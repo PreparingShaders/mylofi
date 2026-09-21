@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="description" content="MyLofi - Трекер питания по фото и журнал тренировок">
+    <meta name="theme-color" content="#1a1a2e">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="MyLofi">
+    <meta name="mobile-web-app-capable" content="yes">
+    
+    <title>MyLofi - Трекер питания и тренировок</title>
+    
+    <!-- Tailwind CSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            50: '#f0f4ff',
+                            100: '#e0e9ff',
+                            200: '#c7d6fe',
+                            300: '#a5b4fc',
+                            400: '#818cf8',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                            800: '#3730a3',
+                            900: '#312e81',
+                        },
+                        surface: {
+                            50: '#fafafa',
+                            100: '#f4f4f5',
+                            200: '#e4e4e7',
+                            300: '#d4d4d8',
+                            400: '#a1a1aa',
+                            500: '#71717a',
+                            600: '#52525b',
+                            700: '#3f3f46',
+                            800: '#27272a',
+                            900: '#18181b',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+                    },
+                    spacing: {
+                        'safe-bottom': 'env(safe-area-inset-bottom)',
+                        'safe-top': 'env(safe-area-inset-top)',
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/static/manifest.json">
+    <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="/static/icons/icon-512.png">
+    
+    <!-- Preconnect for performance -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        /* Custom styles */
+        .safe-area-inset-bottom {
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+        .safe-area-inset-top {
+            padding-top: env(safe-area-inset-top);
+        }
+        
+        /* Pulse animation for pending meals */
+        @keyframes pulse-ring {
+            0% { transform: scale(0.8); opacity: 0.8; }
+            50% { transform: scale(1.2); opacity: 0.4; }
+            100% { transform: scale(0.8); opacity: 0.8; }
+        }
+        .pulse-ring::before {
+            content: '';
+            position: absolute;
+            inset: -4px;
+            border-radius: 50%;
+            border: 2px solid currentColor;
+            animation: pulse-ring 1.5s ease-out infinite;
+        }
+        
+        /* Progress ring animation */
+        .progress-ring {
+            transform: rotate(-90deg);
+        }
+        .progress-ring__circle {
+            transition: stroke-dashoffset 0.5s ease-out;
+        }
+        
+        /* Smooth transitions */
+        .screen {
+            transition: opacity 0.2s ease, transform 0.2s ease;
+        }
+        .screen.hidden {
+            display: none !important;
+        }
+        
+        /* Bottom nav active state */
+        .nav-item.active {
+            color: #6366f1;
+        }
+        .nav-item.active svg {
+            stroke: #6366f1;
+        }
+        
+        /* Toast notifications */
+        .toast-enter {
+            animation: slideUp 0.3s ease-out;
+        }
+        .toast-exit {
+            animation: slideDown 0.2s ease-in;
+        }
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes slideDown {
+            from { opacity: 1; transform: translateY(0); }
+            to { opacity: 0; transform: translateY(20px); }
+        }
+        
+        /* Camera preview */
+        .camera-preview {
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        
+        /* Workout timer */
+        .timer-display {
+            font-variant-numeric: tabular-nums;
+            font-family: 'Inter', monospace;
+        }
+        
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #71717a;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #a1a1aa;
+        }
+        
+        /* Input focus */
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            ring: 2px;
+            ring-color: #6366f1;
+        }
+        
+        /* Button press state */
+        .btn-press:active {
+            transform: scale(0.98);
+        }
+        
+        /* Modal backdrop */
+        .modal-backdrop {
+            backdrop-filter: blur(4px);
+            background: rgba(0, 0, 0, 0.5);
+        }
+    </style>
+</head>
+<body class="bg-surface-50 dark:bg-surface-900 text-surface-900 dark:text-surface-50 min-h-screen font-sans">
+    <!-- App Root -->
+    <div id="app" class="min-h-screen flex flex-col relative">
+        <!-- Top safe area -->
+        <div class="h-safe-top bg-surface-100 dark:bg-surface-800"></div>
+        
+        <!-- Screens Container -->
+        <div id="screens" class="flex-1 overflow-hidden relative">
+            <!-- Landing Screen -->
+            <div id="screen-landing" class="screen absolute inset-0 flex flex-col">
+                <!-- Landing content will be rendered by JS -->
+            </div>
+            
+            <!-- Auth Screen -->
+            <div id="screen-auth" class="screen absolute inset-0 flex flex-col hidden">
+                <!-- Auth content will be rendered by JS -->
+            </div>
+            
+            <!-- Main App Screen (with bottom nav) -->
+            <div id="screen-main" class="screen absolute inset-0 flex flex-col hidden">
+                <!-- Page Content -->
+                <div id="page-content" class="flex-1 overflow-y-auto pb-20 safe-area-inset-bottom">
+                    <!-- Pages will be rendered here -->
+                </div>
+                
+                <!-- Bottom Navigation -->
+                <nav id="bottom-nav" class="fixed bottom-0 left-0 right-0 z-50 bg-surface-100 dark:bg-surface-800 border-t border-surface-200 dark:border-surface-700 safe-area-inset-bottom" style="display: none;">
+                    <div class="grid grid-cols-5 gap-1 px-2 py-2">
+                        <button data-page="nutrition" class="nav-item flex flex-col items-center gap-1 text-surface-500 dark:text-surface-400 btn-press transition-colors" aria-label="Питание">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
+                            <span class="text-xs font-medium">Питание</span>
+                        </button>
+                        <button data-page="workouts" class="nav-item flex flex-col items-center gap-1 text-surface-500 dark:text-surface-400 btn-press transition-colors" aria-label="Тренировки">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                            <span class="text-xs font-medium">Тренировки</span>
+                        </button>
+                        <button data-page="camera" class="nav-item flex flex-col items-center gap-1 text-surface-500 dark:text-surface-400 btn-press transition-colors relative" aria-label="Сфотографировать">
+                            <div class="w-12 h-12 rounded-full bg-primary-600 flex items-center justify-center shadow-lg">
+                                <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                            </div>
+                            <span class="text-xs font-medium">Камера</span>
+                        </button>
+                        <button data-page="history" class="nav-item flex flex-col items-center gap-1 text-surface-500 dark:text-surface-400 btn-press transition-colors" aria-label="История">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            <span class="text-xs font-medium">История</span>
+                        </button>
+                        <button data-page="profile" class="nav-item flex flex-col items-center gap-1 text-surface-500 dark:text-surface-400 btn-press transition-colors" aria-label="Профиль">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+                            <span class="text-xs font-medium">Профиль</span>
+                        </button>
+                    </div>
+                </nav>
+            </div>
+        </div>
+        
+        <!-- Toast Container -->
+        <div id="toast-container" class="fixed bottom-24 left-4 right-4 z-50 flex flex-col gap-2 pointer-events-none"></div>
+        
+        <!-- Modals Container -->
+        <div id="modals" class="fixed inset-0 z-50 pointer-events-none"></div>
+    </div>
+
+    <!-- Service Worker Registration -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/static/sw.js')
+                    .then(reg => console.log('SW registered:', reg.scope))
+                    .catch(err => console.log('SW registration failed:', err));
+            });
+        }
+    </script>
+
+    <!-- Main App JS -->
+    <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>

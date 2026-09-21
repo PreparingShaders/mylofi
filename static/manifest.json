@@ -1,0 +1,82 @@
+{
+    "name": "MyLofi - Трекер питания и тренировок",
+    "short_name": "MyLofi",
+    "description": "Трекер питания по фото и журнал тренировок с офлайн-поддержкой",
+    "start_url": "/",
+    "display": "standalone",
+    "orientation": "portrait-primary",
+    "background_color": "#1a1a2e",
+    "theme_color": "#6366f1",
+    "scope": "/",
+    "lang": "ru",
+    "icons": [
+        {
+            "src": "/static/icons/icon-72.png",
+            "sizes": "72x72",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "/static/icons/icon-96.png",
+            "sizes": "96x96",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "/static/icons/icon-128.png",
+            "sizes": "128x128",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "/static/icons/icon-144.png",
+            "sizes": "144x144",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "/static/icons/icon-152.png",
+            "sizes": "152x152",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "/static/icons/icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "/static/icons/icon-384.png",
+            "sizes": "384x384",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "/static/icons/icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any maskable"
+        }
+    ],
+    "categories": ["health", "fitness", "lifestyle"],
+    "screenshots": [],
+    "shortcuts": [
+        {
+            "name": "Сфотографировать еду",
+            "short_name": "Камера",
+            "description": "Быстро добавить прием пищи по фото",
+            "url": "/?page=camera",
+            "icons": [{ "src": "/static/icons/camera-shortcut.png", "sizes": "192x192" }]
+        },
+        {
+            "name": "Начать тренировку",
+            "short_name": "Тренировка",
+            "description": "Запустить активную тренировку",
+            "url": "/?page=workouts",
+            "icons": [{ "src": "/static/icons/workout-shortcut.png", "sizes": "192x192" }]
+        }
+    ],
+    "prefer_related_applications": false,
+    "related_applications": []
+}

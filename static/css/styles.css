@@ -1,0 +1,109 @@
+/* Custom styles */
+.safe-area-inset-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+}
+.safe-area-inset-top {
+    padding-top: env(safe-area-inset-top);
+}
+
+/* Pulse animation for pending meals */
+@keyframes pulse-ring {
+    0% { transform: scale(0.8); opacity: 0.8; }
+    50% { transform: scale(1.2); opacity: 0.4; }
+    100% { transform: scale(0.8); opacity: 0.8; }
+}
+.pulse-ring::before {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: 50%;
+    border: 2px solid currentColor;
+    animation: pulse-ring 1.5s ease-out infinite;
+}
+
+/* Progress ring animation */
+.progress-ring {
+    transform: rotate(-90deg);
+}
+.progress-ring__circle {
+    transition: stroke-dashoffset 0.5s ease-out;
+}
+
+/* Smooth transitions */
+.screen {
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.screen.hidden {
+    display: none !important;
+}
+
+/* Bottom nav active state */
+.nav-item.active {
+    color: #6366f1;
+}
+.nav-item.active svg {
+    stroke: #6366f1;
+}
+
+/* Toast notifications */
+.toast-enter {
+    animation: slideUp 0.3s ease-out;
+}
+.toast-exit {
+    animation: slideDown 0.2s ease-in;
+}
+@keyframes slideUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+@keyframes slideDown {
+    from { opacity: 1; transform: translateY(0); }
+    to { opacity: 0; transform: translateY(20px); }
+}
+
+/* Camera preview */
+.camera-preview {
+    background: #000;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+/* Workout timer */
+.timer-display {
+    font-variant-numeric: tabular-nums;
+    font-family: 'Inter', monospace;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: #71717a;
+    border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #a1a1aa;
+}
+
+/* Input focus */
+input:focus, select:focus, textarea:focus {
+    outline: none;
+    ring: 2px;
+    ring-color: #6366f1;
+}
+
+/* Button press state */
+.btn-press:active {
+    transform: scale(0.98);
+}
+
+/* Modal backdrop */
+.modal-backdrop {
+    backdrop-filter: blur(4px);
+    background: rgba(0, 0, 0, 0.5);
+}
