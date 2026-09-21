@@ -48,7 +48,7 @@ class User(Base):
     # Profile data
     height_cm: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     weight_kg: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    birth_date: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    birth_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     gender: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     activity_level: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
@@ -61,9 +61,9 @@ class User(Base):
     # Push notifications
     push_subscription: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
     # Relationships
@@ -85,9 +85,9 @@ class RefreshToken(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     token_hash: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     revoked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     user: Mapped["User"] = relationship("User", back_populates="refresh_tokens")
 
@@ -119,10 +119,10 @@ class Meal(Base):
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Timing
-    eaten_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    eaten_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
     user: Mapped["User"] = relationship("User", back_populates="meals")
@@ -138,9 +138,9 @@ class WorkoutTemplate(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
     user: Mapped["User"] = relationship("User", back_populates="workout_templates")
@@ -173,13 +173,13 @@ class WorkoutSession(Base):
     template_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("workout_templates.id", ondelete="SET NULL"), nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[WorkoutSessionStatus] = mapped_column(Enum(WorkoutSessionStatus), default=WorkoutSessionStatus.ACTIVE, nullable=False)
-    started_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
     user: Mapped["User"] = relationship("User", back_populates="workout_sessions")
@@ -199,7 +199,7 @@ class WorkoutSessionExercise(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     session: Mapped["WorkoutSession"] = relationship("WorkoutSession", back_populates="exercises")
     sets: Mapped[list["WorkoutSet"]] = relationship("WorkoutSet", back_populates="exercise", cascade="all, delete-orphan", order_by="WorkoutSet.set_number")
@@ -216,8 +216,8 @@ class WorkoutSet(Base):
     rpe: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # Rate of Perceived Exertion
     is_completed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     rest_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     exercise: Mapped["WorkoutSessionExercise"] = relationship("WorkoutSessionExercise", back_populates="sets")
 

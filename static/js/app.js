@@ -84,6 +84,24 @@ const App = {
         this.state.tokens = { access: null, refresh: null };
         this.state.user = null;
     },
+
+    async refreshAccessToken() {
+        if (!this.state.tokens.refresh) {
+            console.error('[App] No refresh token available');
+            return false;
+        }
+        try {
+            const response = await API.post('/auth/refresh', { refresh_token: this.state.tokens.refresh });
+            this.state.tokens.access = response.access_token;
+            this.state.tokens.refresh = response.refresh_token;
+            this.saveTokens();
+            return true;
+        } catch (error) {
+            console.error('[App] Token refresh failed:', error);
+            this.clearTokens();
+            return false;
+        }
+    },
     
     async validateToken() {
         try {
