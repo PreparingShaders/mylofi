@@ -316,6 +316,60 @@ class WorkoutHistoryResponse(BaseModel):
     total: int
 
 
+# Exercise catalog schemas
+class WorkoutGoal(str, Enum):
+    STRENGTH = "strength"
+    HYPERTROPHY = "hypertrophy"
+    ENDURANCE = "endurance"
+
+
+class ExerciseCatalogResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: Optional[int] = None
+    name: str
+    muscle_group: str
+    equipment: str
+    is_compound: bool
+    description: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ExerciseCatalogCreate(BaseModel):
+    name: str = Field(max_length=255)
+    muscle_group: str = Field(max_length=50)
+    equipment: str = Field(max_length=50)
+    is_compound: bool = True
+    description: Optional[str] = None
+
+
+class ExerciseCatalogUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=255)
+    muscle_group: Optional[str] = Field(None, max_length=50)
+    equipment: Optional[str] = Field(None, max_length=50)
+    is_compound: Optional[bool] = None
+    description: Optional[str] = None
+
+
+class BuildWorkoutSessionRequest(BaseModel):
+    name: str = Field(max_length=255)
+    exercise_ids: List[int] = Field(min_length=1)
+    default_sets: int = Field(default=3, ge=1)
+    default_reps: int = Field(default=10, ge=1)
+    default_rest_seconds: int = Field(default=90, ge=0)
+    notes: Optional[str] = None
+
+
+class QuickStartWorkoutRequest(BaseModel):
+    goal: WorkoutGoal = Field(default=WorkoutGoal.STRENGTH)
+
+
+class QuickStartWorkoutResponse(BaseModel):
+    session_id: int
+
+
 # WebSocket schemas
 class WSMessageType(str, Enum):
     MEAL_UPDATE = "meal_update"
@@ -386,4 +440,11 @@ __all__ = [
     "WSMessageType",
     "WSMessage",
     "WSMealUpdatePayload",
+    "WorkoutGoal",
+    "ExerciseCatalogResponse",
+    "ExerciseCatalogCreate",
+    "ExerciseCatalogUpdate",
+    "BuildWorkoutSessionRequest",
+    "QuickStartWorkoutRequest",
+    "QuickStartWorkoutResponse",
 ]

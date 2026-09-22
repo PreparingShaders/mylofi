@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mylofi-v4';
+const CACHE_NAME = 'mylofi-v5';
 
 self.addEventListener('install', (event) => {
     event.waitUntil(self.skipWaiting());

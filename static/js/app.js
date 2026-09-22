@@ -18,6 +18,7 @@ const App = {
         isOnline: navigator.onLine,
         pendingPhotos: [],
         activeWorkout: null,
+        currentSessionId: null,
     },
     
     elements: {},
@@ -215,10 +216,30 @@ const App = {
                 this.showPage('workouts');
                 break;
             case 'start-workout':
-                this.showToast('Введите профиль и создайте шаблон тренировки', 'info');
+                Workouts.showQuickStart(this);
                 break;
-            case 'resume-workout':
-                this.showToast('Функция в разработке', 'info');
+            case 'show-build-workout':
+                Workouts.showBuildWorkout(this);
+                break;
+            case 'resume-workout': {
+                const sessionId = event.target.closest('[data-session-id]')?.dataset.sessionId;
+                await Workouts.renderWorkoutScreen(this.elements.pageContent, this, sessionId ? parseInt(sessionId) : null);
+                break;
+            }
+            case 'toggle-set':
+                await this.handleToggleSet(event);
+                break;
+            case 'complete-workout':
+                await this.handleCompleteWorkout(event);
+                break;
+            case 'cancel-workout':
+                await this.handleCancelWorkout(event);
+                break;
+            case 'close-quick-start':
+                this.closeQuickStartModal();
+                break;
+            case 'close-build-workout':
+                Workouts.closeBuildModal();
                 break;
             case 'logout':
                 this.clearTokens();
@@ -226,6 +247,54 @@ const App = {
                 this.renderLanding();
                 break;
         }
+    },
+
+    closeQuickStartModal() {
+        const modal = document.getElementById('qs-modal');
+        if (modal) modal.remove();
+    },
+
+    async handleToggleSet(event) {
+        const btn = event.target.closest('[data-action="toggle-set"]');
+        const row = btn?.closest('[data-set-id]');
+        if (!btn || !row) return;
+        const set_id = row.dataset.set_id;
+        const isCompleted = btn.classList.contains('text-primary-600');
+        const payload = { is_completed: !isCompleted };
+        const weight = row.querySelector('[data-field="weight"]').value;
+        const reps = row.querySelector('[data-field="reps"]').value;
+        if (weight) payload.weight_kg = parseFloat(weight);
+        if (reps) payload.reps = parseInt(reps);
+        try {
+            await API.patch(`/workouts/sets/${set_id}`, payload, this.state.tokens.access);
+        } catch (e) {
+            this.showToast(e.message || 'Ошибка обновления сета', 'error');
+        }
+        await Workouts.renderWorkoutScreen(this.elements.pageContent, this, this.state.currentSessionId);
+    },
+
+    async handleCompleteWorkout(event) {
+        const sessionId = event.target.closest('[data-session-id]')?.dataset.sessionId;
+        try {
+            await API.post(`/workouts/sessions/${sessionId}/complete`, null, this.state.tokens.access);
+            this.showToast('Тренировка завершена!', 'success');
+        } catch (e) {
+            this.showToast(e.message || 'Ошибка завершения тренировки', 'error');
+            return;
+        }
+        await this.renderPage('workouts');
+    },
+
+    async handleCancelWorkout(event) {
+        const sessionId = event.target.closest('[data-session-id]')?.dataset.sessionId;
+        try {
+            await API.post(`/workouts/sessions/${sessionId}/cancel`, null, this.state.tokens.access);
+            this.showToast('Тренировка отменена', 'info');
+        } catch (e) {
+            this.showToast(e.message || 'Ошибка отмены тренировки', 'error');
+            return;
+        }
+        await this.renderPage('workouts');
     },
 
     showToast(message, type = 'info') {

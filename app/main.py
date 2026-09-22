@@ -5,7 +5,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 
 from app.core.config import get_settings
-from app.db.session import init_db, close_db
+from app.db.session import init_db, close_db, async_session_maker
+from app.services.workout import seed_exercise_catalog
 from app.api.v1.routes import router as api_router
 
 settings = get_settings()
@@ -15,6 +16,8 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     # Startup
     await init_db()
+    async with async_session_maker() as session:
+        await seed_exercise_catalog(session)
     yield
     # Shutdown
     await close_db()

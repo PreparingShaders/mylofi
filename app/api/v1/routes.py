@@ -27,9 +27,18 @@ from app.schemas import (
     WorkoutSessionResponse,
     WorkoutHistoryResponse,
     WorkoutSessionStatus,
+    WorkoutSessionStatus,
+     WorkoutSessionStatus,
     WSMessageType,
     WSMessage,
     WSMealUpdatePayload,
+    ExerciseCatalogResponse,
+    ExerciseCatalogCreate,
+    ExerciseCatalogUpdate,
+    BuildWorkoutSessionRequest,
+    QuickStartWorkoutRequest,
+    QuickStartWorkoutResponse,
+    WorkoutSetUpdate,
 )
 from app.services.auth import (
     verify_password,
@@ -67,7 +76,15 @@ from app.services.workout import (
     cancel_workout_session,
     get_workout_history,
     update_set_completion,
+    get_exercises,
+    quick_start_workout,
+    create_exercise,
+    update_exercise,
+    delete_exercise,
+    build_workout_session,
+    get_workout_statistics,
 )
+from app.services.exercise_data import MUSCLE_GROUPS, EQUIPMENT
 from app.models import User, Meal
 from app.ws.manager import manager, get_websocket_user
 
@@ -366,6 +383,91 @@ from app.core.config import get_settings
 settings = get_settings()
 
 
+# ===== Exercise Catalog Routes =====
+@router.get("/workouts/exercises", response_model=List[ExerciseCatalogResponse])
+async def list_exercises(
+    muscle_group: Optional[str] = Query(None, description="Filter by muscle group"),
+    equipment: Optional[str] = Query(None, description="Filter by equipment"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get exercises from the catalog (global + personal)"""
+    return await get_exercises(
+        db, muscle_group=muscle_group, equipment=equipment, user_id=current_user.id
+    )
+
+
+@router.get("/workouts/exercises/meta")
+async def list_exercise_categories():
+    """Categories reference (muscle groups + equipment) for filters/UI"""
+    return {"muscle_groups": MUSCLE_GROUPS, "equipment": EQUIPMENT}
+
+
+@router.post(
+    "/workouts/exercises",
+    response_model=ExerciseCatalogResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_exercise_endpoint(
+    exercise_data: ExerciseCatalogCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a personal exercise for the current user"""
+    return await create_exercise(db, current_user.id, exercise_data)
+
+
+@router.put("/workouts/exercises/{exercise_id}", response_model=ExerciseCatalogResponse)
+async def update_exercise_endpoint(
+    exercise_id: int,
+    exercise_data: ExerciseCatalogUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update a personal exercise"""
+    exercise = await update_exercise(db, exercise_id, current_user.id, exercise_data)
+    if not exercise:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exercise not found")
+    return exercise
+
+
+@router.delete("/workouts/exercises/{exercise_id}")
+async def delete_exercise_endpoint(
+    exercise_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete a personal exercise"""
+    success = await delete_exercise(db, exercise_id, current_user.id)
+    if not success:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exercise not found")
+    return {"message": "Exercise deleted"}
+
+
+@router.post(
+    "/workouts/sessions/build",
+    response_model=WorkoutSessionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def build_workout_session_endpoint(
+    session_data: BuildWorkoutSessionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Build a workout session from exercises picked from the catalog"""
+    active = await get_active_workout_session(db, current_user.id)
+    if active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You already have an active workout session. Complete or cancel it first.",
+        )
+    try:
+        session = await build_workout_session(db, current_user.id, session_data)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    return session
+
+
 # ===== Workout Template Routes =====
 @router.post("/workouts/templates", response_model=WorkoutTemplateResponse, status_code=status.HTTP_201_CREATED)
 async def create_workout_template_endpoint(
@@ -429,6 +531,29 @@ async def delete_workout_template_endpoint(
 
 
 # ===== Workout Session Routes =====
+@router.post("/workouts/sessions/quick-start", response_model=QuickStartWorkoutResponse, status_code=status.HTTP_201_CREATED)
+async def quick_start_session(
+    request: QuickStartWorkoutRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a ready-to-go workout session based on a goal"""
+    active = await get_active_workout_session(db, current_user.id)
+    if active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You already have an active workout session. Complete or cancel it first.",
+        )
+    try:
+        session = await quick_start_workout(db, current_user.id, request.goal.value)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    return QuickStartWorkoutResponse(session_id=session.id)
+
+
 @router.post("/workouts/sessions", response_model=WorkoutSessionResponse, status_code=status.HTTP_201_CREATED)
 async def create_workout_session_endpoint(
     session_data: WorkoutSessionCreate,
@@ -511,6 +636,48 @@ async def cancel_workout_session_endpoint(
     return session
 
 
+@router.post("/workouts/templates/{template_id}/start", response_model=WorkoutSessionResponse, status_code=status.HTTP_201_CREATED)
+async def start_workout_from_template(
+    template_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Start a workout session from a template"""
+    active = await get_active_workout_session(db, current_user.id)
+    if active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You already have an active workout session. Complete or cancel it first.",
+        )
+    template = await get_workout_template(db, template_id, current_user.id)
+    if not template:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+
+    # Create session from template
+    session_data = WorkoutSessionCreate(
+        template_id=template.id,
+        name=template.name,
+        exercises=[
+            WorkoutSessionExerciseCreate(
+                name=ex.name,
+                order=ex.order,
+                notes=ex.notes,
+                sets=[
+                    WorkoutSetCreate(
+                        set_number=set_num,
+                        reps=ex.target_reps,
+                        rest_seconds=ex.rest_seconds,
+                    )
+                    for set_num in range(1, ex.target_sets + 1)
+                ],
+            )
+            for ex in template.exercises
+        ],
+    )
+    session = await create_workout_session(db, current_user.id, session_data)
+    return session
+
+
 @router.get("/workouts/history", response_model=WorkoutHistoryResponse)
 async def get_workout_history_endpoint(
     limit: int = Query(50, ge=1, le=100),
@@ -523,19 +690,25 @@ async def get_workout_history_endpoint(
     return WorkoutHistoryResponse(sessions=sessions, total=total)
 
 
+@router.get("/workouts/statistics")
+async def get_workout_statistics_endpoint(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get workout statistics for current user"""
+    return await get_workout_statistics(db, current_user.id)
+
+
 @router.patch("/workouts/sets/{set_id}")
 async def update_set_endpoint(
     set_id: int,
-    is_completed: bool = Form(...),
-    weight_kg: Optional[float] = Form(None),
-    reps: Optional[int] = Form(None),
-    rpe: Optional[float] = Form(None),
+    set_data: WorkoutSetUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Update a workout set (complete, update weight/reps)"""
     workout_set = await update_set_completion(
-        db, set_id, current_user.id, is_completed, weight_kg, reps, rpe
+        db, set_id, current_user.id, set_data.is_completed, set_data.weight_kg, set_data.reps, set_data.rpe
     )
     if not workout_set:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Set not found")

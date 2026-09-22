@@ -224,6 +224,28 @@ class WorkoutSet(Base):
     __table_args__ = (Index("ix_workout_sets_exercise_set", "exercise_id", "set_number", unique=True),)
 
 
+class ExerciseCatalog(Base):
+    __tablename__ = "exercise_catalog"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    muscle_group: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    equipment: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    is_compound: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    user: Mapped[Optional["User"]] = relationship("User", backref="exercises")
+
+    __table_args__ = (Index("ix_exercise_catalog_muscle_equipment", "muscle_group", "equipment"),)
+
+
 __all__ = [
     "User",
     "RefreshToken",
@@ -236,4 +258,5 @@ __all__ = [
     "WorkoutSet",
     "WorkoutSessionStatus",
     "UserRole",
+    "ExerciseCatalog",
 ]

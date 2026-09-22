@@ -19,6 +19,11 @@ export const Auth = {
                 </div>
             </div>
         `;
+        // Attach submit handler directly to form as backup
+        const form = container.querySelector('#login-form');
+        if (form) {
+            form.addEventListener('submit', (e) => this.handleLogin(e, app));
+        }
     },
     
     renderRegister(container, app) {
@@ -40,18 +45,26 @@ export const Auth = {
                 </div>
             </div>
         `;
+        const form = container.querySelector('#register-form');
+        if (form) {
+            form.addEventListener('submit', (e) => this.handleRegister(e, app));
+        }
     },
     
     async handleLogin(event, app) {
+        console.log('[Auth] handleLogin called');
         event.preventDefault();
         const formData = new FormData(event.target);
+        console.log('[Auth] formData:', Object.fromEntries(formData));
         
         const params = new URLSearchParams();
         params.append('username', formData.get('email'));
         params.append('password', formData.get('password'));
+        console.log('[Auth] params:', params.toString());
         
         try {
             const response = await API.post('/auth/login', params, null, true);
+            console.log('[Auth] login response:', response);
             app.state.tokens.access = response.access_token;
             app.state.tokens.refresh = response.refresh_token;
             app.saveTokens();
