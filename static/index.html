@@ -190,7 +190,11 @@
         <div id="screens" class="flex-1 overflow-hidden relative">
             <!-- Landing Screen -->
             <div id="screen-landing" class="screen absolute inset-0 flex flex-col">
-                <!-- Landing content will be rendered by JS -->
+                <div class="flex-1 flex flex-col items-center justify-center p-6 text-center">
+                    <h1 class="text-4xl font-bold mb-4">MyLofi</h1>
+                    <p class="mb-8">Трекер питания и тренировок</p>
+                    <button data-action="show-auth" class="w-full py-3 bg-primary-600 text-white rounded-xl">Войти</button>
+                </div>
             </div>
             
             <!-- Auth Screen -->
@@ -247,13 +251,30 @@
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('/static/sw.js')
-                    .then(reg => console.log('SW registered:', reg.scope))
+                    .then(reg => {
+                        console.log('SW registered:', reg.scope);
+                        if (reg.waiting) {
+                            reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+                        }
+                        reg.addEventListener('updatefound', () => {
+                            if (reg.installing) {
+                                reg.installing.addEventListener('statechange', () => {
+                                    if (reg.waiting) {
+                                        reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+                                    }
+                                });
+                            }
+                        });
+                    })
                     .catch(err => console.log('SW registration failed:', err));
+                navigator.serviceWorker.addEventListener('controllerchange', () => {
+                    window.location.reload();
+                });
             });
         }
     </script>
 
     <!-- Main App JS -->
-    <script type="module" src="/static/js/app.js"></script>
+    <script type="module" src="/static/js/app.js?v=3"></script>
 </body>
 </html>

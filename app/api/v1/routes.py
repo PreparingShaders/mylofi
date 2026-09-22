@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form, WebSocket
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form, WebSocket, Header
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -77,7 +77,7 @@ router = APIRouter()
 # ===== Dependency: Get Current User =====
 async def get_current_user(
     db: AsyncSession = Depends(get_db),
-    authorization: Optional[str] = None,
+    authorization: Optional[str] = Header(None),
 ) -> User:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(

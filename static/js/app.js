@@ -25,26 +25,37 @@ const App = {
     async init() {
         console.log('[App] Initializing...');
         this.cacheElements();
-        
+
         // Проверка элементов перед продолжением
         if (!this.elements.screens.landing) {
             console.error('[App] Critical error: Landing screen element not found!');
             return;
         }
-        
-        await DB.init();
-        this.loadTokens();
+
+        // Render landing immediately so user sees something
+        this.showScreen('landing');
+        this.renderLanding();
         this.setupEventListeners();
-        
+        this.loadTokens();
+
+        // DB init is non-critical
+        try {
+            await DB.init();
+        } catch (e) {
+            console.warn('[App] DB init failed:', e);
+        }
+
         if (this.state.tokens.access) {
             console.log('[App] Token found, validating...');
-            await this.validateToken();
-        } else {
-            console.log('[App] No token, showing landing...');
-            this.showScreen('landing');
-            this.renderLanding();
+            try {
+                await this.validateToken();
+            } catch (e) {
+                console.error('[App] Token validation failed:', e);
+                this.showScreen('landing');
+                this.renderLanding();
+            }
         }
-        
+
         console.log('[App] Initialized');
     },
     
@@ -162,23 +173,27 @@ const App = {
             else if (pageName === 'workouts') await Workouts.render(container, this);
             else if (pageName === 'camera') await Camera.render(container, this);
             else if (pageName === 'profile') await Profile.render(container, this);
+            else if (pageName === 'history') await Workouts.renderHistory(container, this);
         } catch (error) {
             console.error('[App] Render error:', error);
             container.innerHTML = Components.errorState('Ошибка загрузки');
         }
     },
-    
-    showToast(message, type) { console.log(`[Toast] ${type}: ${message}`); },
 
     setupEventListeners() {
         document.addEventListener('submit', (e) => {
             if (e.target.id === 'login-form') Auth.handleLogin(e, this);
             if (e.target.id === 'register-form') Auth.handleRegister(e, this);
         });
-        
+
         document.addEventListener('click', (e) => {
             const action = e.target.closest('[data-action]')?.dataset.action;
             if (action) this.handleAction(action, e);
+
+            const navItem = e.target.closest('.nav-item');
+            if (navItem && navItem.dataset.page) {
+                this.showPage(navItem.dataset.page);
+            }
         });
     },
 
@@ -190,10 +205,46 @@ const App = {
                 Auth.renderLogin(this.elements.screens.auth, this);
                 break;
             case 'show-register':
+                this.showScreen('auth');
                 Auth.renderRegister(this.elements.screens.auth, this);
                 break;
+            case 'view-history':
+                this.showPage('history');
+                break;
+            case 'back-to-workouts':
+                this.showPage('workouts');
+                break;
+            case 'start-workout':
+                this.showToast('Введите профиль и создайте шаблон тренировки', 'info');
+                break;
+            case 'resume-workout':
+                this.showToast('Функция в разработке', 'info');
+                break;
+            case 'logout':
+                this.clearTokens();
+                this.showScreen('landing');
+                this.renderLanding();
+                break;
         }
-    }
+    },
+
+    showToast(message, type = 'info') {
+        console.log(`[Toast] ${type}: ${message}`);
+        const container = this.elements.toastContainer;
+        if (!container) return;
+        const toast = document.createElement('div');
+        toast.className = `toast-enter px-4 py-2 rounded-xl text-sm font-medium shadow-lg pointer-events-auto
+            ${type === 'error' ? 'bg-red-500 text-white' : ''}
+            ${type === 'success' ? 'bg-green-500 text-white' : ''}
+            ${type === 'info' ? 'bg-blue-500 text-white' : ''}`;
+        toast.textContent = message;
+        container.appendChild(toast);
+        setTimeout(() => {
+            toast.classList.remove('toast-enter');
+            toast.classList.add('toast-exit');
+            setTimeout(() => container.removeChild(toast), 200);
+        }, 3000);
+    },
 };
 
 document.addEventListener('DOMContentLoaded', () => App.init());
