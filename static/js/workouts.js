@@ -58,14 +58,8 @@ export const Workouts = {
                     <div class="flex overflow-x-auto snap-x snap-mandatory gap-3 pb-2 scrollbar-none -mx-4 px-4">
                         ${templates.map(t => `
                             <div class="min-w-[220px] max-w-[240px] snap-center bg-surface-100 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-2xl p-4 flex flex-col justify-between shadow-sm">
-                                <div>
-                                    <div class="flex justify-between items-start mb-1">
-                                        <h4 class="font-bold text-base truncate flex-1" title="${t.name}">${t.name}</h4>
-                                        <div class="flex gap-1 ml-1 flex-shrink-0">
-                                            <button data-action="edit-template" data-template-id="${t.id}" class="text-surface-400 hover:text-primary-600 p-1 text-sm" title="Редактировать">✏️</button>
-                                            <button data-action="delete-template" data-template-id="${t.id}" class="text-surface-400 hover:text-red-500 p-1 text-sm" title="Удалить">🗑️</button>
-                                        </div>
-                                    </div>
+                                <div class="flex-1 cursor-pointer" data-action="view-template" data-template-id="${t.id}">
+                                    <h4 class="font-bold text-base truncate mb-1" title="${t.name}">${t.name}</h4>
                                     <p class="text-xs text-surface-500 dark:text-surface-400 mb-2">${t.exercises.length} упр.</p>
                                     <div class="text-[11px] text-surface-400 truncate mb-3">
                                         ${t.exercises.map(ex => ex.name).join(', ')}
@@ -173,43 +167,84 @@ export const Workouts = {
             const sessionId = e.currentTarget.dataset.sessionId;
             app.router.navigate(`/workouts/session/${sessionId}`);
         });
-        container.querySelectorAll('[data-action="start-template"]').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
+
+        container.querySelectorAll('[data-action="view-template"]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
                 const templateId = parseInt(e.currentTarget.dataset.templateId);
-                e.currentTarget.disabled = true;
-                e.currentTarget.textContent = 'Запуск...';
+                const template = templates.find(t => t.id === templateId);
+                if (template) {
+                    this.renderTemplateDetails(container, app, template);
+                }
+            });
+        });
+
+        container.querySelectorAll('[data-action="start-template"]').forEach(btn => {
+
+            btn.addEventListener('click', async (e) => {
+                const button = e.currentTarget;
+                const templateId = parseInt(button.dataset.templateId);
+                button.disabled = true;
+                button.textContent = 'Запуск...';
                 try {
                     const session = await API.post(`/workouts/templates/${templateId}/start`, {}, app.state.tokens.access);
                     app.router.navigate(`/workouts/session/${session.id}`);
                     app.showToast('Тренировка запущена!', 'success');
                 } catch (err) {
+                    console.error('Start template error:', err);
                     app.showToast(err.message || 'Ошибка запуска', 'error');
-                    e.currentTarget.disabled = false;
-                    e.currentTarget.textContent = 'Начать тренировку →';
+                    if (button) {
+                        button.disabled = false;
+                        button.textContent = 'Начать тренировку →';
+                    }
                 }
             });
         });
-        container.querySelectorAll('[data-action="edit-template"]').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const templateId = parseInt(e.currentTarget.dataset.templateId);
-                const template = templates.find(t => t.id === templateId);
-                if (template) {
-                    this.showEditTemplateModal(app, template);
-                }
-            });
+    },
+
+    async renderTemplateDetails(container, app, template) {
+        this.app = app;
+        const html = `
+            <div class="p-4">
+                <div class="flex items-center justify-between mb-4">
+                    <button data-action="back-to-workouts" class="text-surface-500 hover:text-surface-900">←</button>
+                    <h2 class="text-xl font-bold">${template.name}</h2>
+                    <div class="flex gap-2">
+                        <button data-action="edit-template" data-template-id="${template.id}" class="text-surface-500 hover:text-primary-600">✏️</button>
+                        <button data-action="delete-template" data-template-id="${template.id}" class="text-surface-500 hover:text-red-500">🗑️</button>
+                    </div>
+                </div>
+
+                <div class="bg-white dark:bg-surface-800 rounded-xl p-4 shadow-sm">
+                    <h3 class="font-semibold mb-3">Упражнения (${template.exercises.length})</h3>
+                    <ul class="space-y-2">
+                        ${template.exercises.map(ex => `
+                            <li class="text-sm py-2 border-b border-surface-200 dark:border-surface-700 last:border-0">
+                                ${ex.name} - ${ex.target_sets} подх. × ${ex.target_reps} повт.
+                            </li>
+                        `).join('')}
+                    </ul>
+                </div>
+            </div>
+        `;
+        container.innerHTML = html;
+
+        container.querySelector('[data-action="back-to-workouts"]').addEventListener('click', () => {
+            this.render(container, app);
         });
-        container.querySelectorAll('[data-action="delete-template"]').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
-                const templateId = parseInt(e.currentTarget.dataset.templateId);
-                if (!confirm('Удалить этот шаблон тренировки?')) return;
-                try {
-                    await API.delete(`/workouts/templates/${templateId}`, app.state.tokens.access);
-                    app.showToast('Шаблон удален', 'info');
-                    await this.render(container, app);
-                } catch (err) {
-                    app.showToast(err.message || 'Ошибка удаления', 'error');
-                }
-            });
+
+        container.querySelector('[data-action="edit-template"]').addEventListener('click', () => {
+            this.showEditTemplateModal(app, template);
+        });
+
+        container.querySelector('[data-action="delete-template"]').addEventListener('click', async () => {
+            if (!confirm('Удалить этот шаблон тренировки?')) return;
+            try {
+                await API.delete(`/workouts/templates/${template.id}`, app.state.tokens.access);
+                app.showToast('Шаблон удален', 'info');
+                this.render(container, app);
+            } catch (err) {
+                app.showToast(err.message || 'Ошибка удаления', 'error');
+            }
         });
     },
 
@@ -473,7 +508,18 @@ export const Workouts = {
             container.querySelector('[data-action="create-template"]')?.addEventListener('click', () => {
                 this.showCreateTemplateModal(app);
             });
-            container.querySelectorAll('[data-action="start-template"]').forEach(btn => {
+        container.querySelectorAll('[data-action="view-template"]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const templateId = parseInt(e.currentTarget.dataset.templateId);
+                const template = templates.find(t => t.id === templateId);
+                if (template) {
+                    this.renderTemplateDetails(container, app, template);
+                }
+            });
+        });
+
+        container.querySelectorAll('[data-action="start-template"]').forEach(btn => {
+
                 btn.addEventListener('click', async (e) => {
                     const templateId = parseInt(e.currentTarget.dataset.templateId);
                     e.currentTarget.disabled = true;
