@@ -35,5 +35,29 @@ export const Components = {
                 <p>${Math.round(meal.calories || 0)} Ккал</p>
             </div>
         `;
+    },
+
+    sparkline(data, width = 100, height = 30) {
+        if (!data || data.length === 0) return '<div class="text-xs text-surface-400">Нет данных</div>';
+        
+        const min = Math.min(...data);
+        const max = Math.max(...data);
+        const range = max - min || 1;
+        
+        const points = data.map((v, i) => {
+            const x = data.length > 1 ? (i / (data.length - 1)) * width : width / 2;
+            const y = height - ((v - min) / range) * height;
+            return `${x},${y}`;
+        }).join(' ');
+
+        return `
+            <div class="flex items-center gap-2">
+                <span class="text-[10px] text-surface-400 font-mono">${min}</span>
+                <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" class="stroke-primary-500 fill-none" stroke-width="2">
+                    ${data.length === 1 ? `<circle cx="${width/2}" cy="${height/2}" r="3" class="fill-primary-500"/>` : `<polyline points="${points}" stroke-linejoin="round" stroke-linecap="round"/>`}
+                </svg>
+                <span class="text-[10px] text-surface-400 font-mono">${max}</span>
+            </div>
+        `;
     }
 };

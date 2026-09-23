@@ -173,8 +173,7 @@ async def create_workout_session(
             db.add(workout_set)
 
     await db.commit()
-    await db.refresh(session)
-    return session
+    return await get_workout_session(db, session.id, user_id)
 
 
 async def get_workout_session(
@@ -579,8 +578,7 @@ async def build_workout_session(
             )
 
     await db.commit()
-    await db.refresh(session)
-    return session
+    return await get_workout_session(db, session.id, user_id)
 
 
 async def quick_start_workout(
@@ -664,8 +662,7 @@ async def quick_start_workout(
             )
 
     await db.commit()
-    await db.refresh(session)
-    return session
+    return await get_workout_session(db, session.id, user_id)
 
 
 async def get_workout_statistics(

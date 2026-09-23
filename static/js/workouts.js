@@ -49,6 +49,7 @@ export const Workouts = {
 
         let templatesWidget = '';
         if (templates && templates.length > 0) {
+            const hasActiveSession = !!activeSession;
             templatesWidget = `
                 <div class="mb-6">
                     <div class="flex justify-between items-center mb-3">
@@ -65,9 +66,9 @@ export const Workouts = {
                                         ${t.exercises.map(ex => ex.name).join(', ')}
                                     </div>
                                 </div>
-                                <button data-action="start-template" data-template-id="${t.id}"
-                                        class="w-full py-2 bg-primary-600 text-white rounded-xl text-xs font-semibold text-center shadow-sm">
-                                    Начать тренировку →
+                                <button data-action="start-template" data-template-id="${t.id}" ${hasActiveSession ? 'disabled' : ''}
+                                        class="w-full py-2 ${hasActiveSession ? 'bg-surface-400' : 'bg-primary-600'} text-white rounded-xl text-xs font-semibold text-center shadow-sm">
+                                    ${hasActiveSession ? 'Тренировка уже идет' : 'Начать тренировку →'}
                                 </button>
                             </div>
                         `).join('')}
@@ -149,23 +150,23 @@ export const Workouts = {
             el.addEventListener('click', () => this.showBuildWorkout(app));
         });
         container.querySelectorAll('[data-action="view-history"]').forEach(el => {
-            el.addEventListener('click', () => app.router.navigate('/workouts/history'));
+            el.addEventListener('click', () => app.showPage('history'));
         });
         container.querySelectorAll('[data-action="view-statistics"]').forEach(el => {
-            el.addEventListener('click', () => app.router.navigate('/workouts/statistics'));
+            el.addEventListener('click', () => app.showPage('statistics'));
         });
         container.querySelectorAll('[data-action="view-history"]').forEach(el => {
-            el.addEventListener('click', () => app.router.navigate('/workouts/history'));
+            el.addEventListener('click', () => app.showPage('history'));
         });
         container.querySelectorAll('[data-action="view-templates"]').forEach(el => {
-            el.addEventListener('click', () => app.router.navigate('/workouts/templates'));
+            el.addEventListener('click', () => app.showPage('templates'));
         });
         container.querySelectorAll('[data-action="view-statistics"]').forEach(el => {
-            el.addEventListener('click', () => app.router.navigate('/workouts/statistics'));
+            el.addEventListener('click', () => app.showPage('statistics'));
         });
         container.querySelector('[data-action="resume-workout"]')?.addEventListener('click', (e) => {
             const sessionId = e.currentTarget.dataset.sessionId;
-            app.router.navigate(`/workouts/session/${sessionId}`);
+            this.renderWorkoutScreen(container, app, parseInt(sessionId));
         });
 
         container.querySelectorAll('[data-action="view-template"]').forEach(btn => {
@@ -187,7 +188,7 @@ export const Workouts = {
                 button.textContent = 'Запуск...';
                 try {
                     const session = await API.post(`/workouts/templates/${templateId}/start`, {}, app.state.tokens.access);
-                    app.router.navigate(`/workouts/session/${session.id}`);
+                    this.renderWorkoutScreen(container, app, session.id);
                     app.showToast('Тренировка запущена!', 'success');
                 } catch (err) {
                     console.error('Start template error:', err);
@@ -251,12 +252,16 @@ export const Workouts = {
     async renderWorkoutScreen(container, app, sessionId) {
         this.app = app;
         let session;
+        let historyData = { sessions: [] };
         try {
             const url = sessionId ? `/workouts/sessions/${sessionId}` : '/workouts/sessions/active';
-            session = await API.get(url, app.state.tokens.access);
+            [session, historyData] = await Promise.all([
+                API.get(url, app.state.tokens.access),
+                API.get('/workouts/history?limit=10', app.state.tokens.access).catch(() => ({ sessions: [] }))
+            ]);
         } catch (error) {
-            console.error('[Workouts] Session load error:', error);
-            app.showToast('Ошибка загрузки тренировки', 'error');
+            console.error('[Workouts] Session/History load error:', error);
+            app.showToast('Ошибка загрузки данных', 'error');
             return;
         }
         if (!session) {
@@ -265,24 +270,45 @@ export const Workouts = {
         }
         app.state.currentSessionId = session.id;
 
-        const exercisesHtml = (session.exercises || []).map(ex => `
-            <div class="bg-white dark:bg-surface-800 rounded-xl p-4 shadow-sm">
-                <h3 class="font-semibold mb-3">${ex.name}</h3>
-                <div class="space-y-2">
+        const lastWorkout = historyData.sessions[0];
+        const durationMin = Math.floor((new Date() - new Date(session.started_at)) / 60000);
+        
+        const exerciseCards = (session.exercises || []).map(ex => {
+            const historyPoints = historyData.sessions
+                .flatMap(s => s.exercises.filter(e => e.name === ex.name))
+                .flatMap(e => e.sets.map(set => set.weight_kg))
+                .filter(w => w != null && w > 0)
+                .slice(-10);
+
+            return `
+            <div class="min-w-[320px] max-w-[340px] snap-center bg-white dark:bg-surface-800 rounded-2xl p-6 shadow-md flex flex-col" data-exercise-id="${ex.id}">
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="font-bold text-lg">${ex.name}</h3>
+                    <div class="text-sm font-mono text-primary-600" data-exercise-timer="0">00:00</div>
+                </div>
+                <div class="mb-4">
+                    ${Components.sparkline(historyPoints)}
+                </div>
+                <div class="space-y-3 flex-1">
                     ${(ex.sets || []).map(set => `
-                        <div class="flex items-center gap-2" data-set-id="${set.id}">
-                            <span class="text-sm font-medium w-6 text-center">${set.set_number}</span>
-                            <input type="number" min="0" step="0.5" placeholder="вес"
-                                   value="${set.weight_kg ?? ''}"
-                                   class="w-16 px-2 py-1 text-sm border border-surface-300 dark:border-surface-700 rounded bg-surface-50 dark:bg-surface-700"
-                                   data-field="weight" ${set.is_completed ? 'readonly' : ''}>
-                            <span class="text-surface-400">×</span>
-                            <input type="number" min="0" placeholder="повт."
-                                   value="${set.reps ?? ''}"
-                                   class="w-16 px-2 py-1 text-sm border border-surface-300 dark:border-surface-700 rounded bg-surface-50 dark:bg-surface-700"
-                                   data-field="reps" ${set.is_completed ? 'readonly' : ''}>
+                        <div class="flex items-center gap-2 text-sm" data-set-id="${set.id}">
+                            <span class="font-medium w-6 text-center text-surface-400">${set.set_number}</span>
+                            <div class="flex items-center gap-1">
+                                <input type="number" min="0" step="0.5" placeholder="0"
+                                       value="${set.weight_kg ?? ''}"
+                                       class="w-14 bg-transparent text-center border-b border-surface-300 focus:border-primary-500 focus:outline-none"
+                                       data-field="weight" ${set.is_completed ? 'readonly' : ''}>
+                                <span class="text-[10px] text-surface-400">кг</span>
+                            </div>
+                            <div class="flex items-center gap-1">
+                                <input type="number" min="0" placeholder="0"
+                                       value="${set.reps ?? ''}"
+                                       class="w-14 bg-transparent text-center border-b border-surface-300 focus:border-primary-500 focus:outline-none"
+                                       data-field="reps" ${set.is_completed ? 'readonly' : ''}>
+                                <span class="text-[10px] text-surface-400">повт.</span>
+                            </div>
                             <button data-action="toggle-set"
-                                    class="ml-auto py-1 px-2 text-lg ${set.is_completed ? 'text-primary-600 font-bold' : 'text-surface-400'}"
+                                    class="ml-auto py-1 px-2 text-xl ${set.is_completed ? 'text-primary-600 font-bold' : 'text-surface-300'}"
                                     ${set.is_completed ? 'disabled' : ''}>
                                 ✓
                             </button>
@@ -290,33 +316,50 @@ export const Workouts = {
                     `).join('')}
                 </div>
             </div>
-        `).join('');
+        `}).join('');
+
+        // Cards
+        const cancelCard = `
+            <div class="min-w-[320px] max-w-[340px] snap-center bg-surface-100 dark:bg-surface-800 rounded-2xl p-6 shadow-md flex flex-col items-center justify-center">
+                <button data-action="cancel-workout" data-session-id="${session.id}"
+                        class="w-full py-6 border-2 border-dashed border-red-300 dark:border-red-700 rounded-2xl text-red-600 font-bold text-lg">
+                    Отменить тренировку
+                </button>
+            </div>
+        `;
+        const completeCard = `
+            <div class="min-w-[320px] max-w-[340px] snap-center bg-surface-100 dark:bg-surface-800 rounded-2xl p-6 shadow-md flex flex-col items-center justify-center">
+                <button data-action="complete-workout" data-session-id="${session.id}"
+                        class="w-full py-6 bg-primary-600 text-white rounded-2xl font-bold text-lg">
+                    Завершить тренировку
+                </button>
+            </div>
+        `;
+        const allCards = [cancelCard, ...exerciseCards, completeCard];
 
         let html = `
-            <div class="p-4">
+            <div class="p-4" id="workout-container">
                 <div class="flex items-center justify-between mb-4">
-                    <button data-action="back-to-workouts" class="text-surface-500 hover:text-surface-900 dark:text-surface-400">←</button>
-                    <h2 class="text-xl font-bold">${session.name || 'Тренировка'}</h2>
-                    <div class="w-6"></div>
+                    <button data-action="back-to-workouts" class="text-surface-500 hover:text-surface-900 dark:text-surface-400 text-lg">←</button>
+                    <h2 class="text-xl font-bold text-center flex-1">${session.name || 'Тренировка'}</h2>
+                    <span class="text-sm text-surface-500 font-mono">${durationMin} мин.</span>
                 </div>
 
-                <div class="space-y-4">
-                    ${exercisesHtml || `<p class="text-surface-400">Упражнения не добавлены</p>`}
-                </div>
-
-                <div class="flex gap-2 mt-6">
-                    <button data-action="cancel-workout" data-session-id="${session.id}"
-                            class="flex-1 py-2 border border-surface-300 dark:border-surface-700 rounded-xl text-sm font-medium">
-                        Отменить
-                    </button>
-                    <button data-action="complete-workout" data-session-id="${session.id}"
-                            class="flex-1 py-2 bg-primary-600 text-white rounded-xl text-sm font-medium">
-                        Готово
-                    </button>
+                <div class="flex overflow-x-auto snap-x snap-mandatory gap-4 pb-4 px-4 -mx-4" id="carousel">
+                    ${allCards.join('')}
                 </div>
             </div>
         `;
         container.innerHTML = html;
+        
+        // Scroll to first exercise (index 1 in allCards)
+        setTimeout(() => {
+            const carousel = document.getElementById('carousel');
+            if (carousel) {
+                const cardWidth = carousel.querySelector('.min-w-\\[320px\\]').offsetWidth + 16; // 16px is gap
+                carousel.scrollLeft = cardWidth; 
+            }
+        }, 100);
 
         // Event listeners for workout screen
         this.bindWorkoutScreenEvents(container, app, session.id);
@@ -328,31 +371,41 @@ export const Workouts = {
         // Toggle set completion
         container.querySelectorAll('[data-action="toggle-set"]').forEach(btn => {
             btn.addEventListener('click', async (e) => {
-                const setId = parseInt(e.currentTarget.closest('[data-set-id]').dataset.setId);
-                const isCompleted = !e.currentTarget.classList.contains('text-primary-600');
-                e.currentTarget.disabled = true;
-                e.currentTarget.textContent = '...';
+                const button = e.currentTarget;
+                const row = button.closest('[data-set-id]');
+                if (!row) {
+                    console.error('Row not found for set');
+                    return;
+                }
+                const setId = parseInt(row.dataset.setId);
+                if (isNaN(setId)) {
+                    console.error('Invalid setId found:', row.dataset.setId);
+                    return;
+                }
+                
+                const isCompleted = !button.classList.contains('text-primary-600');
+                button.disabled = true;
+                button.textContent = '...';
                 try {
                     await API.patch(`/workouts/sets/${setId}`, { is_completed: isCompleted }, token);
                     if (isCompleted) {
-                        e.currentTarget.classList.add('text-primary-600', 'font-bold');
-                        e.currentTarget.classList.remove('text-surface-400');
-                        e.currentTarget.textContent = '✓';
+                        button.classList.add('text-primary-600', 'font-bold');
+                        button.classList.remove('text-surface-400');
+                        button.textContent = '✓';
                         // Disable inputs
-                        const row = e.currentTarget.closest('[data-set-id]');
                         row.querySelector('[data-field="weight"]').readOnly = true;
                         row.querySelector('[data-field="reps"]').readOnly = true;
-                        e.currentTarget.disabled = true;
+                        button.disabled = true;
                     } else {
-                        e.currentTarget.classList.remove('text-primary-600', 'font-bold');
-                        e.currentTarget.classList.add('text-surface-400');
-                        e.currentTarget.textContent = '✓';
-                        e.currentTarget.disabled = false;
+                        button.classList.remove('text-primary-600', 'font-bold');
+                        button.classList.add('text-surface-400');
+                        button.textContent = '✓';
+                        button.disabled = false;
                     }
                 } catch (err) {
                     app.showToast(err.message || 'Ошибка', 'error');
-                    e.currentTarget.disabled = false;
-                    e.currentTarget.textContent = '✓';
+                    button.disabled = false;
+                    button.textContent = '✓';
                 }
             });
         });
@@ -396,39 +449,14 @@ export const Workouts = {
         });
 
         // Complete workout
-        container.querySelector('[data-action="complete-workout"]')?.addEventListener('click', async (e) => {
-            e.currentTarget.disabled = true;
-            e.currentTarget.textContent = 'Завершаем...';
-            try {
-                await API.post(`/workouts/sessions/${sessionId}/complete`, {}, token);
-                app.showToast('Тренировка завершена!', 'success');
-                app.router.navigate('/workouts');
-            } catch (err) {
-                app.showToast(err.message || 'Ошибка завершения', 'error');
-                e.currentTarget.disabled = false;
-                e.currentTarget.textContent = 'Готово';
-            }
-        });
+        // Handled by App.js
 
         // Cancel workout
-        container.querySelector('[data-action="cancel-workout"]')?.addEventListener('click', async (e) => {
-            if (!confirm('Отменить тренировку? Прогресс не сохранится.')) return;
-            e.currentTarget.disabled = true;
-            e.currentTarget.textContent = 'Отмена...';
-            try {
-                await API.post(`/workouts/sessions/${sessionId}/cancel`, {}, token);
-                app.showToast('Тренировка отменена', 'info');
-                app.router.navigate('/workouts');
-            } catch (err) {
-                app.showToast(err.message || 'Ошибка отмены', 'error');
-                e.currentTarget.disabled = false;
-                e.currentTarget.textContent = 'Отменить';
-            }
-        });
+        // Handled by App.js
 
         // Back button
         container.querySelector('[data-action="back-to-workouts"]')?.addEventListener('click', () => {
-            app.router.navigate('/workouts');
+            app.showPage('workouts');
         });
     },
 
@@ -479,7 +507,11 @@ export const Workouts = {
     async renderTemplatesScreen(container, app) {
         this.app = app;
         try {
-            const templates = await API.get('/workouts/templates', app.state.tokens.access);
+            const [templates, activeSession] = await Promise.all([
+                API.get('/workouts/templates', app.state.tokens.access),
+                API.get('/workouts/sessions/active', app.state.tokens.access).catch(() => null)
+            ]);
+            const hasActiveSession = !!activeSession;
             let html = `
                 <div class="p-4">
                     <div class="flex items-center justify-between mb-4">
@@ -494,8 +526,10 @@ export const Workouts = {
                                     <h3 class="font-semibold">${t.name}</h3>
                                     <p class="text-xs text-surface-400">${t.exercises.length} упр.</p>
                                 </div>
-                                <button data-action="start-template" data-template-id="${t.id}"
-                                        class="px-3 py-1 bg-primary-600 text-white rounded text-xs">Начать</button>
+                                <button data-action="start-template" data-template-id="${t.id}" ${hasActiveSession ? 'disabled' : ''}
+                                        class="px-3 py-1 ${hasActiveSession ? 'bg-surface-400' : 'bg-primary-600'} text-white rounded text-xs">
+                                    ${hasActiveSession ? 'Активна' : 'Начать'}
+                                </button>
                             </div>
                         `).join('')}
                     </div>
@@ -503,7 +537,7 @@ export const Workouts = {
             `;
             container.innerHTML = html;
             container.querySelector('[data-action="back-to-workouts"]')?.addEventListener('click', () => {
-                app.router.navigate('/workouts');
+                app.showPage('workouts');
             });
             container.querySelector('[data-action="create-template"]')?.addEventListener('click', () => {
                 this.showCreateTemplateModal(app);
@@ -609,7 +643,7 @@ export const Workouts = {
             `;
             container.innerHTML = html;
             container.querySelector('[data-action="back-to-workouts"]')?.addEventListener('click', () => {
-                app.router.navigate('/workouts');
+                app.showPage('workouts');
             });
         } catch (err) {
             app.showToast('Ошибка загрузки статистики', 'error');
@@ -776,7 +810,7 @@ export const Workouts = {
                         saveBtn.textContent = 'Сохранить';
                     }
                 }
-            });
+            }, null);
         });
 
         try {
@@ -793,35 +827,39 @@ export const Workouts = {
         }
     },
 
-    renderConfigurationScreen(app, selectedExercises, onSave) {
+    renderConfigurationScreen(app, selectedExercises, onSave, template = null) {
         const modal = document.getElementById('build-modal');
         const content = modal.querySelector('.flex.flex-col');
         
+        const findTemplateEx = (exName) => template?.exercises.find(te => te.name === exName);
+
         content.innerHTML = `
             <div class="p-5 border-b border-surface-200 dark:border-surface-700 flex justify-between items-center">
                 <h3 class="text-lg font-bold">Настройка упражнений</h3>
                 <button data-action="close-build-workout" class="text-surface-500 hover:text-surface-900 dark:text-surface-400 p-1">✕</button>
             </div>
             <div class="p-4 flex-1 overflow-y-auto space-y-4" id="config-list">
-                ${selectedExercises.map((ex, i) => `
+                ${selectedExercises.map((ex, i) => {
+                    const te = findTemplateEx(ex.name);
+                    return `
                     <div class="bg-surface-100 dark:bg-surface-800 p-4 rounded-2xl" data-ex-id="${ex.id}" data-index="${i}">
                         <h4 class="font-bold mb-2">${ex.name}</h4>
                         <div class="grid grid-cols-3 gap-2">
                             <div>
                                 <label class="text-xs text-surface-500">Подходы</label>
-                                <input type="number" value="3" class="w-full px-2 py-1 bg-white dark:bg-surface-900 rounded border border-surface-300 dark:border-surface-700 cfg-sets">
+                                <input type="number" value="${te?.target_sets || 3}" class="w-full px-2 py-1 bg-white dark:bg-surface-900 rounded border border-surface-300 dark:border-surface-700 cfg-sets">
                             </div>
                             <div>
                                 <label class="text-xs text-surface-500">Повт.</label>
-                                <input type="number" value="10" class="w-full px-2 py-1 bg-white dark:bg-surface-900 rounded border border-surface-300 dark:border-surface-700 cfg-reps">
+                                <input type="number" value="${te?.target_reps || 10}" class="w-full px-2 py-1 bg-white dark:bg-surface-900 rounded border border-surface-300 dark:border-surface-700 cfg-reps">
                             </div>
                             <div>
                                 <label class="text-xs text-surface-500">Вес (кг)</label>
-                                <input type="number" value="" placeholder="0" class="w-full px-2 py-1 bg-white dark:bg-surface-900 rounded border border-surface-300 dark:border-surface-700 cfg-weight">
+                                <input type="number" value="${te?.target_weight_kg || 0}" placeholder="0" class="w-full px-2 py-1 bg-white dark:bg-surface-900 rounded border border-surface-300 dark:border-surface-700 cfg-weight">
                             </div>
                         </div>
                     </div>
-                `).join('')}
+                `}).join('')}
             </div>
             <div class="p-4 border-t border-surface-200 dark:border-surface-700">
                 <button id="bw-save-final" class="w-full py-2.5 bg-primary-600 text-white rounded-xl text-sm font-semibold shadow-md">Сохранить</button>
@@ -972,6 +1010,17 @@ export const Workouts = {
         nextBtn.addEventListener('click', () => {
             const selectedExercises = exercises.filter(ex => selected.includes(ex.id));
             const templateName = document.getElementById('bw-name')?.value.trim() || template.name || 'Мой шаблон';
+            
+            // Fix sorting: match original template exercise order
+            selectedExercises.sort((a, b) => {
+                const idxA = template.exercises.findIndex(te => te.name === a.name);
+                const idxB = template.exercises.findIndex(te => te.name === b.name);
+                if (idxA === -1 && idxB === -1) return 0;
+                if (idxA === -1) return 1;
+                if (idxB === -1) return -1;
+                return idxA - idxB;
+            });
+
             this.renderConfigurationScreen(app, selectedExercises, async (configuredExercises) => {
                 const saveBtn = document.getElementById('bw-save-final');
                 if (saveBtn) {
@@ -994,7 +1043,7 @@ export const Workouts = {
                         saveBtn.textContent = 'Сохранить';
                     }
                 }
-            });
+            }, template);
         });
 
         try {

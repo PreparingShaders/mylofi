@@ -668,6 +668,7 @@ async def start_workout_from_template(
                     WorkoutSetCreate(
                         set_number=set_num,
                         reps=ex.target_reps,
+                        weight_kg=ex.target_weight_kg,
                         rest_seconds=ex.rest_seconds,
                     )
                     for set_num in range(1, ex.target_sets + 1)

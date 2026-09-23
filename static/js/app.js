@@ -247,23 +247,56 @@ const App = {
         const btn = event.target.closest('[data-action="toggle-set"]');
         const row = btn?.closest('[data-set-id]');
         if (!btn || !row) return;
-        const set_id = row.dataset.set_id;
+        
+        const set_id = row.dataset.setId;
+        if (!set_id) return;
+        
         const isCompleted = btn.classList.contains('text-primary-600');
         const payload = { is_completed: !isCompleted };
-        const weight = row.querySelector('[data-field="weight"]').value;
-        const reps = row.querySelector('[data-field="reps"]').value;
-        if (weight) payload.weight_kg = parseFloat(weight);
-        if (reps) payload.reps = parseInt(reps);
+        
+        // Update UI immediately (optimistic)
+        btn.disabled = true;
+        btn.textContent = '...';
+        
         try {
             await API.patch(`/workouts/sets/${set_id}`, payload, this.state.tokens.access);
+            
+            // Update UI state
+            if (!isCompleted) {
+                btn.classList.add('text-primary-600', 'font-bold');
+                btn.classList.remove('text-surface-400');
+                row.querySelector('[data-field="weight"]').readOnly = true;
+                row.querySelector('[data-field="reps"]').readOnly = true;
+
+                // Auto-scroll to next exercise if last set of current exercise
+                const exerciseContainer = row.closest('.snap-center');
+                const allSets = exerciseContainer.querySelectorAll('[data-action="toggle-set"]');
+                const allCompleted = Array.from(allSets).every(b => b.disabled);
+                if (allCompleted) {
+                    const carousel = document.getElementById('carousel');
+                    if (carousel) {
+                        const cardWidth = exerciseContainer.offsetWidth + 16; // 16 is gap
+                        carousel.scrollBy({ left: cardWidth, behavior: 'smooth' });
+                    }
+                }
+            } else {
+                btn.classList.remove('text-primary-600', 'font-bold');
+                btn.classList.add('text-surface-300');
+                row.querySelector('[data-field="weight"]').readOnly = false;
+                row.querySelector('[data-field="reps"]').readOnly = false;
+            }
+            btn.textContent = '✓';
+            btn.disabled = false;
         } catch (e) {
             this.showToast(e.message || 'Ошибка обновления сета', 'error');
+            btn.disabled = false;
+            btn.textContent = '✓';
         }
-        await Workouts.renderWorkoutScreen(this.elements.pageContent, this, this.state.currentSessionId);
     },
 
     async handleCompleteWorkout(event) {
         const sessionId = event.target.closest('[data-session-id]')?.dataset.sessionId;
+        if (!confirm('Завершить тренировку?')) return;
         try {
             await API.post(`/workouts/sessions/${sessionId}/complete`, null, this.state.tokens.access);
             this.showToast('Тренировка завершена!', 'success');
@@ -276,6 +309,7 @@ const App = {
 
     async handleCancelWorkout(event) {
         const sessionId = event.target.closest('[data-session-id]')?.dataset.sessionId;
+        if (!confirm('Отменить тренировку? Прогресс не сохранится.')) return;
         try {
             await API.post(`/workouts/sessions/${sessionId}/cancel`, null, this.state.tokens.access);
             this.showToast('Тренировка отменена', 'info');
