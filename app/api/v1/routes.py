@@ -26,6 +26,7 @@ from app.schemas import (
     WorkoutSessionUpdate,
     WorkoutSessionResponse,
     WorkoutHistoryResponse,
+    WorkoutSessionExerciseCreate,
     WorkoutSessionStatus,
     WorkoutSessionStatus,
      WorkoutSessionStatus,
@@ -39,6 +40,7 @@ from app.schemas import (
     QuickStartWorkoutRequest,
     QuickStartWorkoutResponse,
     WorkoutSetUpdate,
+    WorkoutSetCreate,
 )
 from app.services.auth import (
     verify_password,

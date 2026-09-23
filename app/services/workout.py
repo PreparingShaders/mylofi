@@ -57,8 +57,7 @@ async def create_workout_template(
         db.add(exercise)
 
     await db.commit()
-    await db.refresh(template)
-    return template
+    return await get_workout_template(db, template.id, user_id)
 
 
 async def get_workout_templates(db: AsyncSession, user_id: int) -> List[WorkoutTemplate]:
@@ -120,8 +119,7 @@ async def update_workout_template(
 
     template.updated_at = datetime.now(timezone.utc)
     await db.commit()
-    await db.refresh(template)
-    return template
+    return await get_workout_template(db, template.id, user_id)
 
 
 async def delete_workout_template(db: AsyncSession, template_id: int, user_id: int) -> bool:

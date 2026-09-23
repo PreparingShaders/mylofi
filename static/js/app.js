@@ -215,9 +215,6 @@ const App = {
             case 'back-to-workouts':
                 this.showPage('workouts');
                 break;
-            case 'start-workout':
-                Workouts.showQuickStart(this);
-                break;
             case 'show-build-workout':
                 Workouts.showBuildWorkout(this);
                 break;
@@ -235,9 +232,6 @@ const App = {
             case 'cancel-workout':
                 await this.handleCancelWorkout(event);
                 break;
-            case 'close-quick-start':
-                this.closeQuickStartModal();
-                break;
             case 'close-build-workout':
                 Workouts.closeBuildModal();
                 break;
@@ -247,11 +241,6 @@ const App = {
                 this.renderLanding();
                 break;
         }
-    },
-
-    closeQuickStartModal() {
-        const modal = document.getElementById('qs-modal');
-        if (modal) modal.remove();
     },
 
     async handleToggleSet(event) {
