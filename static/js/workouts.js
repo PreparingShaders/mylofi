@@ -600,18 +600,18 @@ export const Workouts = {
                     </div>
 
                     <div class="p-4 border-b border-surface-200 dark:border-surface-700">
-                        <input id="bw-name" type="text" placeholder="Название тренировки (например: День ног)" value="Моя тренировка"
+                        <input id="bw-name" type="text" placeholder="Название тренировки" value="Моя тренировка"
                                class="w-full px-3 py-2.5 text-sm border border-surface-300 dark:border-surface-700 rounded-xl bg-surface-50 dark:bg-surface-800 mb-3 font-medium">
                         
-                        <div class="flex items-center gap-2 flex-wrap">
-                            <select id="bw-group"
-                                    class="px-3 py-2 text-sm border border-surface-300 dark:border-surface-700 rounded-xl bg-surface-50 dark:bg-surface-800">
-                                <option value="">Все группы мышц</option>
-                            </select>
+                        <div class="flex gap-2 overflow-x-auto pb-2 scrollbar-none" id="bw-groups-container">
+                            <!-- Pills will be rendered here -->
+                        </div>
+                        
+                        <div class="flex items-center gap-2 mt-2">
                             <input id="bw-search" type="text" placeholder="Поиск упражнения..."
                                    class="flex-1 px-3 py-2 text-sm border border-surface-300 dark:border-surface-700 rounded-xl bg-surface-50 dark:bg-surface-800">
                             <button id="bw-add-own" type="button" title="Добавить своё упражнение"
-                                    class="px-3 py-2 border border-surface-300 dark:border-surface-700 rounded-xl text-surface-500 hover:text-surface-900 bg-surface-100 dark:bg-surface-800 font-bold">+</button>
+                                    class="w-10 h-10 flex items-center justify-center border border-surface-300 dark:border-surface-700 rounded-xl text-surface-500 hover:text-surface-900 bg-surface-100 dark:bg-surface-800 font-bold">+</button>
                         </div>
                     </div>
 
@@ -622,9 +622,9 @@ export const Workouts = {
 
                     <div class="p-4 border-t border-surface-200 dark:border-surface-700 flex items-center justify-between gap-3">
                         <div id="bw-selected-count" class="text-xs text-surface-500 font-medium">Выбрано: 0</div>
-                        <button id="bw-create"
+                        <button id="bw-next"
                                 class="px-6 py-2.5 bg-primary-600 text-white rounded-xl text-sm font-semibold shadow-md disabled:opacity-50 disabled:cursor-not-allowed" disabled>
-                            Сохранить шаблон
+                            Далее
                         </button>
                     </div>
                 </div>
@@ -632,25 +632,31 @@ export const Workouts = {
         `;
 
         app.elements.modals.innerHTML = buildHtml();
-        const groupEl = document.getElementById('bw-group');
+        const groupsContainer = document.getElementById('bw-groups-container');
         const searchEl = document.getElementById('bw-search');
         const listEl = document.getElementById('bw-list');
-        const createBtn = document.getElementById('bw-create');
+        const nextBtn = document.getElementById('bw-next');
         const ownBtn = document.getElementById('bw-add-own');
 
         const renderGroupOptions = () => {
-            groupEl.innerHTML = '<option value="">Все группы мышц</option>';
+            groupsContainer.innerHTML = '';
+            const allBtn = document.createElement('button');
+            allBtn.textContent = 'Все';
+            allBtn.className = `px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all ${filterGroup === '' ? 'bg-primary-600 text-white' : 'bg-surface-200 dark:bg-surface-700 text-surface-700 dark:text-surface-300'}`;
+            allBtn.addEventListener('click', () => { filterGroup = ''; renderGroupOptions(); renderList(); });
+            groupsContainer.appendChild(allBtn);
+
             Object.entries(meta.muscle_groups || {}).forEach(([slug, label]) => {
-                const opt = document.createElement('option');
-                opt.value = slug;
-                opt.textContent = label;
-                if (slug === filterGroup) opt.selected = true;
-                groupEl.appendChild(opt);
+                const btn = document.createElement('button');
+                btn.textContent = label;
+                btn.className = `px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all ${filterGroup === slug ? 'bg-primary-600 text-white' : 'bg-surface-200 dark:bg-surface-700 text-surface-700 dark:text-surface-300'}`;
+                btn.addEventListener('click', () => { filterGroup = slug; renderGroupOptions(); renderList(); });
+                groupsContainer.appendChild(btn);
             });
         };
 
         const updateCreateLabel = () => {
-            createBtn.disabled = selected.length === 0;
+            nextBtn.disabled = selected.length === 0;
             const countEl = document.getElementById('bw-selected-count');
             if (countEl) countEl.textContent = `Выбрано: ${selected.length}`;
         };
@@ -661,18 +667,20 @@ export const Workouts = {
                 const s = !search || ex.name.toLowerCase().includes(search.toLowerCase());
                 return g && s;
             });
-            listEl.innerHTML = rows.map(ex => `
-                <label class="flex items-center gap-3 p-3 cursor-pointer hover:bg-surface-100 dark:hover:bg-surface-800 rounded-xl border border-transparent hover:border-surface-200 dark:hover:border-surface-700 transition-all">
-                    <input type="checkbox" data-id="${ex.id}" class="w-4 h-4 text-primary-600 rounded"
-                           ${selected.includes(ex.id) ? 'checked' : ''}>
+            listEl.innerHTML = rows.map(ex => {
+                const isSelected = selected.includes(ex.id);
+                return `
+                <label class="flex items-center gap-4 p-4 cursor-pointer rounded-2xl border transition-all ${isSelected ? 'bg-primary-50 border-primary-200 dark:bg-primary-900/20 dark:border-primary-800' : 'bg-white dark:bg-surface-800 border-surface-200 dark:border-surface-700 hover:border-surface-300'}">
+                    <input type="checkbox" data-id="${ex.id}" class="w-5 h-5 text-primary-600 rounded"
+                           ${isSelected ? 'checked' : ''}>
                     <div class="flex-1 min-w-0">
-                        <div class="font-medium text-sm">${ex.name}</div>
+                        <div class="font-semibold text-sm ${isSelected ? 'text-primary-900 dark:text-primary-100' : 'text-surface-900 dark:text-surface-100'}">${ex.name}</div>
                         <div class="text-xs text-surface-500 dark:text-surface-400 mt-0.5">
                             ${meta.muscle_groups?.[ex.muscle_group] || ex.muscle_group} · ${meta.equipment?.[ex.equipment] || ex.equipment}
                         </div>
                     </div>
-                </label>
-            `).join('') || '<div class="text-sm text-surface-400 text-center py-6">Ничего не найдено</div>';
+                </label>`;
+            }).join('') || '<div class="text-sm text-surface-400 text-center py-6">Ничего не найдено</div>';
 
             listEl.querySelectorAll('input[data-id]').forEach(cb => {
                 cb.addEventListener('change', (e) => {
@@ -680,14 +688,11 @@ export const Workouts = {
                     if (e.target.checked) { selected.push(id); }
                     else { selected = selected.filter(i => i !== id); }
                     updateCreateLabel();
+                    renderList();
                 });
             });
         };
 
-        groupEl.addEventListener('change', () => {
-            filterGroup = groupEl.value;
-            renderList();
-        });
         searchEl.addEventListener('input', () => {
             search = searchEl.value.trim();
             renderList();
@@ -700,34 +705,32 @@ export const Workouts = {
                 updateCreateLabel();
             });
         });
-        createBtn.addEventListener('click', async () => {
-            if (selected.length === 0) return;
-            createBtn.disabled = true;
-            createBtn.textContent = 'Сохраняем...';
-            const payload = {
-                name: document.getElementById('bw-name').value.trim() || 'Мой шаблон',
-                exercises: selected.map((id, index) => {
-                    const ex = exercises.find(e => e.id === id);
-                    return {
-                        name: ex ? ex.name : 'Упражнение',
-                        order: index,
-                        target_sets: 3,
-                        target_reps: 10,
-                        rest_seconds: 90,
-                        notes: ex ? `${ex.muscle_group} / ${ex.equipment}` : null,
-                    };
-                }),
-            };
-            try {
-                await API.post('/workouts/templates', payload, token);
-                this.closeBuildModal();
-                await this.render(app.elements.pageContent, app);
-                app.showToast('Шаблон тренировки сохранен!', 'success');
-            } catch (err) {
-                app.showToast(err.message || 'Ошибка сохранения шаблона', 'error');
-                createBtn.disabled = false;
-                createBtn.textContent = 'Сохранить шаблон';
-            }
+        nextBtn.addEventListener('click', () => {
+            const selectedExercises = exercises.filter(ex => selected.includes(ex.id));
+            const templateName = document.getElementById('bw-name')?.value.trim() || 'Мой шаблон';
+            this.renderConfigurationScreen(app, selectedExercises, async (configuredExercises) => {
+                const saveBtn = document.getElementById('bw-save-final');
+                if (saveBtn) {
+                    saveBtn.disabled = true;
+                    saveBtn.textContent = 'Сохраняем...';
+                }
+                const payload = {
+                    name: templateName,
+                    exercises: configuredExercises
+                };
+                try {
+                    await API.post('/workouts/templates', payload, token);
+                    this.closeBuildModal();
+                    await this.render(app.elements.pageContent, app);
+                    app.showToast('Шаблон тренировки сохранен!', 'success');
+                } catch (err) {
+                    app.showToast(err.message || 'Ошибка сохранения шаблона', 'error');
+                    if (saveBtn) {
+                        saveBtn.disabled = false;
+                        saveBtn.textContent = 'Сохранить';
+                    }
+                }
+            });
         });
 
         try {
@@ -742,6 +745,55 @@ export const Workouts = {
         } catch (err) {
             app.showToast(err.message || 'Ошибка загрузки каталога', 'error');
         }
+    },
+
+    renderConfigurationScreen(app, selectedExercises, onSave) {
+        const modal = document.getElementById('build-modal');
+        const content = modal.querySelector('.flex.flex-col');
+        
+        content.innerHTML = `
+            <div class="p-5 border-b border-surface-200 dark:border-surface-700 flex justify-between items-center">
+                <h3 class="text-lg font-bold">Настройка упражнений</h3>
+                <button data-action="close-build-workout" class="text-surface-500 hover:text-surface-900 dark:text-surface-400 p-1">✕</button>
+            </div>
+            <div class="p-4 flex-1 overflow-y-auto space-y-4" id="config-list">
+                ${selectedExercises.map((ex, i) => `
+                    <div class="bg-surface-100 dark:bg-surface-800 p-4 rounded-2xl" data-ex-id="${ex.id}" data-index="${i}">
+                        <h4 class="font-bold mb-2">${ex.name}</h4>
+                        <div class="grid grid-cols-3 gap-2">
+                            <div>
+                                <label class="text-xs text-surface-500">Подходы</label>
+                                <input type="number" value="3" class="w-full px-2 py-1 bg-white dark:bg-surface-900 rounded border border-surface-300 dark:border-surface-700 cfg-sets">
+                            </div>
+                            <div>
+                                <label class="text-xs text-surface-500">Повт.</label>
+                                <input type="number" value="10" class="w-full px-2 py-1 bg-white dark:bg-surface-900 rounded border border-surface-300 dark:border-surface-700 cfg-reps">
+                            </div>
+                            <div>
+                                <label class="text-xs text-surface-500">Вес (кг)</label>
+                                <input type="number" value="" placeholder="0" class="w-full px-2 py-1 bg-white dark:bg-surface-900 rounded border border-surface-300 dark:border-surface-700 cfg-weight">
+                            </div>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+            <div class="p-4 border-t border-surface-200 dark:border-surface-700">
+                <button id="bw-save-final" class="w-full py-2.5 bg-primary-600 text-white rounded-xl text-sm font-semibold shadow-md">Сохранить</button>
+            </div>
+        `;
+
+        document.getElementById('bw-save-final').addEventListener('click', () => {
+            const items = content.querySelectorAll('[data-ex-id]');
+            const configured = Array.from(items).map(item => ({
+                name: item.querySelector('h4').textContent,
+                order: parseInt(item.dataset.index),
+                target_sets: parseInt(item.querySelector('.cfg-sets').value),
+                target_reps: parseInt(item.querySelector('.cfg-reps').value),
+                target_weight_kg: parseFloat(item.querySelector('.cfg-weight').value) || null,
+                rest_seconds: 90
+            }));
+            onSave(configured);
+        });
     },
 
     async showEditTemplateModal(app, template) {
@@ -766,17 +818,17 @@ export const Workouts = {
 
                     <div class="p-4 border-b border-surface-200 dark:border-surface-700">
                         <input id="bw-name" type="text" placeholder="Название тренировки" value="${template.name || ''}"
-                               class="w-full px-3 py-2.5 text-sm border border-surface-300 dark:border-surface-700 rounded-xl bg-surface-50 dark:bg-surface-800 mb-3 font-medium">
+                               class="w-full px-4 py-3 text-sm border border-surface-200 dark:border-surface-700 rounded-2xl bg-surface-100 dark:bg-surface-800 mb-4 font-medium">
                         
-                        <div class="flex items-center gap-2 flex-wrap">
-                            <select id="bw-group"
-                                    class="px-3 py-2 text-sm border border-surface-300 dark:border-surface-700 rounded-xl bg-surface-50 dark:bg-surface-800">
-                                <option value="">Все группы мышц</option>
-                            </select>
+                        <div class="flex gap-2 overflow-x-auto pb-2 scrollbar-none" id="bw-groups-container">
+                            <!-- Pills will be rendered here -->
+                        </div>
+                        
+                        <div class="flex items-center gap-2 mt-2">
                             <input id="bw-search" type="text" placeholder="Поиск упражнения..."
-                                   class="flex-1 px-3 py-2 text-sm border border-surface-300 dark:border-surface-700 rounded-xl bg-surface-50 dark:bg-surface-800">
+                                   class="flex-1 px-4 py-3 text-sm border border-surface-200 dark:border-surface-700 rounded-2xl bg-surface-100 dark:bg-surface-800">
                             <button id="bw-add-own" type="button" title="Добавить своё упражнение"
-                                    class="px-3 py-2 border border-surface-300 dark:border-surface-700 rounded-xl text-surface-500 hover:text-surface-900 bg-surface-100 dark:bg-surface-800 font-bold">+</button>
+                                    class="w-12 h-12 flex items-center justify-center border border-surface-200 dark:border-surface-700 rounded-2xl text-surface-500 hover:text-surface-900 bg-surface-100 dark:bg-surface-800 font-bold text-xl">+</button>
                         </div>
                     </div>
 
@@ -787,9 +839,9 @@ export const Workouts = {
 
                     <div class="p-4 border-t border-surface-200 dark:border-surface-700 flex items-center justify-between gap-3">
                         <div id="bw-selected-count" class="text-xs text-surface-500 font-medium">Выбрано: 0</div>
-                        <button id="bw-create"
+                        <button id="bw-next"
                                 class="px-6 py-2.5 bg-primary-600 text-white rounded-xl text-sm font-semibold shadow-md disabled:opacity-50 disabled:cursor-not-allowed">
-                            Сохранить изменения
+                            Далее
                         </button>
                     </div>
                 </div>
@@ -797,25 +849,31 @@ export const Workouts = {
         `;
 
         app.elements.modals.innerHTML = buildHtml();
-        const groupEl = document.getElementById('bw-group');
+        const groupsContainer = document.getElementById('bw-groups-container');
         const searchEl = document.getElementById('bw-search');
         const listEl = document.getElementById('bw-list');
-        const createBtn = document.getElementById('bw-create');
+        const nextBtn = document.getElementById('bw-next');
         const ownBtn = document.getElementById('bw-add-own');
 
         const renderGroupOptions = () => {
-            groupEl.innerHTML = '<option value="">Все группы мышц</option>';
+            groupsContainer.innerHTML = '';
+            const allBtn = document.createElement('button');
+            allBtn.textContent = 'Все';
+            allBtn.className = `px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all ${filterGroup === '' ? 'bg-primary-600 text-white' : 'bg-surface-200 dark:bg-surface-700 text-surface-700 dark:text-surface-300'}`;
+            allBtn.addEventListener('click', () => { filterGroup = ''; renderGroupOptions(); renderList(); });
+            groupsContainer.appendChild(allBtn);
+
             Object.entries(meta.muscle_groups || {}).forEach(([slug, label]) => {
-                const opt = document.createElement('option');
-                opt.value = slug;
-                opt.textContent = label;
-                if (slug === filterGroup) opt.selected = true;
-                groupEl.appendChild(opt);
+                const btn = document.createElement('button');
+                btn.textContent = label;
+                btn.className = `px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all ${filterGroup === slug ? 'bg-primary-600 text-white' : 'bg-surface-200 dark:bg-surface-700 text-surface-700 dark:text-surface-300'}`;
+                btn.addEventListener('click', () => { filterGroup = slug; renderGroupOptions(); renderList(); });
+                groupsContainer.appendChild(btn);
             });
         };
 
         const updateCreateLabel = () => {
-            createBtn.disabled = selected.length === 0;
+            if (nextBtn) nextBtn.disabled = selected.length === 0;
             const countEl = document.getElementById('bw-selected-count');
             if (countEl) countEl.textContent = `Выбрано: ${selected.length}`;
         };
@@ -826,18 +884,20 @@ export const Workouts = {
                 const s = !search || ex.name.toLowerCase().includes(search.toLowerCase());
                 return g && s;
             });
-            listEl.innerHTML = rows.map(ex => `
-                <label class="flex items-center gap-3 p-3 cursor-pointer hover:bg-surface-100 dark:hover:bg-surface-800 rounded-xl border border-transparent hover:border-surface-200 dark:hover:border-surface-700 transition-all">
-                    <input type="checkbox" data-id="${ex.id}" class="w-4 h-4 text-primary-600 rounded"
-                           ${selected.includes(ex.id) ? 'checked' : ''}>
+            listEl.innerHTML = rows.map(ex => {
+                const isSelected = selected.includes(ex.id);
+                return `
+                <label class="flex items-center gap-4 p-4 cursor-pointer rounded-2xl border transition-all ${isSelected ? 'bg-primary-50 border-primary-200 dark:bg-primary-900/20 dark:border-primary-800' : 'bg-white dark:bg-surface-800 border-surface-200 dark:border-surface-700 hover:border-surface-300'}">
+                    <input type="checkbox" data-id="${ex.id}" class="w-5 h-5 text-primary-600 rounded"
+                           ${isSelected ? 'checked' : ''}>
                     <div class="flex-1 min-w-0">
-                        <div class="font-medium text-sm">${ex.name}</div>
+                        <div class="font-semibold text-sm ${isSelected ? 'text-primary-900 dark:text-primary-100' : 'text-surface-900 dark:text-surface-100'}">${ex.name}</div>
                         <div class="text-xs text-surface-500 dark:text-surface-400 mt-0.5">
                             ${meta.muscle_groups?.[ex.muscle_group] || ex.muscle_group} · ${meta.equipment?.[ex.equipment] || ex.equipment}
                         </div>
                     </div>
-                </label>
-            `).join('') || '<div class="text-sm text-surface-400 text-center py-6">Ничего не найдено</div>';
+                </label>`;
+            }).join('') || '<div class="text-sm text-surface-400 text-center py-6">Ничего не найдено</div>';
 
             listEl.querySelectorAll('input[data-id]').forEach(cb => {
                 cb.addEventListener('change', (e) => {
@@ -845,14 +905,11 @@ export const Workouts = {
                     if (e.target.checked) { selected.push(id); }
                     else { selected = selected.filter(i => i !== id); }
                     updateCreateLabel();
+                    renderList();
                 });
             });
         };
 
-        groupEl.addEventListener('change', () => {
-            filterGroup = groupEl.value;
-            renderList();
-        });
         searchEl.addEventListener('input', () => {
             search = searchEl.value.trim();
             renderList();
@@ -866,34 +923,32 @@ export const Workouts = {
             });
         });
 
-        createBtn.addEventListener('click', async () => {
-            if (selected.length === 0) return;
-            createBtn.disabled = true;
-            createBtn.textContent = 'Сохраняем...';
-            const payload = {
-                name: document.getElementById('bw-name').value.trim() || 'Мой шаблон',
-                exercises: selected.map((id, index) => {
-                    const ex = exercises.find(e => e.id === id);
-                    return {
-                        name: ex ? ex.name : 'Упражнение',
-                        order: index,
-                        target_sets: 3,
-                        target_reps: 10,
-                        rest_seconds: 90,
-                        notes: ex ? `${ex.muscle_group} / ${ex.equipment}` : null,
-                    };
-                }),
-            };
-            try {
-                await API.patch(`/workouts/templates/${template.id}`, payload, token);
-                this.closeBuildModal();
-                await this.render(app.elements.pageContent, app);
-                app.showToast('Шаблон обновлен!', 'success');
-            } catch (err) {
-                app.showToast(err.message || 'Ошибка обновления', 'error');
-                createBtn.disabled = false;
-                createBtn.textContent = 'Сохранить изменения';
-            }
+        nextBtn.addEventListener('click', () => {
+            const selectedExercises = exercises.filter(ex => selected.includes(ex.id));
+            const templateName = document.getElementById('bw-name')?.value.trim() || template.name || 'Мой шаблон';
+            this.renderConfigurationScreen(app, selectedExercises, async (configuredExercises) => {
+                const saveBtn = document.getElementById('bw-save-final');
+                if (saveBtn) {
+                    saveBtn.disabled = true;
+                    saveBtn.textContent = 'Сохраняем...';
+                }
+                const payload = {
+                    name: templateName,
+                    exercises: configuredExercises
+                };
+                try {
+                    await API.patch(`/workouts/templates/${template.id}`, payload, token);
+                    this.closeBuildModal();
+                    await this.render(app.elements.pageContent, app);
+                    app.showToast('Шаблон обновлен!', 'success');
+                } catch (err) {
+                    app.showToast(err.message || 'Ошибка обновления', 'error');
+                    if (saveBtn) {
+                        saveBtn.disabled = false;
+                        saveBtn.textContent = 'Сохранить';
+                    }
+                }
+            });
         });
 
         try {
