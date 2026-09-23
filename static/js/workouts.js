@@ -273,7 +273,7 @@ export const Workouts = {
         const lastWorkout = historyData.sessions[0];
         const durationMin = Math.floor((new Date() - new Date(session.started_at)) / 60000);
         
-        const exerciseCards = (session.exercises || []).map(ex => {
+        const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             const historyPoints = historyData.sessions
                 .flatMap(s => s.exercises.filter(e => e.name === ex.name))
                 .flatMap(e => e.sets.map(set => set.weight_kg))
@@ -283,8 +283,14 @@ export const Workouts = {
             return `
             <div class="min-w-[320px] max-w-[340px] snap-center bg-white dark:bg-surface-800 rounded-2xl p-6 shadow-md flex flex-col" data-exercise-id="${ex.id}">
                 <div class="flex justify-between items-center mb-2">
-                    <h3 class="font-bold text-lg">${ex.name}</h3>
-                    <div class="text-sm font-mono text-primary-600" data-exercise-timer="0">00:00</div>
+                    <h3 class="font-bold text-lg truncate flex-1 mr-2">${ex.name}</h3>
+                    <div class="flex items-center gap-2 flex-shrink-0">
+                        <div class="flex gap-1">
+                            <button type="button" data-action="move-ex-up" data-ex-id="${ex.id}" class="px-2 py-1 bg-surface-100 dark:bg-surface-700 rounded-lg text-xs font-bold hover:bg-surface-200 transition-colors ${index === 0 ? 'opacity-30 cursor-not-allowed' : ''}">▲</button>
+                            <button type="button" data-action="move-ex-down" data-ex-id="${ex.id}" class="px-2 py-1 bg-surface-100 dark:bg-surface-700 rounded-lg text-xs font-bold hover:bg-surface-200 transition-colors ${index === arr.length - 1 ? 'opacity-30 cursor-not-allowed' : ''}">▼</button>
+                        </div>
+                        <div class="text-sm font-mono text-primary-600" data-exercise-timer="0">00:00</div>
+                    </div>
                 </div>
                 <div class="mb-4">
                     ${Components.sparkline(historyPoints)}
@@ -453,6 +459,35 @@ export const Workouts = {
 
         // Cancel workout
         // Handled by App.js
+
+        // Move exercise up/down in active session
+        container.querySelectorAll('[data-action="move-ex-up"], [data-action="move-ex-down"]').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const card = e.currentTarget.closest('[data-exercise-id]');
+                const exId = parseInt(e.currentTarget.dataset.exId);
+                const isUp = e.currentTarget.dataset.action === 'move-ex-up';
+                const exercises = [...session.exercises];
+                const idx = exercises.findIndex(ex => ex.id === exId);
+                if (idx === -1) return;
+                const targetIdx = isUp ? idx - 1 : idx + 1;
+                if (targetIdx < 0 || targetIdx >= exercises.length) return;
+
+                card.classList.add('scale-[1.02]', 'bg-primary-50/50', 'dark:bg-primary-900/20', 'transition-all', 'duration-300');
+
+                const temp = exercises[idx];
+                exercises[idx] = exercises[targetIdx];
+                exercises[targetIdx] = temp;
+
+                try {
+                    await API.patch(`/workouts/sessions/${sessionId}`, {
+                        exercises: exercises.map((ex, i) => ({ id: ex.id, order: i }))
+                    }, token);
+                    await this.renderWorkoutScreen(container, app, sessionId);
+                } catch (err) {
+                    app.showToast(err.message || 'Ошибка изменения порядка', 'error');
+                }
+            });
+        });
 
         // Back button
         container.querySelector('[data-action="back-to-workouts"]')?.addEventListener('click', () => {
@@ -786,7 +821,7 @@ export const Workouts = {
             });
         });
         nextBtn.addEventListener('click', () => {
-            const selectedExercises = exercises.filter(ex => selected.includes(ex.id));
+            const selectedExercises = selected.map(id => exercises.find(ex => ex.id === id)).filter(Boolean);
             const templateName = document.getElementById('bw-name')?.value.trim() || 'Мой шаблон';
             this.renderConfigurationScreen(app, selectedExercises, async (configuredExercises) => {
                 const saveBtn = document.getElementById('bw-save-final');
@@ -835,28 +870,34 @@ export const Workouts = {
 
         content.innerHTML = `
             <div class="p-5 border-b border-surface-200 dark:border-surface-700 flex justify-between items-center">
-                <h3 class="text-lg font-bold">Настройка упражнений</h3>
+                <h3 class="text-lg font-bold">Настройка упражнений и порядка</h3>
                 <button data-action="close-build-workout" class="text-surface-500 hover:text-surface-900 dark:text-surface-400 p-1">✕</button>
             </div>
             <div class="p-4 flex-1 overflow-y-auto space-y-4" id="config-list">
                 ${selectedExercises.map((ex, i) => {
                     const te = findTemplateEx(ex.name);
                     return `
-                    <div class="bg-surface-100 dark:bg-surface-800 p-4 rounded-2xl" data-ex-id="${ex.id}" data-index="${i}">
-                        <h4 class="font-bold mb-2">${ex.name}</h4>
-                        <div class="grid grid-cols-3 gap-2">
-                            <div>
-                                <label class="text-xs text-surface-500">Подходы</label>
-                                <input type="number" value="${te?.target_sets || 3}" class="w-full px-2 py-1 bg-white dark:bg-surface-900 rounded border border-surface-300 dark:border-surface-700 cfg-sets">
+                    <div class="bg-surface-100 dark:bg-surface-800 p-4 rounded-2xl flex items-center justify-between gap-3" data-ex-id="${ex.id}" data-index="${i}">
+                        <div class="flex-1 min-w-0">
+                            <h4 class="font-bold mb-2 truncate">${ex.name}</h4>
+                            <div class="grid grid-cols-3 gap-2">
+                                <div>
+                                    <label class="text-xs text-surface-500">Подходы</label>
+                                    <input type="number" value="${te?.target_sets || 3}" class="w-full px-2 py-1 bg-white dark:bg-surface-900 rounded border border-surface-300 dark:border-surface-700 cfg-sets">
+                                </div>
+                                <div>
+                                    <label class="text-xs text-surface-500">Повт.</label>
+                                    <input type="number" value="${te?.target_reps || 10}" class="w-full px-2 py-1 bg-white dark:bg-surface-900 rounded border border-surface-300 dark:border-surface-700 cfg-reps">
+                                </div>
+                                <div>
+                                    <label class="text-xs text-surface-500">Вес (кг)</label>
+                                    <input type="number" value="${te?.target_weight_kg || 0}" placeholder="0" class="w-full px-2 py-1 bg-white dark:bg-surface-900 rounded border border-surface-300 dark:border-surface-700 cfg-weight">
+                                </div>
                             </div>
-                            <div>
-                                <label class="text-xs text-surface-500">Повт.</label>
-                                <input type="number" value="${te?.target_reps || 10}" class="w-full px-2 py-1 bg-white dark:bg-surface-900 rounded border border-surface-300 dark:border-surface-700 cfg-reps">
-                            </div>
-                            <div>
-                                <label class="text-xs text-surface-500">Вес (кг)</label>
-                                <input type="number" value="${te?.target_weight_kg || 0}" placeholder="0" class="w-full px-2 py-1 bg-white dark:bg-surface-900 rounded border border-surface-300 dark:border-surface-700 cfg-weight">
-                            </div>
+                        </div>
+                        <div class="flex flex-col gap-1.5">
+                            <button type="button" data-action="cfg-move-up" class="px-3.5 py-2 bg-surface-200 dark:bg-surface-700 rounded-xl text-sm font-bold hover:bg-surface-300 transition-colors">▲</button>
+                            <button type="button" data-action="cfg-move-down" class="px-3.5 py-2 bg-surface-200 dark:bg-surface-700 rounded-xl text-sm font-bold hover:bg-surface-300 transition-colors">▼</button>
                         </div>
                     </div>
                 `}).join('')}
@@ -866,11 +907,37 @@ export const Workouts = {
             </div>
         `;
 
+        content.querySelectorAll('[data-action="cfg-move-up"], [data-action="cfg-move-down"]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const card = e.currentTarget.closest('[data-ex-id]');
+                const isUp = e.currentTarget.dataset.action === 'cfg-move-up';
+                const cards = Array.from(content.querySelectorAll('[data-ex-id]'));
+                const idx = cards.indexOf(card);
+                const targetIdx = isUp ? idx - 1 : idx + 1;
+                if (targetIdx < 0 || targetIdx >= cards.length) return;
+
+                const targetCard = cards[targetIdx];
+
+                card.classList.add('scale-[1.02]', 'bg-primary-50', 'dark:bg-primary-900/40', 'transition-all', 'duration-300');
+                targetCard.classList.add('transition-all', 'duration-300');
+
+                if (isUp) {
+                    targetCard.before(card);
+                } else {
+                    targetCard.after(card);
+                }
+
+                setTimeout(() => {
+                    card.classList.remove('scale-[1.02]', 'bg-primary-50', 'dark:bg-primary-900/40');
+                }, 400);
+            });
+        });
+
         document.getElementById('bw-save-final').addEventListener('click', () => {
             const items = content.querySelectorAll('[data-ex-id]');
-            const configured = Array.from(items).map(item => ({
+            const configured = Array.from(items).map((item, i) => ({
                 name: item.querySelector('h4').textContent,
-                order: parseInt(item.dataset.index),
+                order: i,
                 target_sets: parseInt(item.querySelector('.cfg-sets').value),
                 target_reps: parseInt(item.querySelector('.cfg-reps').value),
                 target_weight_kg: parseFloat(item.querySelector('.cfg-weight').value) || null,
@@ -1053,8 +1120,10 @@ export const Workouts = {
             ]);
             meta = resMeta;
             exercises = resExercises;
-            const templateExerciseNames = (template.exercises || []).map(te => te.name);
-            selected = exercises.filter(ex => templateExerciseNames.includes(ex.name)).map(ex => ex.id);
+            selected = (template.exercises || []).map(te => {
+                const found = exercises.find(ex => ex.name === te.name);
+                return found ? found.id : null;
+            }).filter(Boolean);
             renderGroupOptions();
             renderList();
             updateCreateLabel();
