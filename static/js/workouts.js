@@ -15,11 +15,40 @@ export const Workouts = {
     async render(container, app) {
         this.app = app;
         let activeSession;
+        let stats = null;
         try {
-            activeSession = await API.get('/workouts/sessions/active', app.state.tokens.access);
+            [activeSession, stats] = await Promise.all([
+                API.get('/workouts/sessions/active', app.state.tokens.access).catch(() => null),
+                API.get('/workouts/statistics', app.state.tokens.access).catch(() => null),
+            ]);
         } catch (error) {
-            console.error('[Workouts] Active session load error:', error);
-            activeSession = null;
+            console.error('[Workouts] Load error:', error);
+        }
+
+        let statsWidget = '';
+        if (stats && stats.total_workouts > 0) {
+            statsWidget = `
+                <div class="bg-surface-100 dark:bg-surface-800 rounded-2xl p-4 mb-6 shadow-sm">
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="font-semibold text-sm text-surface-500 uppercase tracking-wider">Прогресс и объём</h3>
+                        <span class="text-xs text-primary-600 dark:text-primary-400 font-medium">Серия: ${stats.current_streak_weeks} нед.</span>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2 text-center">
+                        <div class="bg-surface-50 dark:bg-surface-700/50 p-2.5 rounded-xl">
+                            <div class="text-xs text-surface-400">Тренировок</div>
+                            <div class="text-lg font-bold">${stats.total_workouts}</div>
+                        </div>
+                        <div class="bg-surface-50 dark:bg-surface-700/50 p-2.5 rounded-xl">
+                            <div class="text-xs text-surface-400">Тоннаж</div>
+                            <div class="text-lg font-bold">${(stats.total_volume_kg / 1000).toFixed(1)} т</div>
+                        </div>
+                        <div class="bg-surface-50 dark:bg-surface-700/50 p-2.5 rounded-xl">
+                            <div class="text-xs text-surface-400">Подходов</div>
+                            <div class="text-lg font-bold">${stats.total_sets}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
         }
 
         let html = `
@@ -28,55 +57,106 @@ export const Workouts = {
                     <h2 class="text-xl font-bold">Мои тренировки</h2>
                 </div>
 
+                ${statsWidget}
+
                 ${activeSession
-                    ? `<div class="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-xl p-4 mb-4">
-                        <h3 class="font-semibold text-primary-700 dark:text-primary-300">Активная тренировка</h3>
-                        <p class="text-sm text-surface-600 dark:text-surface-300 mb-2">${activeSession.name || 'Без названия'}</p>
+                    ? `<div class="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-xl p-4 mb-6 shadow-sm">
+                        <div class="flex items-center justify-between mb-2">
+                            <h3 class="font-semibold text-primary-700 dark:text-primary-300">Активная тренировка</h3>
+                            <span class="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></span>
+                        </div>
+                        <p class="text-sm text-surface-600 dark:text-surface-300 mb-3">${activeSession.name || 'Без названия'}</p>
                         <button data-action="resume-workout" data-session-id="${activeSession.id}"
-                                class="w-full py-2 bg-primary-600 text-white rounded-xl text-sm font-medium">
-                            Продолжить
+                                class="w-full py-2.5 bg-primary-600 text-white rounded-xl text-sm font-medium shadow-md">
+                            Продолжить тренировку →
                         </button>
                     </div>`
-                    : `<div class="bg-surface-100 dark:bg-surface-800 rounded-xl p-4 mb-4 text-center">
-                        <p class="text-surface-500 dark:text-surface-400 mb-3">Нет активной тренировки</p>
-                        <div class="grid gap-2">
-                            <button data-action="start-workout"
-                                    class="w-full py-2 bg-primary-600 text-white rounded-xl text-sm font-medium">
-                                Быстрая тренировка
-                            </button>
-                            <button data-action="show-build-workout"
-                                    class="w-full py-2 border border-surface-300 dark:border-surface-700 rounded-xl text-sm font-medium btn-press">
-                                Собрать свою тренировку
-                            </button>
+                    : ''}
+
+                <div class="mb-4">
+                    <h3 class="text-sm font-semibold text-surface-500 uppercase tracking-wider mb-3">Режимы и действия</h3>
+                    <div class="flex overflow-x-auto snap-x snap-mandatory gap-3 pb-3 scrollbar-none -mx-4 px-4">
+                        <!-- Card 1: Quick Start -->
+                        <div class="min-w-[240px] max-w-[260px] snap-center bg-gradient-to-br from-primary-600 to-primary-800 text-white rounded-2xl p-4 flex flex-col justify-between shadow-md cursor-pointer btn-press" data-action="start-workout">
+                            <div>
+                                <div class="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center mb-3">
+                                    <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                                </div>
+                                <h4 class="font-bold text-lg mb-1">Быстрый старт</h4>
+                                <p class="text-xs text-primary-100">Начать тренировку по цели (сила, гипертрофия, выносливость)</p>
+                            </div>
+                            <span class="mt-4 text-xs font-semibold bg-white/20 px-3 py-2 rounded-xl text-center">Начать →</span>
                         </div>
-                    </div>`}
 
-                <button data-action="view-history"
-                        class="w-full py-2 border border-surface-300 dark:border-surface-700 rounded-xl text-sm font-medium mb-4">
-                    История тренировок
-                </button>
+                        <!-- Card 2: Build Custom -->
+                        <div class="min-w-[240px] max-w-[260px] snap-center bg-surface-100 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-2xl p-4 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="show-build-workout">
+                            <div>
+                                <div class="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-3">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                                </div>
+                                <h4 class="font-bold text-lg mb-1">Своя тренировка</h4>
+                                <p class="text-xs text-surface-500 dark:text-surface-400">Собрать тренировку из каталога упражнений (220+)</p>
+                            </div>
+                            <span class="mt-4 text-xs font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-3 py-2 rounded-xl text-center">Создать →</span>
+                        </div>
 
-                <button data-action="view-templates"
-                        class="w-full py-2 border border-surface-300 dark:border-surface-700 rounded-xl text-sm font-medium mb-4">
-                    Шаблоны тренировок
-                </button>
+                        <!-- Card 3: Templates -->
+                        <div class="min-w-[240px] max-w-[260px] snap-center bg-surface-100 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-2xl p-4 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="view-templates">
+                            <div>
+                                <div class="w-10 h-10 rounded-xl bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400 flex items-center justify-center mb-3">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                                </div>
+                                <h4 class="font-bold text-lg mb-1">Шаблоны</h4>
+                                <p class="text-xs text-surface-500 dark:text-surface-400">Готовые программы и шаблоны</p>
+                            </div>
+                            <span class="mt-4 text-xs font-semibold bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 px-3 py-2 rounded-xl text-center">Открыть →</span>
+                        </div>
 
-                <button data-action="view-statistics"
-                        class="w-full py-2 border border-surface-300 dark:border-surface-700 rounded-xl text-sm font-medium mb-4">
-                    Статистика
-                </button>
+                        <!-- Card 4: History -->
+                        <div class="min-w-[240px] max-w-[260px] snap-center bg-surface-100 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-2xl p-4 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="view-history">
+                            <div>
+                                <div class="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center mb-3">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                                </div>
+                                <h4 class="font-bold text-lg mb-1">История</h4>
+                                <p class="text-xs text-surface-500 dark:text-surface-400">Журнал прошлых тренировок</p>
+                            </div>
+                            <span class="mt-4 text-xs font-semibold bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-3 py-2 rounded-xl text-center">Смотреть →</span>
+                        </div>
 
-                <p class="text-xs text-surface-400 text-center">Создайте тренировку или выберите шаблон</p>
+                        <!-- Card 5: Statistics -->
+                        <div class="min-w-[240px] max-w-[260px] snap-center bg-surface-100 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-2xl p-4 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="view-statistics">
+                            <div>
+                                <div class="w-10 h-10 rounded-xl bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400 flex items-center justify-center flex-shrink-0 mb-3">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                                </div>
+                                <h4 class="font-bold text-lg mb-1">Статистика</h4>
+                                <p class="text-xs text-surface-500 dark:text-surface-400">Объемы, тоннаж и аналитика</p>
+                            </div>
+                            <span class="mt-4 text-xs font-semibold bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-400 px-3 py-2 rounded-xl text-center">Анализ →</span>
+                        </div>
+                    </div>
+                </div>
             </div>
         `;
 
         container.innerHTML = html;
 
-        container.querySelector('[data-action="start-workout"]')?.addEventListener('click', () => this.showQuickStart(app));
-        container.querySelector('[data-action="show-build-workout"]')?.addEventListener('click', () => this.showBuildWorkout(app));
-        container.querySelector('[data-action="view-history"]')?.addEventListener('click', () => app.router.navigate('/workouts/history'));
-        container.querySelector('[data-action="view-templates"]')?.addEventListener('click', () => app.router.navigate('/workouts/templates'));
-        container.querySelector('[data-action="view-statistics"]')?.addEventListener('click', () => app.router.navigate('/workouts/statistics'));
+        container.querySelectorAll('[data-action="start-workout"]').forEach(el => {
+            el.addEventListener('click', () => this.showQuickStart(app));
+        });
+        container.querySelectorAll('[data-action="show-build-workout"]').forEach(el => {
+            el.addEventListener('click', () => this.showBuildWorkout(app));
+        });
+        container.querySelectorAll('[data-action="view-history"]').forEach(el => {
+            el.addEventListener('click', () => app.router.navigate('/workouts/history'));
+        });
+        container.querySelectorAll('[data-action="view-templates"]').forEach(el => {
+            el.addEventListener('click', () => app.router.navigate('/workouts/templates'));
+        });
+        container.querySelectorAll('[data-action="view-statistics"]').forEach(el => {
+            el.addEventListener('click', () => app.router.navigate('/workouts/statistics'));
+        });
         container.querySelector('[data-action="resume-workout"]')?.addEventListener('click', (e) => {
             const sessionId = e.currentTarget.dataset.sessionId;
             app.router.navigate(`/workouts/session/${sessionId}`);
@@ -722,7 +802,7 @@ export const Workouts = {
         })();
     },
 
-    showCreateTemplateModal(app) {
+    async showCreateTemplateModal(app) {
         this.app = app;
         const token = app.state.tokens.access;
         let meta = { muscle_groups: {}, equipment: {} };
