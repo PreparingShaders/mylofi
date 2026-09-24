@@ -184,22 +184,28 @@ export const Workouts = {
                 const button = e.currentTarget;
                 const templateId = parseInt(button.dataset.templateId);
                 
-                this.renderCountdown(container, async () => {
-                    button.disabled = true;
-                    button.textContent = 'Запуск...';
-                    try {
-                        const session = await API.post(`/workouts/templates/${templateId}/start`, {}, app.state.tokens.access);
-                        this.renderWorkoutScreen(container, app, session.id);
-                        app.showToast('Тренировка началась!', 'success');
-                    } catch (err) {
-                        console.error('Start template error:', err);
-                        app.showToast(err.message || 'Ошибка запуска', 'error');
-                        if (button) {
-                            button.disabled = false;
-                            button.textContent = 'Начать тренировку →';
-                        }
+                button.disabled = true;
+                button.textContent = 'Запуск...';
+                
+                // Запускаем API запрос СРАЗУ, параллельно с отсчетом
+                const sessionPromise = API.post(`/workouts/templates/${templateId}/start`, {}, app.state.tokens.access);
+                
+                // Запускаем отсчет
+                this.renderCountdown(container, () => {});
+                
+                try {
+                    const session = await sessionPromise;
+                    
+                    // Рендерим экран
+                    await this.renderWorkoutScreen(container, app, session.id);
+                } catch (err) {
+                    console.error('Start template error:', err);
+                    app.showToast(err.message || 'Ошибка запуска', 'error');
+                    if (button) {
+                        button.disabled = false;
+                        button.textContent = 'Начать тренировку →';
                     }
-                });
+                }
             });
         });
     },
@@ -314,7 +320,6 @@ export const Workouts = {
                             <button type="button" data-action="move-ex-up" data-ex-id="${ex.id}" class="px-2 py-1 bg-surface-100 dark:bg-surface-700 rounded-lg text-xs font-bold hover:bg-surface-200 transition-colors ${index === 0 ? 'opacity-30 cursor-not-allowed' : ''}">▲</button>
                             <button type="button" data-action="move-ex-down" data-ex-id="${ex.id}" class="px-2 py-1 bg-surface-100 dark:bg-surface-700 rounded-lg text-xs font-bold hover:bg-surface-200 transition-colors ${index === arr.length - 1 ? 'opacity-30 cursor-not-allowed' : ''}">▼</button>
                         </div>
-                        <div class="text-sm font-mono text-primary-600" data-exercise-timer="0">00:00</div>
                     </div>
                 </div>
                 <div class="mb-4">
@@ -646,20 +651,25 @@ export const Workouts = {
                 const button = e.currentTarget;
                 const templateId = parseInt(button.dataset.templateId);
                 
-                this.renderCountdown(container, async () => {
-                    button.disabled = true;
-                    button.textContent = 'Запуск...';
-                    try {
-                        const session = await API.post(`/workouts/templates/${templateId}/start`, {}, app.state.tokens.access);
-                        
-                        // Сразу обновляем экран, чтобы не было задержки
-                        await this.renderWorkoutScreen(app.elements.pageContent, app, session.id);
-                    } catch (err) {
-                        app.showToast(err.message || 'Ошибка запуска', 'error');
-                        button.disabled = false;
-                        button.textContent = 'Начать';
-                    }
-                });
+                button.disabled = true;
+                button.textContent = 'Запуск...';
+                
+                // Запускаем API запрос СРАЗУ, параллельно с отсчетом
+                const sessionPromise = API.post(`/workouts/templates/${templateId}/start`, {}, app.state.tokens.access);
+                
+                // Запускаем отсчет
+                this.renderCountdown(container, () => {});
+                
+                try {
+                    const session = await sessionPromise;
+                    
+                    // Рендерим экран (не блокируя отсчет)
+                    this.renderWorkoutScreen(app.elements.pageContent, app, session.id);
+                } catch (err) {
+                    app.showToast(err.message || 'Ошибка запуска', 'error');
+                    button.disabled = false;
+                    button.textContent = 'Начать';
+                }
             });
         });
         } catch (err) {
