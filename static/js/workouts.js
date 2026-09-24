@@ -313,11 +313,11 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
             return `
             <div class="w-[92vw] snap-center bg-white dark:bg-surface-800 rounded-3xl p-5 shadow-lg flex flex-col min-h-[500px] border border-surface-100 dark:border-surface-700" data-exercise-id="${ex.id}">
-                <div class="flex justify-between items-center mb-4">
-                    <h3 class="font-bold text-xl leading-snug flex-1 mr-2" title="${ex.name}">${ex.name}</h3>
+                <div class="flex justify-between items-start mb-4">
+                    <h3 class="font-bold text-lg text-surface-900 dark:text-surface-50 leading-tight flex-1 mr-2" title="${ex.name}">${ex.name}</h3>
                     <div class="flex items-center gap-1 flex-shrink-0">
-                        <button type="button" data-action="move-ex-up" data-ex-id="${ex.id}" class="w-10 h-10 bg-surface-100 dark:bg-surface-700 rounded-xl text-sm font-bold hover:bg-surface-200 transition-colors ${index === 0 ? 'opacity-30 cursor-not-allowed' : ''}">▲</button>
-                        <button type="button" data-action="move-ex-down" data-ex-id="${ex.id}" class="w-10 h-10 bg-surface-100 dark:bg-surface-700 rounded-xl text-sm font-bold hover:bg-surface-200 transition-colors ${index === arr.length - 1 ? 'opacity-30 cursor-not-allowed' : ''}">▼</button>
+                        <button type="button" data-action="move-ex-up" data-ex-id="${ex.id}" class="w-9 h-9 bg-surface-100 dark:bg-surface-700 rounded-xl text-xs font-bold hover:bg-surface-200 transition-colors ${index === 0 ? 'opacity-30 cursor-not-allowed' : ''}">▲</button>
+                        <button type="button" data-action="move-ex-down" data-ex-id="${ex.id}" class="w-9 h-9 bg-surface-100 dark:bg-surface-700 rounded-xl text-xs font-bold hover:bg-surface-200 transition-colors ${index === arr.length - 1 ? 'opacity-30 cursor-not-allowed' : ''}">▼</button>
                     </div>
                 </div>
                 
@@ -325,29 +325,29 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     ${Components.sparkline(historyPoints)}
                 </div>
 
-                <div class="space-y-4">
+                <div class="space-y-3">
                     ${(ex.sets || []).map(set => `
                         <div class="flex items-center gap-2 bg-surface-50 dark:bg-surface-700/50 p-2 rounded-2xl" data-set-id="${set.id}">
-                            <span class="font-bold w-8 text-center text-surface-400 text-lg">${set.set_number}</span>
+                            <span class="font-bold w-8 text-center text-surface-400 text-sm">${set.set_number}</span>
                             
                             <div class="flex-1 flex flex-col">
-                                <label class="text-[9px] text-surface-400 uppercase font-bold text-center">Вес</label>
+                                <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Вес</label>
                                 <input type="number" min="0" step="0.5" placeholder="0"
                                        value="${set.weight_kg ?? ''}"
-                                       class="w-full h-11 bg-transparent text-center text-xl font-bold rounded-lg focus:border-primary-500 focus:outline-none"
+                                       class="w-full h-10 bg-transparent text-center text-base font-semibold rounded-lg focus:border-primary-500 focus:outline-none"
                                        data-field="weight" ${set.is_completed ? 'readonly' : ''}>
                             </div>
                             
                             <div class="flex-1 flex flex-col">
-                                <label class="text-[9px] text-surface-400 uppercase font-bold text-center">Повт</label>
+                                <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Повт</label>
                                 <input type="number" min="0" placeholder="0"
                                        value="${set.reps ?? ''}"
-                                       class="w-full h-11 bg-transparent text-center text-xl font-bold rounded-lg focus:border-primary-500 focus:outline-none"
+                                       class="w-full h-10 bg-transparent text-center text-base font-semibold rounded-lg focus:border-primary-500 focus:outline-none"
                                        data-field="reps" ${set.is_completed ? 'readonly' : ''}>
                             </div>
                             
                             <button data-action="toggle-set"
-                                    class="flex-shrink-0 w-12 h-12 rounded-2xl text-2xl font-bold transition-all flex items-center justify-center ${set.is_completed ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300 shadow-md' : 'bg-white dark:bg-surface-800 text-surface-400 shadow-sm border border-surface-200'}"
+                                    class="flex-shrink-0 w-11 h-11 rounded-2xl text-lg font-bold transition-all flex items-center justify-center ${set.is_completed ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300 shadow-md' : 'bg-white dark:bg-surface-800 text-surface-400 shadow-sm border border-surface-200'}"
                                     ${set.is_completed ? 'disabled' : ''}>
                                 ✓
                             </button>
