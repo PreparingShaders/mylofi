@@ -180,26 +180,51 @@ export const Workouts = {
         });
 
         container.querySelectorAll('[data-action="start-template"]').forEach(btn => {
-
             btn.addEventListener('click', async (e) => {
                 const button = e.currentTarget;
                 const templateId = parseInt(button.dataset.templateId);
-                button.disabled = true;
-                button.textContent = 'Запуск...';
-                try {
-                    const session = await API.post(`/workouts/templates/${templateId}/start`, {}, app.state.tokens.access);
-                    this.renderWorkoutScreen(container, app, session.id);
-                    app.showToast('Тренировка запущена!', 'success');
-                } catch (err) {
-                    console.error('Start template error:', err);
-                    app.showToast(err.message || 'Ошибка запуска', 'error');
-                    if (button) {
-                        button.disabled = false;
-                        button.textContent = 'Начать тренировку →';
+                
+                this.renderCountdown(container, async () => {
+                    button.disabled = true;
+                    button.textContent = 'Запуск...';
+                    try {
+                        const session = await API.post(`/workouts/templates/${templateId}/start`, {}, app.state.tokens.access);
+                        this.renderWorkoutScreen(container, app, session.id);
+                        app.showToast('Тренировка началась!', 'success');
+                    } catch (err) {
+                        console.error('Start template error:', err);
+                        app.showToast(err.message || 'Ошибка запуска', 'error');
+                        if (button) {
+                            button.disabled = false;
+                            button.textContent = 'Начать тренировку →';
+                        }
                     }
-                }
+                });
             });
         });
+    },
+
+    async renderCountdown(container, onComplete) {
+        const overlay = document.createElement('div');
+        overlay.className = 'fixed inset-0 z-[100] flex items-center justify-center modal-backdrop transition-opacity';
+        overlay.innerHTML = `
+            <div id="countdown" class="text-7xl font-bold text-white tabular-nums animate-pulse">3</div>
+        `;
+        document.body.appendChild(overlay);
+
+        let count = 3;
+        const display = overlay.querySelector('#countdown');
+        
+        const interval = setInterval(() => {
+            count--;
+            if (count > 0) {
+                display.textContent = count;
+            } else {
+                clearInterval(interval);
+                document.body.removeChild(overlay);
+                onComplete();
+            }
+        }, 1000);
     },
 
     async renderTemplateDetails(container, app, template) {
@@ -313,11 +338,12 @@ export const Workouts = {
                                        data-field="reps" ${set.is_completed ? 'readonly' : ''}>
                                 <span class="text-[10px] text-surface-400">повт.</span>
                             </div>
-                            <button data-action="toggle-set"
-                                    class="ml-auto py-1 px-2 text-xl ${set.is_completed ? 'text-primary-600 font-bold' : 'text-surface-300'}"
-                                    ${set.is_completed ? 'disabled' : ''}>
-                                ✓
-                            </button>
+                                <button data-action="toggle-set"
+                                        class="ml-auto py-1 px-3 rounded-lg text-sm font-semibold transition-all ${set.is_completed ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300' : 'bg-surface-100 text-surface-500 dark:bg-surface-700 dark:text-surface-400'}"
+                                        ${set.is_completed ? 'disabled' : ''}>
+                                    ${set.is_completed ? '✓' : '✓'}
+                                </button>
+
                         </div>
                     `).join('')}
                 </div>
@@ -394,17 +420,45 @@ export const Workouts = {
                 button.textContent = '...';
                 try {
                     await API.patch(`/workouts/sets/${setId}`, { is_completed: isCompleted }, token);
-                    if (isCompleted) {
-                        button.classList.add('text-primary-600', 'font-bold');
-                        button.classList.remove('text-surface-400');
+                                        if (isCompleted) {
+                        button.classList.remove('bg-surface-100', 'text-surface-500', 'dark:bg-surface-700', 'dark:text-surface-400');
+                        button.classList.add('bg-primary-100', 'text-primary-700', 'dark:bg-primary-900/40', 'dark:text-primary-300');
                         button.textContent = '✓';
-                        // Disable inputs
+                        
+                        row.querySelector('span.font-medium').classList.add('text-surface-400', 'dark:text-surface-600');
+                        row.querySelector('input[data-field="weight"]').classList.add('text-surface-400', 'dark:text-surface-600');
+                        row.querySelector('input[data-field="reps"]').classList.add('text-surface-400', 'dark:text-surface-600');
+                        row.querySelectorAll('span.text-\\[10px\\]').forEach(span => span.classList.add('text-surface-400', 'dark:text-surface-600'));
+
                         row.querySelector('[data-field="weight"]').readOnly = true;
                         row.querySelector('[data-field="reps"]').readOnly = true;
-                        button.disabled = true;
-                    } else {
-                        button.classList.remove('text-primary-600', 'font-bold');
-                        button.classList.add('text-surface-400');
+                        button.disabled = false; 
+                        
+                        const exerciseContainer = button.closest('.snap-center');
+                        const allToggleButtons = exerciseContainer.querySelectorAll('[data-action="toggle-set"]');
+                        const allCompleted = Array.from(allToggleButtons).every(b => b.classList.contains('bg-primary-100'));
+                        
+                        if (allCompleted) {
+                            const carousel = document.getElementById('carousel');
+                            if (carousel) {
+                                const cardWidth = exerciseContainer.offsetWidth + 16;
+                                carousel.scrollBy({ left: cardWidth, behavior: 'smooth' });
+                            }
+                        }
+                    }
+                    else {
+                        button.classList.remove('bg-primary-100', 'text-primary-700', 'dark:bg-primary-900/40', 'dark:text-primary-300');
+                        button.classList.add('bg-surface-100', 'text-surface-500', 'dark:bg-surface-700', 'dark:text-surface-400');
+                        row.classList.remove('opacity-50');
+                        row.classList.remove('line-through');
+
+                        row.querySelector('span.font-medium').classList.remove('text-surface-400', 'dark:text-surface-600');
+                        row.querySelector('input[data-field="weight"]').classList.remove('text-surface-400', 'dark:text-surface-600');
+                        row.querySelector('input[data-field="reps"]').classList.remove('text-surface-400', 'dark:text-surface-600');
+                        row.querySelectorAll('span.text-\\[10px\\]').forEach(span => span.classList.remove('text-surface-400', 'dark:text-surface-600'));
+
+                        row.querySelector('[data-field="weight"]').readOnly = false;
+                        row.querySelector('[data-field="reps"]').readOnly = false;
                         button.textContent = '✓';
                         button.disabled = false;
                     }
@@ -588,22 +642,26 @@ export const Workouts = {
         });
 
         container.querySelectorAll('[data-action="start-template"]').forEach(btn => {
-
-                btn.addEventListener('click', async (e) => {
-                    const templateId = parseInt(e.currentTarget.dataset.templateId);
-                    e.currentTarget.disabled = true;
-                    e.currentTarget.textContent = 'Запуск...';
+            btn.addEventListener('click', async (e) => {
+                const button = e.currentTarget;
+                const templateId = parseInt(button.dataset.templateId);
+                
+                this.renderCountdown(container, async () => {
+                    button.disabled = true;
+                    button.textContent = 'Запуск...';
                     try {
                         const session = await API.post(`/workouts/templates/${templateId}/start`, {}, app.state.tokens.access);
+                        
+                        // Сразу обновляем экран, чтобы не было задержки
                         await this.renderWorkoutScreen(app.elements.pageContent, app, session.id);
-                        app.showToast('Тренировка запущена!', 'success');
                     } catch (err) {
                         app.showToast(err.message || 'Ошибка запуска', 'error');
-                        e.currentTarget.disabled = false;
-                        e.currentTarget.textContent = 'Начать';
+                        button.disabled = false;
+                        button.textContent = 'Начать';
                     }
                 });
             });
+        });
         } catch (err) {
             app.showToast('Ошибка загрузки шаблонов', 'error');
         }
