@@ -304,7 +304,7 @@ export const Workouts = {
         const lastWorkout = historyData.sessions[0];
         const durationMin = Math.floor((new Date() - new Date(session.started_at)) / 60000);
         
-        const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
+const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             const historyPoints = historyData.sessions
                 .flatMap(s => s.exercises.filter(e => e.name === ex.name))
                 .flatMap(e => e.sets.map(set => set.weight_kg))
@@ -312,43 +312,45 @@ export const Workouts = {
                 .slice(-10);
 
             return `
-            <div class="min-w-[320px] max-w-[340px] snap-center bg-white dark:bg-surface-800 rounded-2xl p-6 shadow-md flex flex-col" data-exercise-id="${ex.id}">
-                <div class="flex justify-between items-center mb-2">
-                    <h3 class="font-bold text-lg truncate flex-1 mr-2">${ex.name}</h3>
-                    <div class="flex items-center gap-2 flex-shrink-0">
-                        <div class="flex gap-1">
-                            <button type="button" data-action="move-ex-up" data-ex-id="${ex.id}" class="px-2 py-1 bg-surface-100 dark:bg-surface-700 rounded-lg text-xs font-bold hover:bg-surface-200 transition-colors ${index === 0 ? 'opacity-30 cursor-not-allowed' : ''}">▲</button>
-                            <button type="button" data-action="move-ex-down" data-ex-id="${ex.id}" class="px-2 py-1 bg-surface-100 dark:bg-surface-700 rounded-lg text-xs font-bold hover:bg-surface-200 transition-colors ${index === arr.length - 1 ? 'opacity-30 cursor-not-allowed' : ''}">▼</button>
-                        </div>
+            <div class="w-[92vw] snap-center bg-white dark:bg-surface-800 rounded-3xl p-5 shadow-lg flex flex-col min-h-[500px] border border-surface-100 dark:border-surface-700" data-exercise-id="${ex.id}">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="font-bold text-xl leading-snug flex-1 mr-2" title="${ex.name}">${ex.name}</h3>
+                    <div class="flex items-center gap-1 flex-shrink-0">
+                        <button type="button" data-action="move-ex-up" data-ex-id="${ex.id}" class="w-10 h-10 bg-surface-100 dark:bg-surface-700 rounded-xl text-sm font-bold hover:bg-surface-200 transition-colors ${index === 0 ? 'opacity-30 cursor-not-allowed' : ''}">▲</button>
+                        <button type="button" data-action="move-ex-down" data-ex-id="${ex.id}" class="w-10 h-10 bg-surface-100 dark:bg-surface-700 rounded-xl text-sm font-bold hover:bg-surface-200 transition-colors ${index === arr.length - 1 ? 'opacity-30 cursor-not-allowed' : ''}">▼</button>
                     </div>
                 </div>
-                <div class="mb-4">
+                
+                <div class="mb-5 flex-1 min-h-[140px]">
                     ${Components.sparkline(historyPoints)}
                 </div>
-                <div class="space-y-3 flex-1">
+
+                <div class="space-y-4">
                     ${(ex.sets || []).map(set => `
-                        <div class="flex items-center gap-2 text-sm" data-set-id="${set.id}">
-                            <span class="font-medium w-6 text-center text-surface-400">${set.set_number}</span>
-                            <div class="flex items-center gap-1">
+                        <div class="flex items-center gap-2 bg-surface-50 dark:bg-surface-700/50 p-2 rounded-2xl" data-set-id="${set.id}">
+                            <span class="font-bold w-8 text-center text-surface-400 text-lg">${set.set_number}</span>
+                            
+                            <div class="flex-1 flex flex-col">
+                                <label class="text-[9px] text-surface-400 uppercase font-bold text-center">Вес</label>
                                 <input type="number" min="0" step="0.5" placeholder="0"
                                        value="${set.weight_kg ?? ''}"
-                                       class="w-14 bg-transparent text-center border-b border-surface-300 focus:border-primary-500 focus:outline-none"
+                                       class="w-full h-11 bg-transparent text-center text-xl font-bold rounded-lg focus:border-primary-500 focus:outline-none"
                                        data-field="weight" ${set.is_completed ? 'readonly' : ''}>
-                                <span class="text-[10px] text-surface-400">кг</span>
                             </div>
-                            <div class="flex items-center gap-1">
+                            
+                            <div class="flex-1 flex flex-col">
+                                <label class="text-[9px] text-surface-400 uppercase font-bold text-center">Повт</label>
                                 <input type="number" min="0" placeholder="0"
                                        value="${set.reps ?? ''}"
-                                       class="w-14 bg-transparent text-center border-b border-surface-300 focus:border-primary-500 focus:outline-none"
+                                       class="w-full h-11 bg-transparent text-center text-xl font-bold rounded-lg focus:border-primary-500 focus:outline-none"
                                        data-field="reps" ${set.is_completed ? 'readonly' : ''}>
-                                <span class="text-[10px] text-surface-400">повт.</span>
                             </div>
-                                <button data-action="toggle-set"
-                                        class="ml-auto py-1 px-3 rounded-lg text-sm font-semibold transition-all ${set.is_completed ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300' : 'bg-surface-100 text-surface-500 dark:bg-surface-700 dark:text-surface-400'}"
-                                        ${set.is_completed ? 'disabled' : ''}>
-                                    ${set.is_completed ? '✓' : '✓'}
-                                </button>
-
+                            
+                            <button data-action="toggle-set"
+                                    class="flex-shrink-0 w-12 h-12 rounded-2xl text-2xl font-bold transition-all flex items-center justify-center ${set.is_completed ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300 shadow-md' : 'bg-white dark:bg-surface-800 text-surface-400 shadow-sm border border-surface-200'}"
+                                    ${set.is_completed ? 'disabled' : ''}>
+                                ✓
+                            </button>
                         </div>
                     `).join('')}
                 </div>
@@ -357,17 +359,17 @@ export const Workouts = {
 
         // Cards
         const cancelCard = `
-            <div class="min-w-[320px] max-w-[340px] snap-center bg-surface-100 dark:bg-surface-800 rounded-2xl p-6 shadow-md flex flex-col items-center justify-center">
+            <div class="min-w-[320px] max-w-[340px] snap-center bg-surface-100 dark:bg-surface-800 rounded-2xl p-6 shadow-md flex flex-col items-center justify-center min-h-[520px]">
                 <button data-action="cancel-workout" data-session-id="${session.id}"
-                        class="w-full py-6 border-2 border-dashed border-red-300 dark:border-red-700 rounded-2xl text-red-600 font-bold text-lg">
+                        class="w-full py-5 border-2 border-dashed border-red-300 dark:border-red-700 rounded-2xl text-red-600 font-bold text-base">
                     Отменить тренировку
                 </button>
             </div>
         `;
         const completeCard = `
-            <div class="min-w-[320px] max-w-[340px] snap-center bg-surface-100 dark:bg-surface-800 rounded-2xl p-6 shadow-md flex flex-col items-center justify-center">
+            <div class="min-w-[320px] max-w-[340px] snap-center bg-surface-100 dark:bg-surface-800 rounded-2xl p-6 shadow-md flex flex-col items-center justify-center min-h-[520px]">
                 <button data-action="complete-workout" data-session-id="${session.id}"
-                        class="w-full py-6 bg-primary-600 text-white rounded-2xl font-bold text-lg">
+                        class="w-full py-5 bg-primary-600 text-white rounded-2xl font-bold text-base">
                     Завершить тренировку
                 </button>
             </div>
@@ -375,14 +377,14 @@ export const Workouts = {
         const allCards = [cancelCard, ...exerciseCards, completeCard];
 
         let html = `
-            <div class="p-4" id="workout-container">
-                <div class="flex items-center justify-between mb-4">
+            <div class="p-4 pt-16" id="workout-container">
+                <div class="flex items-center justify-between mb-6">
                     <button data-action="back-to-workouts" class="text-surface-500 hover:text-surface-900 dark:text-surface-400 text-lg">←</button>
-                    <h2 class="text-xl font-bold text-center flex-1">${session.name || 'Тренировка'}</h2>
+                    <h2 class="text-xl font-bold text-center flex-1 ${!session.name ? 'truncate' : ''}">${session.name || 'Тренировка'}</h2>
                     <span class="text-sm text-surface-500 font-mono">${durationMin} мин.</span>
                 </div>
 
-                <div class="flex overflow-x-auto snap-x snap-mandatory gap-4 pb-4 px-4 -mx-4" id="carousel">
+                <div class="flex overflow-x-auto snap-x snap-mandatory gap-4 pb-10 px-4 -mx-4" id="carousel">
                     ${allCards.join('')}
                 </div>
             </div>
@@ -420,20 +422,19 @@ export const Workouts = {
                     return;
                 }
                 
-                const isCompleted = !button.classList.contains('text-primary-600');
+                const isCompleted = !button.classList.contains('bg-primary-100');
                 button.disabled = true;
                 button.textContent = '...';
                 try {
                     await API.patch(`/workouts/sets/${setId}`, { is_completed: isCompleted }, token);
-                                        if (isCompleted) {
+                    if (isCompleted) {
                         button.classList.remove('bg-surface-100', 'text-surface-500', 'dark:bg-surface-700', 'dark:text-surface-400');
-                        button.classList.add('bg-primary-100', 'text-primary-700', 'dark:bg-primary-900/40', 'dark:text-primary-300');
+                        button.classList.add('bg-primary-100', 'text-primary-700', 'dark:bg-primary-900/40', 'dark:text-primary-300', 'shadow-md');
                         button.textContent = '✓';
                         
-                        row.querySelector('span.font-medium').classList.add('text-surface-400', 'dark:text-surface-600');
-                        row.querySelector('input[data-field="weight"]').classList.add('text-surface-400', 'dark:text-surface-600');
-                        row.querySelector('input[data-field="reps"]').classList.add('text-surface-400', 'dark:text-surface-600');
-                        row.querySelectorAll('span.text-\\[10px\\]').forEach(span => span.classList.add('text-surface-400', 'dark:text-surface-600'));
+                        row.querySelector('span.font-bold').classList.add('text-surface-400', 'dark:text-surface-600');
+                        row.querySelectorAll('input').forEach(inp => inp.classList.add('text-surface-400', 'dark:text-surface-600'));
+                        row.querySelectorAll('label').forEach(lbl => lbl.classList.add('text-surface-400', 'dark:text-surface-600'));
 
                         row.querySelector('[data-field="weight"]').readOnly = true;
                         row.querySelector('[data-field="reps"]').readOnly = true;
@@ -452,15 +453,12 @@ export const Workouts = {
                         }
                     }
                     else {
-                        button.classList.remove('bg-primary-100', 'text-primary-700', 'dark:bg-primary-900/40', 'dark:text-primary-300');
+                        button.classList.remove('bg-primary-100', 'text-primary-700', 'dark:bg-primary-900/40', 'dark:text-primary-300', 'shadow-md');
                         button.classList.add('bg-surface-100', 'text-surface-500', 'dark:bg-surface-700', 'dark:text-surface-400');
-                        row.classList.remove('opacity-50');
-                        row.classList.remove('line-through');
 
-                        row.querySelector('span.font-medium').classList.remove('text-surface-400', 'dark:text-surface-600');
-                        row.querySelector('input[data-field="weight"]').classList.remove('text-surface-400', 'dark:text-surface-600');
-                        row.querySelector('input[data-field="reps"]').classList.remove('text-surface-400', 'dark:text-surface-600');
-                        row.querySelectorAll('span.text-\\[10px\\]').forEach(span => span.classList.remove('text-surface-400', 'dark:text-surface-600'));
+                        row.querySelector('span.font-bold').classList.remove('text-surface-400', 'dark:text-surface-600');
+                        row.querySelectorAll('input').forEach(inp => inp.classList.remove('text-surface-400', 'dark:text-surface-600'));
+                        row.querySelectorAll('label').forEach(lbl => lbl.classList.remove('text-surface-400', 'dark:text-surface-600'));
 
                         row.querySelector('[data-field="weight"]').readOnly = false;
                         row.querySelector('[data-field="reps"]').readOnly = false;
