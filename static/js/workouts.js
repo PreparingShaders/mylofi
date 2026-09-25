@@ -341,32 +341,32 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         }
 
                         return `
-                        <div class="flex items-center gap-1.5 bg-surface-50 dark:bg-surface-700/50 p-2 rounded-2xl" data-set-id="${set.id}">
+                        <div class="flex items-center gap-2 bg-surface-50 dark:bg-surface-700/50 p-2 rounded-2xl" data-set-id="${set.id}">
                             <span class="font-bold w-6 text-center text-surface-400 text-xs">${set.set_number}</span>
                             
-                            <div class="flex flex-col items-center justify-center px-0.5 w-14" title="Прошлый подход">
+                            <div class="w-12 flex flex-col items-center justify-center flex-shrink-0" title="Прошлый подход">
                                 <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Пред.</label>
                                 <span class="text-[11px] font-semibold text-surface-600 dark:text-surface-300 h-10 flex items-center truncate">${prevText}</span>
                             </div>
 
-                            <div class="flex-[1.4] min-w-0 flex flex-col">
+                            <div class="flex-[2] flex flex-col min-w-0">
                                 <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Вес</label>
-                                <input type="text" inputmode="decimal" placeholder="0"
+                                <input type="number" min="0" step="0.5" placeholder="0"
                                        value="${set.weight_kg ?? ''}"
-                                       class="w-full px-1 h-10 bg-transparent text-center text-base font-semibold rounded-lg focus:border-primary-500 focus:outline-none"
+                                       class="w-24 h-12 bg-white dark:bg-surface-800 text-center text-xl font-bold rounded-xl border border-surface-200 dark:border-surface-600 focus:border-primary-500 focus:outline-none"
                                        data-field="weight" ${set.is_completed ? 'readonly' : ''}>
                             </div>
                             
-                            <div class="flex-[1] min-w-0 flex flex-col">
+                            <div class="flex-[2] flex flex-col min-w-0">
                                 <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Повт</label>
-                                <input type="text" inputmode="numeric" placeholder="0"
+                                <input type="number" min="0" placeholder="0"
                                        value="${set.reps ?? ''}"
-                                       class="w-full px-1 h-10 bg-transparent text-center text-base font-semibold rounded-lg focus:border-primary-500 focus:outline-none"
+                                       class="w-24 h-12 bg-white dark:bg-surface-800 text-center text-xl font-bold rounded-xl border border-surface-200 dark:border-surface-600 focus:border-primary-500 focus:outline-none"
                                        data-field="reps" ${set.is_completed ? 'readonly' : ''}>
                             </div>
                             
                             <button data-action="toggle-set"
-                                    class="flex-shrink-0 w-10 h-10 rounded-2xl text-base font-bold transition-all flex items-center justify-center ${set.is_completed ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300 shadow-md' : 'bg-white dark:bg-surface-800 text-surface-400 shadow-sm border border-surface-200'}"
+                                    class="flex-shrink-0 w-11 h-11 rounded-2xl text-xl font-bold transition-all flex items-center justify-center ${set.is_completed ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300 shadow-md' : 'bg-white dark:bg-surface-800 text-surface-400 shadow-sm border border-surface-200'}"
                                     ${set.is_completed ? 'disabled' : ''}>
                                 ✓
                             </button>
