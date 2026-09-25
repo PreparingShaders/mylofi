@@ -328,14 +328,22 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 <div class="space-y-3">
                     ${(ex.sets || []).map(set => {
                         let prevText = '—';
-                        for (const pastSession of (historyData.sessions || [])) {
-                            if (pastSession.id === session.id) continue;
-                            const pastEx = (pastSession.exercises || []).find(e => e.name === ex.name);
+                        
+                        // Сортируем сессии по дате (новейшие первые)
+                        const sortedSessions = (historyData.sessions || []).sort((a, b) => new Date(b.started_at) - new Date(a.started_at));
+                        
+                        // Ищем последнюю сессию, где есть это упражнение
+                        const prevSession = sortedSessions.find(s => 
+                            s.id !== session.id && 
+                            (s.exercises || []).some(e => e.name.trim().toLowerCase() === ex.name.trim().toLowerCase())
+                        );
+                        
+                        if (prevSession) {
+                            const pastEx = (prevSession.exercises || []).find(e => e.name.trim().toLowerCase() === ex.name.trim().toLowerCase());
                             if (pastEx) {
                                 const pastSet = (pastEx.sets || []).find(s => s.set_number === set.set_number) || pastEx.sets[set.set_number - 1];
                                 if (pastSet && pastSet.weight_kg != null && pastSet.reps != null) {
                                     prevText = `${pastSet.weight_kg}×${pastSet.reps}`;
-                                    break;
                                 }
                             }
                         }
