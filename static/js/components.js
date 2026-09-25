@@ -51,7 +51,7 @@ export const Components = {
         const points = data.map((v, i) => {
             const x = data.length > 1 ? 5 + (i / (data.length - 1)) * 90 : 50;
             const y = 95 - ((v - min) / range) * 80;
-            return `${x}%,${y}%`;
+            return `${x},${y}`;
         }).join(' ');
         
         const pointCircles = data.map((v, i) => {
@@ -60,7 +60,7 @@ export const Components = {
             const isLast = i === data.length - 1;
             const r = isLast ? 5 : 3.5;
             const classes = isLast ? 'fill-primary-600 stroke-white stroke-2.5' : 'fill-primary-400 stroke-white stroke-1.5';
-            return `<circle cx="${x}%" cy="${y}%" r="${r}" class="${classes}" ${isLast ? 'style="filter: drop-shadow(0 0 4px #4f46e5)"' : ''}/>`;
+            return `<circle cx="${x}" cy="${y}" r="${r}" class="${classes}" ${isLast ? 'style="filter: drop-shadow(0 0 4px #4f46e5)"' : ''}/>`;
         }).join('');
         
         return `
@@ -88,8 +88,8 @@ export const Components = {
                     ${data.length === 1 
                         ? `<circle cx="50%" cy="50%" r="7" class="fill-primary-500"/>`
                         : `
-                            <polygon points="0,100 ${points} 100%,100" fill="url(#sparkline-gradient)"/>
-                            <polyline points="${points}" stroke-linejoin="round" stroke-linecap="round" stroke-width="2.5" stroke-opacity="0.9"/>
+                            <polygon points="0,100 ${points} 100,100" fill="url(#sparkline-gradient)"/>
+                            <polyline points="${points}" fill="none" stroke-linejoin="round" stroke-linecap="round" stroke-width="2.5" stroke-opacity="0.9"/>
                             ${pointCircles}
                         `}
                 </svg>

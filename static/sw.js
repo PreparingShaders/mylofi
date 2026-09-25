@@ -18,9 +18,8 @@ self.addEventListener('message', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-    // Pass everything through to the network
-    // (SW exists only for background sync of photos)
-    return;
+    // Pass everything through to the network and satisfy PWA install requirements
+    event.respondWith(fetch(event.request));
 });
 
 self.addEventListener('sync', (event) => {

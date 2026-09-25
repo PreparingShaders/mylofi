@@ -312,7 +312,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 .slice(-10);
 
             return `
-            <div class="w-[92vw] snap-center bg-white dark:bg-surface-800 rounded-3xl p-5 shadow-lg flex flex-col min-h-[500px] border border-surface-100 dark:border-surface-700" data-exercise-id="${ex.id}">
+            <div class="w-[98vw] max-w-[500px] snap-center bg-white dark:bg-surface-800 rounded-3xl p-5 shadow-lg flex flex-col min-h-[500px] border border-surface-100 dark:border-surface-700" data-exercise-id="${ex.id}">
                 <div class="flex justify-between items-start mb-4">
                     <h3 class="font-bold text-lg text-surface-900 dark:text-surface-50 leading-tight flex-1 mr-2" title="${ex.name}">${ex.name}</h3>
                     <div class="flex items-center gap-1 flex-shrink-0">
@@ -326,40 +326,60 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 </div>
 
                 <div class="space-y-3">
-                    ${(ex.sets || []).map(set => `
-                        <div class="flex items-center gap-2 bg-surface-50 dark:bg-surface-700/50 p-2 rounded-2xl" data-set-id="${set.id}">
-                            <span class="font-bold w-8 text-center text-surface-400 text-sm">${set.set_number}</span>
+                    ${(ex.sets || []).map(set => {
+                        let prevText = '—';
+                        for (const pastSession of (historyData.sessions || [])) {
+                            if (pastSession.id === session.id) continue;
+                            const pastEx = (pastSession.exercises || []).find(e => e.name === ex.name);
+                            if (pastEx) {
+                                const pastSet = (pastEx.sets || []).find(s => s.set_number === set.set_number) || pastEx.sets[set.set_number - 1];
+                                if (pastSet && pastSet.weight_kg != null && pastSet.reps != null) {
+                                    prevText = `${pastSet.weight_kg}×${pastSet.reps}`;
+                                    break;
+                                }
+                            }
+                        }
+
+                        return `
+                        <div class="flex items-center gap-1.5 bg-surface-50 dark:bg-surface-700/50 p-2 rounded-2xl" data-set-id="${set.id}">
+                            <span class="font-bold w-6 text-center text-surface-400 text-xs">${set.set_number}</span>
                             
-                            <div class="flex-1 flex flex-col">
+                            <div class="flex flex-col items-center justify-center px-0.5 w-14" title="Прошлый подход">
+                                <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Пред.</label>
+                                <span class="text-[11px] font-semibold text-surface-600 dark:text-surface-300 h-10 flex items-center truncate">${prevText}</span>
+                            </div>
+
+                            <div class="flex-[1.4] min-w-0 flex flex-col">
                                 <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Вес</label>
-                                <input type="number" min="0" step="0.5" placeholder="0"
+                                <input type="text" inputmode="decimal" placeholder="0"
                                        value="${set.weight_kg ?? ''}"
-                                       class="w-full h-10 bg-transparent text-center text-base font-semibold rounded-lg focus:border-primary-500 focus:outline-none"
+                                       class="w-full px-1 h-10 bg-transparent text-center text-base font-semibold rounded-lg focus:border-primary-500 focus:outline-none"
                                        data-field="weight" ${set.is_completed ? 'readonly' : ''}>
                             </div>
                             
-                            <div class="flex-1 flex flex-col">
+                            <div class="flex-[1] min-w-0 flex flex-col">
                                 <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Повт</label>
-                                <input type="number" min="0" placeholder="0"
+                                <input type="text" inputmode="numeric" placeholder="0"
                                        value="${set.reps ?? ''}"
-                                       class="w-full h-10 bg-transparent text-center text-base font-semibold rounded-lg focus:border-primary-500 focus:outline-none"
+                                       class="w-full px-1 h-10 bg-transparent text-center text-base font-semibold rounded-lg focus:border-primary-500 focus:outline-none"
                                        data-field="reps" ${set.is_completed ? 'readonly' : ''}>
                             </div>
                             
                             <button data-action="toggle-set"
-                                    class="flex-shrink-0 w-11 h-11 rounded-2xl text-lg font-bold transition-all flex items-center justify-center ${set.is_completed ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300 shadow-md' : 'bg-white dark:bg-surface-800 text-surface-400 shadow-sm border border-surface-200'}"
+                                    class="flex-shrink-0 w-10 h-10 rounded-2xl text-base font-bold transition-all flex items-center justify-center ${set.is_completed ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300 shadow-md' : 'bg-white dark:bg-surface-800 text-surface-400 shadow-sm border border-surface-200'}"
                                     ${set.is_completed ? 'disabled' : ''}>
                                 ✓
                             </button>
                         </div>
-                    `).join('')}
+                    `;
+                    }).join('')}
                 </div>
             </div>
         `}).join('');
 
         // Cards
         const cancelCard = `
-            <div class="min-w-[320px] max-w-[340px] snap-center bg-surface-100 dark:bg-surface-800 rounded-2xl p-6 shadow-md flex flex-col items-center justify-center min-h-[520px]">
+            <div class="w-[98vw] max-w-[500px] snap-center bg-surface-100 dark:bg-surface-800 rounded-2xl p-6 shadow-md flex flex-col items-center justify-center min-h-[520px]">
                 <button data-action="cancel-workout" data-session-id="${session.id}"
                         class="w-full py-5 border-2 border-dashed border-red-300 dark:border-red-700 rounded-2xl text-red-600 font-bold text-base">
                     Отменить тренировку
@@ -367,7 +387,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             </div>
         `;
         const completeCard = `
-            <div class="min-w-[320px] max-w-[340px] snap-center bg-surface-100 dark:bg-surface-800 rounded-2xl p-6 shadow-md flex flex-col items-center justify-center min-h-[520px]">
+            <div class="w-[98vw] max-w-[500px] snap-center bg-surface-100 dark:bg-surface-800 rounded-2xl p-6 shadow-md flex flex-col items-center justify-center min-h-[520px]">
                 <button data-action="complete-workout" data-session-id="${session.id}"
                         class="w-full py-5 bg-primary-600 text-white rounded-2xl font-bold text-base">
                     Завершить тренировку
@@ -395,7 +415,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         setTimeout(() => {
             const carousel = document.getElementById('carousel');
             if (carousel) {
-                const cardWidth = carousel.querySelector('.min-w-\\[320px\\]').offsetWidth + 16; // 16px is gap
+                const cardWidth = carousel.querySelector('.snap-center').offsetWidth + 16; // 16px is gap
                 carousel.scrollLeft = cardWidth; 
             }
         }, 100);
