@@ -572,7 +572,7 @@ async def build_workout_session(
                         exercise_id=exercise.id,
                         set_number=ps.set_number,
                         reps=ps.reps,
-                        weight_kg=ps.weight_kg if (ps.weight_kg is not None and ps.weight_kg > 0) else None,
+                        weight_kg=ps.weight_kg,
                         rest_seconds=data.default_rest_seconds,
                     )
                 )
@@ -583,7 +583,7 @@ async def build_workout_session(
                         exercise_id=exercise.id,
                         set_number=set_num,
                         reps=data.default_reps,
-                        weight_kg=None,
+                        weight_kg=0.0,
                         rest_seconds=data.default_rest_seconds,
                     )
                 )
@@ -670,7 +670,7 @@ async def quick_start_workout(
                         exercise_id=exercise.id,
                         set_number=ps.set_number,
                         reps=ps.reps,
-                        weight_kg=ps.weight_kg if (ps.weight_kg is not None and ps.weight_kg > 0) else None,
+                        weight_kg=ps.weight_kg,
                         rest_seconds=default_rest,
                     )
                 )
@@ -681,7 +681,7 @@ async def quick_start_workout(
                         exercise_id=exercise.id,
                         set_number=set_num,
                         reps=default_reps,
-                        weight_kg=None,
+                        weight_kg=0.0,
                         rest_seconds=default_rest,
                     )
                 )
@@ -822,28 +822,51 @@ async def get_workout_statistics(
 
 
 async def get_last_exercise_sets(db: AsyncSession, user_id: int, exercise_name: str) -> Optional[List[WorkoutSet]]:
-    """Get sets of the last completed workout session containing the given exercise"""
-    subq = (
-        select(WorkoutSession.id)
-        .join(WorkoutSessionExercise)
+    """Get sets of the last completed workout session containing the given exercise with weights"""
+    print(f"[DEBUG] get_last_exercise_sets called for user_id={user_id}, exercise_name='{exercise_name}'")
+    subq_results = await db.execute(
+        select(WorkoutSessionExercise.session_id)
+        .join(WorkoutSession, WorkoutSession.id == WorkoutSessionExercise.session_id)
         .where(
             WorkoutSession.user_id == user_id,
             WorkoutSession.status == WorkoutSessionStatus.COMPLETED,
-            func.lower(func.trim(WorkoutSessionExercise.name)) == exercise_name.strip().lower(),
+            WorkoutSessionExercise.name.ilike(exercise_name.strip()),
         )
         .order_by(WorkoutSession.started_at.desc())
-        .limit(1)
-        .scalar_subquery()
     )
+    session_ids = [row[0] for row in subq_results.all()]
+    print(f"[DEBUG] Found completed session_ids for exercise '{exercise_name}': {session_ids}")
 
-    result = await db.execute(
+    if not session_ids:
+        return None
+
+    # Fetch sessions in order of started_at desc
+    for s_id in session_ids:
+        res = await db.execute(
+            select(WorkoutSession)
+            .where(WorkoutSession.id == s_id)
+            .options(selectinload(WorkoutSession.exercises).selectinload(WorkoutSessionExercise.sets))
+        )
+        session = res.scalar_one_or_none()
+        if session:
+            for ex in session.exercises:
+                if ex.name.strip().lower() == exercise_name.strip().lower():
+                    sets = sorted(ex.sets, key=lambda s: s.set_number)
+                    weights = [s.weight_kg for s in sets]
+                    print(f"[DEBUG] Session {s_id} exercise '{ex.name}' weights: {weights}")
+                    if any(s.weight_kg is not None and s.weight_kg > 0 for s in sets):
+                        return sets
+
+    # Fallback to the first session found if none have weights > 0
+    res = await db.execute(
         select(WorkoutSession)
-        .where(WorkoutSession.id == subq)
+        .where(WorkoutSession.id == session_ids[0])
         .options(selectinload(WorkoutSession.exercises).selectinload(WorkoutSessionExercise.sets))
     )
-    session = result.scalar_one_or_none()
+    session = res.scalar_one_or_none()
     if session:
         for ex in session.exercises:
             if ex.name.strip().lower() == exercise_name.strip().lower():
                 return sorted(ex.sets, key=lambda s: s.set_number)
+
     return None

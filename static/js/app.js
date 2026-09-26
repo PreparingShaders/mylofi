@@ -306,6 +306,21 @@ const App = {
     async handleCompleteWorkout(event) {
         const sessionId = event.target.closest('[data-session-id]')?.dataset.sessionId;
         if (!confirm('Завершить тренировку?')) return;
+
+        // Flush all active weight and rep inputs before completing
+        const inputs = document.querySelectorAll('[data-set-id] input[data-field]');
+        const promises = Array.from(inputs).map(async input => {
+            const row = input.closest('[data-set-id]');
+            if (!row) return;
+            const setId = parseInt(row.dataset.setId);
+            const field = input.dataset.field;
+            const value = field === 'weight' ? parseFloat(input.value) : parseInt(input.value);
+            if (!isNaN(value)) {
+                await API.patch(`/workouts/sets/${setId}`, { [field]: value }, this.state.tokens.access).catch(() => {});
+            }
+        });
+        await Promise.all(promises);
+
         try {
             await API.post(`/workouts/sessions/${sessionId}/complete`, null, this.state.tokens.access);
             this.showToast('Тренировка завершена!', 'success');

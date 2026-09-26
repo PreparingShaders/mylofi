@@ -363,16 +363,16 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
                             <div class="flex-[2] flex flex-col min-w-0">
                                 <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Вес</label>
-                                <input type="number" min="0" step="0.5" placeholder="0"
-                                       value="${set.weight_kg ?? ''}"
+                                 <input type="number" min="0" step="0.5" placeholder="—"
+                                       value="${set.weight_kg != null && set.weight_kg > 0 ? set.weight_kg : ''}"
                                        class="w-24 h-12 bg-white dark:bg-surface-800 text-center text-xl font-bold rounded-xl border border-surface-200 dark:border-surface-600 focus:border-primary-500 focus:outline-none"
                                        data-field="weight" ${set.is_completed ? 'readonly' : ''}>
                             </div>
                             
                             <div class="flex-[2] flex flex-col min-w-0">
                                 <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Повт</label>
-                                <input type="number" min="0" placeholder="0"
-                                       value="${set.reps ?? ''}"
+                                 <input type="number" min="0" placeholder="—"
+                                       value="${set.reps != null && set.reps > 0 ? set.reps : ''}"
                                        class="w-24 h-12 bg-white dark:bg-surface-800 text-center text-xl font-bold rounded-xl border border-surface-200 dark:border-surface-600 focus:border-primary-500 focus:outline-none"
                                        data-field="reps" ${set.is_completed ? 'readonly' : ''}>
                             </div>

@@ -664,7 +664,7 @@ async def start_workout_from_template(
                 WorkoutSetCreate(
                     set_number=ps.set_number,
                     reps=ps.reps,
-                    weight_kg=ps.weight_kg if (ps.weight_kg is not None and ps.weight_kg > 0) else None,
+                    weight_kg=ps.weight_kg,
                     rest_seconds=ex.rest_seconds,
                 )
                 for ps in past_sets
@@ -674,7 +674,7 @@ async def start_workout_from_template(
                 WorkoutSetCreate(
                     set_number=set_num,
                     reps=ex.target_reps,
-                    weight_kg=None,
+                    weight_kg=0.0,
                     rest_seconds=ex.rest_seconds,
                 )
                 for set_num in range(1, ex.target_sets + 1)
