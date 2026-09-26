@@ -294,8 +294,7 @@ async def update_workout_session(
 
     session.updated_at = datetime.now(timezone.utc)
     await db.commit()
-    await db.refresh(session)
-    return session
+    return await get_workout_session(db, session.id, user_id)
 
 
 async def complete_workout_session(db: AsyncSession, session_id: int, user_id: int) -> Optional[WorkoutSession]:
@@ -316,8 +315,7 @@ async def complete_workout_session(db: AsyncSession, session_id: int, user_id: i
     session.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
-    await db.refresh(session)
-    return session
+    return await get_workout_session(db, session.id, user_id)
 
 
 async def cancel_workout_session(db: AsyncSession, session_id: int, user_id: int) -> Optional[WorkoutSession]:
@@ -338,8 +336,7 @@ async def cancel_workout_session(db: AsyncSession, session_id: int, user_id: int
     session.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
-    await db.refresh(session)
-    return session
+    return await get_workout_session(db, session.id, user_id)
 
 
 async def get_workout_history(
@@ -567,15 +564,29 @@ async def build_workout_session(
         )
         db.add(exercise)
         await db.flush()
-        for set_num in range(1, data.default_sets + 1):
-            db.add(
-                WorkoutSet(
-                    exercise_id=exercise.id,
-                    set_number=set_num,
-                    reps=data.default_reps,
-                    rest_seconds=data.default_rest_seconds,
+        past_sets = await get_last_exercise_sets(db, user_id, ex.name)
+        if past_sets:
+            for ps in past_sets:
+                db.add(
+                    WorkoutSet(
+                        exercise_id=exercise.id,
+                        set_number=ps.set_number,
+                        reps=ps.reps,
+                        weight_kg=ps.weight_kg if (ps.weight_kg is not None and ps.weight_kg > 0) else None,
+                        rest_seconds=data.default_rest_seconds,
+                    )
                 )
-            )
+        else:
+            for set_num in range(1, data.default_sets + 1):
+                db.add(
+                    WorkoutSet(
+                        exercise_id=exercise.id,
+                        set_number=set_num,
+                        reps=data.default_reps,
+                        weight_kg=None,
+                        rest_seconds=data.default_rest_seconds,
+                    )
+                )
 
     await db.commit()
     return await get_workout_session(db, session.id, user_id)
@@ -651,15 +662,29 @@ async def quick_start_workout(
         db.add(exercise)
         await db.flush()
 
-        for set_num in range(1, default_sets + 1):
-            db.add(
-                WorkoutSet(
-                    exercise_id=exercise.id,
-                    set_number=set_num,
-                    reps=default_reps,
-                    rest_seconds=default_rest,
+        past_sets = await get_last_exercise_sets(db, user_id, ex.name)
+        if past_sets:
+            for ps in past_sets:
+                db.add(
+                    WorkoutSet(
+                        exercise_id=exercise.id,
+                        set_number=ps.set_number,
+                        reps=ps.reps,
+                        weight_kg=ps.weight_kg if (ps.weight_kg is not None and ps.weight_kg > 0) else None,
+                        rest_seconds=default_rest,
+                    )
                 )
-            )
+        else:
+            for set_num in range(1, default_sets + 1):
+                db.add(
+                    WorkoutSet(
+                        exercise_id=exercise.id,
+                        set_number=set_num,
+                        reps=default_reps,
+                        weight_kg=None,
+                        rest_seconds=default_rest,
+                    )
+                )
 
     await db.commit()
     return await get_workout_session(db, session.id, user_id)
@@ -794,3 +819,31 @@ async def get_workout_statistics(
         "current_streak_weeks": current_streak,
         "top_exercises": top_exercises,
     }
+
+
+async def get_last_exercise_sets(db: AsyncSession, user_id: int, exercise_name: str) -> Optional[List[WorkoutSet]]:
+    """Get sets of the last completed workout session containing the given exercise"""
+    subq = (
+        select(WorkoutSession.id)
+        .join(WorkoutSessionExercise)
+        .where(
+            WorkoutSession.user_id == user_id,
+            WorkoutSession.status == WorkoutSessionStatus.COMPLETED,
+            func.lower(func.trim(WorkoutSessionExercise.name)) == exercise_name.strip().lower(),
+        )
+        .order_by(WorkoutSession.started_at.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+
+    result = await db.execute(
+        select(WorkoutSession)
+        .where(WorkoutSession.id == subq)
+        .options(selectinload(WorkoutSession.exercises).selectinload(WorkoutSessionExercise.sets))
+    )
+    session = result.scalar_one_or_none()
+    if session:
+        for ex in session.exercises:
+            if ex.name.strip().lower() == exercise_name.strip().lower():
+                return sorted(ex.sets, key=lambda s: s.set_number)
+    return None

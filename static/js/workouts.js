@@ -991,7 +991,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     <div class="bg-surface-100 dark:bg-surface-800 p-4 rounded-2xl flex items-center justify-between gap-3" data-ex-id="${ex.id}" data-index="${i}">
                         <div class="flex-1 min-w-0">
                             <h4 class="font-bold mb-2 truncate">${ex.name}</h4>
-                            <div class="grid grid-cols-3 gap-2">
+                            <div class="grid grid-cols-2 gap-2">
                                 <div>
                                     <label class="text-xs text-surface-500">Подходы</label>
                                     <input type="number" value="${te?.target_sets || 3}" class="w-full px-2 py-1 bg-white dark:bg-surface-900 rounded border border-surface-300 dark:border-surface-700 cfg-sets">
@@ -999,10 +999,6 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                                 <div>
                                     <label class="text-xs text-surface-500">Повт.</label>
                                     <input type="number" value="${te?.target_reps || 10}" class="w-full px-2 py-1 bg-white dark:bg-surface-900 rounded border border-surface-300 dark:border-surface-700 cfg-reps">
-                                </div>
-                                <div>
-                                    <label class="text-xs text-surface-500">Вес (кг)</label>
-                                    <input type="number" value="${te?.target_weight_kg || 0}" placeholder="0" class="w-full px-2 py-1 bg-white dark:bg-surface-900 rounded border border-surface-300 dark:border-surface-700 cfg-weight">
                                 </div>
                             </div>
                         </div>
@@ -1051,7 +1047,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 order: i,
                 target_sets: parseInt(item.querySelector('.cfg-sets').value),
                 target_reps: parseInt(item.querySelector('.cfg-reps').value),
-                target_weight_kg: parseFloat(item.querySelector('.cfg-weight').value) || null,
+                target_weight_kg: null,
                 rest_seconds: 90
             }));
             onSave(configured);

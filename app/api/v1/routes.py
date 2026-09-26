@@ -85,6 +85,7 @@ from app.services.workout import (
     delete_exercise,
     build_workout_session,
     get_workout_statistics,
+    get_last_exercise_sets,
 )
 from app.services.exercise_data import MUSCLE_GROUPS, EQUIPMENT
 from app.models import User, Meal
@@ -655,27 +656,43 @@ async def start_workout_from_template(
     if not template:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
 
-    # Create session from template
-    session_data = WorkoutSessionCreate(
-        template_id=template.id,
-        name=template.name,
-        exercises=[
+    session_exercises = []
+    for ex in template.exercises:
+        past_sets = await get_last_exercise_sets(db, current_user.id, ex.name)
+        if past_sets:
+            sets_create = [
+                WorkoutSetCreate(
+                    set_number=ps.set_number,
+                    reps=ps.reps,
+                    weight_kg=ps.weight_kg if (ps.weight_kg is not None and ps.weight_kg > 0) else None,
+                    rest_seconds=ex.rest_seconds,
+                )
+                for ps in past_sets
+            ]
+        else:
+            sets_create = [
+                WorkoutSetCreate(
+                    set_number=set_num,
+                    reps=ex.target_reps,
+                    weight_kg=None,
+                    rest_seconds=ex.rest_seconds,
+                )
+                for set_num in range(1, ex.target_sets + 1)
+            ]
+        session_exercises.append(
             WorkoutSessionExerciseCreate(
                 name=ex.name,
                 order=ex.order,
                 notes=ex.notes,
-                sets=[
-                    WorkoutSetCreate(
-                        set_number=set_num,
-                        reps=ex.target_reps,
-                        weight_kg=ex.target_weight_kg,
-                        rest_seconds=ex.rest_seconds,
-                    )
-                    for set_num in range(1, ex.target_sets + 1)
-                ],
+                sets=sets_create,
             )
-            for ex in template.exercises
-        ],
+        )
+
+    # Create session from template
+    session_data = WorkoutSessionCreate(
+        template_id=template.id,
+        name=template.name,
+        exercises=session_exercises,
     )
     session = await create_workout_session(db, current_user.id, session_data)
     return session
