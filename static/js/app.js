@@ -251,8 +251,17 @@ const App = {
         const set_id = row.dataset.setId;
         if (!set_id) return;
         
-        const isCompleted = btn.classList.contains('text-primary-600');
-        const payload = { is_completed: !isCompleted };
+        const weightInput = row.querySelector('[data-field="weight"]');
+        const repsInput = row.querySelector('[data-field="reps"]');
+        const weight_kg = weightInput ? parseFloat(weightInput.value) : null;
+        const reps = repsInput ? parseInt(repsInput.value) : null;
+
+        const isCompleted = btn.classList.contains('text-primary-600') || btn.classList.contains('bg-primary-100');
+        const payload = { 
+            is_completed: !isCompleted,
+            weight_kg: isNaN(weight_kg) ? null : weight_kg,
+            reps: isNaN(reps) ? null : reps
+        };
         
         // Update UI immediately (optimistic)
         btn.disabled = true;

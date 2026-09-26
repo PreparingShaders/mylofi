@@ -288,7 +288,7 @@ export const Workouts = {
             const url = sessionId ? `/workouts/sessions/${sessionId}` : '/workouts/sessions/active';
             [session, historyData] = await Promise.all([
                 API.get(url, app.state.tokens.access),
-                API.get('/workouts/history?limit=10', app.state.tokens.access).catch(() => ({ sessions: [] }))
+                API.get('/workouts/history?limit=50', app.state.tokens.access).catch(() => ({ sessions: [] }))
             ]);
         } catch (error) {
             console.error('[Workouts] Session/History load error:', error);
@@ -301,12 +301,15 @@ export const Workouts = {
         }
         app.state.currentSessionId = session.id;
 
-        const lastWorkout = historyData.sessions[0];
         const durationMin = Math.floor((new Date() - new Date(session.started_at)) / 60000);
         
+        const completedHistorySessions = [...(historyData.sessions || [])]
+            .filter(s => s.status === 'completed')
+            .sort((a, b) => new Date(a.started_at) - new Date(b.started_at));
+
 const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
-            const historyPoints = historyData.sessions
-                .flatMap(s => s.exercises.filter(e => e.name === ex.name))
+            const historyPoints = completedHistorySessions
+                .flatMap(s => s.exercises.filter(e => e.name.trim().toLowerCase() === ex.name.trim().toLowerCase()))
                 .flatMap(e => e.sets.map(set => set.weight_kg))
                 .filter(w => w != null && w > 0)
                 .slice(-10);
@@ -329,10 +332,10 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     ${(ex.sets || []).map(set => {
                         let prevText = '—';
                         
-                        // Сортируем сессии по дате (новейшие первые)
-                        const sortedSessions = (historyData.sessions || []).sort((a, b) => new Date(b.started_at) - new Date(a.started_at));
+                        // Сортируем завершенные сессии по дате (новейшие первые)
+                        const sortedSessions = [...completedHistorySessions].sort((a, b) => new Date(b.started_at) - new Date(a.started_at));
                         
-                        // Ищем последнюю сессию, где есть это упражнение
+                        // Ищем последнюю завершенную сессию, где есть это упражнение (исключая текущую)
                         const prevSession = sortedSessions.find(s => 
                             s.id !== session.id && 
                             (s.exercises || []).some(e => e.name.trim().toLowerCase() === ex.name.trim().toLowerCase())
@@ -341,7 +344,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         if (prevSession) {
                             const pastEx = (prevSession.exercises || []).find(e => e.name.trim().toLowerCase() === ex.name.trim().toLowerCase());
                             if (pastEx) {
-                                const pastSet = (pastEx.sets || []).find(s => s.set_number === set.set_number) || pastEx.sets[set.set_number - 1];
+                                const pastSets = [...(pastEx.sets || [])].sort((a, b) => a.set_number - b.set_number);
+                                const pastSet = pastSets.find(s => s.set_number === set.set_number) || pastSets[set.set_number - 1];
                                 if (pastSet && pastSet.weight_kg != null && pastSet.reps != null) {
                                     prevText = `${pastSet.weight_kg}×${pastSet.reps}`;
                                 }
@@ -450,11 +454,20 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     return;
                 }
                 
+                const weightInput = row.querySelector('[data-field="weight"]');
+                const repsInput = row.querySelector('[data-field="reps"]');
+                const weight_kg = weightInput ? parseFloat(weightInput.value) : null;
+                const reps = repsInput ? parseInt(repsInput.value) : null;
+
                 const isCompleted = !button.classList.contains('bg-primary-100');
                 button.disabled = true;
                 button.textContent = '...';
                 try {
-                    await API.patch(`/workouts/sets/${setId}`, { is_completed: isCompleted }, token);
+                    await API.patch(`/workouts/sets/${setId}`, { 
+                        is_completed: isCompleted,
+                        weight_kg: isNaN(weight_kg) ? null : weight_kg,
+                        reps: isNaN(reps) ? null : reps
+                    }, token);
                     if (isCompleted) {
                         button.classList.remove('bg-surface-100', 'text-surface-500', 'dark:bg-surface-700', 'dark:text-surface-400');
                         button.classList.add('bg-primary-100', 'text-primary-700', 'dark:bg-primary-900/40', 'dark:text-primary-300', 'shadow-md');
@@ -501,11 +514,12 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             });
         });
 
-        // Save weight/reps on change
+        // Save weight/reps on change or blur
         container.querySelectorAll('[data-field="weight"], [data-field="reps"]').forEach(input => {
-            input.addEventListener('change', async (e) => {
+            const saveHandler = async (e) => {
                 const targetInput = e.target;
                 const row = targetInput.closest('[data-set-id]');
+                if (!row) return;
                 const setId = parseInt(row.dataset.setId);
                 const field = targetInput.dataset.field;
                 const value = field === 'weight' ? parseFloat(targetInput.value) : parseInt(targetInput.value);
@@ -536,7 +550,10 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 } catch (err) {
                     app.showToast(err.message || 'Ошибка сохранения', 'error');
                 }
-            });
+            };
+
+            input.addEventListener('change', saveHandler);
+            input.addEventListener('blur', saveHandler);
         });
 
         // Complete workout
