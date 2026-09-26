@@ -433,10 +433,11 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         }, 100);
 
         // Event listeners for workout screen
-        this.bindWorkoutScreenEvents(container, app, session.id);
+        this.bindWorkoutScreenEvents(container, app, session);
     },
 
-    bindWorkoutScreenEvents(container, app, sessionId) {
+    bindWorkoutScreenEvents(container, app, session) {
+        const sessionId = session.id;
         const token = app.state.tokens.access;
 
         // Toggle set completion

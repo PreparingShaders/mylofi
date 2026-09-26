@@ -237,9 +237,12 @@ async def update_workout_session(
                 )
                 exercise = exercise_result.scalar_one_or_none()
                 if exercise:
-                    exercise.name = exercise_data.name
-                    exercise.order = exercise_data.order
-                    exercise.notes = exercise_data.notes
+                    if exercise_data.name is not None:
+                        exercise.name = exercise_data.name
+                    if exercise_data.order is not None:
+                        exercise.order = exercise_data.order
+                    if exercise_data.notes is not None:
+                        exercise.notes = exercise_data.notes
 
                     # Handle sets
                     if exercise_data.sets is not None:

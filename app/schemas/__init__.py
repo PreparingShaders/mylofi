@@ -266,6 +266,7 @@ class WorkoutSessionExerciseCreate(WorkoutSessionExerciseBase):
 
 
 class WorkoutSessionExerciseUpdate(BaseModel):
+    id: Optional[int] = None
     name: Optional[str] = Field(None, max_length=255)
     order: Optional[int] = None
     notes: Optional[str] = None
@@ -294,7 +295,7 @@ class WorkoutSessionUpdate(BaseModel):
     name: Optional[str] = Field(None, max_length=255)
     status: Optional[WorkoutSessionStatus] = None
     notes: Optional[str] = None
-    exercises: Optional[List[WorkoutSessionExerciseCreate]] = None
+    exercises: Optional[List[WorkoutSessionExerciseUpdate]] = None
 
 
 class WorkoutSessionResponse(WorkoutSessionBase):
