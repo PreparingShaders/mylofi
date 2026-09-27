@@ -39,10 +39,16 @@
 
 /* Bottom nav active state */
 .nav-item.active {
-    color: #6366f1;
+    color: #18181b;
 }
 .nav-item.active svg {
-    stroke: #6366f1;
+    stroke: #18181b;
+}
+.dark .nav-item.active {
+    color: #f4f4f5;
+}
+.dark .nav-item.active svg {
+    stroke: #f4f4f5;
 }
 
 /* Toast notifications */
@@ -91,10 +97,10 @@
 }
 
 /* Input focus */
-input:focus, select:focus, textarea:focus {
+input, select, textarea:focus {
     outline: none;
     ring: 2px;
-    ring-color: #6366f1;
+    ring-color: #52525b;
 }
 
 /* Button press state */
@@ -104,6 +110,6 @@ input:focus, select:focus, textarea:focus {
 
 /* Modal backdrop */
 .modal-backdrop {
-    backdrop-filter: blur(4px);
-    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(8px);
+    background: rgba(9, 9, 11, 0.4);
 }

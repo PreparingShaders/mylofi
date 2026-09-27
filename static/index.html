@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="description" content="MyLofi - Трекер питания по фото и журнал тренировок">
-    <meta name="theme-color" content="#1a1a2e">
+    <meta name="theme-color" content="#18181b">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="MyLofi">
@@ -21,16 +21,16 @@
                 extend: {
                     colors: {
                         primary: {
-                            50: '#f0f4ff',
-                            100: '#e0e9ff',
-                            200: '#c7d6fe',
-                            300: '#a5b4fc',
-                            400: '#818cf8',
-                            500: '#6366f1',
-                            600: '#4f46e5',
-                            700: '#4338ca',
-                            800: '#3730a3',
-                            900: '#312e81',
+                            50: '#fafafa',
+                            100: '#f4f4f5',
+                            200: '#e4e4e7',
+                            300: '#d4d4d8',
+                            400: '#a1a1aa',
+                            500: '#71717a',
+                            600: '#27272a',
+                            700: '#18181b',
+                            800: '#09090b',
+                            900: '#000000',
                         },
                         surface: {
                             50: '#fafafa',
@@ -110,10 +110,16 @@
         
         /* Bottom nav active state */
         .nav-item.active {
-            color: #6366f1;
+            color: #18181b;
         }
         .nav-item.active svg {
-            stroke: #6366f1;
+            stroke: #18181b;
+        }
+        .dark .nav-item.active {
+            color: #f4f4f5;
+        }
+        .dark .nav-item.active svg {
+            stroke: #f4f4f5;
         }
         
         /* Toast notifications */
@@ -176,7 +182,7 @@
         input:focus, select:focus, textarea:focus {
             outline: none;
             ring: 2px;
-            ring-color: #6366f1;
+            ring-color: #52525b;
         }
         
         /* Button press state */
@@ -186,8 +192,8 @@
         
         /* Modal backdrop */
         .modal-backdrop {
-            backdrop-filter: blur(12px);
-            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(8px);
+            background: rgba(9, 9, 11, 0.4);
         }
     </style>
 </head>

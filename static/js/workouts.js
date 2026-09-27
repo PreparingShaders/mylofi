@@ -148,7 +148,7 @@ export const Workouts = {
                         <div class="flex items-center justify-between mb-2">
                             <h3 class="font-semibold text-primary-700 dark:text-primary-300">Активная тренировка</h3>
                             <span class="flex items-center gap-1.5 text-sm font-mono tabular-nums text-primary-700 dark:text-primary-300">
-                                <span class="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></span>
+                                <span class="w-2.5 h-2.5 rounded-full bg-primary-500 animate-pulse"></span>
                                 <span id="dashboard-workout-timer">${this.formatTimer(this.getElapsedSeconds(activeSession))}</span>
                             </span>
                         </div>
@@ -187,7 +187,7 @@ export const Workouts = {
                         <!-- Card 2: Quick Start -->
                         <div class="min-w-[240px] max-w-[260px] snap-center bg-surface-100 dark:bg-surface-800 border ${hasActiveSession ? 'border-surface-200/70 dark:border-surface-700/70' : 'border-surface-200 dark:border-surface-700'} rounded-2xl p-4 flex flex-col justify-between shadow-sm ${hasActiveSession ? 'opacity-60' : 'cursor-pointer btn-press'}" data-action="${hasActiveSession ? '' : 'quick-start-workout'}">
                             <div>
-                                <div class="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center mb-3">
+                                <div class="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-3">
                                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                                 </div>
                                 <h4 class="font-bold text-lg mb-1">Быстрый старт</h4>
@@ -195,19 +195,19 @@ export const Workouts = {
                             </div>
                             ${hasActiveSession
                                 ? `<span class="mt-4 text-xs font-semibold bg-surface-200 dark:bg-surface-700 text-surface-500 dark:text-surface-400 px-3 py-2 rounded-xl text-center flex items-center justify-center gap-1.5">${LOCK_ICON}<span>Активна тренировка</span></span>`
-                                : '<span class="mt-4 text-xs font-semibold bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-3 py-2 rounded-xl text-center">Начать сразу →</span>'}
+                                : '<span class="mt-4 text-xs font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-3 py-2 rounded-xl text-center">Начать сразу →</span>'}
                         </div>
 
                         <!-- Card 3: Personal Records -->
                         <div class="min-w-[240px] max-w-[260px] snap-center bg-surface-100 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-2xl p-4 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="view-records">
                             <div>
-                                <div class="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 flex items-center justify-center mb-3">
+                                <div class="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-3">
                                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-1l2 2 4-4m-5.5-8.5L19 3l2 2-3 3-2-2z"/></svg>
                                 </div>
                                 <h4 class="font-bold text-lg mb-1">Личные рекорды (PR)</h4>
                                 <p class="text-xs text-surface-500 dark:text-surface-400">${records.length > 0 ? `Максимумы по ${records.length} упражнениям` : 'Максимальные веса по упражнениям'}</p>
                             </div>
-                            <span class="mt-4 text-xs font-semibold bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 px-3 py-2 rounded-xl text-center">Смотреть рекорды →</span>
+                            <span class="mt-4 text-xs font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-3 py-2 rounded-xl text-center">Смотреть рекорды →</span>
                         </div>
                     </div>
                 </div>
@@ -1116,17 +1116,17 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                             <p class="text-sm text-primary-700 dark:text-primary-300">Всего тренировок</p>
                             <p class="text-3xl font-bold text-primary-900 dark:text-primary-100">${stats.total_workouts}</p>
                         </div>
-                        <div class="bg-green-50 dark:bg-green-900/20 rounded-xl p-4">
-                            <p class="text-sm text-green-700 dark:text-green-300">На этой неделе</p>
-                            <p class="text-3xl font-bold text-green-900 dark:text-green-100">${stats.workouts_this_week}</p>
+                        <div class="bg-primary-50 dark:bg-primary-900/20 rounded-xl p-4">
+                            <p class="text-sm text-primary-700 dark:text-primary-300">На этой неделе</p>
+                            <p class="text-3xl font-bold text-primary-900 dark:text-primary-100">${stats.workouts_this_week}</p>
                         </div>
-                        <div class="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-4">
-                            <p class="text-sm text-blue-700 dark:text-blue-300">В этом месяце</p>
-                            <p class="text-3xl font-bold text-blue-900 dark:text-blue-100">${stats.workouts_this_month}</p>
+                        <div class="bg-primary-50 dark:bg-primary-900/20 rounded-xl p-4">
+                            <p class="text-sm text-primary-700 dark:text-primary-300">В этом месяце</p>
+                            <p class="text-3xl font-bold text-primary-900 dark:text-primary-100">${stats.workouts_this_month}</p>
                         </div>
-                        <div class="bg-purple-50 dark:bg-purple-900/20 rounded-xl p-4">
-                            <p class="text-sm text-purple-700 dark:text-purple-300">Серия (недель)</p>
-                            <p class="text-3xl font-bold text-purple-900 dark:text-purple-100">${stats.current_streak_weeks}</p>
+                        <div class="bg-primary-50 dark:bg-primary-900/20 rounded-xl p-4">
+                            <p class="text-sm text-primary-700 dark:text-primary-300">Серия (недель)</p>
+                            <p class="text-3xl font-bold text-primary-900 dark:text-primary-100">${stats.current_streak_weeks}</p>
                         </div>
                     </div>
                     <div class="grid grid-cols-2 gap-3 mb-6">

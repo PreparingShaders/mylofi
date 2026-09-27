@@ -367,8 +367,8 @@ const App = {
         const toast = document.createElement('div');
         toast.className = `toast-enter px-4 py-2 rounded-xl text-sm font-medium shadow-lg pointer-events-auto
             ${type === 'error' ? 'bg-red-500 text-white' : ''}
-            ${type === 'success' ? 'bg-green-500 text-white' : ''}
-            ${type === 'info' ? 'bg-blue-500 text-white' : ''}`;
+            ${type === 'success' ? 'bg-primary-600 text-white' : ''}
+            ${type === 'info' ? 'bg-primary-600 text-white' : ''}`;
         toast.textContent = message;
         container.appendChild(toast);
         setTimeout(() => {

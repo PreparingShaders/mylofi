@@ -1,7 +1,7 @@
 console.log("[DEBUG] Loaded components.js");
 import { Utils } from './utils.js';
 
-const SPARKLINE_STROKE = '#6366f1';
+const SPARKLINE_STROKE = '#71717a';
 let sparklineSeq = 0;
 
 function escapeHtml(value) {
@@ -77,7 +77,7 @@ export const Components = {
         const last = data[data.length - 1];
         const first = data[0];
         const trend = last > first ? '↗' : last < first ? '↘' : '→';
-        const trendColor = last > first ? 'text-green-500' : last < first ? 'text-red-500' : 'text-surface-400';
+        const trendColor = last > first ? 'text-primary-500' : last < first ? 'text-primary-400' : 'text-surface-400';
 
         const toY = (v) => 85 - ((v - min) / range) * 60;
 
@@ -127,7 +127,7 @@ export const Components = {
                                     <path d="${linePath}" fill="none" stroke="${SPARKLINE_STROKE}" stroke-width="1.75" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
                                 `}
                         </svg>
-                        <div class="absolute pointer-events-none -translate-x-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full border-2 border-white bg-primary-600 shadow-[0_0_4px_#6366f1]" style="left: ${lastX}%; top: ${lastY}%;"></div>
+                        <div class="absolute pointer-events-none -translate-x-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full border-2 border-white bg-primary-500 shadow-[0_0_4px_#71717a]" style="left: ${lastX}%; top: ${lastY}%;"></div>
                     </div>
                 </div>
             </div>
