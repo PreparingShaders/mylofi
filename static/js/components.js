@@ -76,7 +76,7 @@ export const Components = {
         const last = data[data.length - 1];
         const first = data[0];
         const trend = last > first ? '↑' : last < first ? '↓' : '→';
-        const trendColor = last > first ? 'text-emerald-500 dark:text-emerald-400' : last < first ? 'text-rose-500 dark:text-rose-400' : 'text-surface-500 dark:text-surface-400';
+        const trendColor = last > first ? 'text-lime-600 dark:text-lime-400' : last < first ? 'text-rose-500 dark:text-rose-400' : 'text-surface-500 dark:text-surface-400';
 
         const toY = (v) => 85 - ((v - min) / range) * 60;
 

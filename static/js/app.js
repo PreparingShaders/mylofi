@@ -3,7 +3,7 @@ import { API } from './api.js';
 import { Auth } from './auth.js';
 import { Nutrition } from './nutrition.js';
 import { Workouts } from './workouts.js';
-import { Profile, THEME_OPTION_ACTIVE, THEME_OPTION_IDLE } from './profile.js';
+import { Profile, THEME_OPTION_BASE, THEME_OPTION_ACTIVE, THEME_OPTION_IDLE } from './profile.js';
 import { Camera } from './camera.js';
 import { DB } from './db.js';
 import { Components } from './components.js';
@@ -11,7 +11,7 @@ import { Utils } from './utils.js';
 import { Theme } from './theme.js';
 
 const TOGGLE_BASE = 'flex-shrink-0 w-11 h-11 rounded-2xl text-xl font-bold transition-all flex items-center justify-center';
-const TOGGLE_COMPLETED = 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/40 shadow-sm';
+const TOGGLE_COMPLETED = 'bg-lime-400 text-zinc-950 border-lime-400 shadow-[0_0_12px_rgba(163,230,53,0.4)]';
 const TOGGLE_UNCOMPLETED = 'glass text-surface-400 dark:text-surface-500';
 
 const App = {
@@ -277,9 +277,9 @@ const App = {
         const weight_kg = weightInput ? parseFloat(weightInput.value) : null;
         const reps = repsInput ? parseInt(repsInput.value) : null;
 
-        const isCompleted = btn.classList.contains('bg-primary-100');
+        const wasCompleted = btn.dataset.completed === 'true';
         const payload = { 
-            is_completed: !isCompleted,
+            is_completed: !wasCompleted,
             weight_kg: isNaN(weight_kg) ? null : weight_kg,
             reps: isNaN(reps) ? null : reps
         };
@@ -292,7 +292,8 @@ const App = {
             await API.patch(`/workouts/sets/${set_id}`, payload, this.state.tokens.access);
             
             // Update UI state
-            if (!isCompleted) {
+            if (!wasCompleted) {
+                btn.dataset.completed = 'true';
                 btn.className = TOGGLE_BASE + ' ' + TOGGLE_COMPLETED;
                 row.querySelector('[data-field="weight"]').readOnly = true;
                 row.querySelector('[data-field="reps"]').readOnly = true;
@@ -300,7 +301,7 @@ const App = {
                 // Auto-scroll to next exercise if last set of current exercise
                 const exerciseContainer = row.closest('.snap-center');
                 const allSets = exerciseContainer.querySelectorAll('[data-action="toggle-set"]');
-                const allCompleted = Array.from(allSets).every(b => b.classList.contains('bg-primary-100'));
+                const allCompleted = Array.from(allSets).every(b => b.dataset.completed === 'true');
                 if (allCompleted) {
                     const carousel = document.getElementById('carousel');
                     if (carousel) {
@@ -309,6 +310,7 @@ const App = {
                     }
                 }
             } else {
+                btn.dataset.completed = 'false';
                 btn.className = TOGGLE_BASE + ' ' + TOGGLE_UNCOMPLETED;
                 row.querySelector('[data-field="weight"]').readOnly = false;
                 row.querySelector('[data-field="reps"]').readOnly = false;
@@ -378,8 +380,7 @@ const App = {
     updateThemeControls(mode) {
         document.querySelectorAll('[data-action="set-theme"]').forEach(btn => {
             const isActive = btn.dataset.theme === mode;
-            btn.className = 'flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all '
-                + (isActive ? THEME_OPTION_ACTIVE : THEME_OPTION_IDLE);
+            btn.className = THEME_OPTION_BASE + ' ' + (isActive ? THEME_OPTION_ACTIVE : THEME_OPTION_IDLE);
             btn.setAttribute('aria-pressed', String(isActive));
         });
     },

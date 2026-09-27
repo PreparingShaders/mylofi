@@ -4,8 +4,10 @@ import { Components } from './components.js';
 import { Utils } from './utils.js';
 
 const TOGGLE_BASE = 'flex-shrink-0 w-11 h-11 rounded-2xl text-xl font-bold transition-all flex items-center justify-center';
-const TOGGLE_COMPLETED = 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/40 shadow-sm';
+const TOGGLE_COMPLETED = 'bg-lime-400 text-zinc-950 border-lime-400 shadow-[0_0_12px_rgba(163,230,53,0.4)]';
 const TOGGLE_UNCOMPLETED = 'glass text-surface-400 dark:text-surface-500';
+const SET_DIM = ['text-surface-400', 'dark:text-surface-600'];
+const SET_NUMBER_IDLE = 'text-surface-500';
 
 const LOCK_ICON = '<svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>';
 const WEEK_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
@@ -144,11 +146,11 @@ export const Workouts = {
                 ${statsWidget}
 
                 ${activeSession
-                    ? `<div class="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-4 mb-6 shadow-sm">
+                    ? `<div class="bg-lime-50 dark:bg-lime-900/20 border border-lime-200 dark:border-lime-800 rounded-xl p-4 mb-6 shadow-sm">
                         <div class="flex items-center justify-between mb-2">
-                            <h3 class="font-semibold text-emerald-700 dark:text-emerald-300">Активная тренировка</h3>
-                            <span class="flex items-center gap-1.5 text-sm font-mono tabular-nums text-emerald-700 dark:text-emerald-300">
-                                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                            <h3 class="font-semibold text-lime-700 dark:text-lime-300">Активная тренировка</h3>
+                            <span class="flex items-center gap-1.5 text-sm font-mono tabular-nums text-lime-700 dark:text-lime-300">
+                                <span class="w-2.5 h-2.5 rounded-full bg-lime-500 animate-pulse"></span>
                                 <span id="dashboard-workout-timer">${this.formatTimer(this.getElapsedSeconds(activeSession))}</span>
                             </span>
                         </div>
@@ -547,7 +549,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
                         return `
                              <div class="flex items-center gap-2 glass p-2 rounded-2xl" data-set-id="${set.id}">
-                                 <span class="font-bold w-6 text-center text-surface-400 text-xs">${set.set_number}</span>
+                                 <span class="font-bold w-6 text-center text-xs ${set.is_completed ? SET_DIM.join(' ') : SET_NUMBER_IDLE}">${set.set_number}</span>
                                  
                                  <div class="w-14 flex flex-col items-center justify-center flex-shrink-0" title="Прошлый подход">
                                      <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Пред.</label>
@@ -558,7 +560,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                                      <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Вес</label>
                                      <input type="number" min="0" step="0.5" placeholder="—"
                                             value="${set.weight_kg != null && set.weight_kg > 0 ? set.weight_kg : ''}"
-                                            class="w-full h-12 text-center text-xl font-bold rounded-xl glass-input focus:border-primary-500 focus:outline-none"
+                                            class="w-full h-12 text-center text-xl font-bold rounded-xl glass-input focus:border-primary-500 focus:outline-none ${set.is_completed ? SET_DIM.join(' ') : ''}"
                                             data-field="weight" ${set.is_completed ? 'readonly' : ''}>
                                  </div>
 
@@ -566,13 +568,12 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                                      <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Повт</label>
                                      <input type="number" min="0" placeholder="—"
                                             value="${set.reps != null && set.reps > 0 ? set.reps : ''}"
-                                            class="w-full h-12 text-center text-xl font-bold rounded-xl glass-input focus:border-primary-500 focus:outline-none"
+                                            class="w-full h-12 text-center text-xl font-bold rounded-xl glass-input focus:border-primary-500 focus:outline-none ${set.is_completed ? SET_DIM.join(' ') : ''}"
                                             data-field="reps" ${set.is_completed ? 'readonly' : ''}>
                                  </div>
 
-                                  <button data-action="toggle-set"
-                                          class="${TOGGLE_BASE} ${set.is_completed ? TOGGLE_COMPLETED : TOGGLE_UNCOMPLETED}"
-                                         ${set.is_completed ? 'disabled' : ''}>
+                                  <button data-action="toggle-set" data-completed="${set.is_completed ? 'true' : 'false'}"
+                                          class="${TOGGLE_BASE} ${set.is_completed ? TOGGLE_COMPLETED : TOGGLE_UNCOMPLETED}">
                                       ✓
                                   </button>
                              </div>
@@ -611,7 +612,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 <div class="flex items-center justify-between mb-3">
                     <button data-action="back-to-workouts" class="text-surface-500 hover:text-surface-900 dark:text-surface-400 text-lg">←</button>
                     <h2 class="text-xl font-bold text-center flex-1 ${!session.name ? 'truncate' : ''}">${session.name || 'Тренировка'}</h2>
-                     <span id="workout-timer" class="text-sm text-emerald-500 dark:text-emerald-400 font-mono tabular-nums">00:00</span>
+                     <span id="workout-timer" class="text-sm text-lime-600 dark:text-lime-400 font-mono tabular-nums">00:00</span>
                 </div>
 
                 <div class="mb-6">
@@ -710,7 +711,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 const weight_kg = weightInput ? parseFloat(weightInput.value) : null;
                 const reps = repsInput ? parseInt(repsInput.value) : null;
 
-                const isCompleted = !button.classList.contains('bg-primary-100');
+                const wasCompleted = button.dataset.completed === 'true';
+                const isCompleted = !wasCompleted;
                 button.disabled = true;
                 button.textContent = '...';
                 try {
@@ -727,14 +729,15 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         sessionSet.reps = isNaN(reps) ? null : reps;
                     }
                     this.updateWorkoutMetricsUI(session);
-
                     if (isCompleted) {
+                        button.dataset.completed = 'true';
                         button.className = TOGGLE_BASE + ' ' + TOGGLE_COMPLETED;
                         button.textContent = '✓';
                         
-                        row.querySelector('span.font-bold').classList.add('text-surface-400', 'dark:text-surface-600');
-                        row.querySelectorAll('input').forEach(inp => inp.classList.add('text-surface-400', 'dark:text-surface-600'));
-                        row.querySelectorAll('label').forEach(lbl => lbl.classList.add('text-surface-400', 'dark:text-surface-600'));
+
+                        row.querySelector('span.font-bold').classList.add(...SET_DIM);
+                        row.querySelectorAll('input').forEach(inp => inp.classList.add(...SET_DIM));
+                        row.querySelectorAll('label').forEach(lbl => lbl.classList.add(...SET_DIM));
 
                         row.querySelector('[data-field="weight"]').readOnly = true;
                         row.querySelector('[data-field="reps"]').readOnly = true;
@@ -742,7 +745,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         
                         const exerciseContainer = button.closest('.snap-center');
                         const allToggleButtons = exerciseContainer.querySelectorAll('[data-action="toggle-set"]');
-                        const allCompleted = Array.from(allToggleButtons).every(b => b.classList.contains('bg-primary-100'));
+                        const allCompleted = Array.from(allToggleButtons).every(b => b.dataset.completed === 'true');
                         
                         if (allCompleted) {
                             const carousel = document.getElementById('carousel');
@@ -753,11 +756,13 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         }
                     }
                     else {
+                        button.dataset.completed = 'false';
                         button.className = TOGGLE_BASE + ' ' + TOGGLE_UNCOMPLETED;
 
-                        row.querySelector('span.font-bold').classList.remove('text-surface-400', 'dark:text-surface-600');
-                        row.querySelectorAll('input').forEach(inp => inp.classList.remove('text-surface-400', 'dark:text-surface-600'));
-                        row.querySelectorAll('label').forEach(lbl => lbl.classList.remove('text-surface-400', 'dark:text-surface-600'));
+                        row.querySelector('span.font-bold').classList.remove(...SET_DIM);
+                        row.querySelector('span.font-bold').classList.add(SET_NUMBER_IDLE);
+                        row.querySelectorAll('input').forEach(inp => inp.classList.remove(...SET_DIM));
+                        row.querySelectorAll('label').forEach(lbl => lbl.classList.remove(...SET_DIM));
 
                         row.querySelector('[data-field="weight"]').readOnly = false;
                         row.querySelector('[data-field="reps"]').readOnly = false;

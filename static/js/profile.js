@@ -3,6 +3,7 @@ import { API } from './api.js';
 import { Components } from './components.js';
 import { Theme } from './theme.js';
 
+export const THEME_OPTION_BASE = 'flex items-center justify-center gap-1 px-1 py-2 rounded-lg text-[11px] sm:text-xs font-medium transition-all min-w-0';
 export const THEME_OPTION_ACTIVE = 'bg-white dark:bg-zinc-100 text-surface-900 dark:text-zinc-950 shadow-sm';
 export const THEME_OPTION_IDLE = 'text-surface-500 dark:text-zinc-400 hover:text-surface-900 dark:hover:text-zinc-200';
 
@@ -28,23 +29,19 @@ function renderThemeSwitcher() {
     const current = Theme.getMode();
     const options = THEME_OPTIONS.map(({ mode, label, icon }) => {
         const isActive = mode === current;
-        const cls = 'flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all '
-            + (isActive ? THEME_OPTION_ACTIVE : THEME_OPTION_IDLE);
+        const cls = THEME_OPTION_BASE + ' ' + (isActive ? THEME_OPTION_ACTIVE : THEME_OPTION_IDLE);
         return `
             <button type="button" data-action="set-theme" data-theme="${mode}" aria-pressed="${isActive}" class="${cls}">
-                ${icon}
-                <span>${label}</span>
+                <span class="flex-shrink-0">${icon.replace('class="w-4 h-4"', 'class="w-3.5 h-3.5"')}</span>
+                <span class="truncate">${label}</span>
             </button>
         `;
     }).join('');
 
     return `
-        <div class="glass rounded-2xl p-4 mb-4">
-            <h3 class="font-semibold mb-1">Оформление</h3>
-            <p class="text-xs text-surface-500 dark:text-surface-400 mb-3">
-                Тёмная тема использует графитовое стекло и следует системным настройкам, если выбрана системная тема.
-            </p>
-            <div class="flex gap-2 p-1 rounded-2xl bg-surface-100 dark:bg-zinc-800/60 border border-surface-200 dark:border-white/5">
+        <div class="glass rounded-2xl p-3 mb-4">
+            <h3 class="font-semibold mb-2 px-1">Оформление</h3>
+            <div class="grid grid-cols-3 gap-1 p-1 text-xs rounded-xl bg-surface-100 dark:bg-zinc-800/60 border border-surface-200 dark:border-white/5">
                 ${options}
             </div>
         </div>
@@ -75,6 +72,8 @@ export const Profile = {
                     </button>
                 </div>
 
+                ${renderThemeSwitcher()}
+
                 <div class="glass rounded-2xl p-4 mb-4">
                     <h3 class="font-semibold mb-3">Данные пользователя</h3>
                     <p class="text-sm text-surface-600 dark:text-surface-300 mb-1">
@@ -97,8 +96,6 @@ export const Profile = {
                         <span class="text-surface-500">Вес:</span> ${user.target_weight_kg || user.weight_kg || '—'} кг
                     </p>
                 </div>
-
-                ${renderThemeSwitcher()}
 
                 <div class="text-xs text-surface-400 text-center">
                     Зарегистрирован: ${user.created_at ? new Date(user.created_at).toLocaleDateString('ru-RU') : '—'}
