@@ -4,7 +4,7 @@ import { Components } from './components.js';
 import { Utils } from './utils.js';
 
 const TOGGLE_BASE = 'flex-shrink-0 w-11 h-11 rounded-2xl text-xl font-bold transition-all flex items-center justify-center';
-const TOGGLE_COMPLETED = 'bg-primary-100 text-primary-700 dark:bg-white/15 dark:text-zinc-100 border border-primary-200 dark:border-white/20 shadow-md';
+const TOGGLE_COMPLETED = 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/40 shadow-sm';
 const TOGGLE_UNCOMPLETED = 'glass text-surface-400 dark:text-surface-500';
 
 const LOCK_ICON = '<svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>';
@@ -144,11 +144,11 @@ export const Workouts = {
                 ${statsWidget}
 
                 ${activeSession
-                    ? `<div class="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-xl p-4 mb-6 shadow-sm">
+                    ? `<div class="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-4 mb-6 shadow-sm">
                         <div class="flex items-center justify-between mb-2">
-                            <h3 class="font-semibold text-primary-700 dark:text-primary-300">Активная тренировка</h3>
-                            <span class="flex items-center gap-1.5 text-sm font-mono tabular-nums text-primary-700 dark:text-primary-300">
-                                <span class="w-2.5 h-2.5 rounded-full bg-primary-500 animate-pulse"></span>
+                            <h3 class="font-semibold text-emerald-700 dark:text-emerald-300">Активная тренировка</h3>
+                            <span class="flex items-center gap-1.5 text-sm font-mono tabular-nums text-emerald-700 dark:text-emerald-300">
+                                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
                                 <span id="dashboard-workout-timer">${this.formatTimer(this.getElapsedSeconds(activeSession))}</span>
                             </span>
                         </div>
@@ -611,7 +611,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 <div class="flex items-center justify-between mb-3">
                     <button data-action="back-to-workouts" class="text-surface-500 hover:text-surface-900 dark:text-surface-400 text-lg">←</button>
                     <h2 class="text-xl font-bold text-center flex-1 ${!session.name ? 'truncate' : ''}">${session.name || 'Тренировка'}</h2>
-                     <span id="workout-timer" class="text-sm text-surface-500 font-mono tabular-nums">00:00</span>
+                     <span id="workout-timer" class="text-sm text-emerald-500 dark:text-emerald-400 font-mono tabular-nums">00:00</span>
                 </div>
 
                 <div class="mb-6">

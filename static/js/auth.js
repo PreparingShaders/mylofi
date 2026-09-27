@@ -51,6 +51,35 @@ export const Auth = {
         }
     },
     
+    extractErrorMessage(error) {
+        const detail = error?.data?.detail;
+        if (typeof detail === 'string' && detail) return detail;
+        if (Array.isArray(detail) && detail.length) {
+            const first = detail[0];
+            if (first?.msg) return first.msg;
+        }
+        if (typeof error?.data?.message === 'string' && error.data.message) return error.data.message;
+        if (typeof error?.message === 'string' && error.message) return error.message;
+        return 'Неизвестная ошибка';
+    },
+    
+    showError(app, message) {
+        console.error('[Auth] Error:', message);
+        let shown = false;
+        try {
+            if (typeof app?.showToast === 'function') {
+                app.showToast(message, 'error');
+                shown = Boolean(app.elements?.toastContainer);
+            }
+        } catch (e) {
+            console.error('[Auth] showToast failed:', e);
+            shown = false;
+        }
+        if (!shown) {
+            window.alert(message);
+        }
+    },
+    
     async handleLogin(event, app) {
         console.log('[Auth] handleLogin called');
         event.preventDefault();
@@ -65,6 +94,9 @@ export const Auth = {
         try {
             const response = await API.post('/auth/login', params, null, true);
             console.log('[Auth] login response:', response);
+            if (!response?.access_token) {
+                throw new Error('Сервер не вернул токен доступа');
+            }
             app.state.tokens.access = response.access_token;
             app.state.tokens.refresh = response.refresh_token;
             app.saveTokens();
@@ -75,7 +107,7 @@ export const Auth = {
             app.showPage('nutrition');
         } catch (error) {
             console.error('[Auth] Login error:', error);
-            app.showToast(error.data?.detail || 'Ошибка входа', 'error');
+            this.showError(app, this.extractErrorMessage(error));
         }
     },
     
@@ -94,7 +126,7 @@ export const Auth = {
             this.renderLogin(app.elements.screens.auth, app);
         } catch (error) {
             console.error('[Auth] Register error:', error);
-            app.showToast(error.data?.detail || 'Ошибка регистрации', 'error');
+            this.showError(app, this.extractErrorMessage(error));
         }
     }
 };

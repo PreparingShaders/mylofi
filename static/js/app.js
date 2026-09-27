@@ -11,7 +11,7 @@ import { Utils } from './utils.js';
 import { Theme } from './theme.js';
 
 const TOGGLE_BASE = 'flex-shrink-0 w-11 h-11 rounded-2xl text-xl font-bold transition-all flex items-center justify-center';
-const TOGGLE_COMPLETED = 'bg-primary-100 text-primary-700 dark:bg-white/15 dark:text-zinc-100 border border-primary-200 dark:border-white/20 shadow-md';
+const TOGGLE_COMPLETED = 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/40 shadow-sm';
 const TOGGLE_UNCOMPLETED = 'glass text-surface-400 dark:text-surface-500';
 
 const App = {
@@ -191,6 +191,7 @@ const App = {
 
     setupEventListeners() {
         document.addEventListener('submit', (e) => {
+            if (e.defaultPrevented) return;
             if (e.target.id === 'login-form') Auth.handleLogin(e, this);
             if (e.target.id === 'register-form') Auth.handleRegister(e, this);
         });

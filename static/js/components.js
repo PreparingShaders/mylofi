@@ -75,8 +75,8 @@ export const Components = {
         const range = max - min || 1;
         const last = data[data.length - 1];
         const first = data[0];
-        const trend = last > first ? '↗' : last < first ? '↘' : '→';
-        const trendColor = last === first ? '' : 'dark:text-zinc-100';
+        const trend = last > first ? '↑' : last < first ? '↓' : '→';
+        const trendColor = last > first ? 'text-emerald-500 dark:text-emerald-400' : last < first ? 'text-rose-500 dark:text-rose-400' : 'text-surface-500 dark:text-surface-400';
 
         const toY = (v) => 85 - ((v - min) / range) * 60;
 
@@ -101,7 +101,7 @@ export const Components = {
                         <span class="text-[10px] text-surface-400 dark:text-surface-500 font-mono">${formatNum(min)} кг</span>
                         <div class="flex items-center gap-1">
                             <span class="text-xs text-surface-400 dark:text-surface-500">Последнее:</span>
-                            <span class="text-sm font-bold font-mono text-surface-900 dark:text-zinc-100 ${trendColor}">${formatNum(last)} ${trend}</span>
+                            <span class="text-sm font-bold font-mono ${trendColor}">${formatNum(last)} ${trend}</span>
                         </div>
                         <span class="text-[10px] text-surface-400 dark:text-surface-500 font-mono">${formatNum(max)} кг</span>
                     </div>

@@ -1,5 +1,5 @@
 console.log("[DEBUG] Loaded api.js");
-const API_BASE = '/api/v1';
+const API_BASE = `${window.location.origin}/api/v1`;
 
 class APIClient {
     constructor() {
@@ -22,10 +22,24 @@ class APIClient {
     async handleResponse(response) {
         const contentType = response.headers.get('content-type');
         const isJSON = contentType && contentType.includes('application/json');
-        const data = isJSON ? await response.json() : await response.text();
+        let data;
+        try {
+            data = isJSON ? await response.json() : await response.text();
+        } catch (parseError) {
+            console.error('[API] Failed to parse response body:', parseError);
+            data = null;
+        }
         
         if (!response.ok) {
-            const error = new Error(data?.detail || data?.message || `HTTP ${response.status}`);
+            let message = `HTTP ${response.status} ${response.statusText || ''}`.trim();
+            if (typeof data === 'string' && data.trim()) {
+                message = data.trim().slice(0, 200);
+            } else if (data?.detail) {
+                message = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail);
+            } else if (data?.message) {
+                message = data.message;
+            }
+            const error = new Error(message);
             error.status = response.status;
             error.data = data;
             throw error;
@@ -34,16 +48,36 @@ class APIClient {
         return data;
     }
     
+    normalizeError(error, method, url) {
+        if (error?.name === 'TypeError' || error?.message === 'Failed to fetch') {
+            const networkError = new Error(
+                `Сеть недоступна (${method} ${url}). Проверьте подключение к интернету или адрес сервера.`
+            );
+            networkError.status = 0;
+            networkError.isNetworkError = true;
+            networkError.cause = error;
+            return networkError;
+        }
+        return error;
+    }
+    
     async request(method, endpoint, data = null, accessToken = null, isFormData = false) {
         const url = `${this.baseURL}${endpoint}`;
         const headers = this.getHeaders(accessToken, isFormData);
         
-        const options = { method, headers };
+        const options = { method, headers, credentials: 'include' };
         if (data) {
             options.body = isFormData ? data : JSON.stringify(data);
         }
         
-        let response = await fetch(url, options);
+        let response;
+        try {
+            response = await fetch(url, options);
+        } catch (error) {
+            const normalized = this.normalizeError(error, method, url);
+            console.error(`[API] Request failed: ${method} ${url}`, normalized);
+            throw normalized;
+        }
         
         if (response.status === 401 && accessToken && window.App) {
             return this.handleUnauthorized(method, endpoint, data, accessToken, isFormData);
