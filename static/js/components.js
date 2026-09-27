@@ -4,6 +4,15 @@ import { Utils } from './utils.js';
 const SPARKLINE_STROKE = '#6366f1';
 let sparklineSeq = 0;
 
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function buildSmoothPath(pts, tension = 0.2) {
     if (!pts.length) return '';
     if (pts.length === 1) return `M ${pts[0].x} ${pts[0].y}`;
@@ -123,5 +132,65 @@ export const Components = {
                 </div>
             </div>
         `;
+    },
+
+    confirmModal({
+        title = 'Подтвердите действие',
+        message = '',
+        confirmText = 'Подтвердить',
+        confirmClass = 'bg-primary-600 hover:bg-primary-700 text-white shadow-md',
+        cancelText = 'Отмена',
+        cancelClass = 'bg-surface-100 dark:bg-surface-700 text-surface-700 dark:text-surface-200 hover:bg-surface-200 dark:hover:bg-surface-600'
+    } = {}) {
+        return new Promise((resolve) => {
+            const host = document.getElementById('modals') || document.body;
+            const backdrop = document.createElement('div');
+            backdrop.className = 'fixed inset-0 z-50 bg-black/40 backdrop-blur-md flex items-center justify-center p-4 pointer-events-auto opacity-0 transition-opacity duration-200';
+            backdrop.innerHTML = `
+                <div class="rounded-2xl bg-white dark:bg-surface-800 p-6 shadow-xl max-w-sm w-full mx-4 transform transition-all duration-200 scale-95 opacity-0 flex flex-col">
+                    <h3 class="text-lg font-bold text-surface-900 dark:text-surface-50 mb-2">${escapeHtml(title)}</h3>
+                    <p class="text-sm text-surface-600 dark:text-surface-300 mb-6 leading-relaxed">${escapeHtml(message)}</p>
+                    <div class="flex flex-col-reverse sm:flex-row gap-3">
+                        <button type="button" data-modal-cancel class="flex-1 py-3 px-4 rounded-xl text-sm font-semibold transition-colors ${cancelClass}">${escapeHtml(cancelText)}</button>
+                        <button type="button" data-modal-confirm class="flex-1 py-3 px-4 rounded-xl text-sm font-semibold transition-colors ${confirmClass}">${escapeHtml(confirmText)}</button>
+                    </div>
+                </div>
+            `;
+
+            const card = backdrop.firstElementChild;
+            const confirmBtn = backdrop.querySelector('[data-modal-confirm]');
+            const cancelBtn = backdrop.querySelector('[data-modal-cancel]');
+
+            let settled = false;
+            const close = (result) => {
+                if (settled) return;
+                settled = true;
+                document.removeEventListener('keydown', onKeydown);
+                backdrop.classList.remove('opacity-100');
+                card.classList.remove('scale-100', 'opacity-100');
+                card.classList.add('scale-95', 'opacity-0');
+                setTimeout(() => backdrop.remove(), 200);
+                resolve(result);
+            };
+
+            function onKeydown(e) {
+                if (e.key === 'Escape') close(false);
+            }
+
+            confirmBtn.addEventListener('click', () => close(true));
+            cancelBtn.addEventListener('click', () => close(false));
+            backdrop.addEventListener('click', (e) => {
+                if (e.target === backdrop) close(false);
+            });
+            document.addEventListener('keydown', onKeydown);
+
+            host.appendChild(backdrop);
+            requestAnimationFrame(() => {
+                backdrop.classList.add('opacity-100');
+                card.classList.remove('scale-95', 'opacity-0');
+                card.classList.add('scale-100', 'opacity-100');
+            });
+            cancelBtn.focus();
+        });
     }
 };

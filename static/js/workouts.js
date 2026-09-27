@@ -451,12 +451,27 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         `;
         const allCards = [cancelCard, ...exerciseCards, completeCard];
 
+        const initialMetrics = this.getWorkoutMetrics(session);
+        const initialPercent = initialMetrics.total > 0
+            ? Math.round((initialMetrics.completed / initialMetrics.total) * 100)
+            : 0;
+
         let html = `
             <div class="p-4 pt-12" id="workout-container">
-                <div class="flex items-center justify-between mb-6">
+                <div class="flex items-center justify-between mb-3">
                     <button data-action="back-to-workouts" class="text-surface-500 hover:text-surface-900 dark:text-surface-400 text-lg">←</button>
                     <h2 class="text-xl font-bold text-center flex-1 ${!session.name ? 'truncate' : ''}">${session.name || 'Тренировка'}</h2>
                      <span id="workout-timer" class="text-sm text-surface-500 font-mono tabular-nums">00:00</span>
+                </div>
+
+                <div class="mb-6">
+                    <div class="flex items-center justify-between gap-2 mb-1">
+                        <span id="workout-progress-text" class="text-xs font-semibold text-surface-600 dark:text-surface-300">Сделано ${initialMetrics.completed} из ${initialMetrics.total} подходов (${initialPercent}%)</span>
+                        <span id="workout-total-tonnage" class="text-xs font-semibold text-surface-600 dark:text-surface-300">Суммарный тоннаж: ${Math.round(initialMetrics.tonnage)} кг</span>
+                    </div>
+                    <div class="h-2 w-full rounded-full bg-surface-200 dark:bg-surface-700 overflow-hidden">
+                        <div id="workout-progress-bar" class="h-full rounded-full bg-primary-500 transition-all duration-300" style="width: ${initialPercent}%"></div>
+                    </div>
                 </div>
 
                 <div class="flex overflow-x-auto snap-x snap-mandatory gap-4 pb-10 px-4 -mx-4" id="carousel">
@@ -480,6 +495,44 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
         // Start live timer
         this.startWorkoutTimer(session);
+    },
+
+    getWorkoutMetrics(session) {
+        let total = 0;
+        let completed = 0;
+        let tonnage = 0;
+        (session.exercises || []).forEach(ex => {
+            (ex.sets || []).forEach(set => {
+                total += 1;
+                if (set.is_completed) {
+                    completed += 1;
+                    tonnage += (set.weight_kg || 0) * (set.reps || 0);
+                }
+            });
+        });
+        return { total, completed, tonnage };
+    },
+
+    findSetInSession(session, setId) {
+        for (const ex of (session.exercises || [])) {
+            const set = (ex.sets || []).find(s => s.id === setId);
+            if (set) return set;
+        }
+        return null;
+    },
+
+    updateWorkoutMetricsUI(session) {
+        const { total, completed, tonnage } = this.getWorkoutMetrics(session);
+        const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+        const bar = document.getElementById('workout-progress-bar');
+        if (bar) bar.style.width = `${percent}%`;
+
+        const text = document.getElementById('workout-progress-text');
+        if (text) text.textContent = `Сделано ${completed} из ${total} подходов (${percent}%)`;
+
+        const tonnageEl = document.getElementById('workout-total-tonnage');
+        if (tonnageEl) tonnageEl.textContent = `Суммарный тоннаж: ${Math.round(tonnage)} кг`;
     },
 
     bindWorkoutScreenEvents(container, app, session) {
@@ -516,6 +569,15 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         weight_kg: isNaN(weight_kg) ? null : weight_kg,
                         reps: isNaN(reps) ? null : reps
                     }, token);
+
+                    const sessionSet = this.findSetInSession(session, setId);
+                    if (sessionSet) {
+                        sessionSet.is_completed = isCompleted;
+                        sessionSet.weight_kg = isNaN(weight_kg) ? null : weight_kg;
+                        sessionSet.reps = isNaN(reps) ? null : reps;
+                    }
+                    this.updateWorkoutMetricsUI(session);
+
                     if (isCompleted) {
                         button.className = TOGGLE_BASE + ' ' + TOGGLE_COMPLETED;
                         button.textContent = '✓';
@@ -582,6 +644,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                                 if (nextWeightInput && !nextWeightInput.value) {
                                     nextWeightInput.value = value;
                                     const nextSetId = parseInt(r.dataset.setId);
+                                    const nextSessionSet = this.findSetInSession(session, nextSetId);
+                                    if (nextSessionSet) nextSessionSet.weight_kg = value;
                                     API.patch(`/workouts/sets/${nextSetId}`, { weight_kg: value }, token).catch(() => {});
                                 }
                                 break;
@@ -589,6 +653,12 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                             if (r === row) foundCurrent = true;
                         }
                     }
+                }
+
+                const sessionSet = this.findSetInSession(session, setId);
+                if (sessionSet) {
+                    sessionSet[field] = value;
+                    this.updateWorkoutMetricsUI(session);
                 }
 
                 try {

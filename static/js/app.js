@@ -307,7 +307,13 @@ const App = {
 
     async handleCompleteWorkout(event) {
         const sessionId = event.target.closest('[data-session-id]')?.dataset.sessionId;
-        if (!confirm('Завершить тренировку?')) return;
+        if (!await Components.confirmModal({
+            title: 'Завершить тренировку?',
+            message: 'Все невыполненные подходы не будут сохранены.',
+            confirmText: 'Завершить',
+            confirmClass: 'bg-primary-600 hover:bg-primary-700 text-white shadow-md',
+            cancelText: 'Назад'
+        })) return;
 
         // Flush all active weight and rep inputs before completing
         const inputs = document.querySelectorAll('[data-set-id] input[data-field]');
@@ -335,7 +341,13 @@ const App = {
 
     async handleCancelWorkout(event) {
         const sessionId = event.target.closest('[data-session-id]')?.dataset.sessionId;
-        if (!confirm('Отменить тренировку? Прогресс не сохранится.')) return;
+        if (!await Components.confirmModal({
+            title: 'Сбросить тренировку?',
+            message: 'Прогресс этой сессии будет полностью утерян.',
+            confirmText: 'Сбросить тренировку',
+            confirmClass: 'bg-red-600 hover:bg-red-700 text-white shadow-md',
+            cancelText: 'Назад'
+        })) return;
         try {
             await API.post(`/workouts/sessions/${sessionId}/cancel`, null, this.state.tokens.access);
             this.showToast('Тренировка отменена', 'info');
