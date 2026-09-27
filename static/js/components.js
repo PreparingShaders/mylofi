@@ -1,6 +1,27 @@
 console.log("[DEBUG] Loaded components.js");
 import { Utils } from './utils.js';
 
+const SPARKLINE_STROKE = '#6366f1';
+let sparklineSeq = 0;
+
+function buildSmoothPath(pts, tension = 0.2) {
+    if (!pts.length) return '';
+    if (pts.length === 1) return `M ${pts[0].x} ${pts[0].y}`;
+    let d = `M ${pts[0].x} ${pts[0].y}`;
+    for (let i = 0; i < pts.length - 1; i++) {
+        const p0 = pts[i - 1] || pts[i];
+        const p1 = pts[i];
+        const p2 = pts[i + 1];
+        const p3 = pts[i + 2] || p2;
+        const c1x = p1.x + (p2.x - p0.x) * tension;
+        const c1y = p1.y + (p2.y - p0.y) * tension;
+        const c2x = p2.x - (p3.x - p1.x) * tension;
+        const c2y = p2.y - (p3.y - p1.y) * tension;
+        d += ` C ${c1x.toFixed(2)} ${c1y.toFixed(2)}, ${c2x.toFixed(2)} ${c2y.toFixed(2)}, ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
+    }
+    return d;
+}
+
 export const Components = {
     loadingSpinner(size = 'h-8 w-8') {
         return `<div class="flex items-center justify-center"><div class="animate-spin rounded-full ${size} border-2 border-primary-600 border-t-transparent"></div></div>`;
@@ -51,19 +72,18 @@ export const Components = {
 
         const toY = (v) => 85 - ((v - min) / range) * 60;
 
-        const points = data.map((v, i) => {
-            const x = data.length > 1 ? 5 + (i / (data.length - 1)) * 90 : 50;
-            const y = toY(v);
-            return `${x},${y}`;
-        }).join(' ');
+        const coords = data.map((v, i) => ({
+            x: data.length > 1 ? 5 + (i / (data.length - 1)) * 90 : 50,
+            y: toY(v)
+        }));
 
-        const pointCircles = data.map((v, i) => {
-            const x = data.length > 1 ? 5 + (i / (data.length - 1)) * 90 : 50;
-            const y = toY(v);
-            const isLast = i === data.length - 1;
-            const r = isLast ? 5 : 3.5;
-            return `<circle cx="${x}" cy="${y}" r="${r}" fill="#4f46e5" stroke="white" stroke-width="1.5" ${isLast ? 'style="filter: drop-shadow(0 0 4px #4f46e5)"' : ''}/>`;
-        }).join('');
+        const gradientId = `sparkline-gradient-${++sparklineSeq}`;
+        const lastPoint = coords[coords.length - 1];
+        const linePath = buildSmoothPath(coords);
+        const areaPath = `${linePath} L ${lastPoint.x} 100 L ${coords[0].x} 100 Z`;
+
+        const lastX = data.length === 1 ? 50 : lastPoint.x;
+        const lastY = data.length === 1 ? 55 : lastPoint.y;
 
         return `
             <div class="w-full">
@@ -79,25 +99,27 @@ export const Components = {
                     </div>
                 </div>
                 <div class="pt-2">
-                    <svg width="100%" height="${height}" viewBox="0 0 100 100" preserveAspectRatio="none">
-                        <defs>
-                            <linearGradient id="sparkline-gradient" x1="0%" y1="100%" x2="0%" y2="0%">
-                                <stop offset="0%" stop-color="#4f46e5" stop-opacity="0.25"/>
-                                <stop offset="100%" stop-color="#4f46e5" stop-opacity="0"/>
-                            </linearGradient>
-                        </defs>
-                        <g stroke="currentColor" stroke-opacity="0.06" stroke-width="0.5" stroke-dasharray="3 3">
-                            <line x1="0" y1="35" x2="100" y2="35"/>
-                            <line x1="0" y1="65" x2="100" y2="65"/>
-                        </g>
-                        ${data.length === 1
-                            ? `<circle cx="50" cy="55" r="7" fill="#4f46e5"/>`
-                            : `
-                                <polygon points="0,100 ${points} 100,100" fill="url(#sparkline-gradient)"/>
-                                <polyline points="${points}" fill="none" stroke="#4f46e5" stroke-linejoin="round" stroke-linecap="round" stroke-width="2.5"/>
-                                ${pointCircles}
-                            `}
-                    </svg>
+                    <div class="relative w-full">
+                        <svg class="block w-full" width="100%" height="${height}" viewBox="0 0 100 100" preserveAspectRatio="none">
+                            <defs>
+                                <linearGradient id="${gradientId}" x1="0%" y1="100%" x2="0%" y2="0%">
+                                    <stop offset="0%" stop-color="${SPARKLINE_STROKE}" stop-opacity="0.12"/>
+                                    <stop offset="100%" stop-color="${SPARKLINE_STROKE}" stop-opacity="0"/>
+                                </linearGradient>
+                            </defs>
+                            <g stroke="currentColor" stroke-opacity="0.06" stroke-width="0.5" stroke-dasharray="3 3" vector-effect="non-scaling-stroke">
+                                <line x1="0" y1="35" x2="100" y2="35"/>
+                                <line x1="0" y1="65" x2="100" y2="65"/>
+                            </g>
+                            ${data.length === 1
+                                ? ''
+                                : `
+                                    <path d="${areaPath}" fill="url(#${gradientId})" stroke="none"/>
+                                    <path d="${linePath}" fill="none" stroke="${SPARKLINE_STROKE}" stroke-width="1.75" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+                                `}
+                        </svg>
+                        <div class="absolute pointer-events-none -translate-x-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full border-2 border-white bg-primary-600 shadow-[0_0_4px_#6366f1]" style="left: ${lastX}%; top: ${lastY}%;"></div>
+                    </div>
                 </div>
             </div>
         `;
