@@ -368,7 +368,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 </div>
                 
                   <div class="min-h-[140px]">
-                      ${Components.sparkline(historyPoints, 72, 'Тоннаж (кг)')}
+                      ${Components.sparkline(historyPoints, 72)}
                   </div>
 
                  <div class="space-y-2">
