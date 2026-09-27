@@ -7,9 +7,18 @@ const TOGGLE_BASE = 'flex-shrink-0 w-11 h-11 rounded-2xl text-xl font-bold trans
 const TOGGLE_COMPLETED = 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300 shadow-md';
 const TOGGLE_UNCOMPLETED = 'bg-white dark:bg-surface-800 text-surface-400 shadow-sm border border-surface-200 dark:border-surface-700';
 
+const LOCK_ICON = '<svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>';
+const WEEK_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+const QUICK_GOALS = [
+    { value: 'strength', title: 'Сила', subtitle: 'Базовые движения, 3×5' },
+    { value: 'hypertrophy', title: 'Набор массы', subtitle: 'Компаундные + изоляция, 3×10' },
+    { value: 'endurance', title: 'Выносливость', subtitle: 'Лёгкий вес, много подходов, 2×15' },
+];
+
 export const Workouts = {
     app: null,
     workoutTimerInterval: null,
+    recentSessions: [],
 
     async render(container, app) {
         this.app = app;
@@ -17,25 +26,32 @@ export const Workouts = {
         let activeSession;
         let stats = null;
         let templates = [];
+        let historyData = { sessions: [] };
         try {
-            [activeSession, stats, templates] = await Promise.all([
+            [activeSession, stats, templates, historyData] = await Promise.all([
                 API.get('/workouts/sessions/active', app.state.tokens.access).catch(() => null),
                 API.get('/workouts/statistics', app.state.tokens.access).catch(() => null),
                 API.get('/workouts/templates', app.state.tokens.access).catch(() => []),
+                API.get('/workouts/history?limit=100', app.state.tokens.access).catch(() => ({ sessions: [] })),
             ]);
         } catch (error) {
             console.error('[Workouts] Load error:', error);
         }
 
+        const recentSessions = (historyData.sessions || []).filter(s => s.status === 'completed');
+        this.recentSessions = recentSessions;
+
         let statsWidget = '';
         if (stats && stats.total_workouts > 0) {
+            const week = this.getWeekActivity(recentSessions);
+            const trainedThisWeek = week.filter(d => d.count > 0).length;
             statsWidget = `
                 <div class="bg-surface-100 dark:bg-surface-800 rounded-2xl p-4 mb-6 shadow-sm">
                     <div class="flex justify-between items-center mb-3">
                         <h3 class="font-semibold text-sm text-surface-500 uppercase tracking-wider">Прогресс и объём</h3>
                         <span class="text-xs text-primary-600 dark:text-primary-400 font-medium">Серия: ${stats.current_streak_weeks} нед.</span>
                     </div>
-                    <div class="grid grid-cols-3 gap-2 text-center">
+                    <div class="grid grid-cols-3 gap-2 text-center mb-4">
                         <div class="bg-surface-50 dark:bg-surface-700/50 p-2.5 rounded-xl">
                             <div class="text-xs text-surface-400">Тренировок</div>
                             <div class="text-lg font-bold">${stats.total_workouts}</div>
@@ -49,13 +65,49 @@ export const Workouts = {
                             <div class="text-lg font-bold">${stats.total_sets}</div>
                         </div>
                     </div>
+
+                    <div class="bg-surface-50 dark:bg-surface-700/50 p-3 rounded-2xl">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-[11px] font-semibold text-surface-500 uppercase tracking-wider">Неделя</span>
+                            <span class="text-[11px] text-surface-500 dark:text-surface-400">${trainedThisWeek} из 7 дней</span>
+                        </div>
+                        <div class="grid grid-cols-7 gap-1.5">
+                            ${week.map((day, i) => `
+                                <div class="flex flex-col items-center gap-1"
+                                     title="${day.dayNum} ${WEEK_LABELS[i]}: ${day.count} тренировок, ${Math.round(day.volume)} кг">
+                                    <span class="text-[10px] font-medium ${day.isToday ? 'text-primary-600 dark:text-primary-400' : 'text-surface-400'}">${WEEK_LABELS[i]}</span>
+                                    <div class="w-full h-10 rounded-xl flex flex-col items-center justify-center leading-none transition-colors
+                                                ${day.count > 0
+                                                    ? 'bg-primary-600 text-white shadow-sm'
+                                                    : day.isToday
+                                                        ? 'bg-primary-50 dark:bg-primary-900/40 text-primary-600 dark:text-primary-300 border border-primary-200 dark:border-primary-800'
+                                                        : 'bg-white dark:bg-surface-800 text-surface-300 dark:text-surface-600 border border-surface-200 dark:border-surface-700'}">
+                                        <span class="text-sm font-bold">${day.dayNum}</span>
+                                        ${day.count > 0 ? `<span class="text-[9px] opacity-90 mt-0.5">×${day.count}</span>` : ''}
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+
+                    <div class="flex justify-end mt-3">
+                        <button data-action="view-statistics" class="text-xs font-semibold text-primary-600 dark:text-primary-400">
+                            Вся статистика →
+                        </button>
+                    </div>
                 </div>
             `;
         }
 
+        const hasActiveSession = !!activeSession;
+        const activeMetrics = this.getWorkoutMetrics(activeSession || { exercises: [] });
+        const activePercent = activeMetrics.total > 0
+            ? Math.round((activeMetrics.completed / activeMetrics.total) * 100)
+            : 0;
+        const records = this.getPersonalRecords(recentSessions);
+
         let templatesWidget = '';
         if (templates && templates.length > 0) {
-            const hasActiveSession = !!activeSession;
             templatesWidget = `
                 <div class="mb-6">
                     <div class="flex justify-between items-center mb-3">
@@ -64,7 +116,7 @@ export const Workouts = {
                     </div>
                     <div class="flex overflow-x-auto snap-x snap-mandatory gap-3 pb-2 scrollbar-none -mx-4 px-4">
                         ${templates.map(t => `
-                            <div class="min-w-[220px] max-w-[240px] snap-center bg-surface-100 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-2xl p-4 flex flex-col justify-between shadow-sm">
+                            <div class="min-w-[220px] max-w-[240px] snap-center bg-surface-100 dark:bg-surface-800 border ${hasActiveSession ? 'border-surface-200/70 dark:border-surface-700/70 opacity-60' : 'border-surface-200 dark:border-surface-700'} rounded-2xl p-4 flex flex-col justify-between shadow-sm">
                                 <div class="flex-1 cursor-pointer" data-action="view-template" data-template-id="${t.id}">
                                     <h4 class="font-bold text-base truncate mb-1" title="${t.name}">${t.name}</h4>
                                     <p class="text-xs text-surface-500 dark:text-surface-400 mb-2">${t.exercises.length} упр.</p>
@@ -73,8 +125,8 @@ export const Workouts = {
                                     </div>
                                 </div>
                                 <button data-action="start-template" data-template-id="${t.id}" ${hasActiveSession ? 'disabled' : ''}
-                                        class="w-full py-2 ${hasActiveSession ? 'bg-surface-400' : 'bg-primary-600'} text-white rounded-xl text-xs font-semibold text-center shadow-sm">
-                                    ${hasActiveSession ? 'Тренировка уже идет' : 'Начать тренировку →'}
+                                        class="w-full py-2 flex items-center justify-center gap-1.5 ${hasActiveSession ? 'bg-surface-300 text-surface-500 dark:bg-surface-700 dark:text-surface-400 cursor-not-allowed' : 'bg-primary-600 text-white'} rounded-xl text-xs font-semibold text-center shadow-sm">
+                                    ${hasActiveSession ? `${LOCK_ICON}<span>Активна тренировка</span>` : '<span>Начать тренировку →</span>'}
                                 </button>
                             </div>
                         `).join('')}
@@ -95,9 +147,21 @@ export const Workouts = {
                     ? `<div class="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-xl p-4 mb-6 shadow-sm">
                         <div class="flex items-center justify-between mb-2">
                             <h3 class="font-semibold text-primary-700 dark:text-primary-300">Активная тренировка</h3>
-                            <span class="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></span>
+                            <span class="flex items-center gap-1.5 text-sm font-mono tabular-nums text-primary-700 dark:text-primary-300">
+                                <span class="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></span>
+                                <span id="dashboard-workout-timer">${this.formatTimer(this.getElapsedSeconds(activeSession))}</span>
+                            </span>
                         </div>
                         <p class="text-sm text-surface-600 dark:text-surface-300 mb-3">${activeSession.name || 'Без названия'}</p>
+                        <div class="mb-3">
+                            <div class="flex items-center justify-between gap-2 mb-1">
+                                <span class="text-xs font-semibold text-surface-600 dark:text-surface-300">Сделано ${activeMetrics.completed} из ${activeMetrics.total} подходов (${activePercent}%)</span>
+                                <span class="text-xs font-semibold text-surface-600 dark:text-surface-300">${Math.round(activeMetrics.tonnage)} кг</span>
+                            </div>
+                            <div class="h-2 w-full rounded-full bg-surface-200 dark:bg-surface-700 overflow-hidden">
+                                <div class="h-full rounded-full bg-primary-500 transition-all duration-300" style="width: ${activePercent}%"></div>
+                            </div>
+                        </div>
                         <button data-action="resume-workout" data-session-id="${activeSession.id}"
                                 class="w-full py-2.5 bg-primary-600 text-white rounded-xl text-sm font-medium shadow-md">
                             Продолжить тренировку →
@@ -120,28 +184,30 @@ export const Workouts = {
                             <span class="mt-4 text-xs font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-3 py-2 rounded-xl text-center">Создать шаблон →</span>
                         </div>
 
-                        <!-- Card 2: History -->
-                        <div class="min-w-[240px] max-w-[260px] snap-center bg-surface-100 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-2xl p-4 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="view-history">
+                        <!-- Card 2: Quick Start -->
+                        <div class="min-w-[240px] max-w-[260px] snap-center bg-surface-100 dark:bg-surface-800 border ${hasActiveSession ? 'border-surface-200/70 dark:border-surface-700/70' : 'border-surface-200 dark:border-surface-700'} rounded-2xl p-4 flex flex-col justify-between shadow-sm ${hasActiveSession ? 'opacity-60' : 'cursor-pointer btn-press'}" data-action="${hasActiveSession ? '' : 'quick-start-workout'}">
                             <div>
                                 <div class="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center mb-3">
-                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                                 </div>
-                                <h4 class="font-bold text-lg mb-1">История</h4>
-                                <p class="text-xs text-surface-500 dark:text-surface-400">Журнал прошлых тренировок</p>
+                                <h4 class="font-bold text-lg mb-1">Быстрый старт</h4>
+                                <p class="text-xs text-surface-500 dark:text-surface-400">Готовая тренировка под цель: сила, масса или выносливость</p>
                             </div>
-                            <span class="mt-4 text-xs font-semibold bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-3 py-2 rounded-xl text-center">Смотреть →</span>
+                            ${hasActiveSession
+                                ? `<span class="mt-4 text-xs font-semibold bg-surface-200 dark:bg-surface-700 text-surface-500 dark:text-surface-400 px-3 py-2 rounded-xl text-center flex items-center justify-center gap-1.5">${LOCK_ICON}<span>Активна тренировка</span></span>`
+                                : '<span class="mt-4 text-xs font-semibold bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-3 py-2 rounded-xl text-center">Начать сразу →</span>'}
                         </div>
 
-                        <!-- Card 3: Statistics -->
-                        <div class="min-w-[240px] max-w-[260px] snap-center bg-surface-100 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-2xl p-4 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="view-statistics">
+                        <!-- Card 3: Personal Records -->
+                        <div class="min-w-[240px] max-w-[260px] snap-center bg-surface-100 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-2xl p-4 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="view-records">
                             <div>
-                                <div class="w-10 h-10 rounded-xl bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400 flex items-center justify-center flex-shrink-0 mb-3">
-                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                                <div class="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 flex items-center justify-center mb-3">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-1l2 2 4-4m-5.5-8.5L19 3l2 2-3 3-2-2z"/></svg>
                                 </div>
-                                <h4 class="font-bold text-lg mb-1">Статистика</h4>
-                                <p class="text-xs text-surface-500 dark:text-surface-400">Объемы, тоннаж и аналитика</p>
+                                <h4 class="font-bold text-lg mb-1">Личные рекорды (PR)</h4>
+                                <p class="text-xs text-surface-500 dark:text-surface-400">${records.length > 0 ? `Максимумы по ${records.length} упражнениям` : 'Максимальные веса по упражнениям'}</p>
                             </div>
-                            <span class="mt-4 text-xs font-semibold bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-400 px-3 py-2 rounded-xl text-center">Анализ →</span>
+                            <span class="mt-4 text-xs font-semibold bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 px-3 py-2 rounded-xl text-center">Смотреть рекорды →</span>
                         </div>
                     </div>
                 </div>
@@ -153,30 +219,32 @@ export const Workouts = {
         container.innerHTML = html;
 
         container.querySelectorAll('[data-action="show-build-workout"]').forEach(el => {
-            el.addEventListener('click', () => this.showBuildWorkout(app));
+            el.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.showBuildWorkout(app);
+            });
         });
-        container.querySelectorAll('[data-action="view-history"]').forEach(el => {
-            el.addEventListener('click', () => app.showPage('history'));
+        container.querySelectorAll('[data-action="quick-start-workout"]').forEach(el => {
+            el.addEventListener('click', () => this.showQuickStartModal(app));
+        });
+        container.querySelectorAll('[data-action="view-records"]').forEach(el => {
+            el.addEventListener('click', () => this.renderPersonalRecords(container, app, records));
         });
         container.querySelectorAll('[data-action="view-statistics"]').forEach(el => {
             el.addEventListener('click', () => app.showPage('statistics'));
-        });
-        container.querySelectorAll('[data-action="view-history"]').forEach(el => {
-            el.addEventListener('click', () => app.showPage('history'));
         });
         container.querySelectorAll('[data-action="view-templates"]').forEach(el => {
             el.addEventListener('click', () => app.showPage('templates'));
         });
-        container.querySelectorAll('[data-action="view-statistics"]').forEach(el => {
-            el.addEventListener('click', () => app.showPage('statistics'));
-        });
         container.querySelector('[data-action="resume-workout"]')?.addEventListener('click', (e) => {
+            e.stopPropagation();
             const sessionId = e.currentTarget.dataset.sessionId;
             this.renderWorkoutScreen(container, app, parseInt(sessionId));
         });
 
         container.querySelectorAll('[data-action="view-template"]').forEach(btn => {
             btn.addEventListener('click', (e) => {
+                e.stopPropagation();
                 const templateId = parseInt(e.currentTarget.dataset.templateId);
                 const template = templates.find(t => t.id === templateId);
                 if (template) {
@@ -187,21 +255,23 @@ export const Workouts = {
 
         container.querySelectorAll('[data-action="start-template"]').forEach(btn => {
             btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
                 const button = e.currentTarget;
                 const templateId = parseInt(button.dataset.templateId);
-                
+                const originalHtml = button.innerHTML;
+
                 button.disabled = true;
-                button.textContent = 'Запуск...';
-                
+                button.innerHTML = '<span>Запуск...</span>';
+
                 // Запускаем API запрос СРАЗУ, параллельно с отсчетом
                 const sessionPromise = API.post(`/workouts/templates/${templateId}/start`, {}, app.state.tokens.access);
-                
+
                 // Запускаем отсчет
                 this.renderCountdown(container, () => {});
-                
+
                 try {
                     const session = await sessionPromise;
-                    
+
                     // Рендерим экран
                     await this.renderWorkoutScreen(container, app, session.id);
                 } catch (err) {
@@ -209,11 +279,80 @@ export const Workouts = {
                     app.showToast(err.message || 'Ошибка запуска', 'error');
                     if (button) {
                         button.disabled = false;
-                        button.textContent = 'Начать тренировку →';
+                        button.innerHTML = originalHtml;
                     }
                 }
             });
         });
+
+        if (activeSession) {
+            this.startWorkoutTimer(activeSession, 'dashboard-workout-timer');
+        }
+    },
+
+    getElapsedSeconds(session) {
+        if (!session || !session.started_at) return 0;
+        const startTime = new Date(session.started_at).getTime();
+        if (isNaN(startTime)) return 0;
+        return Math.max(0, Math.floor((Date.now() - startTime) / 1000));
+    },
+
+    getWeekActivity(sessions) {
+        const now = new Date();
+        const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        monday.setDate(monday.getDate() - ((now.getDay() + 6) % 7));
+
+        const dayVolume = (session) => (session.exercises || []).reduce((sum, ex) =>
+            sum + (ex.sets || []).reduce((s, set) =>
+                s + (set.is_completed ? (set.weight_kg || 0) * (set.reps || 0) : 0), 0), 0);
+
+        return WEEK_LABELS.map((_, i) => {
+            const date = new Date(monday);
+            date.setDate(monday.getDate() + i);
+            const daySessions = (sessions || []).filter(s => {
+                const stamp = s.completed_at || s.started_at;
+                if (!stamp) return false;
+                const d = new Date(stamp);
+                return d.getFullYear() === date.getFullYear()
+                    && d.getMonth() === date.getMonth()
+                    && d.getDate() === date.getDate();
+            });
+            return {
+                date,
+                dayNum: date.getDate(),
+                count: daySessions.length,
+                volume: daySessions.reduce((sum, s) => sum + dayVolume(s), 0),
+                isToday: date.toDateString() === now.toDateString(),
+            };
+        });
+    },
+
+    getPersonalRecords(sessions) {
+        const best = new Map();
+
+        (sessions || []).forEach(session => {
+            (session.exercises || []).forEach(ex => {
+                (ex.sets || []).forEach(set => {
+                    const weight = set.weight_kg || 0;
+                    if (!set.is_completed || weight <= 0 || !set.reps) return;
+                    const key = ex.name.trim().toLowerCase();
+                    // Epley: оценочный максимум на 1 повтор
+                    const e1rm = weight * (1 + set.reps / 30);
+                    const current = best.get(key);
+                    if (!current || e1rm > current.e1rm) {
+                        best.set(key, {
+                            name: ex.name,
+                            weight_kg: weight,
+                            reps: set.reps,
+                            e1rm,
+                            date: session.completed_at || session.started_at || null,
+                        });
+                    }
+                });
+            });
+        });
+
+        return [...best.values()].sort((a, b) => b.e1rm - a.e1rm);
     },
 
     formatTimer(seconds) {
@@ -226,17 +365,22 @@ export const Workouts = {
         return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
     },
 
-    startWorkoutTimer(session) {
+    startWorkoutTimer(session, elementId = 'workout-timer') {
         this.stopWorkoutTimer();
         if (!session || !session.started_at) return;
 
         const startTime = new Date(session.started_at).getTime();
-        const timerEl = document.getElementById('workout-timer');
+        if (isNaN(startTime)) return;
+        const timerEl = document.getElementById(elementId);
         if (!timerEl) return;
 
         const updateTimer = () => {
-            const elapsed = Math.floor((Date.now() - startTime) / 1000);
-            timerEl.textContent = this.formatTimer(elapsed);
+            const el = document.getElementById(elementId);
+            if (!el) {
+                this.stopWorkoutTimer();
+                return;
+            }
+            el.textContent = this.formatTimer(Math.floor((Date.now() - startTime) / 1000));
         };
 
         updateTimer();
@@ -309,7 +453,13 @@ export const Workouts = {
         });
 
         container.querySelector('[data-action="delete-template"]').addEventListener('click', async () => {
-            if (!confirm('Удалить этот шаблон тренировки?')) return;
+            if (!await Components.confirmModal({
+                title: 'Удалить шаблон?',
+                message: `Шаблон «${template.name}» будет удалён безвозвратно.`,
+                confirmText: 'Удалить',
+                confirmClass: 'bg-red-600 hover:bg-red-700 text-white shadow-md',
+                cancelText: 'Назад'
+            })) return;
             try {
                 await API.delete(`/workouts/templates/${template.id}`, app.state.tokens.access);
                 app.showToast('Шаблон удален', 'info');
@@ -708,7 +858,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         });
 
         // Back button
-        container.querySelector('[data-action="back-to-workouts"]')?.addEventListener('click', () => {
+        container.querySelector('[data-action="back-to-workouts"]')?.addEventListener('click', (e) => {
+            e.stopPropagation();
             this.stopWorkoutTimer();
             app.showPage('workouts');
         });
@@ -753,8 +904,119 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         `;
 
         container.innerHTML = html;
-        container.querySelector('[data-action="back-to-workouts"]')?.addEventListener('click', () => {
-            app.router.navigate('/workouts');
+        container.querySelector('[data-action="back-to-workouts"]')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            app.showPage('workouts');
+        });
+    },
+
+    showQuickStartModal(app) {
+        this.app = app;
+        const modal = document.createElement('div');
+        modal.id = 'quick-start-modal';
+        modal.className = 'fixed inset-0 z-50 flex items-center justify-center modal-backdrop pointer-events-auto';
+        modal.innerHTML = `
+            <div class="bg-surface-50 dark:bg-surface-900 rounded-2xl p-6 mx-4 max-w-sm w-full shadow-2xl">
+                <div class="flex justify-between items-center mb-1">
+                    <h3 class="text-lg font-bold">Быстрый старт</h3>
+                    <button type="button" data-action="close-quick-start" class="text-surface-500 hover:text-surface-900 dark:text-surface-400 p-1">✕</button>
+                </div>
+                <p class="text-xs text-surface-500 dark:text-surface-400 mb-4">
+                    Выберите цель — упражнения и подходы подставятся автоматически, веса берутся из прошлых тренировок.
+                </p>
+                <div class="space-y-2">
+                    ${QUICK_GOALS.map(goal => `
+                        <button type="button" data-goal="${goal.value}"
+                                class="w-full flex items-center justify-between gap-3 p-3.5 rounded-2xl bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-left btn-press">
+                            <span class="min-w-0">
+                                <span class="block font-semibold text-sm">${goal.title}</span>
+                                <span class="block text-[11px] text-surface-500 dark:text-surface-400">${goal.subtitle}</span>
+                            </span>
+                            <span class="text-surface-300 flex-shrink-0">→</span>
+                        </button>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+
+        const onKeydown = (e) => {
+            if (e.key === 'Escape') close();
+        };
+        const close = () => {
+            document.removeEventListener('keydown', onKeydown);
+            modal.remove();
+        };
+
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) close();
+        });
+        modal.querySelector('[data-action="close-quick-start"]').addEventListener('click', close);
+        modal.querySelectorAll('[data-goal]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const goal = btn.dataset.goal;
+                close();
+                await this.startQuickWorkout(app, goal);
+            });
+        });
+        document.addEventListener('keydown', onKeydown);
+
+        (document.getElementById('modals') || document.body).appendChild(modal);
+    },
+
+    async startQuickWorkout(app, goal) {
+        this.app = app;
+        this.stopWorkoutTimer();
+
+        // Запускаем API запрос СРАЗУ, параллельно с отсчетом
+        const sessionPromise = API.post('/workouts/sessions/quick-start', { goal }, app.state.tokens.access);
+        this.renderCountdown(app.elements.pageContent, () => {});
+
+        try {
+            const { session_id } = await sessionPromise;
+            await this.renderWorkoutScreen(app.elements.pageContent, app, session_id);
+        } catch (err) {
+            console.error('Quick start error:', err);
+            app.showToast(err.message || 'Ошибка быстрого старта', 'error');
+            await this.render(app.elements.pageContent, app);
+        }
+    },
+
+    renderPersonalRecords(container, app, records = null) {
+        this.app = app;
+        this.stopWorkoutTimer();
+        const list = records || this.getPersonalRecords(this.recentSessions || []);
+
+        container.innerHTML = `
+            <div class="p-4">
+                <div class="flex items-center mb-4">
+                    <button data-action="back-to-workouts" class="mr-3 text-surface-500 hover:text-surface-900 dark:text-surface-400">←</button>
+                    <h2 class="text-xl font-bold">Личные рекорды</h2>
+                </div>
+
+                ${list.length === 0
+                    ? '<div class="text-center py-8 text-surface-400">Рекордов пока нет. Завершите тренировку с весами.</div>'
+                    : `<div class="space-y-2">
+                        ${list.map(record => `
+                            <div class="bg-white dark:bg-surface-800 rounded-2xl p-4 shadow-sm flex items-center justify-between gap-3">
+                                <div class="min-w-0 flex-1">
+                                    <h3 class="font-semibold text-sm truncate" title="${record.name}">${record.name}</h3>
+                                    <p class="text-xs text-surface-500 dark:text-surface-400 mt-0.5">
+                                        ${record.reps} повт.${record.date ? ` · ${Utils.formatDate(record.date)}` : ''}
+                                    </p>
+                                </div>
+                                <div class="text-right flex-shrink-0">
+                                    <p class="text-lg font-bold text-primary-600 dark:text-primary-400">${record.weight_kg} кг</p>
+                                    <p class="text-[11px] text-surface-400">≈${Math.round(record.e1rm)} кг на 1 повтор</p>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>`}
+            </div>
+        `;
+
+        container.querySelector('[data-action="back-to-workouts"]')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.render(container, app);
         });
     },
 
@@ -775,14 +1037,14 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     </div>
                     <div class="space-y-3">
                         ${templates.map(t => `
-                            <div class="bg-white dark:bg-surface-800 rounded-xl p-4 shadow-sm flex justify-between items-center">
-                                <div>
-                                    <h3 class="font-semibold">${t.name}</h3>
+                            <div class="bg-white dark:bg-surface-800 rounded-xl p-4 shadow-sm flex justify-between items-center gap-3 ${hasActiveSession ? 'opacity-60' : ''}">
+                                <div class="min-w-0">
+                                    <h3 class="font-semibold truncate">${t.name}</h3>
                                     <p class="text-xs text-surface-400">${t.exercises.length} упр.</p>
                                 </div>
                                 <button data-action="start-template" data-template-id="${t.id}" ${hasActiveSession ? 'disabled' : ''}
-                                        class="px-3 py-1 ${hasActiveSession ? 'bg-surface-400' : 'bg-primary-600'} text-white rounded text-xs">
-                                    ${hasActiveSession ? 'Активна' : 'Начать'}
+                                        class="px-3 py-1.5 flex items-center gap-1.5 flex-shrink-0 ${hasActiveSession ? 'bg-surface-200 text-surface-500 dark:bg-surface-700 dark:text-surface-400 cursor-not-allowed' : 'bg-primary-600 text-white'} rounded text-xs">
+                                    ${hasActiveSession ? `${LOCK_ICON}<span>Активна тренировка</span>` : '<span>Начать</span>'}
                                 </button>
                             </div>
                         `).join('')}
@@ -790,7 +1052,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 </div>
             `;
             container.innerHTML = html;
-            container.querySelector('[data-action="back-to-workouts"]')?.addEventListener('click', () => {
+            container.querySelector('[data-action="back-to-workouts"]')?.addEventListener('click', (e) => {
+                e.stopPropagation();
                 app.showPage('workouts');
             });
             container.querySelector('[data-action="create-template"]')?.addEventListener('click', () => {
@@ -810,9 +1073,10 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             btn.addEventListener('click', async (e) => {
                 const button = e.currentTarget;
                 const templateId = parseInt(button.dataset.templateId);
+                const originalHtml = button.innerHTML;
                 
                 button.disabled = true;
-                button.textContent = 'Запуск...';
+                button.innerHTML = '<span>Запуск...</span>';
                 
                 // Запускаем API запрос СРАЗУ, параллельно с отсчетом
                 const sessionPromise = API.post(`/workouts/templates/${templateId}/start`, {}, app.state.tokens.access);
@@ -828,7 +1092,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 } catch (err) {
                     app.showToast(err.message || 'Ошибка запуска', 'error');
                     button.disabled = false;
-                    button.textContent = 'Начать';
+                    button.innerHTML = originalHtml;
                 }
             });
         });
@@ -905,7 +1169,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 </div>
             `;
             container.innerHTML = html;
-            container.querySelector('[data-action="back-to-workouts"]')?.addEventListener('click', () => {
+            container.querySelector('[data-action="back-to-workouts"]')?.addEventListener('click', (e) => {
+                e.stopPropagation();
                 app.showPage('workouts');
             });
         } catch (err) {

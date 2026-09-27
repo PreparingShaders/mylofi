@@ -179,6 +179,8 @@ const App = {
             else if (pageName === 'camera') await Camera.render(container, this);
             else if (pageName === 'profile') await Profile.render(container, this);
             else if (pageName === 'history') await Workouts.renderHistory(container, this);
+            else if (pageName === 'statistics') await Workouts.renderStatisticsScreen(container, this);
+            else if (pageName === 'templates') await Workouts.renderTemplatesScreen(container, this);
         } catch (error) {
             console.error('[App] Render error:', error);
             container.innerHTML = Components.errorState('Ошибка загрузки');
