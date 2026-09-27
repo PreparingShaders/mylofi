@@ -80,6 +80,17 @@ const App = {
             this.state.isOnline = false;
             console.log('[App] Network lost, requests will be queued locally');
         });
+
+        API.itemResolver = (item) => Workouts.resolveQueuedItem(item);
+        API.onItemSynced = (item, response, meta) => Workouts.handleSyncedItem(item, response, meta);
+
+        // Lists rendered from the read cache are stale right after a sync
+        window.addEventListener('mylofi:offline-sync', () => {
+            if (this.state.currentScreen !== 'main') return;
+            if (['workouts', 'history', 'statistics', 'templates'].includes(this.state.currentPage)) {
+                this.renderPage(this.state.currentPage);
+            }
+        });
     },
 
     async flushOfflineQueue() {
@@ -312,17 +323,22 @@ const App = {
         // Update UI immediately (optimistic)
         btn.disabled = true;
         btn.textContent = '...';
-        
+
+        const applyState = (completed) => {
+            btn.dataset.completed = String(completed);
+            btn.className = TOGGLE_BASE + ' ' + (completed ? TOGGLE_COMPLETED : TOGGLE_UNCOMPLETED);
+            const weightField = row.querySelector('[data-field="weight"]');
+            const repsField = row.querySelector('[data-field="reps"]');
+            if (weightField) weightField.readOnly = completed;
+            if (repsField) repsField.readOnly = completed;
+        };
+
         try {
             await API.patch(`/workouts/sets/${set_id}`, payload, this.state.tokens.access);
-            
-            // Update UI state
-            if (!wasCompleted) {
-                btn.dataset.completed = 'true';
-                btn.className = TOGGLE_BASE + ' ' + TOGGLE_COMPLETED;
-                row.querySelector('[data-field="weight"]').readOnly = true;
-                row.querySelector('[data-field="reps"]').readOnly = true;
 
+            // Update UI state
+            applyState(!wasCompleted);
+            if (!wasCompleted) {
                 // Auto-scroll to next exercise if last set of current exercise
                 const exerciseContainer = row.closest('.snap-center');
                 const allSets = exerciseContainer.querySelectorAll('[data-action="toggle-set"]');
@@ -334,16 +350,17 @@ const App = {
                         carousel.scrollBy({ left: cardWidth, behavior: 'smooth' });
                     }
                 }
-            } else {
-                btn.dataset.completed = 'false';
-                btn.className = TOGGLE_BASE + ' ' + TOGGLE_UNCOMPLETED;
-                row.querySelector('[data-field="weight"]').readOnly = false;
-                row.querySelector('[data-field="reps"]').readOnly = false;
             }
             btn.textContent = '✓';
             btn.disabled = false;
         } catch (e) {
-            this.showToast(e.message || 'Ошибка обновления сета', 'error');
+            if (e?.offlineQueued) {
+                // Keep the optimistic state: the request is replayed from the sync queue
+                applyState(!wasCompleted);
+                this.showToast(e.message, 'info');
+            } else {
+                this.showToast(e.message || 'Ошибка обновления сета', 'error');
+            }
             btn.disabled = false;
             btn.textContent = '✓';
         }
@@ -358,6 +375,12 @@ const App = {
             confirmClass: 'bg-primary-600 hover:bg-primary-700 text-white dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200 font-semibold shadow-md',
             cancelText: 'Назад'
         })) return;
+
+        // A session created offline has no server id yet: close it locally and queue the request
+        if (Workouts.completeLocalSession(this)) {
+            await this.renderPage('workouts');
+            return;
+        }
 
         // Flush all active weight and rep inputs before completing
         const inputs = document.querySelectorAll('[data-set-id] input[data-field]');
@@ -377,6 +400,13 @@ const App = {
             await API.post(`/workouts/sessions/${sessionId}/complete`, null, this.state.tokens.access);
             this.showToast('Тренировка завершена!', 'success');
         } catch (e) {
+            if (e?.offlineQueued) {
+                // Session is closed locally, the request goes out as soon as the network is back
+                await Workouts.markSessionCompletedLocally(sessionId);
+                this.showToast('Тренировка завершена! Сеть недоступна, данные будут синхронизированы при появлении связи', 'info');
+                await this.renderPage('workouts');
+                return;
+            }
             this.showToast(e.message || 'Ошибка завершения тренировки', 'error');
             return;
         }
@@ -392,10 +422,20 @@ const App = {
             confirmClass: 'bg-red-600 hover:bg-red-700 text-white shadow-md',
             cancelText: 'Назад'
         })) return;
+        if (Workouts.cancelLocalSession(this)) {
+            await this.renderPage('workouts');
+            return;
+        }
         try {
             await API.post(`/workouts/sessions/${sessionId}/cancel`, null, this.state.tokens.access);
             this.showToast('Тренировка отменена', 'info');
         } catch (e) {
+            if (e?.offlineQueued) {
+                await Workouts.markSessionCancelledLocally(sessionId);
+                this.showToast('Тренировка отменена', 'info');
+                await this.renderPage('workouts');
+                return;
+            }
             this.showToast(e.message || 'Ошибка отмены тренировки', 'error');
             return;
         }

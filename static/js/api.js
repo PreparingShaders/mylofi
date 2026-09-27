@@ -5,6 +5,21 @@ const OFFLINE_QUEUE_KEY = 'offline_sync_queue';
 const OFFLINE_MESSAGE = 'Сеть недоступна. Изменения сохранены локально и будут отправлены при появлении связи';
 const QUEUEABLE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
+const READ_CACHE_PREFIX = 'offline_read_cache:';
+const READ_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const READ_CACHE_MAX_ENTRY_BYTES = 300 * 1024;
+const READ_CACHE_TOTAL_BYTES = 2 * 1024 * 1024;
+
+// Cache entries invalidated together when a mutation touches a resource
+const READ_CACHE_RELATIONSHIPS = {
+    'workouts/sets': ['workouts/sessions', 'workouts/statistics', 'workouts/history'],
+    'workouts/sessions': ['workouts/sessions', 'workouts/statistics', 'workouts/history'],
+    'workouts/templates': ['workouts/templates'],
+    'nutrition/meals': ['nutrition/logs', 'nutrition/summary'],
+    'nutrition/photos': ['nutrition/logs', 'nutrition/summary'],
+    'users/me': ['users/me'],
+};
+
 class APIClient {
     constructor() {
         this.baseURL = API_BASE;
@@ -12,8 +27,10 @@ class APIClient {
         this.refreshQueue = [];
         this.replaying = false;
         this.processingQueue = false;
+        this.itemResolver = null;
+        this.onItemSynced = null;
     }
-    
+
     getHeaders(accessToken, isFormData = false) {
         const headers = {};
         if (accessToken) {
@@ -91,47 +108,193 @@ class APIClient {
         return this.readQueue().length > 0;
     }
 
-    enqueueRequest(method, endpoint, data, accessToken) {
+    enqueueRequest(method, endpoint, data, accessToken, options = {}) {
         const queue = this.readQueue();
-        queue.push({
+        const item = {
             method,
             endpoint,
             data: data ?? null,
             accessToken: accessToken ?? null,
             queuedAt: new Date().toISOString(),
-        });
+        };
+        if (options.offlineSessionKey) item.offlineSessionKey = options.offlineSessionKey;
+        if (options.prepend) {
+            queue.unshift(item);
+        } else {
+            queue.push(item);
+        }
         this.writeQueue(queue);
+        this.invalidateReadCache(endpoint);
         console.log(`[API] Queued offline request: ${method} ${endpoint} (queue: ${queue.length})`);
+        return item;
     }
 
     isQueueable(method, data, isFormData) {
         return !this.replaying && QUEUEABLE_METHODS.has(method) && !isFormData && data !== undefined;
     }
 
+    // Attaches metadata to the most recently queued matching request
+    markQueuedRequest(method, endpoint, extra) {
+        const queue = this.readQueue();
+        for (let i = queue.length - 1; i >= 0; i -= 1) {
+            if (queue[i].method === method && queue[i].endpoint === endpoint) {
+                queue[i] = { ...queue[i], ...extra };
+                this.writeQueue(queue);
+                return queue[i];
+            }
+        }
+        return null;
+    }
+
+    static readCacheKey(endpoint) {
+        return `${READ_CACHE_PREFIX}${endpoint}`;
+    }
+
+    readCacheGet(endpoint) {
+        try {
+            const raw = localStorage.getItem(APIClient.readCacheKey(endpoint));
+            if (!raw) return null;
+            const entry = JSON.parse(raw);
+            if (!entry || typeof entry !== 'object' || entry.data === undefined) return null;
+            if (Date.now() - (entry.savedAt || 0) > READ_CACHE_MAX_AGE_MS) {
+                localStorage.removeItem(APIClient.readCacheKey(endpoint));
+                return null;
+            }
+            return entry.data;
+        } catch (error) {
+            console.warn('[API] Failed to read cache entry:', endpoint, error);
+            return null;
+        }
+    }
+
+    readCacheSet(endpoint, data) {
+        if (data === undefined || data === null || typeof data !== 'object') return;
+        let serialized;
+        try {
+            serialized = JSON.stringify({ savedAt: Date.now(), data });
+        } catch (error) {
+            return;
+        }
+        if (serialized.length > READ_CACHE_MAX_ENTRY_BYTES) return;
+        try {
+            const cacheKey = APIClient.readCacheKey(endpoint);
+            let used = serialized.length;
+            const evictable = this.listReadCacheKeys()
+                .filter(key => key !== cacheKey)
+                .map(key => ({ key, savedAt: this.readCacheSavedAt(key) }))
+                .sort((a, b) => a.savedAt - b.savedAt);
+
+            for (const entry of evictable) {
+                if (used <= READ_CACHE_TOTAL_BYTES) break;
+                used -= (localStorage.getItem(entry.key)?.length || 0);
+                localStorage.removeItem(entry.key);
+            }
+            if (used > READ_CACHE_TOTAL_BYTES) return;
+
+            localStorage.setItem(cacheKey, serialized);
+        } catch (error) {
+            console.warn('[API] Failed to persist cache entry:', endpoint, error);
+        }
+    }
+
+    listReadCacheKeys() {
+        const keys = [];
+        try {
+            for (let i = 0; i < localStorage.length; i += 1) {
+                const key = localStorage.key(i);
+                if (key?.startsWith(READ_CACHE_PREFIX)) keys.push(key);
+            }
+        } catch (error) {
+            console.warn('[API] Failed to enumerate read cache:', error);
+        }
+        return keys;
+    }
+
+    readCacheSavedAt(cacheKey) {
+        try {
+            return JSON.parse(localStorage.getItem(cacheKey))?.savedAt || 0;
+        } catch (error) {
+            return 0;
+        }
+    }
+
+    invalidateReadCache(endpoint) {
+        const toResource = (item) => String(item).split('?')[0].replace(/^\/+/, '').split('/').slice(0, 2).join('/');
+        const resource = toResource(endpoint);
+        const related = new Set([resource, ...(READ_CACHE_RELATIONSHIPS[resource] || [])]);
+        this.listReadCacheKeys().forEach((key) => {
+            if (related.has(toResource(key.slice(READ_CACHE_PREFIX.length)))) {
+                localStorage.removeItem(key);
+            }
+        });
+    }
+
+    async getWithReadCache(endpoint, accessToken = null) {
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+            const offlineData = this.readCacheGet(endpoint);
+            if (offlineData !== null) {
+                console.log(`[API] Serving "${endpoint}" from read cache (offline)`);
+                return offlineData;
+            }
+        }
+
+        try {
+            const data = await this.request('GET', endpoint, null, accessToken);
+            this.readCacheSet(endpoint, data);
+            return data;
+        } catch (error) {
+            const cachedData = this.readCacheGet(endpoint);
+            if (cachedData !== null) {
+                console.warn(`[API] Serving "${endpoint}" from read cache after failed request`);
+                return cachedData;
+            }
+            throw error;
+        }
+    }
+
     async processOfflineQueue() {
         if (this.processingQueue) return;
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+            console.log('[API] Still offline, skipping queue processing');
+            return;
+        }
         this.processingQueue = true;
 
         try {
-            let queue = this.readQueue();
-            if (!queue.length) return;
-
-            console.log(`[API] Processing offline queue (${queue.length} pending)`);
             let synced = 0;
 
-            while (queue.length) {
-                const item = queue[0];
+            for (;;) {
+                const queue = this.readQueue();
+                if (!queue.length) break;
+
+                let item = queue[0];
+                if (typeof this.itemResolver === 'function') {
+                    const resolved = this.itemResolver(item);
+                    if (resolved === false) {
+                        console.warn('[API] Queued request not ready for replay yet, keeping queue intact');
+                        break;
+                    }
+                    if (resolved && resolved !== item) {
+                        item = resolved;
+                        queue[0] = item;
+                        this.writeQueue(queue);
+                    }
+                }
+
                 const token = item.accessToken || window.App?.state?.tokens?.access || null;
+                let response = null;
+                let failed = false;
 
                 try {
                     this.replaying = true;
-                    await this.request(item.method, item.endpoint, item.data, token, false);
+                    response = await this.request(item.method, item.endpoint, item.data, token, false);
                 } catch (error) {
                     // Transient failures (offline, token refresh issue) keep the item for a later retry
                     if (!error?.status || error.status < 400) {
                         console.warn('[API] Replay deferred, keeping queue intact:', error?.message);
                         return;
                     }
+                    failed = true;
                     console.error('[API] Dropping permanently failed queued request:', item, error);
                 } finally {
                     this.replaying = false;
@@ -139,12 +302,22 @@ class APIClient {
 
                 queue.shift();
                 this.writeQueue(queue);
+                this.invalidateReadCache(item.endpoint);
                 synced += 1;
+
+                if (typeof this.onItemSynced === 'function') {
+                    try {
+                        await this.onItemSynced(item, failed ? null : response, { failed });
+                    } catch (hookError) {
+                        console.error('[API] Post-sync hook failed:', hookError);
+                    }
+                }
             }
 
             if (synced) {
                 console.log(`[API] Offline queue synced: ${synced} request(s)`);
                 window.App?.showToast?.(`Синхронизировано изменений: ${synced}`, 'success');
+                window.dispatchEvent(new CustomEvent('mylofi:offline-sync', { detail: { synced } }));
             }
         } finally {
             this.processingQueue = false;
@@ -187,7 +360,11 @@ class APIClient {
         if (response.status === 401 && accessToken && window.App) {
             return this.handleUnauthorized(method, endpoint, data, accessToken, isFormData);
         }
-        
+
+        if (method !== 'GET') {
+            this.invalidateReadCache(endpoint);
+        }
+
         return this.handleResponse(response);
     }
     
@@ -224,7 +401,7 @@ class APIClient {
         }
     }
     
-    get(endpoint, accessToken = null) { return this.request('GET', endpoint, null, accessToken); }
+    get(endpoint, accessToken = null) { return this.getWithReadCache(endpoint, accessToken); }
     post(endpoint, data, accessToken = null, isFormData = false) { return this.request('POST', endpoint, data, accessToken, isFormData); }
     patch(endpoint, data, accessToken = null) { return this.request('PATCH', endpoint, data, accessToken); }
     delete(endpoint, accessToken = null) { return this.request('DELETE', endpoint, null, accessToken); }

@@ -17,10 +17,291 @@ const QUICK_GOALS = [
     { value: 'endurance', title: 'Выносливость', subtitle: 'Лёгкий вес, много подходов, 2×15' },
 ];
 
+const LOCAL_SESSION_KEY = 'offline_local_session';
+const LOCAL_CLOSED_SESSIONS_KEY = 'offline_closed_sessions';
+const LOCAL_SESSION_PLACEHOLDER = '__local_session__';
+const TEMP_EXERCISE_ID_BASE = -1000;
+const TEMP_SET_ID_BASE = -100000;
+const OFFLINE_START_MESSAGE = 'Нет подключения к интернету. Тренировка создана локально и будет синхронизирована при появлении связи';
+const OFFLINE_COMPLETE_MESSAGE = 'Тренировка завершена! Сеть недоступна, данные будут синхронизированы при появлении связи';
+
 export const Workouts = {
     app: null,
     workoutTimerInterval: null,
     recentSessions: [],
+
+    getLocalSession() {
+        try {
+            const raw = localStorage.getItem(LOCAL_SESSION_KEY);
+            return raw ? JSON.parse(raw) : null;
+        } catch (error) {
+            console.warn('[Workouts] Failed to read local session:', error);
+            return null;
+        }
+    },
+
+    getActiveLocalSession() {
+        const session = this.getLocalSession();
+        return session && session.status === 'active' ? session : null;
+    },
+
+    saveLocalSession(session) {
+        try {
+            localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(session));
+        } catch (error) {
+            console.error('[Workouts] Failed to persist local session:', error);
+        }
+    },
+
+    // Persists live UI edits of a local session without dropping queued patch payloads
+    persistLocalSession(session) {
+        const stored = this.getLocalSession();
+        if (!stored || stored.key !== session.key) return;
+        this.saveLocalSession({ ...stored, name: session.name, exercises: session.exercises });
+    },
+
+    clearLocalSession() {
+        localStorage.removeItem(LOCAL_SESSION_KEY);
+    },
+
+    getLocallyClosedSessions() {
+        try {
+            const raw = localStorage.getItem(LOCAL_CLOSED_SESSIONS_KEY);
+            const parsed = raw ? JSON.parse(raw) : [];
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (error) {
+            return [];
+        }
+    },
+
+    // Server sessions finished/cancelled while offline must not show as active once back online
+    markSessionClosedLocally(sessionId) {
+        if (!sessionId) return;
+        const closed = this.getLocallyClosedSessions();
+        if (!closed.includes(sessionId)) closed.push(sessionId);
+        try {
+            localStorage.setItem(LOCAL_CLOSED_SESSIONS_KEY, JSON.stringify(closed.slice(-50)));
+        } catch (error) {
+            console.warn('[Workouts] Failed to persist locally closed sessions:', error);
+        }
+    },
+
+    isSessionClosedLocally(sessionId) {
+        return this.getLocallyClosedSessions().includes(sessionId);
+    },
+
+    forgetLocallyClosedSession(sessionId) {
+        const closed = this.getLocallyClosedSessions();
+        if (!closed.includes(sessionId)) return;
+        localStorage.setItem(LOCAL_CLOSED_SESSIONS_KEY, JSON.stringify(closed.filter(id => id !== sessionId)));
+    },
+
+    markSessionCompletedLocally(sessionId) {
+        this.markSessionClosedLocally(sessionId);
+    },
+
+    markSessionCancelledLocally(sessionId) {
+        this.markSessionClosedLocally(sessionId);
+    },
+
+    isLocalSession(session) {
+        return !!session && session.isLocal === true;
+    },
+
+    buildLocalSessionFromTemplate(template) {
+        let setCounter = 0;
+        const exercises = [...(template.exercises || [])]
+            .sort((a, b) => (a.order || 0) - (b.order || 0))
+            .map((ex, index) => {
+                const exerciseId = TEMP_EXERCISE_ID_BASE - index;
+                const targetSets = Math.max(1, ex.target_sets || 3);
+                return {
+                    id: exerciseId,
+                    name: ex.name,
+                    order: ex.order ?? index,
+                    notes: ex.notes ?? null,
+                    sets: Array.from({ length: targetSets }, (_, i) => {
+                        setCounter += 1;
+                        return {
+                            id: TEMP_SET_ID_BASE - setCounter,
+                            exercise_id: exerciseId,
+                            set_number: i + 1,
+                            weight_kg: i === 0 ? (ex.target_weight_kg ?? 0) : 0,
+                            reps: ex.target_reps || 10,
+                            rest_seconds: ex.rest_seconds ?? null,
+                            is_completed: false,
+                        };
+                    }),
+                };
+            });
+
+        return {
+            key: `local-${Date.now()}`,
+            isLocal: true,
+            status: 'active',
+            name: template.name || 'Тренировка',
+            started_at: new Date().toISOString(),
+            completed_at: null,
+            duration_seconds: null,
+            exercises,
+            pendingPatches: [],
+            remoteSessionId: null,
+            setIdMap: {},
+        };
+    },
+
+    recordLocalSetPatch(sessionKey, setId, patch) {
+        const session = this.getLocalSession();
+        if (!session || session.key !== sessionKey) return;
+        const pending = session.pendingPatches || [];
+        const existing = pending.find(item => item.setId === setId);
+        if (existing) {
+            Object.assign(existing.patch, patch);
+        } else {
+            pending.push({ setId, patch: { ...patch } });
+        }
+        session.pendingPatches = pending;
+        this.saveLocalSession(session);
+    },
+
+    mapLocalSetId(session, setId) {
+        if (!this.isLocalSession(session)) return setId;
+        return session.setIdMap?.[String(setId)] ?? null;
+    },
+
+    // Queue items referring to a not-yet-synced local session are rewritten once the
+    // real session (and its set ids) are known; `false` means "not ready yet".
+    resolveQueuedItem(item) {
+        if (!item?.offlineSessionKey) return item;
+        if (!item.endpoint.includes(LOCAL_SESSION_PLACEHOLDER)) return item;
+        const session = this.getLocalSession();
+        const remoteSessionId = session?.remoteSessionId ?? null;
+        if (!remoteSessionId) {
+            // The session creation was dropped: let the request fail instead of blocking the queue
+            return session?.createFailed ? item : false;
+        }
+        return {
+            ...item,
+            endpoint: item.endpoint.replace(LOCAL_SESSION_PLACEHOLDER, String(remoteSessionId)),
+        };
+    },
+
+    async handleSyncedItem(item, response, { failed = false } = {}) {
+        if (!item?.offlineSessionKey) {
+            const closedMatch = item?.endpoint?.match(/^\/workouts\/sessions\/(\d+)\/(complete|cancel)$/);
+            if (closedMatch && !failed) this.forgetLocallyClosedSession(parseInt(closedMatch[1]));
+            return;
+        }
+        const session = this.getLocalSession();
+        if (!session || session.key !== item.offlineSessionKey) {
+            this.clearLocalSession();
+            return;
+        }
+
+        if (failed && !session.remoteSessionId) {
+            session.createFailed = true;
+            this.saveLocalSession(session);
+        }
+
+        if (!failed && response?.id && !session.remoteSessionId) {
+            const remoteExercises = response.exercises || [];
+            const findRemoteExercise = (localEx, exIndex) =>
+                remoteExercises.find(remote => remote.name === localEx.name) || remoteExercises[exIndex];
+
+            // The server creates exercises in template order, which may differ from the local one
+            const setIdMap = {};
+            (session.exercises || []).forEach((localEx, exIndex) => {
+                const remoteEx = findRemoteExercise(localEx, exIndex);
+                if (!remoteEx) return;
+                (localEx.sets || []).forEach((localSet, setIndex) => {
+                    const remoteSet = (remoteEx.sets || [])[setIndex];
+                    if (remoteSet) setIdMap[String(localSet.id)] = remoteSet.id;
+                });
+            });
+
+            session.remoteSessionId = response.id;
+            session.setIdMap = setIdMap;
+            const pendingPatches = session.pendingPatches || [];
+            session.pendingPatches = [];
+            this.saveLocalSession(session);
+
+            const token = this.app?.state?.tokens?.access || null;
+
+            // Replay offline edits against the real sets before any queued complete/cancel request
+            pendingPatches.forEach(({ setId, patch }) => {
+                const realSetId = setIdMap[String(setId)];
+                if (!realSetId) {
+                    console.warn('[Workouts] Skipping offline patch for unmapped set', setId);
+                    return;
+                }
+                API.enqueueRequest('PATCH', `/workouts/sets/${realSetId}`, patch, token, { prepend: true });
+            });
+
+            const localOrder = (session.exercises || []).map(ex => ex.name);
+            const remoteOrder = remoteExercises.map(ex => ex.name);
+            const orderChanged = remoteOrder.length === localOrder.length
+                && remoteOrder.some((name, i) => name !== localOrder[i]);
+            if (orderChanged) {
+                const reordered = (session.exercises || []).map((localEx, i) => {
+                    const remoteEx = findRemoteExercise(localEx, i);
+                    return remoteEx ? { id: remoteEx.id, order: i } : null;
+                }).filter(Boolean);
+                API.enqueueRequest('PATCH', `/workouts/sessions/${response.id}`, { exercises: reordered }, token, { prepend: true });
+            }
+
+            console.log(`[Workouts] Local session "${session.key}" synced to session ${response.id}`);
+            window.dispatchEvent(new CustomEvent('mylofi:local-session-synced', {
+                detail: { sessionId: response.id },
+            }));
+        }
+
+        if (!API.readQueue().some(queued => queued.offlineSessionKey === session.key)) {
+            this.clearLocalSession();
+        }
+    },
+
+    startLocalSessionFromTemplate(app, template, createEndpoint) {
+        const session = this.buildLocalSessionFromTemplate(template);
+        this.saveLocalSession(session);
+        API.markQueuedRequest('POST', createEndpoint, { offlineSessionKey: session.key });
+        app?.showToast(OFFLINE_START_MESSAGE, 'info');
+        return session;
+    },
+
+    completeLocalSession(app) {
+        const session = this.getActiveLocalSession();
+        if (!session) return false;
+        const token = app?.state?.tokens?.access || null;
+        session.status = 'completed';
+        session.completed_at = new Date().toISOString();
+        session.duration_seconds = this.getElapsedSeconds(session);
+        this.saveLocalSession(session);
+        API.enqueueRequest(
+            'POST',
+            `/workouts/sessions/${LOCAL_SESSION_PLACEHOLDER}/complete`,
+            null,
+            token,
+            { offlineSessionKey: session.key }
+        );
+        app?.showToast(OFFLINE_COMPLETE_MESSAGE, 'info');
+        return true;
+    },
+
+    cancelLocalSession(app) {
+        const session = this.getActiveLocalSession();
+        if (!session) return false;
+        const token = app?.state?.tokens?.access || null;
+        session.status = 'cancelled';
+        this.saveLocalSession(session);
+        API.enqueueRequest(
+            'POST',
+            `/workouts/sessions/${LOCAL_SESSION_PLACEHOLDER}/cancel`,
+            null,
+            token,
+            { offlineSessionKey: session.key }
+        );
+        return true;
+    },
 
     async render(container, app) {
         this.app = app;
@@ -38,6 +319,14 @@ export const Workouts = {
             ]);
         } catch (error) {
             console.error('[Workouts] Load error:', error);
+        }
+
+        // A workout started offline lives only in localStorage until it is synced
+        if (!activeSession) {
+            activeSession = this.getActiveLocalSession();
+        } else if (activeSession.id && this.isSessionClosedLocally(activeSession.id)) {
+            // Completed offline and not yet replayed on the server
+            activeSession = null;
         }
 
         const recentSessions = (historyData.sessions || []).filter(s => s.status === 'completed');
@@ -164,7 +453,7 @@ export const Workouts = {
                                 <div class="h-full rounded-full bg-surface-800 dark:bg-zinc-100 transition-all duration-300" style="width: ${activePercent}%"></div>
                             </div>
                         </div>
-                        <button data-action="resume-workout" data-session-id="${activeSession.id}"
+                        <button data-action="resume-workout" data-session-id="${activeSession.isLocal ? activeSession.key : activeSession.id}"
                                 class="w-full py-2.5 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl text-sm font-semibold shadow-md">
                             Продолжить тренировку →
                         </button>
@@ -241,7 +530,7 @@ export const Workouts = {
         container.querySelector('[data-action="resume-workout"]')?.addEventListener('click', (e) => {
             e.stopPropagation();
             const sessionId = e.currentTarget.dataset.sessionId;
-            this.renderWorkoutScreen(container, app, parseInt(sessionId));
+            this.renderWorkoutScreen(container, app, sessionId.startsWith('local-') ? sessionId : parseInt(sessionId));
         });
 
         container.querySelectorAll('[data-action="view-template"]').forEach(btn => {
@@ -266,7 +555,8 @@ export const Workouts = {
                 button.innerHTML = '<span>Запуск...</span>';
 
                 // Запускаем API запрос СРАЗУ, параллельно с отсчетом
-                const sessionPromise = API.post(`/workouts/templates/${templateId}/start`, {}, app.state.tokens.access);
+                const startEndpoint = `/workouts/templates/${templateId}/start`;
+                const sessionPromise = API.post(startEndpoint, {}, app.state.tokens.access);
 
                 // Запускаем отсчет
                 this.renderCountdown(container, () => {});
@@ -277,6 +567,12 @@ export const Workouts = {
                     // Рендерим экран
                     await this.renderWorkoutScreen(container, app, session.id);
                 } catch (err) {
+                    const template = templates.find(t => t.id === templateId);
+                    if (err?.offlineQueued && template) {
+                        const localSession = this.startLocalSessionFromTemplate(app, template, startEndpoint);
+                        await this.renderWorkoutScreen(container, app, localSession.key);
+                        return;
+                    }
                     console.error('Start template error:', err);
                     app.showToast(err.message || 'Ошибка запуска', 'error');
                     if (button) {
@@ -477,22 +773,33 @@ export const Workouts = {
         this.stopWorkoutTimer();
         let session;
         let historyData = { sessions: [] };
-        try {
-            const url = sessionId ? `/workouts/sessions/${sessionId}` : '/workouts/sessions/active';
-            [session, historyData] = await Promise.all([
-                API.get(url, app.state.tokens.access),
-                API.get('/workouts/history?limit=50', app.state.tokens.access).catch(() => ({ sessions: [] }))
-            ]);
-        } catch (error) {
-            console.error('[Workouts] Session/History load error:', error);
-            app.showToast('Ошибка загрузки данных', 'error');
-            return;
+        const localSession = this.getActiveLocalSession();
+        const wantsLocal = localSession && (sessionId === localSession.key || !sessionId);
+
+        if (wantsLocal) {
+            session = localSession;
+            historyData = await API.get('/workouts/history?limit=50', app.state.tokens.access).catch(() => ({ sessions: [] }));
+        } else {
+            try {
+                const url = sessionId ? `/workouts/sessions/${sessionId}` : '/workouts/sessions/active';
+                [session, historyData] = await Promise.all([
+                    API.get(url, app.state.tokens.access),
+                    API.get('/workouts/history?limit=50', app.state.tokens.access).catch(() => ({ sessions: [] }))
+                ]);
+            } catch (error) {
+                console.error('[Workouts] Session/History load error:', error);
+                session = this.getActiveLocalSession();
+                if (!session) {
+                    app.showToast('Ошибка загрузки данных', 'error');
+                    return;
+                }
+            }
         }
         if (!session) {
             app.showToast('Нет активной тренировки', 'info');
             return;
         }
-        app.state.currentSessionId = session.id;
+        app.state.currentSessionId = session.isLocal ? session.key : session.id;
 
         const completedHistorySessions = [...(historyData.sessions || [])]
             .filter(s => s.status === 'completed')
@@ -584,9 +891,10 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         `}).join('');
 
         // Cards
+        const sessionKey = session.isLocal ? session.key : session.id;
         const cancelCard = `
             <div class="w-[98vw] max-w-[500px] snap-center glass rounded-2xl p-6 flex flex-col items-center justify-center min-h-[520px]">
-                <button data-action="cancel-workout" data-session-id="${session.id}"
+                <button data-action="cancel-workout" data-session-id="${sessionKey}"
                         class="w-full py-5 border-2 border-dashed border-red-300 dark:border-red-700 rounded-2xl text-red-600 font-bold text-base">
                     Отменить тренировку
                 </button>
@@ -594,7 +902,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         `;
         const completeCard = `
             <div class="w-[98vw] max-w-[500px] snap-center glass rounded-2xl p-6 flex flex-col items-center justify-center min-h-[520px]">
-                <button data-action="complete-workout" data-session-id="${session.id}"
+                <button data-action="complete-workout" data-session-id="${sessionKey}"
                         class="w-full py-5 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-2xl font-bold text-base">
                     Завершить тренировку
                 </button>
@@ -687,7 +995,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
     },
 
     bindWorkoutScreenEvents(container, app, session) {
-        const sessionId = session.id;
+        const isLocal = this.isLocalSession(session);
+        const sessionId = isLocal ? session.key : session.id;
         const token = app.state.tokens.access;
 
         // Toggle set completion
@@ -768,12 +1077,24 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 button.textContent = '...';
                 // Optimistic local update so the UI reacts instantly, even offline
                 applyToggleState(isCompleted);
+                const payload = {
+                    is_completed: isCompleted,
+                    weight_kg: isNaN(weight_kg) ? null : weight_kg,
+                    reps: isNaN(reps) ? null : reps
+                };
+                if (isLocal) {
+                    this.persistLocalSession(session);
+                    this.recordLocalSetPatch(session.key, setId, payload);
+                    button.disabled = false;
+                    button.textContent = '✓';
+                    if (!offlineNotified) {
+                        offlineNotified = true;
+                        app.showToast('Изменение сохранено локально и будет синхронизировано', 'info');
+                    }
+                    return;
+                }
                 try {
-                    await API.patch(`/workouts/sets/${setId}`, { 
-                        is_completed: isCompleted,
-                        weight_kg: isNaN(weight_kg) ? null : weight_kg,
-                        reps: isNaN(reps) ? null : reps
-                    }, token);
+                    await API.patch(`/workouts/sets/${setId}`, payload, token);
                 } catch (err) {
                     if (err?.offlineQueued) {
                         app.showToast(err.message, 'info');
@@ -821,7 +1142,12 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         const nextSetId = parseInt(r.dataset.setId);
                         const nextSessionSet = this.findSetInSession(session, nextSetId);
                         if (nextSessionSet) nextSessionSet.weight_kg = value;
-                        API.patch(`/workouts/sets/${nextSetId}`, { weight_kg: value }, token).catch(() => {});
+                        if (isLocal) {
+                            this.persistLocalSession(session);
+                            this.recordLocalSetPatch(session.key, nextSetId, { weight_kg: value });
+                        } else {
+                            API.patch(`/workouts/sets/${nextSetId}`, { weight_kg: value }, token).catch(() => {});
+                        }
                     }
                     break;
                 }
@@ -836,6 +1162,16 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
             if (field === 'weight') {
                 propagateWeightToNextSet(row, value);
+            }
+
+            if (isLocal) {
+                this.persistLocalSession(session);
+                this.recordLocalSetPatch(session.key, setId, { [field]: value });
+                if (!offlineNotified) {
+                    offlineNotified = true;
+                    app.showToast('Изменение сохранено локально и будет синхронизировано', 'info');
+                }
+                return;
             }
 
             try {
@@ -905,6 +1241,14 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 const temp = exercises[idx];
                 exercises[idx] = exercises[targetIdx];
                 exercises[targetIdx] = temp;
+
+                if (isLocal) {
+                    session.exercises = exercises;
+                    exercises.forEach((ex, i) => { ex.order = i; });
+                    this.persistLocalSession(session);
+                    await this.renderWorkoutScreen(container, app, sessionId);
+                    return;
+                }
 
                 try {
                     await API.patch(`/workouts/sessions/${sessionId}`, {
@@ -1027,6 +1371,12 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         this.app = app;
         this.stopWorkoutTimer();
 
+        // Exercises for a quick start are picked by the server, so it requires a connection
+        if (navigator.onLine === false) {
+            app.showToast('Быстрый старт требует подключения к интернету. Выберите шаблон — он работает офлайн', 'info');
+            return;
+        }
+
         // Запускаем API запрос СРАЗУ, параллельно с отсчетом
         const sessionPromise = API.post('/workouts/sessions/quick-start', { goal }, app.state.tokens.access);
         this.renderCountdown(app.elements.pageContent, () => {});
@@ -1036,7 +1386,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             await this.renderWorkoutScreen(app.elements.pageContent, app, session_id);
         } catch (err) {
             console.error('Quick start error:', err);
-            app.showToast(err.message || 'Ошибка быстрого старта', 'error');
+            app.showToast(err?.offlineQueued ? 'Быстрый старт требует подключения к интернету. Выберите шаблон — он работает офлайн' : (err.message || 'Ошибка быстрого старта'), 'error');
             await this.render(app.elements.pageContent, app);
         }
     },
@@ -1087,7 +1437,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 API.get('/workouts/templates', app.state.tokens.access),
                 API.get('/workouts/sessions/active', app.state.tokens.access).catch(() => null)
             ]);
-            const hasActiveSession = !!activeSession;
+            const hasActiveSession = !!activeSession || !!this.getActiveLocalSession();
             let html = `
                 <div class="p-4">
                     <div class="flex items-center justify-between mb-4">
@@ -1139,17 +1489,24 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 button.innerHTML = '<span>Запуск...</span>';
                 
                 // Запускаем API запрос СРАЗУ, параллельно с отсчетом
-                const sessionPromise = API.post(`/workouts/templates/${templateId}/start`, {}, app.state.tokens.access);
-                
+                const startEndpoint = `/workouts/templates/${templateId}/start`;
+                const sessionPromise = API.post(startEndpoint, {}, app.state.tokens.access);
+
                 // Запускаем отсчет
                 this.renderCountdown(container, () => {});
-                
+
                 try {
                     const session = await sessionPromise;
-                    
+
                     // Рендерим экран (не блокируя отсчет)
                     this.renderWorkoutScreen(app.elements.pageContent, app, session.id);
                 } catch (err) {
+                    const template = templates.find(t => t.id === templateId);
+                    if (err?.offlineQueued && template) {
+                        const localSession = this.startLocalSessionFromTemplate(app, template, startEndpoint);
+                        await this.renderWorkoutScreen(app.elements.pageContent, app, localSession.key);
+                        return;
+                    }
                     app.showToast(err.message || 'Ошибка запуска', 'error');
                     button.disabled = false;
                     button.innerHTML = originalHtml;
