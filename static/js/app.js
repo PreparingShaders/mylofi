@@ -43,6 +43,7 @@ const App = {
         this.showScreen('landing');
         this.renderLanding();
         this.setupEventListeners();
+        this.setupOfflineSync();
         this.loadTokens();
 
         // DB init is non-critical
@@ -63,7 +64,31 @@ const App = {
             }
         }
 
+        await this.flushOfflineQueue();
+
         console.log('[App] Initialized');
+    },
+
+    setupOfflineSync() {
+        window.addEventListener('online', () => {
+            this.state.isOnline = true;
+            console.log('[App] Network restored, flushing offline queue');
+            this.flushOfflineQueue();
+        });
+
+        window.addEventListener('offline', () => {
+            this.state.isOnline = false;
+            console.log('[App] Network lost, requests will be queued locally');
+        });
+    },
+
+    async flushOfflineQueue() {
+        if (!this.state.tokens.access) return;
+        try {
+            await API.processOfflineQueue();
+        } catch (e) {
+            console.error('[App] Offline queue processing failed:', e);
+        }
     },
     
     cacheElements() {

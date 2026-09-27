@@ -845,7 +845,7 @@ async def get_last_exercise_sets(db: AsyncSession, user_id: int, exercise_name: 
     print(f"[DEBUG] Found completed session_ids for exercise '{exercise_name}': {session_ids}")
 
     if not session_ids:
-        return None
+        return []
 
     # Fetch sessions in order of started_at desc
     for s_id in session_ids:
@@ -876,4 +876,4 @@ async def get_last_exercise_sets(db: AsyncSession, user_id: int, exercise_name: 
             if ex.name.strip().lower() == exercise_name.strip().lower():
                 return sorted(ex.sets, key=lambda s: s.set_number)
 
-    return None
+    return []

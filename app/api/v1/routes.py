@@ -658,7 +658,7 @@ async def start_workout_from_template(
 
     session_exercises = []
     for ex in template.exercises:
-        past_sets = await get_last_exercise_sets(db, current_user.id, ex.name)
+        past_sets = await get_last_exercise_sets(db, current_user.id, ex.name) or []
         target_sets = ex.target_sets
         sets_create = [
             WorkoutSetCreate(

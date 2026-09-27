@@ -713,27 +713,20 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
                 const wasCompleted = button.dataset.completed === 'true';
                 const isCompleted = !wasCompleted;
-                button.disabled = true;
-                button.textContent = '...';
-                try {
-                    await API.patch(`/workouts/sets/${setId}`, { 
-                        is_completed: isCompleted,
-                        weight_kg: isNaN(weight_kg) ? null : weight_kg,
-                        reps: isNaN(reps) ? null : reps
-                    }, token);
 
+                const applyToggleState = (completed) => {
                     const sessionSet = this.findSetInSession(session, setId);
                     if (sessionSet) {
-                        sessionSet.is_completed = isCompleted;
+                        sessionSet.is_completed = completed;
                         sessionSet.weight_kg = isNaN(weight_kg) ? null : weight_kg;
                         sessionSet.reps = isNaN(reps) ? null : reps;
                     }
                     this.updateWorkoutMetricsUI(session);
-                    if (isCompleted) {
+                    if (completed) {
                         button.dataset.completed = 'true';
                         button.className = TOGGLE_BASE + ' ' + TOGGLE_COMPLETED;
                         button.textContent = '✓';
-                        
+
 
                         row.querySelector('span.font-bold').classList.add(...SET_DIM);
                         row.querySelectorAll('input').forEach(inp => inp.classList.add(...SET_DIM));
@@ -741,7 +734,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
                         row.querySelector('[data-field="weight"]').readOnly = true;
                         row.querySelector('[data-field="reps"]').readOnly = true;
-                        button.disabled = false; 
+                        button.disabled = false;
                         
                         const exerciseContainer = button.closest('.snap-center');
                         const allToggleButtons = exerciseContainer.querySelectorAll('[data-action="toggle-set"]');
@@ -769,62 +762,124 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         button.textContent = '✓';
                         button.disabled = false;
                     }
+                };
+
+                button.disabled = true;
+                button.textContent = '...';
+                // Optimistic local update so the UI reacts instantly, even offline
+                applyToggleState(isCompleted);
+                try {
+                    await API.patch(`/workouts/sets/${setId}`, { 
+                        is_completed: isCompleted,
+                        weight_kg: isNaN(weight_kg) ? null : weight_kg,
+                        reps: isNaN(reps) ? null : reps
+                    }, token);
                 } catch (err) {
-                    app.showToast(err.message || 'Ошибка', 'error');
+                    if (err?.offlineQueued) {
+                        app.showToast(err.message, 'info');
+                    } else {
+                        applyToggleState(wasCompleted);
+                        app.showToast(err.message || 'Ошибка', 'error');
+                    }
                     button.disabled = false;
                     button.textContent = '✓';
                 }
             });
         });
 
-        // Save weight/reps on change or blur
-        container.querySelectorAll('[data-field="weight"], [data-field="reps"]').forEach(input => {
-            const saveHandler = async (e) => {
-                const targetInput = e.target;
-                const row = targetInput.closest('[data-set-id]');
-                if (!row) return;
-                const setId = parseInt(row.dataset.setId);
-                const field = targetInput.dataset.field;
-                const value = field === 'weight' ? parseFloat(targetInput.value) : parseInt(targetInput.value);
-                if (isNaN(value)) return;
+        // Save weight/reps: instant local update while typing, debounced network sync, flush on blur
+        const DEBOUNCE_MS = 400;
+        const pendingTimers = new Map();
+        let offlineNotified = false;
 
-                if (field === 'weight') {
-                    const exerciseContainer = row.closest('.bg-white, .dark\\:bg-surface-800');
-                    if (exerciseContainer) {
-                        const rows = exerciseContainer.querySelectorAll('[data-set-id]');
-                        let foundCurrent = false;
-                        for (const r of rows) {
-                            if (foundCurrent) {
-                                const nextWeightInput = r.querySelector('[data-field="weight"]');
-                                if (nextWeightInput && !nextWeightInput.value) {
-                                    nextWeightInput.value = value;
-                                    const nextSetId = parseInt(r.dataset.setId);
-                                    const nextSessionSet = this.findSetInSession(session, nextSetId);
-                                    if (nextSessionSet) nextSessionSet.weight_kg = value;
-                                    API.patch(`/workouts/sets/${nextSetId}`, { weight_kg: value }, token).catch(() => {});
-                                }
-                                break;
-                            }
-                            if (r === row) foundCurrent = true;
-                        }
+        const applyLocalValue = (input) => {
+            const row = input.closest('[data-set-id]');
+            if (!row) return null;
+            const setId = parseInt(row.dataset.setId);
+            const field = input.dataset.field;
+            const value = field === 'weight' ? parseFloat(input.value) : parseInt(input.value);
+            if (isNaN(value)) return null;
+
+            const sessionSet = this.findSetInSession(session, setId);
+            if (sessionSet) {
+                sessionSet[field === 'weight' ? 'weight_kg' : 'reps'] = value;
+                this.updateWorkoutMetricsUI(session);
+            }
+            return { row, setId, field, value };
+        };
+
+        const propagateWeightToNextSet = (row, value) => {
+            const exerciseContainer = row.closest('.bg-white, .dark\\:bg-surface-800');
+            if (!exerciseContainer) return;
+            const rows = exerciseContainer.querySelectorAll('[data-set-id]');
+            let foundCurrent = false;
+            for (const r of rows) {
+                if (foundCurrent) {
+                    const nextWeightInput = r.querySelector('[data-field="weight"]');
+                    if (nextWeightInput && !nextWeightInput.value) {
+                        nextWeightInput.value = value;
+                        const nextSetId = parseInt(r.dataset.setId);
+                        const nextSessionSet = this.findSetInSession(session, nextSetId);
+                        if (nextSessionSet) nextSessionSet.weight_kg = value;
+                        API.patch(`/workouts/sets/${nextSetId}`, { weight_kg: value }, token).catch(() => {});
                     }
+                    break;
                 }
+                if (r === row) foundCurrent = true;
+            }
+        };
 
-                const sessionSet = this.findSetInSession(session, setId);
-                if (sessionSet) {
-                    sessionSet[field] = value;
-                    this.updateWorkoutMetricsUI(session);
-                }
+        const persistSet = async (input) => {
+            const parsed = applyLocalValue(input);
+            if (!parsed) return;
+            const { row, setId, field, value } = parsed;
 
-                try {
-                    await API.patch(`/workouts/sets/${setId}`, { [field]: value }, token);
-                } catch (err) {
+            if (field === 'weight') {
+                propagateWeightToNextSet(row, value);
+            }
+
+            try {
+                await API.patch(`/workouts/sets/${setId}`, { [field]: value }, token);
+            } catch (err) {
+                if (err?.offlineQueued) {
+                    if (!offlineNotified) {
+                        offlineNotified = true;
+                        app.showToast(err.message, 'info');
+                    }
+                } else {
+                    offlineNotified = false;
                     app.showToast(err.message || 'Ошибка сохранения', 'error');
                 }
+            }
+        };
+
+        const scheduleSave = (input, immediate) => {
+            const row = input.closest('[data-set-id]');
+            if (!row) return;
+            const key = `${row.dataset.setId}:${input.dataset.field}`;
+
+            const run = () => {
+                pendingTimers.delete(key);
+                return persistSet(input);
             };
 
-            input.addEventListener('change', saveHandler);
-            input.addEventListener('blur', saveHandler);
+            const existing = pendingTimers.get(key);
+            if (existing) {
+                clearTimeout(existing);
+                pendingTimers.delete(key);
+            }
+
+            if (immediate) {
+                run();
+            } else {
+                pendingTimers.set(key, setTimeout(run, DEBOUNCE_MS));
+            }
+        };
+
+        container.querySelectorAll('[data-field="weight"], [data-field="reps"]').forEach(input => {
+            input.addEventListener('input', () => applyLocalValue(input));
+            input.addEventListener('change', () => scheduleSave(input, false));
+            input.addEventListener('blur', () => scheduleSave(input, true));
         });
 
         // Complete workout
