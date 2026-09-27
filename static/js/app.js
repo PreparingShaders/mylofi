@@ -9,6 +9,10 @@ import { DB } from './db.js';
 import { Components } from './components.js';
 import { Utils } from './utils.js';
 
+const TOGGLE_BASE = 'flex-shrink-0 w-11 h-11 rounded-2xl text-xl font-bold transition-all flex items-center justify-center';
+const TOGGLE_COMPLETED = 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300 shadow-md';
+const TOGGLE_UNCOMPLETED = 'bg-white dark:bg-surface-800 text-surface-400 shadow-sm border border-surface-200 dark:border-surface-700';
+
 const App = {
     state: {
         user: null,
@@ -256,7 +260,7 @@ const App = {
         const weight_kg = weightInput ? parseFloat(weightInput.value) : null;
         const reps = repsInput ? parseInt(repsInput.value) : null;
 
-        const isCompleted = btn.classList.contains('text-primary-600') || btn.classList.contains('bg-primary-100');
+        const isCompleted = btn.classList.contains('bg-primary-100');
         const payload = { 
             is_completed: !isCompleted,
             weight_kg: isNaN(weight_kg) ? null : weight_kg,
@@ -272,15 +276,14 @@ const App = {
             
             // Update UI state
             if (!isCompleted) {
-                btn.classList.add('text-primary-600', 'font-bold');
-                btn.classList.remove('text-surface-400');
+                btn.className = TOGGLE_BASE + ' ' + TOGGLE_COMPLETED;
                 row.querySelector('[data-field="weight"]').readOnly = true;
                 row.querySelector('[data-field="reps"]').readOnly = true;
 
                 // Auto-scroll to next exercise if last set of current exercise
                 const exerciseContainer = row.closest('.snap-center');
                 const allSets = exerciseContainer.querySelectorAll('[data-action="toggle-set"]');
-                const allCompleted = Array.from(allSets).every(b => b.disabled);
+                const allCompleted = Array.from(allSets).every(b => b.classList.contains('bg-primary-100'));
                 if (allCompleted) {
                     const carousel = document.getElementById('carousel');
                     if (carousel) {
@@ -289,8 +292,7 @@ const App = {
                     }
                 }
             } else {
-                btn.classList.remove('text-primary-600', 'font-bold');
-                btn.classList.add('text-surface-300');
+                btn.className = TOGGLE_BASE + ' ' + TOGGLE_UNCOMPLETED;
                 row.querySelector('[data-field="weight"]').readOnly = false;
                 row.querySelector('[data-field="reps"]').readOnly = false;
             }

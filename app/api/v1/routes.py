@@ -659,25 +659,26 @@ async def start_workout_from_template(
     session_exercises = []
     for ex in template.exercises:
         past_sets = await get_last_exercise_sets(db, current_user.id, ex.name)
-        if past_sets:
-            sets_create = [
-                WorkoutSetCreate(
-                    set_number=ps.set_number,
-                    reps=ps.reps,
-                    weight_kg=ps.weight_kg,
-                    rest_seconds=ex.rest_seconds,
-                )
-                for ps in past_sets
-            ]
-        else:
-            sets_create = [
+        target_sets = ex.target_sets
+        sets_create = [
+            WorkoutSetCreate(
+                set_number=ps.set_number,
+                reps=ps.reps,
+                weight_kg=ps.weight_kg,
+                rest_seconds=ex.rest_seconds,
+            )
+            for ps in past_sets[:target_sets]
+        ]
+        if len(past_sets) < target_sets:
+            start_num = past_sets[-1].set_number + 1 if past_sets else 1
+            sets_create += [
                 WorkoutSetCreate(
                     set_number=set_num,
                     reps=ex.target_reps,
                     weight_kg=0.0,
                     rest_seconds=ex.rest_seconds,
                 )
-                for set_num in range(1, ex.target_sets + 1)
+                for set_num in range(start_num, start_num + target_sets - len(past_sets))
             ]
         session_exercises.append(
             WorkoutSessionExerciseCreate(

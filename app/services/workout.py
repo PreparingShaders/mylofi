@@ -568,8 +568,9 @@ async def build_workout_session(
         db.add(exercise)
         await db.flush()
         past_sets = await get_last_exercise_sets(db, user_id, ex.name)
+        target_sets = data.default_sets
         if past_sets:
-            for ps in past_sets:
+            for ps in past_sets[:target_sets]:
                 db.add(
                     WorkoutSet(
                         exercise_id=exercise.id,
@@ -579,17 +580,18 @@ async def build_workout_session(
                         rest_seconds=data.default_rest_seconds,
                     )
                 )
-        else:
-            for set_num in range(1, data.default_sets + 1):
-                db.add(
-                    WorkoutSet(
-                        exercise_id=exercise.id,
-                        set_number=set_num,
-                        reps=data.default_reps,
-                        weight_kg=0.0,
-                        rest_seconds=data.default_rest_seconds,
-                    )
+        start_num = (past_sets[-1].set_number + 1) if past_sets else 1
+        remaining = target_sets - len(past_sets) if past_sets else target_sets
+        for set_num in range(start_num, start_num + remaining):
+            db.add(
+                WorkoutSet(
+                    exercise_id=exercise.id,
+                    set_number=set_num,
+                    reps=data.default_reps,
+                    weight_kg=0.0,
+                    rest_seconds=data.default_rest_seconds,
                 )
+            )
 
     await db.commit()
     return await get_workout_session(db, session.id, user_id)
@@ -666,8 +668,9 @@ async def quick_start_workout(
         await db.flush()
 
         past_sets = await get_last_exercise_sets(db, user_id, ex.name)
+        target_sets = default_sets
         if past_sets:
-            for ps in past_sets:
+            for ps in past_sets[:target_sets]:
                 db.add(
                     WorkoutSet(
                         exercise_id=exercise.id,
@@ -677,17 +680,18 @@ async def quick_start_workout(
                         rest_seconds=default_rest,
                     )
                 )
-        else:
-            for set_num in range(1, default_sets + 1):
-                db.add(
-                    WorkoutSet(
-                        exercise_id=exercise.id,
-                        set_number=set_num,
-                        reps=default_reps,
-                        weight_kg=0.0,
-                        rest_seconds=default_rest,
-                    )
+        start_num = (past_sets[-1].set_number + 1) if past_sets else 1
+        remaining = target_sets - len(past_sets) if past_sets else target_sets
+        for set_num in range(start_num, start_num + remaining):
+            db.add(
+                WorkoutSet(
+                    exercise_id=exercise.id,
+                    set_number=set_num,
+                    reps=default_reps,
+                    weight_kg=0.0,
+                    rest_seconds=default_rest,
                 )
+            )
 
     await db.commit()
     return await get_workout_session(db, session.id, user_id)

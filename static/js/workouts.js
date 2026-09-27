@@ -3,11 +3,17 @@ import { API } from './api.js';
 import { Components } from './components.js';
 import { Utils } from './utils.js';
 
+const TOGGLE_BASE = 'flex-shrink-0 w-11 h-11 rounded-2xl text-xl font-bold transition-all flex items-center justify-center';
+const TOGGLE_COMPLETED = 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300 shadow-md';
+const TOGGLE_UNCOMPLETED = 'bg-white dark:bg-surface-800 text-surface-400 shadow-sm border border-surface-200 dark:border-surface-700';
+
 export const Workouts = {
     app: null,
+    workoutTimerInterval: null,
 
     async render(container, app) {
         this.app = app;
+        this.stopWorkoutTimer();
         let activeSession;
         let stats = null;
         let templates = [];
@@ -210,6 +216,40 @@ export const Workouts = {
         });
     },
 
+    formatTimer(seconds) {
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = Math.floor(seconds % 60);
+        if (h > 0) {
+            return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        }
+        return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    },
+
+    startWorkoutTimer(session) {
+        this.stopWorkoutTimer();
+        if (!session || !session.started_at) return;
+
+        const startTime = new Date(session.started_at).getTime();
+        const timerEl = document.getElementById('workout-timer');
+        if (!timerEl) return;
+
+        const updateTimer = () => {
+            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+            timerEl.textContent = this.formatTimer(elapsed);
+        };
+
+        updateTimer();
+        this.workoutTimerInterval = setInterval(updateTimer, 1000);
+    },
+
+    stopWorkoutTimer() {
+        if (this.workoutTimerInterval) {
+            clearInterval(this.workoutTimerInterval);
+            this.workoutTimerInterval = null;
+        }
+    },
+
     async renderCountdown(container, onComplete) {
         const overlay = document.createElement('div');
         overlay.className = 'fixed inset-0 z-[100] flex items-center justify-center modal-backdrop transition-opacity';
@@ -282,6 +322,7 @@ export const Workouts = {
 
     async renderWorkoutScreen(container, app, sessionId) {
         this.app = app;
+        this.stopWorkoutTimer();
         let session;
         let historyData = { sessions: [] };
         try {
@@ -301,34 +342,36 @@ export const Workouts = {
         }
         app.state.currentSessionId = session.id;
 
-        const durationMin = Math.floor((new Date() - new Date(session.started_at)) / 60000);
-        
         const completedHistorySessions = [...(historyData.sessions || [])]
             .filter(s => s.status === 'completed')
             .sort((a, b) => new Date(a.started_at) - new Date(b.started_at));
 
 const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             const historyPoints = completedHistorySessions
-                .flatMap(s => s.exercises.filter(e => e.name.trim().toLowerCase() === ex.name.trim().toLowerCase()))
-                .flatMap(e => e.sets.map(set => set.weight_kg))
-                .filter(w => w != null && w > 0)
+                .map(s => {
+                    const matchEx = (s.exercises || []).find(e => e.name.trim().toLowerCase() === ex.name.trim().toLowerCase());
+                    if (!matchEx) return null;
+                    const tonnage = (matchEx.sets || []).reduce((sum, set) => sum + ((set.weight_kg || 0) * (set.reps || 0)), 0);
+                    return tonnage > 0 ? tonnage : null;
+                })
+                .filter(v => v != null && v > 0)
                 .slice(-10);
 
             return `
-            <div class="w-[98vw] max-w-[500px] snap-center bg-white dark:bg-surface-800 rounded-3xl p-5 shadow-lg flex flex-col min-h-[500px] border border-surface-100 dark:border-surface-700" data-exercise-id="${ex.id}">
-                <div class="flex justify-between items-start mb-4">
-                    <h3 class="font-bold text-lg text-surface-900 dark:text-surface-50 leading-tight flex-1 mr-2" title="${ex.name}">${ex.name}</h3>
+             <div class="w-[98vw] max-w-[500px] snap-center bg-white dark:bg-surface-800 rounded-3xl p-4 shadow-lg flex flex-col space-y-4 border border-surface-100 dark:border-surface-700" data-exercise-id="${ex.id}">
+                <div class="flex justify-between items-start mb-4 gap-2">
+                    <h3 class="font-bold text-lg text-surface-900 dark:text-surface-50 leading-tight flex-1 min-w-0 break-words" title="${ex.name}">${ex.name}</h3>
                     <div class="flex items-center gap-1 flex-shrink-0">
-                        <button type="button" data-action="move-ex-up" data-ex-id="${ex.id}" class="w-9 h-9 bg-surface-100 dark:bg-surface-700 rounded-xl text-xs font-bold hover:bg-surface-200 transition-colors ${index === 0 ? 'opacity-30 cursor-not-allowed' : ''}">▲</button>
-                        <button type="button" data-action="move-ex-down" data-ex-id="${ex.id}" class="w-9 h-9 bg-surface-100 dark:bg-surface-700 rounded-xl text-xs font-bold hover:bg-surface-200 transition-colors ${index === arr.length - 1 ? 'opacity-30 cursor-not-allowed' : ''}">▼</button>
+                        <button type="button" data-action="move-ex-up" data-ex-id="${ex.id}" class="w-8 h-8 bg-surface-100 dark:bg-surface-700 rounded-xl text-xs font-bold hover:bg-surface-200 transition-colors ${index === 0 ? 'opacity-30 cursor-not-allowed' : ''}">▲</button>
+                        <button type="button" data-action="move-ex-down" data-ex-id="${ex.id}" class="w-8 h-8 bg-surface-100 dark:bg-surface-700 rounded-xl text-xs font-bold hover:bg-surface-200 transition-colors ${index === arr.length - 1 ? 'opacity-30 cursor-not-allowed' : ''}">▼</button>
                     </div>
                 </div>
                 
-                <div class="mb-5 flex-1 min-h-[140px]">
-                    ${Components.sparkline(historyPoints)}
-                </div>
+                  <div class="min-h-[140px]">
+                      ${Components.sparkline(historyPoints, 72, 'Тоннаж (кг)')}
+                  </div>
 
-                <div class="space-y-3">
+                 <div class="space-y-2">
                     ${(ex.sets || []).map(set => {
                         let prevText = '—';
                         
@@ -353,36 +396,36 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         }
 
                         return `
-                        <div class="flex items-center gap-2 bg-surface-50 dark:bg-surface-700/50 p-2 rounded-2xl" data-set-id="${set.id}">
-                            <span class="font-bold w-6 text-center text-surface-400 text-xs">${set.set_number}</span>
-                            
-                            <div class="w-12 flex flex-col items-center justify-center flex-shrink-0" title="Прошлый подход">
-                                <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Пред.</label>
-                                <span class="text-[11px] font-semibold text-surface-600 dark:text-surface-300 h-10 flex items-center truncate">${prevText}</span>
-                            </div>
+                             <div class="flex items-center gap-2 bg-surface-50 dark:bg-surface-700/50 p-2 rounded-2xl" data-set-id="${set.id}">
+                                 <span class="font-bold w-6 text-center text-surface-400 text-xs">${set.set_number}</span>
+                                 
+                                 <div class="w-14 flex flex-col items-center justify-center flex-shrink-0" title="Прошлый подход">
+                                     <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Пред.</label>
+                                     <span class="text-[11px] font-semibold text-surface-600 dark:text-surface-300 h-10 flex items-center justify-center truncate leading-tight">${prevText}</span>
+                                 </div>
 
-                            <div class="flex-[2] flex flex-col min-w-0">
-                                <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Вес</label>
-                                 <input type="number" min="0" step="0.5" placeholder="—"
-                                       value="${set.weight_kg != null && set.weight_kg > 0 ? set.weight_kg : ''}"
-                                       class="w-24 h-12 bg-white dark:bg-surface-800 text-center text-xl font-bold rounded-xl border border-surface-200 dark:border-surface-600 focus:border-primary-500 focus:outline-none"
-                                       data-field="weight" ${set.is_completed ? 'readonly' : ''}>
-                            </div>
-                            
-                            <div class="flex-[2] flex flex-col min-w-0">
-                                <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Повт</label>
-                                 <input type="number" min="0" placeholder="—"
-                                       value="${set.reps != null && set.reps > 0 ? set.reps : ''}"
-                                       class="w-24 h-12 bg-white dark:bg-surface-800 text-center text-xl font-bold rounded-xl border border-surface-200 dark:border-surface-600 focus:border-primary-500 focus:outline-none"
-                                       data-field="reps" ${set.is_completed ? 'readonly' : ''}>
-                            </div>
-                            
-                            <button data-action="toggle-set"
-                                    class="flex-shrink-0 w-11 h-11 rounded-2xl text-xl font-bold transition-all flex items-center justify-center ${set.is_completed ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300 shadow-md' : 'bg-white dark:bg-surface-800 text-surface-400 shadow-sm border border-surface-200'}"
-                                    ${set.is_completed ? 'disabled' : ''}>
-                                ✓
-                            </button>
-                        </div>
+                                 <div class="flex-1 min-w-[60px] flex flex-col">
+                                     <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Вес</label>
+                                     <input type="number" min="0" step="0.5" placeholder="—"
+                                            value="${set.weight_kg != null && set.weight_kg > 0 ? set.weight_kg : ''}"
+                                            class="w-full h-12 bg-white dark:bg-surface-800 text-center text-xl font-bold rounded-xl border border-surface-200 dark:border-surface-600 focus:border-primary-500 focus:outline-none"
+                                            data-field="weight" ${set.is_completed ? 'readonly' : ''}>
+                                 </div>
+
+                                 <div class="flex-1 min-w-[60px] flex flex-col">
+                                     <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Повт</label>
+                                     <input type="number" min="0" placeholder="—"
+                                            value="${set.reps != null && set.reps > 0 ? set.reps : ''}"
+                                            class="w-full h-12 bg-white dark:bg-surface-800 text-center text-xl font-bold rounded-xl border border-surface-200 dark:border-surface-600 focus:border-primary-500 focus:outline-none"
+                                            data-field="reps" ${set.is_completed ? 'readonly' : ''}>
+                                 </div>
+
+                                  <button data-action="toggle-set"
+                                          class="${TOGGLE_BASE} ${set.is_completed ? TOGGLE_COMPLETED : TOGGLE_UNCOMPLETED}"
+                                         ${set.is_completed ? 'disabled' : ''}>
+                                      ✓
+                                  </button>
+                             </div>
                     `;
                     }).join('')}
                 </div>
@@ -409,11 +452,11 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         const allCards = [cancelCard, ...exerciseCards, completeCard];
 
         let html = `
-            <div class="p-4 pt-16" id="workout-container">
+            <div class="p-4 pt-12" id="workout-container">
                 <div class="flex items-center justify-between mb-6">
                     <button data-action="back-to-workouts" class="text-surface-500 hover:text-surface-900 dark:text-surface-400 text-lg">←</button>
                     <h2 class="text-xl font-bold text-center flex-1 ${!session.name ? 'truncate' : ''}">${session.name || 'Тренировка'}</h2>
-                    <span class="text-sm text-surface-500 font-mono">${durationMin} мин.</span>
+                     <span id="workout-timer" class="text-sm text-surface-500 font-mono tabular-nums">00:00</span>
                 </div>
 
                 <div class="flex overflow-x-auto snap-x snap-mandatory gap-4 pb-10 px-4 -mx-4" id="carousel">
@@ -434,6 +477,9 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
         // Event listeners for workout screen
         this.bindWorkoutScreenEvents(container, app, session);
+
+        // Start live timer
+        this.startWorkoutTimer(session);
     },
 
     bindWorkoutScreenEvents(container, app, session) {
@@ -443,6 +489,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         // Toggle set completion
         container.querySelectorAll('[data-action="toggle-set"]').forEach(btn => {
             btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
                 const button = e.currentTarget;
                 const row = button.closest('[data-set-id]');
                 if (!row) {
@@ -470,8 +517,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         reps: isNaN(reps) ? null : reps
                     }, token);
                     if (isCompleted) {
-                        button.classList.remove('bg-surface-100', 'text-surface-500', 'dark:bg-surface-700', 'dark:text-surface-400');
-                        button.classList.add('bg-primary-100', 'text-primary-700', 'dark:bg-primary-900/40', 'dark:text-primary-300', 'shadow-md');
+                        button.className = TOGGLE_BASE + ' ' + TOGGLE_COMPLETED;
                         button.textContent = '✓';
                         
                         row.querySelector('span.font-bold').classList.add('text-surface-400', 'dark:text-surface-600');
@@ -495,8 +541,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         }
                     }
                     else {
-                        button.classList.remove('bg-primary-100', 'text-primary-700', 'dark:bg-primary-900/40', 'dark:text-primary-300', 'shadow-md');
-                        button.classList.add('bg-surface-100', 'text-surface-500', 'dark:bg-surface-700', 'dark:text-surface-400');
+                        button.className = TOGGLE_BASE + ' ' + TOGGLE_UNCOMPLETED;
 
                         row.querySelector('span.font-bold').classList.remove('text-surface-400', 'dark:text-surface-600');
                         row.querySelectorAll('input').forEach(inp => inp.classList.remove('text-surface-400', 'dark:text-surface-600'));
@@ -594,6 +639,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
         // Back button
         container.querySelector('[data-action="back-to-workouts"]')?.addEventListener('click', () => {
+            this.stopWorkoutTimer();
             app.showPage('workouts');
         });
     },

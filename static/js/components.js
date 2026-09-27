@@ -37,9 +37,10 @@ export const Components = {
         `;
     },
 
-    sparkline(data, height = 72) {
-        if (!data || data.length === 0) return '<div class="text-xs text-surface-400 h-20 flex items-center justify-center">Нет истории весов</div>';
+    sparkline(data, height = 72, label = 'Тоннаж (кг)') {
+        if (!data || data.length === 0) return '<div class="text-xs text-surface-400 h-20 flex items-center justify-center">Нет истории тренировок</div>';
         
+        const formatNum = (n) => Math.round(n).toLocaleString();
         const min = Math.min(...data);
         const max = Math.max(...data);
         const range = max - min || 1;
@@ -65,15 +66,18 @@ export const Components = {
         
         return `
             <div class="w-full relative">
-                <div class="absolute top-0 left-0 right-0 flex justify-between items-baseline pointer-events-none mb-1">
-                    <span class="text-[10px] text-surface-400 font-mono">${min} кг</span>
-                    <div class="flex items-center gap-1">
-                        <span class="text-xs text-surface-400">Последнее:</span>
-                        <span class="text-sm font-bold font-mono text-primary-600 ${trendColor}">${last} ${trend}</span>
+                <div class="absolute top-0 left-0 right-0 pointer-events-none mb-1">
+                    <div class="text-xs text-surface-500 font-medium mb-1">${label}</div>
+                    <div class="flex justify-between items-baseline">
+                        <span class="text-[10px] text-surface-400 font-mono">${formatNum(min)} кг</span>
+                        <div class="flex items-center gap-1">
+                            <span class="text-xs text-surface-400">Последнее:</span>
+                            <span class="text-sm font-bold font-mono text-primary-600 ${trendColor}">${formatNum(last)} ${trend}</span>
+                        </div>
+                        <span class="text-[10px] text-surface-400 font-mono">${formatNum(max)} кг</span>
                     </div>
-                    <span class="text-[10px] text-surface-400 font-mono">${max} кг</span>
                 </div>
-                <svg width="100%" height="${height}" viewBox="0 0 100 100" preserveAspectRatio="none" style="margin-top: 18px;">
+                <svg width="100%" height="${height}" viewBox="0 0 100 100" preserveAspectRatio="none" style="margin-top: 24px;">
                     <defs>
                         <linearGradient id="sparkline-gradient" x1="0%" y1="100%" x2="0%" y2="0%">
                             <stop offset="0%" stop-color="currentColor" stop-opacity="0.1"/>
