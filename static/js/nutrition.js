@@ -35,26 +35,26 @@ export const Nutrition = {
                 <h2 class="text-xl font-bold mb-4">Питание за сегодня</h2>
 
                 <div class="grid grid-cols-4 gap-2 mb-6">
-                    <div class="bg-white dark:bg-surface-800 rounded-xl p-3 text-center">
-                        <p class="text-2xl font-bold text-primary-600">${Math.round(summary.calories)}</p>
+                    <div class="glass rounded-xl p-3 text-center">
+                        <p class="text-2xl font-bold text-surface-900 dark:text-zinc-100">${Math.round(summary.calories)}</p>
                         <p class="text-xs text-surface-500">Ккал</p>
                     </div>
-                    <div class="bg-white dark:bg-surface-800 rounded-xl p-3 text-center">
-                        <p class="text-lg font-bold text-primary-600">${Math.round(summary.protein)}г</p>
+                    <div class="glass rounded-xl p-3 text-center">
+                        <p class="text-lg font-bold text-surface-900 dark:text-zinc-100">${Math.round(summary.protein)}г</p>
                         <p class="text-xs text-surface-500">Белки</p>
                     </div>
-                    <div class="bg-white dark:bg-surface-800 rounded-xl p-3 text-center">
-                        <p class="text-lg font-bold text-primary-600">${Math.round(summary.fat)}г</p>
+                    <div class="glass rounded-xl p-3 text-center">
+                        <p class="text-lg font-bold text-surface-900 dark:text-zinc-100">${Math.round(summary.fat)}г</p>
                         <p class="text-xs text-surface-500">Жиры</p>
                     </div>
-                    <div class="bg-white dark:bg-surface-800 rounded-xl p-3 text-center">
-                        <p class="text-lg font-bold text-primary-600">${Math.round(summary.carbs)}г</p>
+                    <div class="glass rounded-xl p-3 text-center">
+                        <p class="text-lg font-bold text-surface-900 dark:text-zinc-100">${Math.round(summary.carbs)}г</p>
                         <p class="text-xs text-surface-500">Углы</p>
                     </div>
                 </div>
 
-                <div class="h-2 bg-surface-200 dark:bg-surface-700 rounded-full mb-4">
-                    <div class="h-full bg-primary-600 rounded-full" style="width: ${Math.min(100, (summary.calories / targets.target_calories) * 100)}%"></div>
+                <div class="h-2 bg-surface-200 dark:bg-white/10 rounded-full mb-4">
+                    <div class="h-full bg-surface-800 dark:bg-zinc-100 rounded-full" style="width: ${Math.min(100, (summary.calories / targets.target_calories) * 100)}%"></div>
                 </div>
                 <p class="text-xs text-surface-500 mb-4">
                     ${Math.round(summary.calories)} / ${targets.target_calories} Ккал

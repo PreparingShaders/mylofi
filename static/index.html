@@ -11,6 +11,19 @@
     <meta name="mobile-web-app-capable" content="yes">
     
     <title>MyLofi - Трекер питания и тренировок</title>
+
+    <!-- Anti-flash theme init: must run before first paint -->
+    <script>
+        (function () {
+            var stored = null;
+            try { stored = localStorage.getItem('theme'); } catch (e) {}
+            var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            var isDark = stored === 'dark' || (stored !== 'light' && prefersDark);
+            document.documentElement.classList.toggle('dark', isDark);
+            var meta = document.querySelector('meta[name="theme-color"]');
+            if (meta) meta.setAttribute('content', isDark ? '#09090b' : '#fafafa');
+        })();
+    </script>
     
     <!-- Tailwind CSS via CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -70,6 +83,60 @@
     
     <style>
         /* Custom styles */
+        
+        /* ============ Glassmorphism (light + dark graphite) ============ */
+        .glass {
+            background: rgba(255, 255, 255, 0.72);
+            -webkit-backdrop-filter: blur(16px) saturate(150%);
+            backdrop-filter: blur(16px) saturate(150%);
+            border: 1px solid rgba(24, 24, 27, 0.07);
+            box-shadow: 0 1px 2px rgba(24, 24, 27, 0.04);
+        }
+        .dark .glass {
+            background: rgba(24, 24, 27, 0.72);
+            -webkit-backdrop-filter: blur(20px) saturate(140%);
+            backdrop-filter: blur(20px) saturate(140%);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+        }
+        .glass-strong {
+            background: rgba(255, 255, 255, 0.92);
+            -webkit-backdrop-filter: blur(24px) saturate(160%);
+            backdrop-filter: blur(24px) saturate(160%);
+            border: 1px solid rgba(24, 24, 27, 0.08);
+            box-shadow: 0 10px 40px rgba(24, 24, 27, 0.10);
+        }
+        .dark .glass-strong {
+            background: rgba(9, 9, 11, 0.86);
+            -webkit-backdrop-filter: blur(28px) saturate(140%);
+            backdrop-filter: blur(28px) saturate(140%);
+            border: 1px solid rgba(255, 255, 255, 0.10);
+            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+        }
+        .glass-input {
+            background: rgba(244, 244, 245, 0.8);
+            border: 1px solid rgba(24, 24, 27, 0.08);
+        }
+        .dark .glass-input {
+            background: rgba(63, 63, 70, 0.55);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            color: #fafafa;
+        }
+        
+        /* Ambient graphite ambience behind the glass layers */
+        .dark body {
+            background-image:
+                radial-gradient(60rem 40rem at 12% -8%, rgba(63, 63, 70, 0.30), transparent 60%),
+                radial-gradient(48rem 34rem at 92% 4%, rgba(82, 82, 91, 0.20), transparent 62%),
+                radial-gradient(52rem 40rem at 50% 108%, rgba(39, 39, 42, 0.55), transparent 60%);
+        }
+        
+        /* Theme transition (suppressed during boot) */
+        html.theme-anim,
+        html.theme-anim * {
+            transition: background-color 0.25s ease, border-color 0.25s ease, color 0.25s ease !important;
+        }
+        
         .safe-area-inset-bottom {
             padding-bottom: env(safe-area-inset-bottom);
         }
@@ -197,11 +264,11 @@
         }
     </style>
 </head>
-<body class="bg-surface-50 dark:bg-surface-900 text-surface-900 dark:text-surface-50 min-h-screen font-sans">
+<body class="bg-surface-50 dark:bg-zinc-950 text-surface-900 dark:text-surface-50 min-h-screen font-sans">
     <!-- App Root -->
     <div id="app" class="min-h-screen flex flex-col relative">
         <!-- Top safe area -->
-        <div class="h-safe-top bg-surface-100 dark:bg-surface-800"></div>
+        <div class="h-safe-top"></div>
         
         <!-- Screens Container -->
         <div id="screens" class="flex-1 overflow-hidden relative">
@@ -210,7 +277,7 @@
                 <div class="flex-1 flex flex-col items-center justify-center p-6 text-center">
                     <h1 class="text-4xl font-bold mb-4">MyLofi</h1>
                     <p class="mb-8">Трекер питания и тренировок</p>
-                    <button data-action="show-auth" class="w-full py-3 bg-primary-600 text-white rounded-xl">Войти</button>
+                    <button data-action="show-auth" class="w-full py-3 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl font-semibold shadow-md">Войти</button>
                 </div>
             </div>
             
@@ -227,7 +294,7 @@
                 </div>
                 
                 <!-- Bottom Navigation -->
-                <nav id="bottom-nav" class="fixed bottom-0 left-0 right-0 z-50 bg-surface-100 dark:bg-surface-800 border-t border-surface-200 dark:border-surface-700 safe-area-inset-bottom" style="display: none;">
+                <nav id="bottom-nav" class="fixed bottom-0 left-0 right-0 z-50 glass-strong border-t border-surface-200 dark:border-white/10 safe-area-inset-bottom" style="display: none;">
                     <div class="grid grid-cols-5 gap-1 px-2 py-2">
                         <button data-page="nutrition" class="nav-item flex flex-col items-center gap-1 text-surface-500 dark:text-surface-400 btn-press transition-colors" aria-label="Питание">
                             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
@@ -238,8 +305,8 @@
                             <span class="text-xs font-medium">Тренировки</span>
                         </button>
                         <button data-page="camera" class="nav-item flex flex-col items-center gap-1 text-surface-500 dark:text-surface-400 btn-press transition-colors relative" aria-label="Сфотографировать">
-                            <div class="w-12 h-12 rounded-full bg-primary-600 flex items-center justify-center shadow-lg">
-                                <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                            <div class="w-12 h-12 rounded-full bg-primary-600 dark:bg-zinc-100 flex items-center justify-center shadow-lg">
+                                <svg class="w-7 h-7 text-white dark:text-zinc-950" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
                             </div>
                             <span class="text-xs font-medium">Камера</span>
                         </button>
@@ -292,6 +359,6 @@
     </script>
 
     <!-- Main App JS -->
-    <script type="module" src="/static/js/app.js?v=7"></script>
+    <script type="module" src="/static/js/app.js?v=8"></script>
 </body>
 </html>

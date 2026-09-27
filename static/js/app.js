@@ -3,15 +3,16 @@ import { API } from './api.js';
 import { Auth } from './auth.js';
 import { Nutrition } from './nutrition.js';
 import { Workouts } from './workouts.js';
-import { Profile } from './profile.js';
+import { Profile, THEME_OPTION_ACTIVE, THEME_OPTION_IDLE } from './profile.js';
 import { Camera } from './camera.js';
 import { DB } from './db.js';
 import { Components } from './components.js';
 import { Utils } from './utils.js';
+import { Theme } from './theme.js';
 
 const TOGGLE_BASE = 'flex-shrink-0 w-11 h-11 rounded-2xl text-xl font-bold transition-all flex items-center justify-center';
-const TOGGLE_COMPLETED = 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300 shadow-md';
-const TOGGLE_UNCOMPLETED = 'bg-white dark:bg-surface-800 text-surface-400 shadow-sm border border-surface-200 dark:border-surface-700';
+const TOGGLE_COMPLETED = 'bg-primary-100 text-primary-700 dark:bg-white/15 dark:text-zinc-100 border border-primary-200 dark:border-white/20 shadow-md';
+const TOGGLE_UNCOMPLETED = 'glass text-surface-400 dark:text-surface-500';
 
 const App = {
     state: {
@@ -29,6 +30,7 @@ const App = {
     
     async init() {
         console.log('[App] Initializing...');
+        Theme.init();
         this.cacheElements();
 
         // Проверка элементов перед продолжением
@@ -137,8 +139,8 @@ const App = {
         this.elements.screens.landing.innerHTML = `
             <div class="flex-1 flex flex-col items-center justify-center p-6 text-center">
                 <h1 class="text-4xl font-bold mb-4">MyLofi</h1>
-                <p class="mb-8">Трекер питания и тренировок</p>
-                <button data-action="show-auth" class="w-full py-3 bg-primary-600 text-white rounded-xl">Войти</button>
+                <p class="mb-8 text-surface-600 dark:text-surface-400">Трекер питания и тренировок</p>
+                <button data-action="show-auth" class="w-full py-3 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl font-semibold shadow-md">Войти</button>
             </div>
         `;
     },
@@ -241,6 +243,18 @@ const App = {
             case 'close-build-workout':
                 Workouts.closeBuildModal();
                 break;
+            case 'set-theme': {
+                const option = event.target.closest('[data-action="set-theme"]');
+                const mode = option?.dataset.theme;
+                if (!mode) break;
+                Theme.set(mode);
+                this.updateThemeControls(mode);
+                this.showToast(
+                    mode === 'system' ? 'Тема: системная' : (mode === 'dark' ? 'Тема: тёмная' : 'Тема: светлая'),
+                    'info'
+                );
+                break;
+            }
             case 'logout':
                 this.clearTokens();
                 this.showScreen('landing');
@@ -313,7 +327,7 @@ const App = {
             title: 'Завершить тренировку?',
             message: 'Все невыполненные подходы не будут сохранены.',
             confirmText: 'Завершить',
-            confirmClass: 'bg-primary-600 hover:bg-primary-700 text-white shadow-md',
+            confirmClass: 'bg-primary-600 hover:bg-primary-700 text-white dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200 font-semibold shadow-md',
             cancelText: 'Назад'
         })) return;
 
@@ -360,6 +374,15 @@ const App = {
         await this.renderPage('workouts');
     },
 
+    updateThemeControls(mode) {
+        document.querySelectorAll('[data-action="set-theme"]').forEach(btn => {
+            const isActive = btn.dataset.theme === mode;
+            btn.className = 'flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all '
+                + (isActive ? THEME_OPTION_ACTIVE : THEME_OPTION_IDLE);
+            btn.setAttribute('aria-pressed', String(isActive));
+        });
+    },
+
     showToast(message, type = 'info') {
         console.log(`[Toast] ${type}: ${message}`);
         const container = this.elements.toastContainer;
@@ -367,8 +390,8 @@ const App = {
         const toast = document.createElement('div');
         toast.className = `toast-enter px-4 py-2 rounded-xl text-sm font-medium shadow-lg pointer-events-auto
             ${type === 'error' ? 'bg-red-500 text-white' : ''}
-            ${type === 'success' ? 'bg-primary-600 text-white' : ''}
-            ${type === 'info' ? 'bg-primary-600 text-white' : ''}`;
+            ${type === 'success' ? 'bg-primary-600 text-white dark:bg-zinc-100 dark:text-zinc-950' : ''}
+            ${type === 'info' ? 'bg-primary-600 text-white dark:bg-zinc-100 dark:text-zinc-950' : ''}`;
         toast.textContent = message;
         container.appendChild(toast);
         setTimeout(() => {

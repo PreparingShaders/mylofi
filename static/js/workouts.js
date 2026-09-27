@@ -4,8 +4,8 @@ import { Components } from './components.js';
 import { Utils } from './utils.js';
 
 const TOGGLE_BASE = 'flex-shrink-0 w-11 h-11 rounded-2xl text-xl font-bold transition-all flex items-center justify-center';
-const TOGGLE_COMPLETED = 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300 shadow-md';
-const TOGGLE_UNCOMPLETED = 'bg-white dark:bg-surface-800 text-surface-400 shadow-sm border border-surface-200 dark:border-surface-700';
+const TOGGLE_COMPLETED = 'bg-primary-100 text-primary-700 dark:bg-white/15 dark:text-zinc-100 border border-primary-200 dark:border-white/20 shadow-md';
+const TOGGLE_UNCOMPLETED = 'glass text-surface-400 dark:text-surface-500';
 
 const LOCK_ICON = '<svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>';
 const WEEK_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
@@ -46,27 +46,27 @@ export const Workouts = {
             const week = this.getWeekActivity(recentSessions);
             const trainedThisWeek = week.filter(d => d.count > 0).length;
             statsWidget = `
-                <div class="bg-surface-100 dark:bg-surface-800 rounded-2xl p-4 mb-6 shadow-sm">
+                <div class="glass rounded-2xl p-4 mb-6">
                     <div class="flex justify-between items-center mb-3">
                         <h3 class="font-semibold text-sm text-surface-500 uppercase tracking-wider">Прогресс и объём</h3>
                         <span class="text-xs text-primary-600 dark:text-primary-400 font-medium">Серия: ${stats.current_streak_weeks} нед.</span>
                     </div>
                     <div class="grid grid-cols-3 gap-2 text-center mb-4">
-                        <div class="bg-surface-50 dark:bg-surface-700/50 p-2.5 rounded-xl">
+                        <div class="bg-surface-50 dark:bg-white/5 p-2.5 rounded-xl">
                             <div class="text-xs text-surface-400">Тренировок</div>
                             <div class="text-lg font-bold">${stats.total_workouts}</div>
                         </div>
-                        <div class="bg-surface-50 dark:bg-surface-700/50 p-2.5 rounded-xl">
+                        <div class="bg-surface-50 dark:bg-white/5 p-2.5 rounded-xl">
                             <div class="text-xs text-surface-400">Тоннаж</div>
                             <div class="text-lg font-bold">${(stats.total_volume_kg / 1000).toFixed(1)} т</div>
                         </div>
-                        <div class="bg-surface-50 dark:bg-surface-700/50 p-2.5 rounded-xl">
+                        <div class="bg-surface-50 dark:bg-white/5 p-2.5 rounded-xl">
                             <div class="text-xs text-surface-400">Подходов</div>
                             <div class="text-lg font-bold">${stats.total_sets}</div>
                         </div>
                     </div>
 
-                    <div class="bg-surface-50 dark:bg-surface-700/50 p-3 rounded-2xl">
+                    <div class="glass p-3 rounded-2xl">
                         <div class="flex items-center justify-between mb-2">
                             <span class="text-[11px] font-semibold text-surface-500 uppercase tracking-wider">Неделя</span>
                             <span class="text-[11px] text-surface-500 dark:text-surface-400">${trainedThisWeek} из 7 дней</span>
@@ -78,10 +78,10 @@ export const Workouts = {
                                     <span class="text-[10px] font-medium ${day.isToday ? 'text-primary-600 dark:text-primary-400' : 'text-surface-400'}">${WEEK_LABELS[i]}</span>
                                     <div class="w-full h-10 rounded-xl flex flex-col items-center justify-center leading-none transition-colors
                                                 ${day.count > 0
-                                                    ? 'bg-primary-600 text-white shadow-sm'
+                                                    ? 'bg-primary-600 text-white dark:bg-zinc-100 dark:text-zinc-950 shadow-sm'
                                                     : day.isToday
                                                         ? 'bg-primary-50 dark:bg-primary-900/40 text-primary-600 dark:text-primary-300 border border-primary-200 dark:border-primary-800'
-                                                        : 'bg-white dark:bg-surface-800 text-surface-300 dark:text-surface-600 border border-surface-200 dark:border-surface-700'}">
+                                                        : 'glass text-surface-300 dark:text-surface-500'}">
                                         <span class="text-sm font-bold">${day.dayNum}</span>
                                         ${day.count > 0 ? `<span class="text-[9px] opacity-90 mt-0.5">×${day.count}</span>` : ''}
                                     </div>
@@ -116,7 +116,7 @@ export const Workouts = {
                     </div>
                     <div class="flex overflow-x-auto snap-x snap-mandatory gap-3 pb-2 scrollbar-none -mx-4 px-4">
                         ${templates.map(t => `
-                            <div class="min-w-[220px] max-w-[240px] snap-center bg-surface-100 dark:bg-surface-800 border ${hasActiveSession ? 'border-surface-200/70 dark:border-surface-700/70 opacity-60' : 'border-surface-200 dark:border-surface-700'} rounded-2xl p-4 flex flex-col justify-between shadow-sm">
+                            <div class="min-w-[220px] max-w-[240px] snap-center glass border ${hasActiveSession ? 'border-surface-200/70 dark:border-white/10 opacity-60' : ''} rounded-2xl p-4 flex flex-col justify-between shadow-sm">
                                 <div class="flex-1 cursor-pointer" data-action="view-template" data-template-id="${t.id}">
                                     <h4 class="font-bold text-base truncate mb-1" title="${t.name}">${t.name}</h4>
                                     <p class="text-xs text-surface-500 dark:text-surface-400 mb-2">${t.exercises.length} упр.</p>
@@ -125,7 +125,7 @@ export const Workouts = {
                                     </div>
                                 </div>
                                 <button data-action="start-template" data-template-id="${t.id}" ${hasActiveSession ? 'disabled' : ''}
-                                        class="w-full py-2 flex items-center justify-center gap-1.5 ${hasActiveSession ? 'bg-surface-300 text-surface-500 dark:bg-surface-700 dark:text-surface-400 cursor-not-allowed' : 'bg-primary-600 text-white'} rounded-xl text-xs font-semibold text-center shadow-sm">
+                                        class="w-full py-2 flex items-center justify-center gap-1.5 ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'bg-primary-600 text-white'} rounded-xl text-xs font-semibold text-center shadow-sm">
                                     ${hasActiveSession ? `${LOCK_ICON}<span>Активна тренировка</span>` : '<span>Начать тренировку →</span>'}
                                 </button>
                             </div>
@@ -158,12 +158,12 @@ export const Workouts = {
                                 <span class="text-xs font-semibold text-surface-600 dark:text-surface-300">Сделано ${activeMetrics.completed} из ${activeMetrics.total} подходов (${activePercent}%)</span>
                                 <span class="text-xs font-semibold text-surface-600 dark:text-surface-300">${Math.round(activeMetrics.tonnage)} кг</span>
                             </div>
-                            <div class="h-2 w-full rounded-full bg-surface-200 dark:bg-surface-700 overflow-hidden">
-                                <div class="h-full rounded-full bg-primary-500 transition-all duration-300" style="width: ${activePercent}%"></div>
+                            <div class="h-2 w-full rounded-full bg-surface-200 dark:bg-white/10 overflow-hidden">
+                                <div class="h-full rounded-full bg-surface-800 dark:bg-zinc-100 transition-all duration-300" style="width: ${activePercent}%"></div>
                             </div>
                         </div>
                         <button data-action="resume-workout" data-session-id="${activeSession.id}"
-                                class="w-full py-2.5 bg-primary-600 text-white rounded-xl text-sm font-medium shadow-md">
+                                class="w-full py-2.5 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl text-sm font-semibold shadow-md">
                             Продолжить тренировку →
                         </button>
                     </div>`
@@ -173,7 +173,7 @@ export const Workouts = {
                     <h3 class="text-sm font-semibold text-surface-500 uppercase tracking-wider mb-3">Действия</h3>
                     <div class="flex overflow-x-auto snap-x snap-mandatory gap-3 pb-3 scrollbar-none -mx-4 px-4">
                         <!-- Card 1: Build Custom -->
-                        <div class="min-w-[240px] max-w-[260px] snap-center bg-surface-100 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-2xl p-4 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="show-build-workout">
+                        <div class="min-w-[240px] max-w-[260px] snap-center glass border rounded-2xl p-4 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="show-build-workout">
                             <div>
                                 <div class="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-3">
                                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
@@ -185,7 +185,7 @@ export const Workouts = {
                         </div>
 
                         <!-- Card 2: Quick Start -->
-                        <div class="min-w-[240px] max-w-[260px] snap-center bg-surface-100 dark:bg-surface-800 border ${hasActiveSession ? 'border-surface-200/70 dark:border-surface-700/70' : 'border-surface-200 dark:border-surface-700'} rounded-2xl p-4 flex flex-col justify-between shadow-sm ${hasActiveSession ? 'opacity-60' : 'cursor-pointer btn-press'}" data-action="${hasActiveSession ? '' : 'quick-start-workout'}">
+                        <div class="min-w-[240px] max-w-[260px] snap-center glass border ${hasActiveSession ? 'border-surface-200/70 dark:border-white/10' : ''} rounded-2xl p-4 flex flex-col justify-between shadow-sm ${hasActiveSession ? 'opacity-60' : 'cursor-pointer btn-press'}" data-action="${hasActiveSession ? '' : 'quick-start-workout'}">
                             <div>
                                 <div class="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-3">
                                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
@@ -194,12 +194,12 @@ export const Workouts = {
                                 <p class="text-xs text-surface-500 dark:text-surface-400">Готовая тренировка под цель: сила, масса или выносливость</p>
                             </div>
                             ${hasActiveSession
-                                ? `<span class="mt-4 text-xs font-semibold bg-surface-200 dark:bg-surface-700 text-surface-500 dark:text-surface-400 px-3 py-2 rounded-xl text-center flex items-center justify-center gap-1.5">${LOCK_ICON}<span>Активна тренировка</span></span>`
+                                ? `<span class="mt-4 text-xs font-semibold bg-surface-200 dark:bg-white/5 text-surface-500 dark:text-surface-400 px-3 py-2 rounded-xl text-center flex items-center justify-center gap-1.5">${LOCK_ICON}<span>Активна тренировка</span></span>`
                                 : '<span class="mt-4 text-xs font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-3 py-2 rounded-xl text-center">Начать сразу →</span>'}
                         </div>
 
                         <!-- Card 3: Personal Records -->
-                        <div class="min-w-[240px] max-w-[260px] snap-center bg-surface-100 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-2xl p-4 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="view-records">
+                        <div class="min-w-[240px] max-w-[260px] snap-center glass border rounded-2xl p-4 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="view-records">
                             <div>
                                 <div class="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-3">
                                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-1l2 2 4-4m-5.5-8.5L19 3l2 2-3 3-2-2z"/></svg>
@@ -430,11 +430,11 @@ export const Workouts = {
                     </div>
                 </div>
 
-                <div class="bg-white dark:bg-surface-800 rounded-xl p-4 shadow-sm">
+                <div class="glass rounded-xl p-4">
                     <h3 class="font-semibold mb-3">Упражнения (${template.exercises.length})</h3>
                     <ul class="space-y-2">
                         ${template.exercises.map(ex => `
-                            <li class="text-sm py-2 border-b border-surface-200 dark:border-surface-700 last:border-0">
+                            <li class="text-sm py-2 border-b  last:border-0">
                                 ${ex.name} - ${ex.target_sets} подх. × ${ex.target_reps} повт.
                             </li>
                         `).join('')}
@@ -508,12 +508,12 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 .slice(-10);
 
             return `
-             <div class="w-[98vw] max-w-[500px] snap-center bg-white dark:bg-surface-800 rounded-3xl p-4 shadow-lg flex flex-col space-y-4 border border-surface-100 dark:border-surface-700" data-exercise-id="${ex.id}">
+             <div class="w-[98vw] max-w-[500px] snap-center glass rounded-3xl p-4 flex flex-col space-y-4" data-exercise-id="${ex.id}">
                 <div class="flex justify-between items-start mb-4 gap-2">
                     <h3 class="font-bold text-lg text-surface-900 dark:text-surface-50 leading-tight flex-1 min-w-0 break-words" title="${ex.name}">${ex.name}</h3>
                     <div class="flex items-center gap-1 flex-shrink-0">
-                        <button type="button" data-action="move-ex-up" data-ex-id="${ex.id}" class="w-8 h-8 bg-surface-100 dark:bg-surface-700 rounded-xl text-xs font-bold hover:bg-surface-200 transition-colors ${index === 0 ? 'opacity-30 cursor-not-allowed' : ''}">▲</button>
-                        <button type="button" data-action="move-ex-down" data-ex-id="${ex.id}" class="w-8 h-8 bg-surface-100 dark:bg-surface-700 rounded-xl text-xs font-bold hover:bg-surface-200 transition-colors ${index === arr.length - 1 ? 'opacity-30 cursor-not-allowed' : ''}">▼</button>
+                        <button type="button" data-action="move-ex-up" data-ex-id="${ex.id}" class="w-8 h-8 glass rounded-xl text-xs font-bold hover:bg-surface-200 transition-colors ${index === 0 ? 'opacity-30 cursor-not-allowed' : ''}">▲</button>
+                        <button type="button" data-action="move-ex-down" data-ex-id="${ex.id}" class="w-8 h-8 glass rounded-xl text-xs font-bold hover:bg-surface-200 transition-colors ${index === arr.length - 1 ? 'opacity-30 cursor-not-allowed' : ''}">▼</button>
                     </div>
                 </div>
                 
@@ -546,7 +546,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         }
 
                         return `
-                             <div class="flex items-center gap-2 bg-surface-50 dark:bg-surface-700/50 p-2 rounded-2xl" data-set-id="${set.id}">
+                             <div class="flex items-center gap-2 glass p-2 rounded-2xl" data-set-id="${set.id}">
                                  <span class="font-bold w-6 text-center text-surface-400 text-xs">${set.set_number}</span>
                                  
                                  <div class="w-14 flex flex-col items-center justify-center flex-shrink-0" title="Прошлый подход">
@@ -558,7 +558,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                                      <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Вес</label>
                                      <input type="number" min="0" step="0.5" placeholder="—"
                                             value="${set.weight_kg != null && set.weight_kg > 0 ? set.weight_kg : ''}"
-                                            class="w-full h-12 bg-white dark:bg-surface-800 text-center text-xl font-bold rounded-xl border border-surface-200 dark:border-surface-600 focus:border-primary-500 focus:outline-none"
+                                            class="w-full h-12 text-center text-xl font-bold rounded-xl glass-input focus:border-primary-500 focus:outline-none"
                                             data-field="weight" ${set.is_completed ? 'readonly' : ''}>
                                  </div>
 
@@ -566,7 +566,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                                      <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Повт</label>
                                      <input type="number" min="0" placeholder="—"
                                             value="${set.reps != null && set.reps > 0 ? set.reps : ''}"
-                                            class="w-full h-12 bg-white dark:bg-surface-800 text-center text-xl font-bold rounded-xl border border-surface-200 dark:border-surface-600 focus:border-primary-500 focus:outline-none"
+                                            class="w-full h-12 text-center text-xl font-bold rounded-xl glass-input focus:border-primary-500 focus:outline-none"
                                             data-field="reps" ${set.is_completed ? 'readonly' : ''}>
                                  </div>
 
@@ -584,7 +584,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
         // Cards
         const cancelCard = `
-            <div class="w-[98vw] max-w-[500px] snap-center bg-surface-100 dark:bg-surface-800 rounded-2xl p-6 shadow-md flex flex-col items-center justify-center min-h-[520px]">
+            <div class="w-[98vw] max-w-[500px] snap-center glass rounded-2xl p-6 flex flex-col items-center justify-center min-h-[520px]">
                 <button data-action="cancel-workout" data-session-id="${session.id}"
                         class="w-full py-5 border-2 border-dashed border-red-300 dark:border-red-700 rounded-2xl text-red-600 font-bold text-base">
                     Отменить тренировку
@@ -592,9 +592,9 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             </div>
         `;
         const completeCard = `
-            <div class="w-[98vw] max-w-[500px] snap-center bg-surface-100 dark:bg-surface-800 rounded-2xl p-6 shadow-md flex flex-col items-center justify-center min-h-[520px]">
+            <div class="w-[98vw] max-w-[500px] snap-center glass rounded-2xl p-6 flex flex-col items-center justify-center min-h-[520px]">
                 <button data-action="complete-workout" data-session-id="${session.id}"
-                        class="w-full py-5 bg-primary-600 text-white rounded-2xl font-bold text-base">
+                        class="w-full py-5 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-2xl font-bold text-base">
                     Завершить тренировку
                 </button>
             </div>
@@ -619,8 +619,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         <span id="workout-progress-text" class="text-xs font-semibold text-surface-600 dark:text-surface-300">Сделано ${initialMetrics.completed} из ${initialMetrics.total} подходов (${initialPercent}%)</span>
                         <span id="workout-total-tonnage" class="text-xs font-semibold text-surface-600 dark:text-surface-300">Суммарный тоннаж: ${Math.round(initialMetrics.tonnage)} кг</span>
                     </div>
-                    <div class="h-2 w-full rounded-full bg-surface-200 dark:bg-surface-700 overflow-hidden">
-                        <div id="workout-progress-bar" class="h-full rounded-full bg-primary-500 transition-all duration-300" style="width: ${initialPercent}%"></div>
+                    <div class="h-2 w-full rounded-full bg-surface-200 dark:bg-white/10 overflow-hidden">
+                        <div id="workout-progress-bar" class="h-full rounded-full bg-surface-800 dark:bg-zinc-100 transition-all duration-300" style="width: ${initialPercent}%"></div>
                     </div>
                 </div>
 
@@ -889,7 +889,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     ? `<div class="text-center py-8 text-surface-400">Ещё нет тренировок. Начните первую!</div>`
                     : `<div class="space-y-3">
                         ${sessions.map(s => `
-                            <div class="bg-white dark:bg-surface-800 rounded-xl p-4 shadow-sm">
+                            <div class="glass rounded-xl p-4">
                                 <h3 class="font-semibold">${s.name || 'Тренировка'}</h3>
                                 <p class="text-sm text-surface-500 dark:text-surface-400">
                                     ${Utils.formatDate(s.started_at)} · ${Utils.formatDuration(s.duration_seconds || 0)}
@@ -916,7 +916,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         modal.id = 'quick-start-modal';
         modal.className = 'fixed inset-0 z-50 flex items-center justify-center modal-backdrop pointer-events-auto';
         modal.innerHTML = `
-            <div class="bg-surface-50 dark:bg-surface-900 rounded-2xl p-6 mx-4 max-w-sm w-full shadow-2xl">
+            <div class="glass-strong rounded-2xl p-6 mx-4 max-w-sm w-full">
                 <div class="flex justify-between items-center mb-1">
                     <h3 class="text-lg font-bold">Быстрый старт</h3>
                     <button type="button" data-action="close-quick-start" class="text-surface-500 hover:text-surface-900 dark:text-surface-400 p-1">✕</button>
@@ -927,7 +927,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 <div class="space-y-2">
                     ${QUICK_GOALS.map(goal => `
                         <button type="button" data-goal="${goal.value}"
-                                class="w-full flex items-center justify-between gap-3 p-3.5 rounded-2xl bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-left btn-press">
+                                class="w-full flex items-center justify-between gap-3 p-3.5 rounded-2xl glass text-left btn-press">
                             <span class="min-w-0">
                                 <span class="block font-semibold text-sm">${goal.title}</span>
                                 <span class="block text-[11px] text-surface-500 dark:text-surface-400">${goal.subtitle}</span>
@@ -997,7 +997,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     ? '<div class="text-center py-8 text-surface-400">Рекордов пока нет. Завершите тренировку с весами.</div>'
                     : `<div class="space-y-2">
                         ${list.map(record => `
-                            <div class="bg-white dark:bg-surface-800 rounded-2xl p-4 shadow-sm flex items-center justify-between gap-3">
+                            <div class="glass rounded-2xl p-4 flex items-center justify-between gap-3">
                                 <div class="min-w-0 flex-1">
                                     <h3 class="font-semibold text-sm truncate" title="${record.name}">${record.name}</h3>
                                     <p class="text-xs text-surface-500 dark:text-surface-400 mt-0.5">
@@ -1033,17 +1033,17 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     <div class="flex items-center justify-between mb-4">
                         <button data-action="back-to-workouts" class="text-surface-500 hover:text-surface-900">←</button>
                         <h2 class="text-xl font-bold">Шаблоны</h2>
-                        <button data-action="create-template" class="px-4 py-2 bg-primary-600 text-white rounded-xl text-sm font-medium">+ Создать</button>
+                        <button data-action="create-template" class="px-4 py-2 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl text-sm font-medium">+ Создать</button>
                     </div>
                     <div class="space-y-3">
                         ${templates.map(t => `
-                            <div class="bg-white dark:bg-surface-800 rounded-xl p-4 shadow-sm flex justify-between items-center gap-3 ${hasActiveSession ? 'opacity-60' : ''}">
+                            <div class="glass rounded-xl p-4 flex justify-between items-center gap-3 ${hasActiveSession ? 'opacity-60' : ''}">
                                 <div class="min-w-0">
                                     <h3 class="font-semibold truncate">${t.name}</h3>
                                     <p class="text-xs text-surface-400">${t.exercises.length} упр.</p>
                                 </div>
                                 <button data-action="start-template" data-template-id="${t.id}" ${hasActiveSession ? 'disabled' : ''}
-                                        class="px-3 py-1.5 flex items-center gap-1.5 flex-shrink-0 ${hasActiveSession ? 'bg-surface-200 text-surface-500 dark:bg-surface-700 dark:text-surface-400 cursor-not-allowed' : 'bg-primary-600 text-white'} rounded text-xs">
+                                        class="px-3 py-1.5 flex items-center gap-1.5 flex-shrink-0 ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'bg-primary-600 text-white'} rounded text-xs">
                                     ${hasActiveSession ? `${LOCK_ICON}<span>Активна тренировка</span>` : '<span>Начать</span>'}
                                 </button>
                             </div>
@@ -1130,19 +1130,19 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         </div>
                     </div>
                     <div class="grid grid-cols-2 gap-3 mb-6">
-                        <div class="bg-surface-100 dark:bg-surface-800 rounded-xl p-4">
+                        <div class="glass rounded-xl p-4">
                             <p class="text-sm text-surface-500 dark:text-surface-400">Общий объём</p>
                             <p class="text-2xl font-bold">${stats.total_volume_kg.toLocaleString()} кг</p>
                         </div>
-                        <div class="bg-surface-100 dark:bg-surface-800 rounded-xl p-4">
+                        <div class="glass rounded-xl p-4">
                             <p class="text-sm text-surface-500 dark:text-surface-400">Всего подходов</p>
                             <p class="text-2xl font-bold">${stats.total_sets}</p>
                         </div>
-                        <div class="bg-surface-100 dark:bg-surface-800 rounded-xl p-4">
+                        <div class="glass rounded-xl p-4">
                             <p class="text-sm text-surface-500 dark:text-surface-400">Общее время</p>
                             <p class="text-2xl font-bold">${stats.total_duration_hours} ч</p>
                         </div>
-                        <div class="bg-surface-100 dark:bg-surface-800 rounded-xl p-4">
+                        <div class="glass rounded-xl p-4">
                             <p class="text-sm text-surface-500 dark:text-surface-400">Средняя тренировка</p>
                             <p class="text-2xl font-bold">${stats.avg_workout_duration_min} мин</p>
                         </div>
@@ -1152,7 +1152,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                             <h3 class="font-semibold mb-3">Топ упражнений по объёму</h3>
                             <div class="space-y-2">
                                 ${stats.top_exercises.map((ex, i) => `
-                                    <div class="bg-white dark:bg-surface-800 rounded-xl p-3 flex justify-between items-center">
+                                    <div class="glass rounded-xl p-3 flex justify-between items-center">
                                         <div class="flex items-center gap-3">
                                             <span class="text-sm text-surface-400 w-6">${i + 1}.</span>
                                             <span class="font-medium">${ex.name}</span>
@@ -1198,8 +1198,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
         const buildHtml = () => `
             <div id="build-modal" class="fixed inset-0 z-50 flex items-center justify-center modal-backdrop pointer-events-auto">
-                <div class="bg-surface-50 dark:bg-surface-900 rounded-2xl mx-4 max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl">
-                    <div class="p-5 border-b border-surface-200 dark:border-surface-700 flex justify-between items-center">
+                <div class="glass-strong rounded-2xl mx-4 max-w-2xl w-full max-h-[85vh] flex flex-col">
+                    <div class="p-5 border-b  flex justify-between items-center">
                         <div>
                             <h3 class="text-lg font-bold">Собрать тренировку</h3>
                             <p class="text-xs text-surface-500">Выберите упражнения из каталога</p>
@@ -1207,9 +1207,9 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         <button data-action="close-build-workout" class="text-surface-500 hover:text-surface-900 dark:text-surface-400 p-1">✕</button>
                     </div>
 
-                    <div class="p-4 border-b border-surface-200 dark:border-surface-700">
+                    <div class="p-4 border-b ">
                         <input id="bw-name" type="text" placeholder="Название тренировки" value="Моя тренировка"
-                               class="w-full px-3 py-2.5 text-sm border border-surface-300 dark:border-surface-700 rounded-xl bg-surface-50 dark:bg-surface-800 mb-3 font-medium">
+                               class="w-full px-3 py-2.5 text-sm glass-input rounded-xl mb-3 font-medium">
                         
                         <div class="flex gap-2 overflow-x-auto pb-2 scrollbar-none" id="bw-groups-container">
                             <!-- Pills will be rendered here -->
@@ -1217,9 +1217,9 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         
                         <div class="flex items-center gap-2 mt-2">
                             <input id="bw-search" type="text" placeholder="Поиск упражнения..."
-                                   class="flex-1 px-3 py-2 text-sm border border-surface-300 dark:border-surface-700 rounded-xl bg-surface-50 dark:bg-surface-800">
+                                   class="flex-1 px-3 py-2 text-sm glass-input rounded-xl">
                             <button id="bw-add-own" type="button" title="Добавить своё упражнение"
-                                    class="w-10 h-10 flex items-center justify-center border border-surface-300 dark:border-surface-700 rounded-xl text-surface-500 hover:text-surface-900 bg-surface-100 dark:bg-surface-800 font-bold">+</button>
+                                    class="w-10 h-10 flex items-center justify-center glass rounded-xl text-surface-500 dark:text-zinc-400 hover:text-surface-900 dark:hover:text-zinc-100 font-bold">+</button>
                         </div>
                     </div>
 
@@ -1228,10 +1228,10 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         <div id="bw-list" class="space-y-1.5"></div>
                     </div>
 
-                    <div class="p-4 border-t border-surface-200 dark:border-surface-700 flex items-center justify-between gap-3">
+                    <div class="p-4 border-t  flex items-center justify-between gap-3">
                         <div id="bw-selected-count" class="text-xs text-surface-500 font-medium">Выбрано: 0</div>
                         <button id="bw-next"
-                                class="px-6 py-2.5 bg-primary-600 text-white rounded-xl text-sm font-semibold shadow-md disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                                class="px-6 py-2.5 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl text-sm font-semibold shadow-md disabled:opacity-50 disabled:cursor-not-allowed" disabled>
                             Далее
                         </button>
                     </div>
@@ -1250,14 +1250,14 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             groupsContainer.innerHTML = '';
             const allBtn = document.createElement('button');
             allBtn.textContent = 'Все';
-            allBtn.className = `px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all ${filterGroup === '' ? 'bg-primary-600 text-white' : 'bg-surface-200 dark:bg-surface-700 text-surface-700 dark:text-surface-300'}`;
+            allBtn.className = `px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all ${filterGroup === '' ? 'bg-surface-900 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'bg-surface-200 dark:bg-white/10 text-surface-700 dark:text-surface-300'}`;
             allBtn.addEventListener('click', () => { filterGroup = ''; renderGroupOptions(); renderList(); });
             groupsContainer.appendChild(allBtn);
 
             Object.entries(meta.muscle_groups || {}).forEach(([slug, label]) => {
                 const btn = document.createElement('button');
                 btn.textContent = label;
-                btn.className = `px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all ${filterGroup === slug ? 'bg-primary-600 text-white' : 'bg-surface-200 dark:bg-surface-700 text-surface-700 dark:text-surface-300'}`;
+                btn.className = `px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all ${filterGroup === slug ? 'bg-surface-900 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'bg-surface-200 dark:bg-white/10 text-surface-700 dark:text-surface-300'}`;
                 btn.addEventListener('click', () => { filterGroup = slug; renderGroupOptions(); renderList(); });
                 groupsContainer.appendChild(btn);
             });
@@ -1278,7 +1278,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             listEl.innerHTML = rows.map(ex => {
                 const isSelected = selected.includes(ex.id);
                 return `
-                <label class="flex items-center gap-4 p-4 cursor-pointer rounded-2xl border transition-all ${isSelected ? 'bg-primary-50 border-primary-200 dark:bg-primary-900/20 dark:border-primary-800' : 'bg-white dark:bg-surface-800 border-surface-200 dark:border-surface-700 hover:border-surface-300'}">
+                <label class="flex items-center gap-4 p-4 cursor-pointer rounded-2xl border transition-all ${isSelected ? 'bg-primary-50 border-primary-200 dark:bg-primary-900/20 dark:border-primary-800' : 'glass hover:border-surface-300 dark:hover:border-white/20'}">
                     <input type="checkbox" data-id="${ex.id}" class="w-5 h-5 text-primary-600 rounded"
                            ${isSelected ? 'checked' : ''}>
                     <div class="flex-1 min-w-0">
@@ -1362,7 +1362,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         const findTemplateEx = (exName) => template?.exercises.find(te => te.name === exName);
 
         content.innerHTML = `
-            <div class="p-5 border-b border-surface-200 dark:border-surface-700 flex justify-between items-center">
+            <div class="p-5 border-b  flex justify-between items-center">
                 <h3 class="text-lg font-bold">Настройка упражнений и порядка</h3>
                 <button data-action="close-build-workout" class="text-surface-500 hover:text-surface-900 dark:text-surface-400 p-1">✕</button>
             </div>
@@ -1370,29 +1370,29 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 ${selectedExercises.map((ex, i) => {
                     const te = findTemplateEx(ex.name);
                     return `
-                    <div class="bg-surface-100 dark:bg-surface-800 p-4 rounded-2xl flex items-center justify-between gap-3" data-ex-id="${ex.id}" data-index="${i}">
+                    <div class="glass p-4 rounded-2xl flex items-center justify-between gap-3" data-ex-id="${ex.id}" data-index="${i}">
                         <div class="flex-1 min-w-0">
                             <h4 class="font-bold mb-2 truncate">${ex.name}</h4>
                             <div class="grid grid-cols-2 gap-2">
                                 <div>
                                     <label class="text-xs text-surface-500">Подходы</label>
-                                    <input type="number" value="${te?.target_sets || 3}" class="w-full px-2 py-1 bg-white dark:bg-surface-900 rounded border border-surface-300 dark:border-surface-700 cfg-sets">
+                                    <input type="number" value="${te?.target_sets || 3}" class="w-full px-2 py-1 glass-input rounded cfg-sets">
                                 </div>
                                 <div>
                                     <label class="text-xs text-surface-500">Повт.</label>
-                                    <input type="number" value="${te?.target_reps || 10}" class="w-full px-2 py-1 bg-white dark:bg-surface-900 rounded border border-surface-300 dark:border-surface-700 cfg-reps">
+                                    <input type="number" value="${te?.target_reps || 10}" class="w-full px-2 py-1 glass-input rounded cfg-reps">
                                 </div>
                             </div>
                         </div>
                         <div class="flex flex-col gap-1.5">
-                            <button type="button" data-action="cfg-move-up" class="px-3.5 py-2 bg-surface-200 dark:bg-surface-700 rounded-xl text-sm font-bold hover:bg-surface-300 transition-colors">▲</button>
-                            <button type="button" data-action="cfg-move-down" class="px-3.5 py-2 bg-surface-200 dark:bg-surface-700 rounded-xl text-sm font-bold hover:bg-surface-300 transition-colors">▼</button>
+                            <button type="button" data-action="cfg-move-up" class="px-3.5 py-2 glass rounded-xl text-sm font-bold hover:bg-surface-300 dark:hover:bg-white/10 transition-colors">▲</button>
+                            <button type="button" data-action="cfg-move-down" class="px-3.5 py-2 glass rounded-xl text-sm font-bold hover:bg-surface-300 dark:hover:bg-white/10 transition-colors">▼</button>
                         </div>
                     </div>
                 `}).join('')}
             </div>
-            <div class="p-4 border-t border-surface-200 dark:border-surface-700">
-                <button id="bw-save-final" class="w-full py-2.5 bg-primary-600 text-white rounded-xl text-sm font-semibold shadow-md">Сохранить</button>
+            <div class="p-4 border-t ">
+                <button id="bw-save-final" class="w-full py-2.5 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl text-sm font-semibold shadow-md">Сохранить</button>
             </div>
         `;
 
@@ -1447,8 +1447,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
         const buildHtml = () => `
             <div id="build-modal" class="fixed inset-0 z-50 flex items-center justify-center modal-backdrop pointer-events-auto">
-                <div class="bg-surface-50 dark:bg-surface-900 rounded-2xl mx-4 max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl">
-                    <div class="p-5 border-b border-surface-200 dark:border-surface-700 flex justify-between items-center">
+                <div class="glass-strong rounded-2xl mx-4 max-w-2xl w-full max-h-[85vh] flex flex-col">
+                    <div class="p-5 border-b  flex justify-between items-center">
                         <div>
                             <h3 class="text-lg font-bold">Редактировать шаблон</h3>
                             <p class="text-xs text-surface-500">Измените название или упражнения</p>
@@ -1456,9 +1456,9 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         <button data-action="close-build-workout" class="text-surface-500 hover:text-surface-900 dark:text-surface-400 p-1">✕</button>
                     </div>
 
-                    <div class="p-4 border-b border-surface-200 dark:border-surface-700">
+                    <div class="p-4 border-b ">
                         <input id="bw-name" type="text" placeholder="Название тренировки" value="${template.name || ''}"
-                               class="w-full px-4 py-3 text-sm border border-surface-200 dark:border-surface-700 rounded-2xl bg-surface-100 dark:bg-surface-800 mb-4 font-medium">
+                               class="w-full px-4 py-3 text-sm rounded-2xl glass-input mb-4 font-medium">
                         
                         <div class="flex gap-2 overflow-x-auto pb-2 scrollbar-none" id="bw-groups-container">
                             <!-- Pills will be rendered here -->
@@ -1466,9 +1466,9 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         
                         <div class="flex items-center gap-2 mt-2">
                             <input id="bw-search" type="text" placeholder="Поиск упражнения..."
-                                   class="flex-1 px-4 py-3 text-sm border border-surface-200 dark:border-surface-700 rounded-2xl bg-surface-100 dark:bg-surface-800">
+                                   class="flex-1 px-4 py-3 text-sm rounded-2xl glass-input">
                             <button id="bw-add-own" type="button" title="Добавить своё упражнение"
-                                    class="w-12 h-12 flex items-center justify-center border border-surface-200 dark:border-surface-700 rounded-2xl text-surface-500 hover:text-surface-900 bg-surface-100 dark:bg-surface-800 font-bold text-xl">+</button>
+                                    class="w-12 h-12 flex items-center justify-center glass rounded-2xl text-surface-500 dark:text-zinc-400 hover:text-surface-900 dark:hover:text-zinc-100 font-bold text-xl">+</button>
                         </div>
                     </div>
 
@@ -1477,10 +1477,10 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         <div id="bw-list" class="space-y-1.5"></div>
                     </div>
 
-                    <div class="p-4 border-t border-surface-200 dark:border-surface-700 flex items-center justify-between gap-3">
+                    <div class="p-4 border-t  flex items-center justify-between gap-3">
                         <div id="bw-selected-count" class="text-xs text-surface-500 font-medium">Выбрано: 0</div>
                         <button id="bw-next"
-                                class="px-6 py-2.5 bg-primary-600 text-white rounded-xl text-sm font-semibold shadow-md disabled:opacity-50 disabled:cursor-not-allowed">
+                                class="px-6 py-2.5 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl text-sm font-semibold shadow-md disabled:opacity-50 disabled:cursor-not-allowed">
                             Далее
                         </button>
                     </div>
@@ -1499,14 +1499,14 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             groupsContainer.innerHTML = '';
             const allBtn = document.createElement('button');
             allBtn.textContent = 'Все';
-            allBtn.className = `px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all ${filterGroup === '' ? 'bg-primary-600 text-white' : 'bg-surface-200 dark:bg-surface-700 text-surface-700 dark:text-surface-300'}`;
+            allBtn.className = `px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all ${filterGroup === '' ? 'bg-surface-900 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'bg-surface-200 dark:bg-white/10 text-surface-700 dark:text-surface-300'}`;
             allBtn.addEventListener('click', () => { filterGroup = ''; renderGroupOptions(); renderList(); });
             groupsContainer.appendChild(allBtn);
 
             Object.entries(meta.muscle_groups || {}).forEach(([slug, label]) => {
                 const btn = document.createElement('button');
                 btn.textContent = label;
-                btn.className = `px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all ${filterGroup === slug ? 'bg-primary-600 text-white' : 'bg-surface-200 dark:bg-surface-700 text-surface-700 dark:text-surface-300'}`;
+                btn.className = `px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all ${filterGroup === slug ? 'bg-surface-900 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'bg-surface-200 dark:bg-white/10 text-surface-700 dark:text-surface-300'}`;
                 btn.addEventListener('click', () => { filterGroup = slug; renderGroupOptions(); renderList(); });
                 groupsContainer.appendChild(btn);
             });
@@ -1527,7 +1527,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             listEl.innerHTML = rows.map(ex => {
                 const isSelected = selected.includes(ex.id);
                 return `
-                <label class="flex items-center gap-4 p-4 cursor-pointer rounded-2xl border transition-all ${isSelected ? 'bg-primary-50 border-primary-200 dark:bg-primary-900/20 dark:border-primary-800' : 'bg-white dark:bg-surface-800 border-surface-200 dark:border-surface-700 hover:border-surface-300'}">
+                <label class="flex items-center gap-4 p-4 cursor-pointer rounded-2xl border transition-all ${isSelected ? 'bg-primary-50 border-primary-200 dark:bg-primary-900/20 dark:border-primary-800' : 'glass hover:border-surface-300 dark:hover:border-white/20'}">
                     <input type="checkbox" data-id="${ex.id}" class="w-5 h-5 text-primary-600 rounded"
                            ${isSelected ? 'checked' : ''}>
                     <div class="flex-1 min-w-0">
@@ -1628,29 +1628,29 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
         const html = `
             <div id="create-ex-modal" class="fixed inset-0 z-50 flex items-center justify-center modal-backdrop pointer-events-auto">
-                <div class="bg-surface-50 dark:bg-surface-900 rounded-2xl p-6 mx-4 max-w-sm w-full">
+                <div class="glass-strong rounded-2xl p-6 mx-4 max-w-sm w-full">
                     <div class="flex justify-between items-center mb-4">
                         <h3 class="text-lg font-bold">Новое упражнение</h3>
                         <button data-action="close-build-workout" class="text-surface-500 hover:text-surface-900 dark:text-surface-400">✕</button>
                     </div>
                     <div class="space-y-3">
                         <input id="ce-name" type="text" placeholder="Название"
-                                class="w-full px-3 py-2 text-sm border border-surface-300 dark:border-surface-700 rounded bg-surface-50 dark:bg-surface-800">
+                                class="w-full px-3 py-2 text-sm glass-input rounded">
                         <select id="ce-group"
-                                class="w-full px-3 py-2 text-sm border border-surface-300 dark:border-surface-700 rounded bg-surface-50 dark:bg-surface-800"></select>
+                                class="w-full px-3 py-2 text-sm glass-input rounded"></select>
                         <select id="ce-equipment"
-                                class="w-full px-3 py-2 text-sm border border-surface-300 dark:border-surface-700 rounded bg-surface-50 dark:bg-surface-800"></select>
+                                class="w-full px-3 py-2 text-sm glass-input rounded"></select>
                         <label class="flex items-center gap-2 text-sm">
                             <input id="ce-compound" type="checkbox" checked> Компаундное
                         </label>
                         <textarea id="ce-desc" placeholder="Описание (необязательно)"
-                                  class="w-full px-3 py-2 text-sm border border-surface-300 dark:border-surface-700 rounded bg-surface-50 dark:bg-surface-800"></textarea>
+                                  class="w-full px-3 py-2 text-sm glass-input rounded"></textarea>
                     </div>
                     <div class="flex gap-2 mt-5">
                         <button data-action="close-build-workout"
-                                class="flex-1 py-2 border border-surface-300 dark:border-surface-700 rounded-xl text-sm font-medium">Отмена</button>
+                                class="flex-1 py-2 border border-surface-300 dark:border-white/10 rounded-xl text-sm font-medium">Отмена</button>
                         <button id="ce-save"
-                                class="flex-1 py-2 bg-primary-600 text-white rounded-xl text-sm font-medium">Сохранить</button>
+                                class="flex-1 py-2 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl text-sm font-medium">Сохранить</button>
                     </div>
                 </div>
             </div>
@@ -1741,7 +1741,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 return g && s;
             });
             listEl.innerHTML = rows.map(ex => `
-                <label class="flex items-center gap-2 p-2 cursor-pointer hover:bg-surface-100 dark:hover:bg-surface-700 rounded">
+                <label class="flex items-center gap-2 p-2 cursor-pointer hover:bg-surface-100 dark:hover:bg-white/10 rounded">
                     <input type="checkbox" data-id="${ex.id}"
                            ${selected.includes(ex.id) ? 'checked' : ''}>
                     <div class="flex-1 min-w-0">
@@ -1764,35 +1764,35 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
         const html = `
             <div id="template-modal" class="fixed inset-0 z-50 flex items-center justify-center modal-backdrop pointer-events-auto">
-                <div class="bg-surface-50 dark:bg-surface-900 rounded-2xl mx-4 max-w-2xl w-full max-h-[85vh] flex flex-col">
-                    <div class="p-5 border-b border-surface-200 dark:border-surface-700">
+                <div class="glass-strong rounded-2xl mx-4 max-w-2xl w-full max-h-[85vh] flex flex-col">
+                    <div class="p-5 border-b ">
                         <div class="flex justify-between items-center">
                             <h3 class="text-lg font-bold">Создать шаблон тренировки</h3>
                             <button data-action="close-template-modal" class="text-surface-500 hover:text-surface-900 dark:text-surface-400">✕</button>
                         </div>
                         <div class="grid grid-cols-2 gap-3 mt-3">
                             <input id="tmpl-name" type="text" placeholder="Название шаблона" value="Мой шаблон"
-                                   class="px-3 py-2 text-sm border border-surface-300 dark:border-surface-700 rounded bg-surface-50 dark:bg-surface-800">
+                                   class="px-3 py-2 text-sm glass-input rounded">
                             <input id="tmpl-desc" type="text" placeholder="Описание (необязательно)"
-                                   class="px-3 py-2 text-sm border border-surface-300 dark:border-surface-700 rounded bg-surface-50 dark:bg-surface-800">
+                                   class="px-3 py-2 text-sm glass-input rounded">
                         </div>
                     </div>
-                    <div class="p-4 border-b border-surface-200 dark:border-surface-700">
+                    <div class="p-4 border-b ">
                         <div class="flex items-center gap-2 mb-2 flex-wrap">
                             <select id="tmpl-group"
-                                    class="px-2 py-1 text-sm border border-surface-300 dark:border-surface-700 rounded bg-surface-50 dark:bg-surface-800">
+                                    class="px-2 py-1 text-sm glass-input rounded">
                                 <option value="">Все группы мышц</option>
                             </select>
                             <input id="tmpl-search" type="text" placeholder="Поиск упражнения"
-                                   class="flex-1 px-2 py-1 text-sm border border-surface-300 dark:border-surface-700 rounded bg-surface-50 dark:bg-surface-800">
+                                   class="flex-1 px-2 py-1 text-sm glass-input rounded">
                             <button id="tmpl-add-own" type="button" title="Добавить своё упражнение"
-                                    class="px-2 py-1 border border-surface-300 dark:border-surface-700 rounded text-surface-500 hover:text-surface-900">+</button>
+                                    class="px-2 py-1 border border-surface-300 dark:border-white/10 rounded text-surface-500 hover:text-surface-900">+</button>
                         </div>
                         <div id="tmpl-list" class="space-y-1 overflow-y-auto max-h-72"></div>
                     </div>
-                    <div class="p-4 border-t border-surface-200 dark:border-surface-700 flex gap-2">
+                    <div class="p-4 border-t  flex gap-2">
                         <button id="tmpl-create"
-                                class="flex-1 py-2 bg-primary-600 text-white rounded-xl text-sm font-medium" disabled>
+                                class="flex-1 py-2 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl text-sm font-medium" disabled>
                             Создать шаблон
                         </button>
                     </div>

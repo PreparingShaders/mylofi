@@ -5,16 +5,16 @@ export const Auth = {
     renderLogin(container, app) {
         container.innerHTML = `
             <div class="min-h-screen flex items-center justify-center p-4">
-                <div class="w-full max-w-md">
+                <div class="w-full max-w-md glass rounded-2xl p-6">
                     <h1 class="text-3xl font-bold text-center mb-8">MyLofi</h1>
                     <form id="login-form" class="space-y-4">
-                        <input type="email" name="email" placeholder="Email" required class="w-full px-4 py-3 rounded-xl border">
-                        <input type="password" name="password" placeholder="Пароль" required class="w-full px-4 py-3 rounded-xl border">
-                        <button type="submit" class="w-full py-3 bg-primary-600 text-white rounded-xl">Войти</button>
+                        <input type="email" name="email" placeholder="Email" required class="w-full px-4 py-3 rounded-xl glass-input">
+                        <input type="password" name="password" placeholder="Пароль" required class="w-full px-4 py-3 rounded-xl glass-input">
+                        <button type="submit" class="w-full py-3 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl font-semibold">Войти</button>
                     </form>
                     <p class="text-center text-sm mt-6">
                         Нет аккаунта? 
-                        <button data-action="show-register" class="text-primary-600 font-medium hover:underline">Зарегистрироваться</button>
+                        <button data-action="show-register" class="text-surface-900 dark:text-zinc-100 font-medium hover:underline">Зарегистрироваться</button>
                     </p>
                 </div>
             </div>
@@ -29,18 +29,18 @@ export const Auth = {
     renderRegister(container, app) {
         container.innerHTML = `
             <div class="min-h-screen flex items-center justify-center p-4">
-                <div class="w-full max-w-md">
+                <div class="w-full max-w-md glass rounded-2xl p-6">
                     <h1 class="text-3xl font-bold text-center mb-8">MyLofi</h1>
                     <form id="register-form" class="space-y-4">
-                        <input type="email" name="email" placeholder="Email" required class="w-full px-4 py-3 rounded-xl border">
-                        <input type="text" name="full_name" placeholder="Имя" class="w-full px-4 py-3 rounded-xl border">
-                        <input type="password" name="password" placeholder="Пароль" required class="w-full px-4 py-3 rounded-xl border">
-                        <input type="password" name="password_confirm" placeholder="Подтвердите пароль" required class="w-full px-4 py-3 rounded-xl border">
-                        <button type="submit" class="w-full py-3 bg-primary-600 text-white rounded-xl">Зарегистрироваться</button>
+                        <input type="email" name="email" placeholder="Email" required class="w-full px-4 py-3 rounded-xl glass-input">
+                        <input type="text" name="full_name" placeholder="Имя" class="w-full px-4 py-3 rounded-xl glass-input">
+                        <input type="password" name="password" placeholder="Пароль" required class="w-full px-4 py-3 rounded-xl glass-input">
+                        <input type="password" name="password_confirm" placeholder="Подтвердите пароль" required class="w-full px-4 py-3 rounded-xl glass-input">
+                        <button type="submit" class="w-full py-3 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl font-semibold">Зарегистрироваться</button>
                     </form>
                     <p class="text-center text-sm mt-6">
                         Уже есть аккаунт? 
-                        <button data-action="show-auth" class="text-primary-600 font-medium hover:underline">Войти</button>
+                        <button data-action="show-auth" class="text-surface-900 dark:text-zinc-100 font-medium hover:underline">Войти</button>
                     </p>
                 </div>
             </div>
