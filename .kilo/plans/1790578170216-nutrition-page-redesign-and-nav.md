@@ -1,68 +1,65 @@
-# Plan: Refined Nutrition Page Redesign, Unified Dashboard & Interactive Food Cards
+# Plan: Optimized Dashboard Layout, Flip-Card UI Bugfix, Enlarged Carousel & Mandatory Meal Type Selector
 
 ## Objective
-Redesign the "Nutrition" page (`/nutrition`) and simplify the Bottom Navigation Bar (3 tabs), implementing a unified nutrition dashboard with a caloric donut chart, macro progress bars, and AI meal quality score, along with interactive flip-cards in a horizontal carousel, gallery/camera photo uploads below the carousel, date selector with future-date blocking, and correct terminology ("Углеводы").
+Optimize the nutrition dashboard with compact layout and period selector (Day / Week / Month averages), fix the 3D flip-card layout overflow and pending status bugs, enlarge carousel cards, enforce a mandatory meal type selector before photo upload, and simplify bottom navigation to 3 tabs.
 
 ---
 
 ## 1. Bottom Navigation Bar Redesign
-- **Target state**: Exactly 3 tabs:
+- **Target state**: Exactly 3 tabs in `#bottom-nav`:
   1. **Питание (Nutrition)** (`data-page="nutrition"`)
   2. **Тренировки (Workouts)** (`data-page="workouts"`)
   3. **Профиль (Profile)** (`data-page="profile"`)
-- **Changes**: Remove Camera floating circle and History tab from `#bottom-nav` in `static/index.html`. Update grid columns to `grid-cols-3`.
+- Remove Camera floating circle and History tab. Update grid columns to `grid-cols-3`.
 
 ---
 
 ## 2. Header & Layout Adjustments
-- **Top Padding**: Add appropriate top padding (`pt-safe` / `safe-area-inset-top`) and spacing for the nutrition page header so it doesn't overlap the screen top.
-- **Date Limits**: Disable the "next day" (`>`) date button when the selected date is equal to today's date (prevent future dates).
-- **Terminology Fix**: Replace instances of "Углы" with "Углеводы" (or "Углев.") across the UI.
+- **Top Padding**: Add top padding/margin (`pt-safe`) for the nutrition page header.
+- **Date Limits**: Disable the next day (`>`) button when selected date equals today (prevent future dates).
+- **Terminology**: Replace "Углы" with "Углеводы" (or "Углев.") globally.
 
 ---
 
-## 3. Unified Nutrition Dashboard (Merging Macros & Goals)
-- **Removal**: Remove separate macro summary block.
-- **Widget Structure**:
-  - **Center**: Caloric Progress Ring / Donut Chart with current vs target calories (e.g., `1450 / 2000 ккал`).
-  - **Macros**: 3 progress bars / mini-indicators for Protein, Fat, and Carbs with current grams and targets.
-  - **Meal Quality Score**: AI-derived quality metric (score 1–10 or balance percentage) integrated into the unified dashboard.
+## 3. Compact Dashboard & Period Selector (Week / Month Averages)
+- **Period Selector**: Tabs/Pills: **День | Неделя | Месяц**.
+- **Averages**: When Week or Month is selected, compute and display average daily calories and macro values.
+- **Compact Layout**:
+  - Remove wide full-width progress bars.
+  - Position calorie ring (donut chart) on the left/center and 3 macros (Protein, Fat, Carbs) in a compact horizontal bar / mini columns with colored fills.
+  - Reduced vertical padding.
+  - AI Meal Quality Score integrated into the dashboard widget.
 
 ---
 
 ## 4. Page Layout Restructuring (Top to Bottom Sequence)
-1. **Header & Date Selector** (`← Сегодня, [Дата] →` with future date restriction)
-2. **Unified Nutrition Dashboard** (Caloric Donut Chart + Macros + Meal Quality Score)
-3. **Food Carousel Section** (Horizontal scroll-snap with peek effect)
-4. **Actions Section** (Below carousel: Photo upload from camera/gallery button, manual entry button, notes input)
+1. **Header & Date Selector** (with future-date restriction)
+2. **Compact Dashboard** (Period Selector + Calorie Ring + Macros + Quality Score)
+3. **Food Carousel Section** (Enlarged cards, horizontal scroll-snap with peek effect)
+4. **Actions Section** (Below carousel: Meal type selector chips + Photo upload button + Manual entry button + Notes input)
 
 ---
 
-## 5. Action Area Enhancements (Photo & Gallery Input)
-- **File Input**: Remove rigid `capture="environment"` attribute from `input[type="file"]` so users can choose between capturing with camera or selecting from device gallery.
-- **Placement**: Located below the food carousel.
+## 5. Mandatory Meal Type Selector Before Photo Upload
+- **Selector UI**: Chips / buttons for **Завтрак | Обед | Ужин | Перекус** positioned above upload.
+- **Validation**: When clicking "Сфотографировать / Добавить блюдо", require meal type selection first (show alert or modal if not selected). Do not upload or call AI without it.
+- **Card Display**: Display selected meal type and time on card front (e.g. `Обед · 14:15`).
 
 ---
 
-## 6. Interactive Flip-Cards for Food Carousel (`MealCarouselCard`)
-- **Front Side**:
-  - Full-cover background image of the dish.
-  - Gradient overlay for text contrast and readability.
-  - Overlay metadata: Dish name / meal type, time, KCBZ badge, and AI quality badge.
-- **Card Flip Animation**: Tap/click triggers 180-degree CSS card flip (`perspective`, `transform: rotateY(180deg)`).
-- **Back Side**:
-  - Detailed AI composition breakdown.
-  - Analytical AI recommendation comment.
-  - Action buttons: «Редактировать» and «Удалить».
-  - Second tap flips back to the front side.
-- **Empty State**: Neatly styled block when no meals exist for the selected date.
+## 6. Fix Flip-Card Layout, Size & Pending Status Bug (`MealCarouselCard`)
+- **Enlarged Cards**: Increase card width and height in the horizontal carousel for clear image and text visibility.
+- **3D Flip Bugfix**:
+  - Use `perspective`, `transform-style: preserve-3d`, `backface-visibility: hidden`.
+  - `.flip-card-back` must use `position: absolute; inset: 0; overflow-y-auto` to prevent content from spilling out or overlapping adjacent cards.
+- **Pending Status Bugfix**:
+  - Instantly hide/remove the yellow "Очередь" badge and reset background/border styles when a meal transitions from pending/offline to synced (`sync_status === SYNCED`).
 
 ---
 
 ## 7. Validation & Verification Plan
-1. **Navigation**: Verify 3-tab bottom navigation (`nutrition`, `workouts`, `profile`).
-2. **Date Limits & Terminology**: Verify future dates cannot be selected and "Углы" is replaced by "Углеводы".
-3. **Unified Dashboard**: Verify calorie donut chart, macro bars, and AI quality score render correctly.
-4. **Layout Sequence**: Verify blocks appear in the exact specified order (Header/Date → Dashboard → Carousel → Actions).
-5. **Interactive Flip Cards**: Verify card flip animation on tap, front/back details, and edit/delete actions.
-6. **Gallery & Camera Upload**: Verify file input allows gallery selection without forced camera capture.
+1. **Navigation**: Verify 3-tab bottom nav.
+2. **Dashboard & Periods**: Verify Day/Week/Month period switching and average metrics display.
+3. **Layout & Terminology**: Verify header top padding, future date blocking, and "Углеводы".
+4. **Mandatory Meal Type**: Verify photo upload requires meal type selection and displays correctly on card front.
+5. **Flip-Card UI & Bugfix**: Verify enlarged carousel cards, clean 3D card flip with no content overflow, and instant pending badge removal upon sync.

@@ -139,9 +139,11 @@ export const Components = {
                    <span class="text-xs font-bold text-white">${qualityScore}</span>
                    <span class="text-[9px] text-white/50">/100</span>
                </div>`
-            : `<div class="flex items-center gap-1 bg-amber-500/20 backdrop-blur rounded-lg px-2 py-1">
-                   <span class="text-xs font-medium text-amber-300">${grade.label}</span>
-               </div>`;
+            : isPending
+                ? `<div class="flex items-center gap-1 bg-amber-500/20 backdrop-blur rounded-lg px-2 py-1">
+                       <span class="text-xs font-medium text-amber-300">${grade.label}</span>
+                   </div>`
+                : '';
 
         const frontImage = safeSrc
             ? `<div class="absolute inset-0 bg-cover bg-center" style="background-image: url('${safeSrc}');"></div>`
@@ -154,18 +156,18 @@ export const Components = {
 
         const macroClass = (v) => v > 0 ? 'text-white' : 'text-white/40';
 
-        return `
-            <div class="snap-start w-72 shrink-0">
+return `
+            <div class="snap-start w-80 shrink-0">
                 <div class="flip-card" data-meal-id="${meal.id || ''}">
                     <div class="flip-card-inner relative w-full aspect-[4/3]">
                         <div class="flip-card-face flip-card-front flex flex-col justify-end ${isFailed ? 'ring-2 ring-red-500/30' : ''}">
                             ${frontImage}
-                            <div class="absolute inset-0 bg-gradient-to-t from-black/75 via-black/10 to-transparent"></div>
+                            <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-transparent"></div>
                             <div class="relative p-4">
                                 <div class="flex items-end justify-between">
                                     <div class="flex flex-col">
                                         <h3 class="font-bold text-white text-lg leading-tight">${escName}</h3>
-                                        <p class="text-sm text-white/75 mt-0.5">${escapeHtml(mealType)} · ${timeLabel}</p>
+                                        <p class="text-sm text-white/80 mt-0.5">${mealType} · ${timeLabel}</p>
                                     </div>
                                     ${qualityBadge}
                                 </div>

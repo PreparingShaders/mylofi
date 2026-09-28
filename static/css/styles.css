@@ -81,6 +81,27 @@
 }
 .flip-card-back {
     transform: rotateY(180deg);
+    position: absolute;
+    inset: 0;
+    overflow-y: auto;
+    -webkit-overflow-y: auto;
+}
+
+/* Enlarged meal carousel with peek effect */
+.meal-carousel {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+    gap: 1rem;
+}
+.meal-carousel::-webkit-scrollbar {
+    display: none;
+}
+.meal-carousel {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
+.meal-carousel .snap-start {
+    scroll-snap-align: start;
 }
 
 /* Smooth transitions */
@@ -166,6 +187,40 @@ input, select, textarea:focus {
 .modal-backdrop {
     backdrop-filter: blur(8px);
     background: rgba(9, 9, 11, 0.4);
+}
+
+/* ============ Compact Nutrition Dashboard ============ */
+.period-pill {
+    transition: all 0.2s ease;
+}
+.period-pill.active {
+    background: #18181b;
+    color: #fafafa;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+.dark .period-pill.active {
+    background: #fafafa;
+    color: #09090b;
+}
+
+/* Meal type selector chips */
+.meal-type-chip {
+    transition: all 0.15s ease;
+}
+.meal-type-chip.active {
+    background: #18181b;
+    color: #fafafa;
+    border-color: #18181b;
+}
+.dark .meal-type-chip.active {
+    background: #fafafa;
+    color: #09090b;
+    border-color: #fafafa;
+}
+
+/* Compact macro mini column */
+.macro-mini-fill {
+    transition: height 0.4s ease;
 }
 
 /* ============ Network status banner (top compact bar that pushes content) ============ */

@@ -8,6 +8,8 @@ import { Camera } from './camera.js';
 export const Nutrition = {
     app: null,
     selectedDate: null,
+    period: 'day',
+    selectedMealType: null,
 
     async loadData(date) {
         const token = this.app.state.tokens.access;
@@ -52,6 +54,26 @@ export const Nutrition = {
         return { serverMeals, summary, pendingMeals, failedItems, fromCache };
     },
 
+    async loadPeriodData(period) {
+        if (period === 'day') return null;
+        const token = this.app.state.tokens.access;
+        const endpoint = period === 'week' ? '/nutrition/week' : '/nutrition/month';
+        try {
+            const data = await API.get(endpoint, token);
+            if (data && typeof data === 'object') {
+                return {
+                    calories: data.total_calories || data.avg_calories || 0,
+                    protein: data.total_protein_g || data.avg_protein_g || 0,
+                    fat: data.total_fat_g || data.avg_fat_g || 0,
+                    carbs: data.total_carbs_g || data.avg_carbs_g || 0,
+                };
+            }
+        } catch (error) {
+            console.warn('[Nutrition] Period average unavailable:', error?.message);
+        }
+        return null;
+    },
+
     formatDateLabel(dateISO) {
         const d = new Date(dateISO);
         const today = new Date().toISOString().split('T')[0];
@@ -84,6 +106,66 @@ export const Nutrition = {
                 </div>
             </div>
         `;
+    },
+
+    renderCompactMacros(summary, targets) {
+        const items = [
+            { label: 'Б', value: summary.protein, target: targets.target_protein, color: 'bg-blue-500' },
+            { label: 'Ж', value: summary.fat, target: targets.target_fat, color: 'bg-amber-500' },
+            { label: 'У', value: summary.carbs, target: targets.target_carbs, color: 'bg-lime-500' },
+        ];
+        return `
+            <div class="grid grid-cols-3 gap-2">
+                ${items.map((item) => {
+                    const pct = item.target > 0 ? Math.min(100, (item.value / item.target) * 100) : 0;
+                    return `
+                        <div class="flex flex-col items-center gap-1.5">
+                            <div class="relative w-full h-16 bg-surface-200 dark:bg-white/5 rounded-lg overflow-hidden flex items-end">
+                                <div class="w-full ${item.color} opacity-80 macro-mini-fill" style="height: ${Math.max(pct, 4)}%"></div>
+                            </div>
+                            <div class="text-center">
+                                <p class="text-[10px] font-bold text-surface-900 dark:text-zinc-100 leading-tight">${Math.round(item.value)}г</p>
+                                <p class="text-[9px] text-surface-400 leading-tight">${item.label} · ${Math.round(item.target)}г</p>
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        `;
+    },
+
+    renderPeriodSelector() {
+        const options = [
+            { value: 'day', label: 'День' },
+            { value: 'week', label: 'Неделя' },
+            { value: 'month', label: 'Месяц' },
+        ];
+        return `
+            <div class="flex items-center gap-1 bg-surface-100 dark:bg-white/5 rounded-lg p-1 mb-3">
+                ${options.map((opt) => `
+                    <button type="button" data-action="set-period" data-period="${opt.value}"
+                            class="period-pill flex-1 py-1.5 text-xs font-semibold rounded-md transition-colors ${this.period === opt.value ? 'active' : 'text-surface-500 dark:text-surface-400'}">
+                        ${opt.label}
+                    </button>
+                `).join('')}
+            </div>
+        `;
+    },
+
+    renderMealTypeChips() {
+        const types = [
+            { value: 'breakfast', label: 'Завтрак', icon: '🍳' },
+            { value: 'lunch', label: 'Обед', icon: '🍜' },
+            { value: 'dinner', label: 'Ужин', icon: '🍽️' },
+            { value: 'snack', label: 'Перекус', icon: '🍎' },
+        ];
+        return types.map((t) => `
+            <button type="button" data-action="set-meal-type" data-type="${t.value}"
+                    class="meal-type-chip flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border border-surface-200 dark:border-white/10 text-[10px] font-medium text-surface-600 dark:text-surface-400 transition-colors">
+                <span class="text-base leading-none">${t.icon}</span>
+                <span>${t.label}</span>
+            </button>
+        `).join('');
     },
 
     async render(container, app, dateOverride = null) {
@@ -139,12 +221,33 @@ export const Nutrition = {
                 ? Utils.qualityGrade(dailyScore)
                 : { label: 'Нет данных', color: 'text-surface-400' };
 
+            let displaySummary = summary;
+            let displayScore = dailyScore;
+            let displayGrade = dailyGrade;
+            if (this.period !== 'day') {
+                const avg = await this.loadPeriodData(this.period);
+                if (avg) {
+                    displaySummary = avg;
+                    displayScore = (avg.calories > 0 || avg.protein > 0 || avg.fat > 0 || avg.carbs > 0)
+                        ? Utils.computeQualityScore({
+                            calories: avg.calories,
+                            protein: avg.protein,
+                            fat: avg.fat,
+                            carbs: avg.carbs,
+                        })
+                        : null;
+                    displayGrade = displayScore !== null
+                        ? Utils.qualityGrade(displayScore)
+                        : { label: 'Нет данных', color: 'text-surface-400' };
+                }
+            }
+
             const totalMeals = sortedMeals.length + pendingSorted.length;
 
             let html = `
                 <div class="p-4 pb-20 safe-area-inset-top">
                     <!-- 1. Header & Date Selector -->
-                    <div class="flex items-center justify-between mb-6">
+                    <div class="flex items-center justify-between mb-4">
                         <button id="date-prev" data-action="date-prev" class="btn-press w-10 h-10 rounded-xl glass flex items-center justify-center text-surface-700 dark:text-surface-300">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
                         </button>
@@ -157,23 +260,24 @@ export const Nutrition = {
                         </button>
                     </div>
 
-                    <!-- 2. Unified Nutrition Dashboard -->
-                    <div class="glass-strong rounded-2xl p-4 mb-6">
-                        <div class="flex items-center justify-between mb-3">
+                    <!-- 2. Compact Nutrition Dashboard -->
+                    <div class="glass-strong rounded-2xl p-4 mb-4">
+                        <div class="flex items-center justify-between mb-2">
                             <h3 class="text-xs font-semibold text-surface-400 uppercase tracking-wider">Питание за ${dateLabel}</h3>
-                            <div class="flex items-center gap-1.5 bg-surface-100 dark:bg-white/5 rounded-lg px-2.5 py-1">
-                                <span class="text-xs font-bold text-surface-900 dark:text-zinc-100">${dailyScore !== null ? dailyScore : '—'}</span>
+                            <div class="flex items-center gap-1.5 bg-surface-100 dark:bg-white/5 rounded-lg px-2 py-1">
+                                <span class="text-xs font-bold text-surface-900 dark:text-zinc-100">${displayScore !== null ? displayScore : '—'}</span>
                                 <span class="text-[10px] text-surface-500 dark:text-surface-400">/100</span>
-                                <span class="text-[10px] font-medium ${dailyGrade.color}">${dailyGrade.label}</span>
+                                <span class="text-[10px] font-medium ${displayGrade.color}">${displayGrade.label}</span>
                             </div>
                         </div>
-                        <div class="flex items-center justify-center mb-4">
-                            ${Components.caloricDonut(summary.calories, targets.target_calories, '#3b82f6', '#d4d4d8')}
-                        </div>
-                        <div class="space-y-3">
-                            ${this.renderMacroBar('Белки', summary.protein, targets.target_protein, 'г', 'bg-blue-500')}
-                            ${this.renderMacroBar('Жиры', summary.fat, targets.target_fat, 'г', 'bg-amber-500')}
-                            ${this.renderMacroBar('Углеводы', summary.carbs, targets.target_carbs, 'г', 'bg-lime-500')}
+                        ${this.renderPeriodSelector()}
+                        <div class="flex items-center gap-4">
+                            <div class="flex-shrink-0">
+                                ${Components.caloricDonut(displaySummary.calories, targets.target_calories, '#3b82f6', '#d4d4d8')}
+                            </div>
+                            <div class="flex-1">
+                                ${this.renderCompactMacros(displaySummary, targets)}
+                            </div>
                         </div>
                     </div>
 
@@ -201,7 +305,7 @@ export const Nutrition = {
                         ? `
                         <div class="mb-4">
                             <h4 class="text-xs font-semibold text-amber-500 uppercase tracking-wider mb-2">Ожидают синхронизации</h4>
-                            <div class="flex gap-3 overflow-x-auto snap-x snap-mandatory -mx-4 px-4 pb-2">
+                            <div class="meal-carousel flex gap-3 overflow-x-auto snap-x snap-mandatory -mx-4 px-4 pb-2">
                                 ${pendingSorted.map((meal) => Components.mealCarouselCard(meal, app)).join('')}
                             </div>
                         </div>
@@ -225,7 +329,7 @@ export const Nutrition = {
                             <div class="mb-4">
                                 <h3 class="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-2">Приёмы пищи</h3>
                             </div>
-                            <div class="flex gap-3 overflow-x-auto snap-x snap-mandatory -mx-4 px-4 pb-2" id="meal-carousel">
+                            <div class="meal-carousel flex gap-3 overflow-x-auto snap-x snap-mandatory -mx-4 px-4 pb-2" id="meal-carousel">
                                 ${carouselCards}
                             </div>
                             `
@@ -234,6 +338,11 @@ export const Nutrition = {
 
                     <!-- 6. Actions Section (below carousel) -->
                     <div class="mt-6">
+                        <h3 class="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-3">Тип приёма пищи</h3>
+                        <div class="grid grid-cols-4 gap-2 mb-4" id="meal-type-selector">
+                            ${this.renderMealTypeChips()}
+                        </div>
+
                         <h3 class="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-3">Действия</h3>
                         <div class="grid grid-cols-2 gap-3 mb-4">
                             <label for="photo-input" class="btn-press cursor-pointer flex flex-col items-center gap-2 py-3 glass rounded-xl text-center transition-all">
@@ -256,6 +365,8 @@ export const Nutrition = {
             container.innerHTML = html;
 
             this.bindDateNav();
+            this.bindPeriodSelector();
+            this.bindMealTypeSelector();
             this.bindPhotoInput();
             this.bindManualEntry();
             this.bindMealActions();
@@ -318,6 +429,31 @@ export const Nutrition = {
         }
     },
 
+    bindPeriodSelector() {
+        const container = this.app.elements.pageContent;
+        container.querySelectorAll('[data-action="set-period"]').forEach((btn) => {
+            btn.onclick = () => {
+                this.period = btn.dataset.period;
+                this.render(this.app.elements.pageContent, this.app, this.selectedDate);
+            };
+        });
+    },
+
+    bindMealTypeSelector() {
+        const container = this.app.elements.pageContent;
+        container.querySelectorAll('[data-action="set-meal-type"]').forEach((btn) => {
+            btn.onclick = () => {
+                this.selectedMealType = btn.dataset.type;
+                this.bindMealTypeSelector();
+            };
+        });
+        // Update active state
+        container.querySelectorAll('[data-action="set-meal-type"]').forEach((btn) => {
+            const isActive = btn.dataset.type === this.selectedMealType;
+            btn.classList.toggle('active', isActive);
+        });
+    },
+
     bindPhotoInput() {
         const input = this.app.elements.pageContent.querySelector('#photo-input');
         if (!input) return;
@@ -373,6 +509,10 @@ export const Nutrition = {
     },
 
     async uploadPhoto(file) {
+        if (!this.selectedMealType) {
+            this.app.showToast('Выберите тип приёма пищи', 'error');
+            return;
+        }
         const notesInput = this.app.elements.pageContent.querySelector('#photo-notes');
         const notes = notesInput ? notesInput.value || null : null;
         const token = this.app.state.tokens.access;
@@ -391,6 +531,7 @@ export const Nutrition = {
 
         const formData = new FormData();
         formData.append('file', compressedBlob, 'photo.webp');
+        formData.append('meal_type', this.selectedMealType);
         if (notes) formData.append('notes', notes);
 
         try {
@@ -398,7 +539,7 @@ export const Nutrition = {
             this.app.showToast('Фото загружено, идёт анализ', 'success');
         } catch (error) {
             if (error?.isNetworkError || error?.offlineQueued) {
-                await Camera.queueOfflineMeal(compressedBlob, notes);
+                await Camera.queueOfflineMeal(compressedBlob, notes, this.selectedMealType);
                 this.app.showToast('Нет связи. Фото сохранено локально и будет загружено при появлении связи', 'info');
             } else {
                 console.error('[Nutrition] Upload error:', error);

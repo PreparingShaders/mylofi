@@ -135,13 +135,14 @@ export const Camera = {
         });
     },
 
-    async queueOfflineMeal(blob, notes) {
+    async queueOfflineMeal(blob, notes, mealType = null) {
         await DB.init();
         const tempId = DB.generateTempId();
         const meal = {
             id: tempId,
             blob: blob,
             notes: notes || null,
+            meal_type: mealType || null,
             dish_name: null,
             calories: null,
             status: 'pending',
@@ -157,7 +158,10 @@ export const Camera = {
             formData: {
                 blob: blob,
                 filename: 'photo.webp',
-                fields: notes ? { notes } : {},
+                fields: {
+                    ...(notes ? { notes } : {}),
+                    ...(mealType ? { meal_type: mealType } : {}),
+                },
             },
             tempId,
             store: 'meals',

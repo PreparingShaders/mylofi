@@ -113,6 +113,15 @@ const App = {
             }
         });
 
+        // Re-render nutrition instantly when a queued meal finishes syncing
+        // (pending → synced) so the carousel updates without a manual refresh.
+        window.addEventListener('mylofi:meal-synced', () => {
+            if (this.state.currentScreen !== 'main') return;
+            if (this.state.currentPage === 'nutrition') {
+                this.renderPage('nutrition');
+            }
+        });
+
         // Background sync completion from the service worker
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.addEventListener('message', (event) => {
