@@ -305,6 +305,7 @@ export const Workouts = {
 
     async render(container, app) {
         this.app = app;
+        try {
         this.stopWorkoutTimer();
         let activeSession;
         let stats = null;
@@ -329,7 +330,7 @@ export const Workouts = {
             activeSession = null;
         }
 
-        const recentSessions = (historyData.sessions || []).filter(s => s.status === 'completed');
+        const recentSessions = (historyData?.sessions || []).filter(s => s.status === 'completed');
         this.recentSessions = recentSessions;
 
         let statsWidget = '';
@@ -586,6 +587,10 @@ export const Workouts = {
         if (activeSession) {
             this.startWorkoutTimer(activeSession, 'dashboard-workout-timer');
         }
+        } catch (error) {
+            console.error('[Workouts] Render error:', error);
+            container.innerHTML = Components.errorState('Ошибка загрузки данных');
+        }
     },
 
     getElapsedSeconds(session) {
@@ -770,6 +775,7 @@ export const Workouts = {
 
     async renderWorkoutScreen(container, app, sessionId) {
         this.app = app;
+        try {
         this.stopWorkoutTimer();
         let session;
         let historyData = { sessions: [] };
@@ -801,7 +807,7 @@ export const Workouts = {
         }
         app.state.currentSessionId = session.isLocal ? session.key : session.id;
 
-        const completedHistorySessions = [...(historyData.sessions || [])]
+        const completedHistorySessions = [...(historyData?.sessions || [])]
             .filter(s => s.status === 'completed')
             .sort((a, b) => new Date(a.started_at) - new Date(b.started_at));
 
@@ -954,6 +960,10 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
         // Start live timer
         this.startWorkoutTimer(session);
+        } catch (error) {
+            console.error('[Workouts] Workout screen render error:', error);
+            container.innerHTML = Components.errorState('Ошибка загрузки тренировки');
+        }
     },
 
     getWorkoutMetrics(session) {
@@ -1280,7 +1290,12 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             return;
         }
 
-        const sessions = data.sessions || [];
+        if (!data) {
+            container.innerHTML = Components.errorState('Данные истории недоступны');
+            return;
+        }
+
+        const sessions = data?.sessions || [];
 
         let html = `
             <div class="p-4">
@@ -1437,6 +1452,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 API.get('/workouts/templates', app.state.tokens.access),
                 API.get('/workouts/sessions/active', app.state.tokens.access).catch(() => null)
             ]);
+            const safeTemplates = templates || [];
             const hasActiveSession = !!activeSession || !!this.getActiveLocalSession();
             let html = `
                 <div class="p-4">
@@ -1446,7 +1462,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         <button data-action="create-template" class="px-4 py-2 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl text-sm font-medium">+ Создать</button>
                     </div>
                     <div class="space-y-3">
-                        ${templates.map(t => `
+                        ${safeTemplates.map(t => `
                             <div class="glass rounded-xl p-4 flex justify-between items-center gap-3 ${hasActiveSession ? 'opacity-60' : ''}">
                                 <div class="min-w-0">
                                     <h3 class="font-semibold truncate">${t.name}</h3>
@@ -1514,7 +1530,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             });
         });
         } catch (err) {
-            app.showToast('Ошибка загрузки шаблонов', 'error');
+            console.error('[Workouts] Templates screen error:', err);
+            container.innerHTML = Components.errorState('Ошибка загрузки шаблонов');
         }
     },
 
@@ -1522,6 +1539,10 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         this.app = app;
         try {
             const stats = await API.get('/workouts/statistics', app.state.tokens.access);
+            if (!stats) {
+                container.innerHTML = Components.errorState('Данные статистики недоступны');
+                return;
+            }
             let html = `
                 <div class="p-4">
                     <div class="flex items-center mb-4">
@@ -1531,40 +1552,40 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     <div class="grid grid-cols-2 gap-3 mb-6">
                         <div class="bg-primary-50 dark:bg-primary-900/20 rounded-xl p-4">
                             <p class="text-sm text-primary-700 dark:text-primary-300">Всего тренировок</p>
-                            <p class="text-3xl font-bold text-primary-900 dark:text-primary-100">${stats.total_workouts}</p>
+                            <p class="text-3xl font-bold text-primary-900 dark:text-primary-100">${stats?.total_workouts || 0}</p>
                         </div>
                         <div class="bg-primary-50 dark:bg-primary-900/20 rounded-xl p-4">
                             <p class="text-sm text-primary-700 dark:text-primary-300">На этой неделе</p>
-                            <p class="text-3xl font-bold text-primary-900 dark:text-primary-100">${stats.workouts_this_week}</p>
+                            <p class="text-3xl font-bold text-primary-900 dark:text-primary-100">${stats?.workouts_this_week || 0}</p>
                         </div>
                         <div class="bg-primary-50 dark:bg-primary-900/20 rounded-xl p-4">
                             <p class="text-sm text-primary-700 dark:text-primary-300">В этом месяце</p>
-                            <p class="text-3xl font-bold text-primary-900 dark:text-primary-100">${stats.workouts_this_month}</p>
+                            <p class="text-3xl font-bold text-primary-900 dark:text-primary-100">${stats?.workouts_this_month || 0}</p>
                         </div>
                         <div class="bg-primary-50 dark:bg-primary-900/20 rounded-xl p-4">
                             <p class="text-sm text-primary-700 dark:text-primary-300">Серия (недель)</p>
-                            <p class="text-3xl font-bold text-primary-900 dark:text-primary-100">${stats.current_streak_weeks}</p>
+                            <p class="text-3xl font-bold text-primary-900 dark:text-primary-100">${stats?.current_streak_weeks || 0}</p>
                         </div>
                     </div>
                     <div class="grid grid-cols-2 gap-3 mb-6">
                         <div class="glass rounded-xl p-4">
                             <p class="text-sm text-surface-500 dark:text-surface-400">Общий объём</p>
-                            <p class="text-2xl font-bold">${stats.total_volume_kg.toLocaleString()} кг</p>
+                            <p class="text-2xl font-bold">${stats?.total_volume_kg?.toLocaleString() || 0} кг</p>
                         </div>
                         <div class="glass rounded-xl p-4">
                             <p class="text-sm text-surface-500 dark:text-surface-400">Всего подходов</p>
-                            <p class="text-2xl font-bold">${stats.total_sets}</p>
+                            <p class="text-2xl font-bold">${stats?.total_sets || 0}</p>
                         </div>
                         <div class="glass rounded-xl p-4">
                             <p class="text-sm text-surface-500 dark:text-surface-400">Общее время</p>
-                            <p class="text-2xl font-bold">${stats.total_duration_hours} ч</p>
+                            <p class="text-2xl font-bold">${stats?.total_duration_hours || 0} ч</p>
                         </div>
                         <div class="glass rounded-xl p-4">
                             <p class="text-sm text-surface-500 dark:text-surface-400">Средняя тренировка</p>
-                            <p class="text-2xl font-bold">${stats.avg_workout_duration_min} мин</p>
+                            <p class="text-2xl font-bold">${stats?.avg_workout_duration_min || 0} мин</p>
                         </div>
                     </div>
-                    ${stats.top_exercises.length > 0 ? `
+                    ${stats?.top_exercises?.length > 0 ? `
                         <div class="mb-6">
                             <h3 class="font-semibold mb-3">Топ упражнений по объёму</h3>
                             <div class="space-y-2">

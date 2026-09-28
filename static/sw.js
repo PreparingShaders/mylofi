@@ -2,6 +2,15 @@ const SHELL_CACHE = 'mylofi-shell-v6';
 const RUNTIME_CACHE = 'mylofi-runtime-v6';
 const CURRENT_CACHES = [SHELL_CACHE, RUNTIME_CACHE];
 
+const OFFLINE_FALLBACK_HTML = '<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>mylofi — офлайн</title><link rel="stylesheet" href="/static/css/styles.css"></head><body><div class="min-h-screen flex items-center justify-center p-4"><div class="text-center"><h1 class="text-2xl font-bold mb-2">Офлайн</h1><p class="text-surface-500">Проверьте подключение к интернету. Данные, сохранённые локально, будут синхронизированы при возвращении связи.</p></div></div></body></html>';
+
+function offlineResponse() {
+    return new Response(OFFLINE_FALLBACK_HTML, {
+        status: 200,
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    });
+}
+
 const SHELL_ASSETS = [
     '/',
     '/static/index.html',
@@ -68,8 +77,13 @@ self.addEventListener('fetch', (event) => {
 
     const url = new URL(request.url);
 
-    // API traffic is handled by the client-side read cache / sync queue
-    if (url.origin === self.location.origin && url.pathname.startsWith('/api/')) return;
+    // API traffic: network-first with cache fallback for offline support
+    // (The client-side read cache remains the primary fallback; this SW layer adds
+    // resilience when the browser is online but the server is unreachable.)
+    if (url.origin === self.location.origin && url.pathname.startsWith('/api/')) {
+        event.respondWith(networkFirst(request, RUNTIME_CACHE));
+        return;
+    }
 
     if (request.mode === 'navigate') {
         event.respondWith(handleNavigation(request));
@@ -109,7 +123,7 @@ async function handleNavigation(request) {
         network.catch(() => {});
         return cached;
     }
-    return network;
+    return network.then(response => response || offlineResponse());
 }
 
 async function cacheFirst(request, cacheName, ignoreSearch) {
@@ -132,6 +146,25 @@ async function cacheFirst(request, cacheName, ignoreSearch) {
     }
 }
 
+async function networkFirst(request, cacheName) {
+    const cache = await caches.open(cacheName);
+    try {
+        const response = await fetch(request);
+        // Only cache successful responses — never cache 4xx/5xx errors
+        if (response && response.ok && response.type !== 'opaque') {
+            cache.put(request, response.clone());
+        }
+        return response;
+    } catch (error) {
+        const cached = await cache.match(request);
+        if (cached) {
+            console.warn('[SW] Serving cached API response (network down):', request.url);
+            return cached;
+        }
+        throw error;
+    }
+}
+
 async function staleWhileRevalidate(request, cacheName) {
     const cache = await caches.open(cacheName);
     const cached = await cache.match(request);
@@ -139,11 +172,15 @@ async function staleWhileRevalidate(request, cacheName) {
         revalidate(cache, request);
         return cached;
     }
-    const response = await fetch(request);
-    if (response && (response.ok || response.type === 'opaque')) {
-        cache.put(request, response.clone());
+    try {
+        const response = await fetch(request);
+        if (response && (response.ok || response.type === 'opaque')) {
+            cache.put(request, response.clone());
+        }
+        return response;
+    } catch (error) {
+        console.warn('[SW] Network failed for runtime asset, no cache available:', request.url, error);
     }
-    return response;
 }
 
 function revalidate(cache, request) {

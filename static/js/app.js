@@ -152,6 +152,11 @@ const App = {
             return true;
         } catch (error) {
             console.error('[App] Token refresh failed:', error);
+            // Network errors should not wipe tokens — the user is still authenticated,
+            // just temporarily offline. Re-throw so handleUnauthorized can preserve them.
+            if (error?.isNetworkError) {
+                throw error;
+            }
             this.clearTokens();
             return false;
         }

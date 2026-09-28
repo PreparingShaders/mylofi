@@ -25,7 +25,6 @@ class APIClient {
         this.baseURL = API_BASE;
         this.refreshing = false;
         this.refreshQueue = [];
-        this.replaying = false;
         this.processingQueue = false;
         this.itemResolver = null;
         this.onItemSynced = null;
@@ -130,7 +129,7 @@ class APIClient {
     }
 
     isQueueable(method, data, isFormData) {
-        return !this.replaying && QUEUEABLE_METHODS.has(method) && !isFormData && data !== undefined;
+        return QUEUEABLE_METHODS.has(method) && !isFormData && data !== undefined;
     }
 
     // Attaches metadata to the most recently queued matching request
@@ -286,8 +285,7 @@ class APIClient {
                 let failed = false;
 
                 try {
-                    this.replaying = true;
-                    response = await this.request(item.method, item.endpoint, item.data, token, false);
+                    response = await this.request(item.method, item.endpoint, item.data, token, false, true);
                 } catch (error) {
                     // Transient failures (offline, token refresh issue) keep the item for a later retry
                     if (!error?.status || error.status < 400) {
@@ -296,8 +294,6 @@ class APIClient {
                     }
                     failed = true;
                     console.error('[API] Dropping permanently failed queued request:', item, error);
-                } finally {
-                    this.replaying = false;
                 }
 
                 queue.shift();
@@ -321,11 +317,10 @@ class APIClient {
             }
         } finally {
             this.processingQueue = false;
-            this.replaying = false;
         }
     }
 
-    async request(method, endpoint, data = null, accessToken = null, isFormData = false) {
+    async request(method, endpoint, data = null, accessToken = null, isFormData = false, skipEnqueue = false) {
         const url = `${this.baseURL}${endpoint}`;
         const headers = this.getHeaders(accessToken, isFormData);
         
@@ -339,7 +334,7 @@ class APIClient {
             response = await fetch(url, options);
         } catch (error) {
             const normalized = this.normalizeError(error, method, url);
-            if (normalized?.isNetworkError && this.isQueueable(method, data, isFormData)) {
+            if (normalized?.isNetworkError && !skipEnqueue && this.isQueueable(method, data, isFormData)) {
                 try {
                     this.enqueueRequest(method, endpoint, data, accessToken);
                 } catch (queueError) {
@@ -393,8 +388,12 @@ class APIClient {
         } catch (error) {
             this.refreshQueue.forEach(({ reject }) => reject(error));
             this.refreshQueue = [];
-            window.App.clearTokens();
-            window.App.showScreen('landing');
+            // Network errors during refresh must not wipe tokens — the user is still
+            // authenticated; they simply can't reach the server right now.
+            if (!error?.isNetworkError) {
+                window.App.clearTokens();
+                window.App.showScreen('landing');
+            }
             throw error;
         } finally {
             this.refreshing = false;
