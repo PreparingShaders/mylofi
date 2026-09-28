@@ -1,8 +1,8 @@
 console.log("[DEBUG] Loaded network.js");
 import { SyncEngine } from './sync.js';
 
-const OFFLINE_MESSAGE = 'Нет тырнета, но он нам и не нужен (работаем оффлайн)';
-const RESTORED_MESSAGE = 'Связь восстановлена. Синхронизируем данные...';
+const OFFLINE_MESSAGE = 'Нет тырнета, а он нам и не нужон (работаем оффлайн)';
+const RESTORED_MESSAGE = 'Связь восстановлена. Синхронизируем...';
 const HIDE_DELAY_MS = 3000;
 
 const OFFLINE_ICON = `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true">
@@ -21,15 +21,6 @@ const RESTORED_ICON = `<svg class="w-4 h-4" fill="none" stroke="currentColor" st
     <path d="M12.5 19.5a.5.5 0 001 0"></path>
     <path d="M20 12.5l2 2 4-4"></path>
 </svg>`;
-
-function escapeHtml(value) {
-    return String(value ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
 
 export const NetworkBanner = {
     el: null,
@@ -80,9 +71,9 @@ export const NetworkBanner = {
         this.el.classList.toggle('network-status-banner--offline', isOffline);
         this.el.classList.toggle('network-status-banner--restored', !isOffline);
         this.el.querySelector('.network-status-banner__icon').innerHTML = isOffline ? OFFLINE_ICON : RESTORED_ICON;
-        this.el.querySelector('.network-status-banner__text').textContent = escapeHtml(
-            isOffline ? OFFLINE_MESSAGE : RESTORED_MESSAGE
-        );
+        this.el.querySelector('.network-status-banner__text').textContent = isOffline
+            ? OFFLINE_MESSAGE
+            : RESTORED_MESSAGE;
     },
 
     showOffline() {
@@ -91,6 +82,7 @@ export const NetworkBanner = {
         this.mount();
         this.render('offline');
         this.el.classList.add('is-visible');
+        document.body.classList.add('has-network-banner');
     },
 
     showRestored() {
@@ -99,6 +91,7 @@ export const NetworkBanner = {
         this.mount();
         this.render('restored');
         this.el.classList.add('is-visible');
+        document.body.classList.add('has-network-banner');
 
         SyncEngine.processQueue().catch((error) => {
             console.warn('[NetworkBanner] processQueue failed:', error);
@@ -111,6 +104,7 @@ export const NetworkBanner = {
         this.clearTimers();
         this.state = 'hidden';
         if (this.el) this.el.classList.remove('is-visible');
+        document.body.classList.remove('has-network-banner');
     },
 
     // Re-evaluate state without interrupting a freshly shown "restored" message.

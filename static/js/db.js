@@ -48,6 +48,9 @@ function openDB() {
                     store.createIndex('status', 'status', { unique: false });
                     store.createIndex('createdAt', 'createdAt', { unique: false });
                 }
+                if (!db.objectStoreNames.contains('exercise_catalog')) {
+                    db.createObjectStore('exercise_catalog', { keyPath: 'id' });
+                }
             }
         };
 
@@ -381,6 +384,40 @@ export const DB = {
 
     async deletePR(id) {
         return this.delete('PRs', id);
+    },
+
+    // ─── Exercise catalog (offline cache) ───────────────────────────────
+    async saveExerciseCatalog(exercises) {
+        if (!Array.isArray(exercises)) return;
+        const db = await openDB();
+        const tx = db.transaction('exercise_catalog', 'readwrite');
+        const store = tx.objectStore('exercise_catalog');
+        const now = Date.now();
+        for (const ex of exercises) {
+            if (ex && ex.id != null && ex.id !== '__meta__') {
+                store.put({ ...ex, _cached_at: now });
+            }
+        }
+        await txDone(tx);
+    },
+
+    async saveExerciseCatalogMeta(meta) {
+        if (!meta || typeof meta !== 'object') return;
+        return this.put('exercise_catalog', { id: '__meta__', ...meta, _cached_at: Date.now() });
+    },
+
+    async getExerciseCatalogMeta() {
+        return this.get('exercise_catalog', '__meta__');
+    },
+
+    async getExerciseCatalog() {
+        const all = await this.getAll('exercise_catalog');
+        return (all || []).filter(item => item && item.id !== '__meta__');
+    },
+
+    async getExerciseCatalogCount() {
+        const items = await this.getExerciseCatalog();
+        return items.length;
     },
 };
 

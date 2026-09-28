@@ -405,9 +405,9 @@ const App = {
             btn.disabled = false;
         } catch (e) {
             if (e?.offlineQueued) {
-                // Keep the optimistic state: the request is replayed from the sync queue
+                // Keep the optimistic state: the request is replayed from the sync queue.
+                // Silent — the global network banner reflects offline/syncing status.
                 applyState(!wasCompleted);
-                this.showToast(e.message, 'info');
             } else {
                 this.showToast(e.message || 'Ошибка обновления сета', 'error');
             }

@@ -2,6 +2,7 @@ console.log("[DEBUG] Loaded workouts.js");
 import { API } from './api.js';
 import { Components } from './components.js';
 import { Utils } from './utils.js';
+import { DB } from './db.js';
 
 const TOGGLE_BASE = 'flex-shrink-0 w-11 h-11 rounded-2xl text-xl font-bold transition-all flex items-center justify-center';
 const TOGGLE_COMPLETED = 'bg-lime-400 text-zinc-950 border-lime-400 shadow-[0_0_12px_rgba(163,230,53,0.4)]';
@@ -102,6 +103,43 @@ export const Workouts = {
 
     markSessionCancelledLocally(sessionId) {
         this.markSessionClosedLocally(sessionId);
+    },
+
+    // Fetch the exercise catalog, caching to IndexedDB on success and
+    // falling back to the local cache when the network is unavailable.
+    async fetchExerciseCatalog(token) {
+        try {
+            const [meta, exercises] = await Promise.all([
+                API.get('/workouts/exercises/meta', token),
+                API.get('/workouts/exercises', token),
+            ]);
+            // Persist to IndexedDB for offline use (best-effort, never blocks the UI)
+            try {
+                await DB.saveExerciseCatalog(exercises);
+                if (meta) await DB.saveExerciseCatalogMeta(meta);
+            } catch (cacheError) {
+                console.warn('[Workouts] Failed to cache exercise catalog:', cacheError);
+            }
+            return { meta, exercises, fromCache: false };
+        } catch (error) {
+            console.warn('[Workouts] Exercise catalog fetch failed, trying cache:', error);
+            try {
+                const [cachedExercises, cachedMeta] = await Promise.all([
+                    DB.getExerciseCatalog(),
+                    DB.getExerciseCatalogMeta(),
+                ]);
+                if (cachedExercises && cachedExercises.length > 0) {
+                    return {
+                        meta: cachedMeta || { muscle_groups: {}, equipment: {} },
+                        exercises: cachedExercises,
+                        fromCache: true,
+                    };
+                }
+            } catch (cacheError) {
+                console.error('[Workouts] Failed to read cached exercise catalog:', cacheError);
+            }
+            throw error;
+        }
     },
 
     isLocalSession(session) {
@@ -1097,17 +1135,13 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     this.recordLocalSetPatch(session.key, setId, payload);
                     button.disabled = false;
                     button.textContent = '✓';
-                    if (!offlineNotified) {
-                        offlineNotified = true;
-                        app.showToast('Изменение сохранено локально и будет синхронизировано', 'info');
-                    }
                     return;
                 }
                 try {
                     await API.patch(`/workouts/sets/${setId}`, payload, token);
                 } catch (err) {
                     if (err?.offlineQueued) {
-                        app.showToast(err.message, 'info');
+                        // Silent: the global network banner reflects offline/syncing status
                     } else {
                         applyToggleState(wasCompleted);
                         app.showToast(err.message || 'Ошибка', 'error');
@@ -1121,7 +1155,6 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         // Save weight/reps: instant local update while typing, debounced network sync, flush on blur
         const DEBOUNCE_MS = 400;
         const pendingTimers = new Map();
-        let offlineNotified = false;
 
         const applyLocalValue = (input) => {
             const row = input.closest('[data-set-id]');
@@ -1177,10 +1210,6 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             if (isLocal) {
                 this.persistLocalSession(session);
                 this.recordLocalSetPatch(session.key, setId, { [field]: value });
-                if (!offlineNotified) {
-                    offlineNotified = true;
-                    app.showToast('Изменение сохранено локально и будет синхронизировано', 'info');
-                }
                 return;
             }
 
@@ -1188,12 +1217,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 await API.patch(`/workouts/sets/${setId}`, { [field]: value }, token);
             } catch (err) {
                 if (err?.offlineQueued) {
-                    if (!offlineNotified) {
-                        offlineNotified = true;
-                        app.showToast(err.message, 'info');
-                    }
+                    // Silent: the global network banner reflects offline/syncing status
                 } else {
-                    offlineNotified = false;
                     app.showToast(err.message || 'Ошибка сохранения', 'error');
                 }
             }
@@ -1780,15 +1805,22 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         });
 
         try {
-            const [resMeta, resExercises] = await Promise.all([
-                API.get('/workouts/exercises/meta', token),
-                API.get('/workouts/exercises', token),
-            ]);
+            const { meta: resMeta, exercises: resExercises } = await this.fetchExerciseCatalog(token);
             meta = resMeta;
             exercises = resExercises;
             renderGroupOptions();
             renderList();
         } catch (err) {
+            // Only show an error toast if there is genuinely no cached catalog to fall back to
+            try {
+                const cachedCount = await DB.getExerciseCatalogCount();
+                if (cachedCount > 0) {
+                    app.showToast('Каталог загружен из кэша (оффлайн)', 'info');
+                    return;
+                }
+            } catch (cacheError) {
+                // ignore
+            }
             app.showToast(err.message || 'Ошибка загрузки каталога', 'error');
         }
     },
@@ -2041,10 +2073,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         });
 
         try {
-            const [resMeta, resExercises] = await Promise.all([
-                API.get('/workouts/exercises/meta', token),
-                API.get('/workouts/exercises', token),
-            ]);
+            const { meta: resMeta, exercises: resExercises } = await this.fetchExerciseCatalog(token);
             meta = resMeta;
             exercises = resExercises;
             selected = (template.exercises || []).map(te => {
@@ -2055,6 +2084,15 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             renderList();
             updateCreateLabel();
         } catch (err) {
+            try {
+                const cachedCount = await DB.getExerciseCatalogCount();
+                if (cachedCount > 0) {
+                    app.showToast('Каталог загружен из кэша (оффлайн)', 'info');
+                    return;
+                }
+            } catch (cacheError) {
+                // ignore
+            }
             app.showToast(err.message || 'Ошибка загрузки каталога', 'error');
         }
     },
@@ -2298,13 +2336,21 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         });
 
         try {
-            const [meta, exercises] = await Promise.all([
-                API.get('/workouts/exercises/meta', token),
-                API.get('/workouts/exercises', token),
-            ]);
+            const { meta: resMeta, exercises: resExercises } = await this.fetchExerciseCatalog(token);
+            meta = resMeta;
+            exercises = resExercises;
             renderGroupOptions();
             renderList();
         } catch (err) {
+            try {
+                const cachedCount = await DB.getExerciseCatalogCount();
+                if (cachedCount > 0) {
+                    app.showToast('Каталог загружен из кэша (оффлайн)', 'info');
+                    return;
+                }
+            } catch (cacheError) {
+                // ignore
+            }
             app.showToast(err.message || 'Ошибка загрузки каталога', 'error');
         }
     }
