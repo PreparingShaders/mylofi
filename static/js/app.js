@@ -7,6 +7,7 @@ import { Profile, THEME_OPTION_BASE, THEME_OPTION_ACTIVE, THEME_OPTION_IDLE } fr
 import { Camera } from './camera.js';
 import { DB } from './db.js';
 import { SyncEngine } from './sync.js';
+import { NetworkBanner } from './network.js';
 import { Components } from './components.js';
 import { Utils } from './utils.js';
 import { Theme } from './theme.js';
@@ -81,7 +82,6 @@ const App = {
         const onOnline = () => {
             this.state.isOnline = true;
             this.updateNetworkBanner();
-            this.flushOfflineQueue().then(() => this.updateNetworkBanner()).catch(() => {});
         };
         SyncEngine.setReplayFn((item) => API.replayQueuedItem(item));
         SyncEngine.setHooks({
@@ -152,41 +152,11 @@ const App = {
     },
 
     setupNetworkBanner() {
-        this.elements.networkBanner = document.getElementById('network-banner');
-        if (this.elements.networkBanner) return;
-
-        const banner = document.createElement('div');
-        banner.id = 'network-banner';
-        banner.className = 'fixed top-0 left-0 right-0 z-40 px-4 py-2 text-sm font-medium transition-all duration-200 hidden';
-        banner.innerHTML = Components.networkBanner('online');
-        document.body.appendChild(banner);
-        this.elements.networkBanner = banner;
-        this.updateNetworkBanner();
+        NetworkBanner.init();
     },
 
-    async updateNetworkBanner() {
-        const banner = this.elements.networkBanner;
-        if (!banner) return;
-
-        let state = this.state.isOnline ? 'online' : 'offline';
-        if (this.state.isOnline) {
-            const pending = await SyncEngine.getPendingCount().catch(() => 0);
-            if (pending > 0 && SyncEngine.processing) {
-                state = 'syncing';
-            }
-        }
-
-        banner.innerHTML = Components.networkBanner(state);
-        banner.classList.remove('bg-emerald-500', 'bg-amber-500', 'bg-sky-500');
-        banner.classList.remove('hidden');
-
-        if (state === 'online') {
-            banner.classList.add('bg-emerald-500', 'text-white');
-        } else if (state === 'syncing') {
-            banner.classList.add('bg-sky-500', 'text-white');
-        } else {
-            banner.classList.add('bg-amber-500', 'text-white');
-        }
+    updateNetworkBanner() {
+        NetworkBanner.refresh();
     },
 
     isAIOnline() {
