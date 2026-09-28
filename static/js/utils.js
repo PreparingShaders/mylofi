@@ -69,5 +69,47 @@ export const Utils = {
         const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
         const value = parseFloat((bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1));
         return `${value} ${units[i]}`;
-    }
+    },
+
+    computeMacroCalories(macros) {
+        const protein = macros.protein || 0;
+        const fat = macros.fat || 0;
+        const carbs = macros.carbs || 0;
+        return {
+            protein: protein * 4,
+            fat: fat * 9,
+            carbs: carbs * 4,
+        };
+    },
+
+    computeQualityScore(macros, targetCalories = 0) {
+        const calories = macros.calories || 0;
+        const protein = macros.protein || 0;
+        const fat = macros.fat || 0;
+        const carbs = macros.carbs || 0;
+
+        if (!calories && !(protein + fat + carbs)) return null;
+
+        const mc = Utils.computeMacroCalories({ protein, fat, carbs });
+        const totalCals = (calories > 0 ? calories : (mc.protein + mc.fat + mc.carbs)) || 0;
+        if (totalCals <= 0) return null;
+
+        const pPct = (mc.protein / totalCals) * 100;
+        const fPct = (mc.fat / totalCals) * 100;
+        const cPct = (mc.carbs / totalCals) * 100;
+
+        const pScore = Math.max(0, 100 - Math.abs(pPct - 20) * 2.5);
+        const fScore = Math.max(0, 100 - Math.abs(fPct - 30) * 2.5);
+        const cScore = Math.max(0, 100 - Math.abs(cPct - 50) * 2.5);
+
+        return Math.round((pScore + fScore + cScore) / 3);
+    },
+
+    qualityGrade(score) {
+        if (score === null || score < 0) return { label: '—', color: 'text-surface-400' };
+        if (score >= 85) return { label: 'Отлично', color: 'text-lime-400' };
+        if (score >= 70) return { label: 'Хорошо', color: 'text-sky-400' };
+        if (score >= 55) return { label: 'Средне', color: 'text-amber-400' };
+        return { label: 'Нужно поправить', color: 'text-rose-400' };
+    },
 };

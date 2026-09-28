@@ -167,6 +167,60 @@
         .progress-ring__circle {
             transition: stroke-dashoffset 0.5s ease-out;
         }
+
+        /* Caloric donut chart */
+        .caloric-donut {
+            position: relative;
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+        }
+        .caloric-donut__track {
+            position: absolute;
+            inset: 0;
+            border-radius: 50%;
+            background: conic-gradient(from -90deg, var(--donut-track) 0%, var(--donut-track) 100%);
+        }
+        .caloric-donut__progress {
+            position: absolute;
+            inset: 0;
+            border-radius: 50%;
+            background: conic-gradient(from -90deg, var(--donut-color) 0%, var(--donut-color) var(--donut-pct), transparent var(--donut-pct), transparent 100%);
+            transition: background 0.5s ease-out;
+        }
+        .caloric-donut__center {
+            position: absolute;
+            inset: 16px;
+            border-radius: 50%;
+        }
+
+        /* Meal flip card (3D card flip) */
+        .flip-card {
+            perspective: 1000px;
+            cursor: pointer;
+        }
+        .flip-card-inner {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            transition: transform 0.5s ease;
+            transform-style: preserve-3d;
+        }
+        .flip-card-inner.flipped {
+            transform: rotateY(180deg);
+        }
+        .flip-card-face {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            backface-visibility: hidden;
+            border-radius: 1.25rem;
+            overflow: hidden;
+        }
+        .flip-card-back {
+            transform: rotateY(180deg);
+        }
         
         /* Smooth transitions */
         .screen {
@@ -296,7 +350,7 @@
                 
                 <!-- Bottom Navigation -->
                 <nav id="bottom-nav" class="fixed bottom-0 left-0 right-0 z-50 glass-strong border-t border-surface-200 dark:border-white/10 safe-area-inset-bottom" style="display: none;">
-                    <div class="grid grid-cols-5 gap-1 px-2 py-2">
+                    <div class="grid grid-cols-3 gap-1 px-2 py-2">
                         <button data-page="nutrition" class="nav-item flex flex-col items-center gap-1 text-surface-500 dark:text-surface-400 btn-press transition-colors" aria-label="Питание">
                             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
                             <span class="text-xs font-medium">Питание</span>
@@ -304,16 +358,6 @@
                         <button data-page="workouts" class="nav-item flex flex-col items-center gap-1 text-surface-500 dark:text-surface-400 btn-press transition-colors" aria-label="Тренировки">
                             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                             <span class="text-xs font-medium">Тренировки</span>
-                        </button>
-                        <button data-page="camera" class="nav-item flex flex-col items-center gap-1 text-surface-500 dark:text-surface-400 btn-press transition-colors relative" aria-label="Сфотографировать">
-                            <div class="w-12 h-12 rounded-full bg-primary-600 dark:bg-zinc-100 flex items-center justify-center shadow-lg">
-                                <svg class="w-7 h-7 text-white dark:text-zinc-950" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-                            </div>
-                            <span class="text-xs font-medium">Камера</span>
-                        </button>
-                        <button data-page="history" class="nav-item flex flex-col items-center gap-1 text-surface-500 dark:text-surface-400 btn-press transition-colors" aria-label="История">
-                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                            <span class="text-xs font-medium">История</span>
                         </button>
                         <button data-page="profile" class="nav-item flex flex-col items-center gap-1 text-surface-500 dark:text-surface-400 btn-press transition-colors" aria-label="Профиль">
                             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>

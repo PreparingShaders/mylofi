@@ -32,8 +32,7 @@ export const Camera = {
             <div class="p-4">
                 <h2 class="text-xl font-bold mb-4">Камера</h2>
                 <div class="border-2 border-dashed border-surface-300 dark:border-white/10 rounded-xl p-6 text-center mb-4 glass">
-                    <input type="file" id="photo-input" accept="image/*" capture="environment"
-                           class="hidden">
+                    <input type="file" id="photo-input" accept="image/*" class="hidden">
                     <label for="photo-input"
                            class="cursor-pointer inline-flex flex-col items-center gap-2 text-surface-500 dark:text-surface-400 hover:text-surface-900 dark:hover:text-zinc-100">
                         <svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
