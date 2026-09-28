@@ -29,7 +29,7 @@
     transition: stroke-dashoffset 0.5s ease-out;
 }
 
-/* Unified nutrition ring (kcal / protein / fat) */
+/* Unified nutrition ring (single track + multi-segment arcs) */
 .nutrition-ring__track {
     stroke: #e4e4e7;
     opacity: 0.9;
@@ -38,10 +38,9 @@
     stroke: #ffffff;
     opacity: 0.12;
 }
-.nutrition-ring__arc {
-    transform: rotate(-90deg);
-    transform-origin: 60px 60px;
-    transition: stroke-dashoffset 0.6s ease-out;
+.nutrition-ring__segment {
+    transition: stroke-dasharray 0.6s ease-out, stroke-dashoffset 0.6s ease-out;
+    stroke-linecap: round;
 }
 
 /* Native date input overlaid on the calendar button */

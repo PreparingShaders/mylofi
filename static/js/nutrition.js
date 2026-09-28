@@ -129,7 +129,7 @@ export const Nutrition = {
         const today = new Date().toISOString().split('T')[0];
         const isCurrent = dateISO >= today;
         return `
-            <div class="flex items-center justify-between mb-4" id="date-nav">
+            <div class="flex items-center justify-between" id="date-nav">
                 <button id="date-prev" data-action="date-prev" aria-label="Предыдущий период" class="btn-press w-10 h-10 rounded-xl glass flex items-center justify-center text-surface-700 dark:text-surface-300 shrink-0">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
                 </button>
@@ -157,7 +157,7 @@ export const Nutrition = {
             { value: 'month', label: 'Месяц' },
         ];
         return `
-            <div class="flex items-center gap-1 bg-surface-100 dark:bg-white/5 rounded-xl p-1 mb-3" role="group" aria-label="Период аналитики">
+            <div class="flex items-center gap-1 bg-surface-100 dark:bg-white/5 rounded-xl px-2 py-1" role="group" aria-label="Период аналитики">
                 ${options.map((opt) => `
                     <button type="button" data-action="set-period" data-period="${opt.value}"
                             aria-pressed="${this.period === opt.value}"
@@ -227,25 +227,15 @@ export const Nutrition = {
 
             const carouselCards = sortedMeals.map((meal) => Components.mealCardPhoto(meal, app)).join('');
 
-            const hasMacros = (data) => data.calories > 0 || data.protein > 0 || data.fat > 0 || data.carbs > 0;
-            const scoreFor = (data) => (hasMacros(data) ? Utils.computeQualityScore(data) : null);
-            const gradeFor = (score) => (score !== null ? Utils.qualityGrade(score) : { label: 'Нет данных', color: 'text-surface-400' });
-
             let displaySummary = summary;
-            let displayScore = scoreFor(summary);
-            let displayGrade = gradeFor(displayScore);
             let periodHint = '';
             if (this.period !== 'day') {
                 const avg = await this.loadPeriodData(this.period, this.selectedDate);
                 if (avg) {
                     displaySummary = avg;
-                    displayScore = scoreFor(avg);
-                    displayGrade = gradeFor(displayScore);
                     periodHint = 'Среднее за период';
                 } else {
                     displaySummary = { calories: 0, protein: 0, fat: 0, carbs: 0 };
-                    displayScore = null;
-                    displayGrade = gradeFor(null);
                     periodHint = 'Нет данных за период';
                 }
             }
@@ -253,23 +243,15 @@ export const Nutrition = {
             const totalMeals = sortedMeals.length + pendingSorted.length;
 
             let html = `
-                <div class="p-4 pb-20 safe-area-inset-top">
-                    <!-- 1. Diary navigation: prev / date + picker / next -->
-                    ${this.renderDateNav(this.selectedDate, dateLabel, fromCache)}
-
-                    <!-- 2. Analytics period selector (День / Неделя / Месяц) -->
-                    ${this.renderPeriodSelector()}
+                <div class="p-4 pb-32 safe-area-inset-top">
+                    <div class="flex justify-between items-center gap-2 mb-4">
+                        ${this.renderDateNav(this.selectedDate, dateLabel, fromCache)}
+                        ${this.renderPeriodSelector()}
+                    </div>
 
                     <!-- 3. Unified kcal/macro ring widget -->
                     <div class="glass-strong rounded-2xl p-4 mb-4">
-                        <div class="flex items-center justify-between mb-3 gap-3">
-                            <h3 class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider truncate">${periodTitle}</h3>
-                            <div class="flex items-center gap-1.5 bg-surface-100 dark:bg-white/5 rounded-lg px-2 py-1 shrink-0">
-                                <span class="text-xs font-bold text-surface-900 dark:text-zinc-100">${displayScore !== null ? displayScore : '—'}</span>
-                                <span class="text-[10px] text-surface-500 dark:text-surface-400">/100</span>
-                                <span class="text-[10px] font-medium ${displayGrade.color}">${displayGrade.label}</span>
-                            </div>
-                        </div>
+                        <h3 class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider truncate mb-3">${periodTitle}</h3>
                         ${Components.nutritionRing(displaySummary, targets)}
                         ${periodHint ? `<p class="text-[11px] text-center text-surface-500 dark:text-surface-400 mt-2">${periodHint}</p>` : ''}
                     </div>
@@ -313,7 +295,7 @@ export const Nutrition = {
                                 <svg class="w-8 h-8 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6l4 2M4 12a8 8 0 1116 0 8 8 0 01-16 0z"/></svg>
                             </div>
                             <h3 class="text-lg font-semibold text-surface-900 dark:text-zinc-100 mb-2">Нет приёмов пищи</h3>
-                            <p class="text-sm text-surface-500">Сфотографируйте блюдо или введите его вручную, чтобы начать</p>
+                            <p class="text-sm text-surface-500">Сфотографируйте блюдо, чтобы начать</p>
                         </div>
                         `
                         : `
@@ -336,22 +318,17 @@ export const Nutrition = {
                             ${this.renderMealTypeChips()}
                         </div>
 
-                        <h3 class="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-3">Действия</h3>
-                        <div class="grid grid-cols-2 gap-3 mb-4">
-                            <label for="photo-input" class="btn-press cursor-pointer flex flex-col items-center gap-2 py-3 glass rounded-xl text-center transition-all">
-                                <svg class="w-7 h-7 text-primary-600 dark:text-zinc-100" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 13a3 3 0 100-6 3 3 0 010 6z"/></svg>
-                                <span class="text-sm font-medium text-surface-900 dark:text-zinc-100">Сфотографировать</span>
-                                <input type="file" id="photo-input" accept="image/*" class="hidden">
-                            </label>
-                            <button id="manual-entry-btn" data-action="manual-entry" class="btn-press flex flex-col items-center gap-2 py-3 glass rounded-xl text-center transition-all">
-                                <svg class="w-7 h-7 text-primary-600 dark:text-zinc-100" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 0 2 2 0 010 2.828l-9.414 9.414H7v-2.828a2 2 0 012-2l5.414-5.414Z"/></svg>
-                                <span class="text-sm font-medium text-surface-900 dark:text-zinc-100">Ввести вручную</span>
-                            </button>
-                        </div>
-
                         <label class="block text-xs text-surface-500 mb-1">Заметки (необязательно)</label>
                         <textarea id="photo-notes" placeholder="Например: обед, завтрак..." class="w-full px-3 py-2 rounded-xl glass-input text-sm resize-none" rows="2"></textarea>
                     </div>
+                </div>
+
+                <div class="fixed inset-x-0 bottom-0 z-10 p-4 safe-area-inset-bottom bg-surface-50 dark:bg-zinc-950 shadow-lg">
+                    <label for="photo-input" class="btn-press cursor-pointer flex flex-col items-center gap-2 py-3 glass rounded-xl text-center transition-all">
+                        <svg class="w-7 h-7 text-primary-600 dark:text-zinc-100" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812-1.22A2 2 0 018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 13a3 3 0 100-6 3 3 0 010 6z"/></svg>
+                        <span class="text-sm font-medium text-surface-900 dark:text-zinc-100">Сфотографировать</span>
+                        <input type="file" id="photo-input" accept="image/*" class="hidden">
+                    </label>
                 </div>
             `;
 
@@ -361,7 +338,6 @@ export const Nutrition = {
             this.bindPeriodSelector();
             this.bindMealTypeSelector();
             this.bindPhotoInput();
-            this.bindManualEntry();
             this.bindMealActions();
             this.bindMealMenus();
 
@@ -510,15 +486,6 @@ export const Nutrition = {
                 this.uploadPhoto(file);
             }
         };
-    },
-
-    bindManualEntry() {
-        const btn = this.app.elements.pageContent.querySelector('#manual-entry-btn');
-        if (btn) {
-            btn.onclick = () => {
-                this.app.showToast('Ручной ввод пока недоступен', 'info');
-            };
-        }
     },
 
     bindMealActions() {
