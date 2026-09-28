@@ -29,62 +29,57 @@
     transition: stroke-dashoffset 0.5s ease-out;
 }
 
-/* Caloric donut chart */
-.caloric-donut {
-    position: relative;
-    width: 120px;
-    height: 120px;
-    border-radius: 50%;
+/* Unified nutrition ring (kcal / protein / fat) */
+.nutrition-ring__track {
+    stroke: #e4e4e7;
+    opacity: 0.9;
 }
-.caloric-donut__track {
-    position: absolute;
-    inset: 0;
-    border-radius: 50%;
-    background: conic-gradient(from -90deg, var(--donut-track) 0%, var(--donut-track) 100%);
+.dark .nutrition-ring__track {
+    stroke: #ffffff;
+    opacity: 0.12;
 }
-.caloric-donut__progress {
-    position: absolute;
-    inset: 0;
-    border-radius: 50%;
-    background: conic-gradient(from -90deg, var(--donut-color) 0%, var(--donut-color) var(--donut-pct), transparent var(--donut-pct), transparent 100%);
-    transition: background 0.5s ease-out;
-}
-.caloric-donut__center {
-    position: absolute;
-    inset: 16px;
-    border-radius: 50%;
+.nutrition-ring__arc {
+    transform: rotate(-90deg);
+    transform-origin: 60px 60px;
+    transition: stroke-dashoffset 0.6s ease-out;
 }
 
-/* Meal flip card (3D card flip) */
-.flip-card {
-    perspective: 1000px;
+/* Native date input overlaid on the calendar button */
+.date-picker {
+    -webkit-appearance: none;
+    appearance: none;
+    border: 0;
+    padding: 0;
+    color: transparent;
+    background: transparent;
+}
+.date-picker::-webkit-calendar-picker-indicator {
+    width: 100%;
+    height: 100%;
+    position: absolute;
+    inset: 0;
     cursor: pointer;
+    opacity: 0;
 }
-.flip-card-inner {
-    position: relative;
-    width: 100%;
-    height: 100%;
-    transition: transform 0.5s ease;
-    transform-style: preserve-3d;
+
+/* Meal photo card */
+.meal-card {
+    box-shadow: 0 8px 24px rgba(9, 9, 11, 0.28);
 }
-.flip-card-inner.flipped {
-    transform: rotateY(180deg);
+.meal-card-photo {
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-color: #27272a;
 }
-.flip-card-face {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    backface-visibility: hidden;
-    border-radius: 1.25rem;
-    overflow: hidden;
-}
-.flip-card-back {
-    transform: rotateY(180deg);
-    position: absolute;
-    inset: 0;
-    overflow-y: auto;
-    -webkit-overflow-y: auto;
+.meal-card-overlay {
+    background: linear-gradient(
+        to top,
+        rgba(0, 0, 0, 0.88) 0%,
+        rgba(0, 0, 0, 0.55) 45%,
+        rgba(0, 0, 0, 0.12) 75%,
+        rgba(0, 0, 0, 0.35) 100%
+    );
 }
 
 /* Enlarged meal carousel with peek effect */
@@ -216,11 +211,6 @@ input, select, textarea:focus {
     background: #fafafa;
     color: #09090b;
     border-color: #fafafa;
-}
-
-/* Compact macro mini column */
-.macro-mini-fill {
-    transition: height 0.4s ease;
 }
 
 /* ============ Network status banner (top compact bar that pushes content) ============ */

@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -45,6 +46,12 @@ app.include_router(api_router, prefix="/api/v1")
 
 # Static files (for PWA frontend)
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Uploaded meal photos (stored under UPLOAD_DIR and referenced by
+# photo_path / photo_thumbnail_path in meal responses)
+os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+os.makedirs(os.path.join(settings.UPLOAD_DIR, "thumbnails"), exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
 
 
 @app.get("/health")

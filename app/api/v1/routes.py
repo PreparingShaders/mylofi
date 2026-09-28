@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form, WebSocket, Header
 from fastapi.security import OAuth2PasswordRequestForm
@@ -63,6 +63,7 @@ from app.services.nutrition import (
     update_meal_analysis_result,
     mark_meal_failed,
     get_daily_nutrition_summary,
+    get_period_nutrition_summary,
 )
 from app.services.workout import (
     create_workout_template,
@@ -325,15 +326,7 @@ async def get_nutrition_logs(
     current_user: User = Depends(get_current_user),
 ):
     """Get meals for a specific date"""
-    if date:
-        try:
-            target_date = datetime.fromisoformat(date).date()
-        except ValueError:
-            target_date = datetime.utcnow().date()
-    else:
-        target_date = datetime.utcnow().date()
-
-    return await get_meals_for_date(db, current_user.id, target_date)
+    return await get_meals_for_date(db, current_user.id, _parse_target_date(date))
 
 
 @router.get("/nutrition/summary")
@@ -343,15 +336,37 @@ async def get_nutrition_summary(
     current_user: User = Depends(get_current_user),
 ):
     """Get aggregated nutrition summary for a date"""
+    return await get_daily_nutrition_summary(db, current_user.id, _parse_target_date(date))
+
+
+def _parse_target_date(date: Optional[str]) -> date:
+    """Parse an optional YYYY-MM-DD query param, falling back to today."""
     if date:
         try:
-            target_date = datetime.fromisoformat(date).date()
+            return datetime.fromisoformat(date).date()
         except ValueError:
-            target_date = datetime.utcnow().date()
-    else:
-        target_date = datetime.utcnow().date()
+            pass
+    return datetime.utcnow().date()
 
-    return await get_daily_nutrition_summary(db, current_user.id, target_date)
+
+@router.get("/nutrition/week")
+async def get_nutrition_week(
+    date: Optional[str] = Query(None, description="Any date within the week, YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get weekly nutrition totals and per-day averages (week starts on Monday)"""
+    return await get_period_nutrition_summary(db, current_user.id, _parse_target_date(date), "week")
+
+
+@router.get("/nutrition/month")
+async def get_nutrition_month(
+    date: Optional[str] = Query(None, description="Any date within the month, YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get monthly nutrition totals and per-day averages"""
+    return await get_period_nutrition_summary(db, current_user.id, _parse_target_date(date), "month")
 
 
 @router.patch("/nutrition/meals/{meal_id}", response_model=MealResponse)

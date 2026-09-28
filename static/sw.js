@@ -1,6 +1,6 @@
-const SHELL_CACHE = 'mylofi-shell-v8';
-const RUNTIME_CACHE = 'mylofi-runtime-v8';
-const CATALOG_CACHE = 'mylofi-catalog-v8';
+const SHELL_CACHE = 'mylofi-shell-v9';
+const RUNTIME_CACHE = 'mylofi-runtime-v9';
+const CATALOG_CACHE = 'mylofi-catalog-v9';
 const CURRENT_CACHES = [SHELL_CACHE, RUNTIME_CACHE, CATALOG_CACHE];
 
 const OFFLINE_FALLBACK_HTML = '<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>mylofi — офлайн</title><link rel="stylesheet" href="/static/css/styles.css"></head><body><div class="min-h-screen flex items-center justify-center p-4"><div class="text-center"><h1 class="text-2xl font-bold mb-2">Офлайн</h1><p class="text-surface-500">Проверьте подключение к интернету. Данные, сохранённые локально, будут синхронизированы при возвращении связи.</p></div></div></body></html>';
@@ -106,6 +106,13 @@ self.addEventListener('fetch', (event) => {
 
     if (url.origin === self.location.origin && url.pathname.startsWith('/static/')) {
         event.respondWith(cacheFirst(request, SHELL_CACHE, true));
+        return;
+    }
+
+    // Meal photos: cache-first with background revalidation so previously
+    // loaded dishes stay visible offline.
+    if (url.origin === self.location.origin && url.pathname.startsWith('/uploads/')) {
+        event.respondWith(staleWhileRevalidate(request, RUNTIME_CACHE));
         return;
     }
 

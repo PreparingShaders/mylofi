@@ -13,6 +13,20 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
+const MEAL_TYPE_META = {
+    breakfast: { label: 'Завтрак', icon: 'sunrise' },
+    lunch: { label: 'Обед', icon: 'utensils' },
+    dinner: { label: 'Ужин', icon: 'moon' },
+    snack: { label: 'Перекус', icon: 'cookie' },
+};
+
+const MEAL_TYPE_ICON_PATHS = {
+    sunrise: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9Z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 4v4"/>',
+    utensils: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2v20"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 2v20"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 2v20"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2 10h20"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2 14h20"/>',
+    moon: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 8a2 2 0 0 0 0-4 2 2 0 0 0-4 0 2 2 0 0 0 4 0Z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2 8h20"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 16V12a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v4"/>',
+    cookie: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v.01"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12v.01"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 12v.01"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 16v.01"/>',
+};
+
 function buildSmoothPath(pts, tension = 0.2) {
     if (!pts.length) return '';
     if (pts.length === 1) return `M ${pts[0].x} ${pts[0].y}`;
@@ -57,26 +71,100 @@ export const Components = {
         `;
     },
 
-    caloricDonut(current, target, color = '#3b82f6', trackColor = '#d4d4d8') {
-        const pct = Math.min(100, Math.max(0, (target > 0 ? (current / target) * 100 : 0)));
-        const rounded = Math.round(current);
-        const roundedTarget = Math.round(target);
-        const pctClamped = Math.max(0.5, pct);
+    mealTypeLabel(type) {
+        return MEAL_TYPE_META[type]?.label || 'Приём пищи';
+    },
+
+    mealTypeIcon(type, className = 'w-4 h-4') {
+        const icon = MEAL_TYPE_META[type]?.icon || 'utensils';
+        return `<svg class="${className}" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">${MEAL_TYPE_ICON_PATHS[icon]}</svg>`;
+    },
+
+    /**
+     * Unified kcal/macro widget: one SVG with three concentric rings
+     * (calories outer, protein middle, fat/carbs inner) and the calorie
+     * value in the centre.
+     */
+    nutritionRing(summary = {}, targets = {}, caption = 'ккал') {
+        const safeNum = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
+        const ratio = (current, target) => (target > 0 ? Math.min(1, Math.max(0, current / target)) : 0);
+
+        const calories = safeNum(summary.calories);
+        const protein = safeNum(summary.protein);
+        const fat = safeNum(summary.fat);
+        const carbs = safeNum(summary.carbs);
+
+        const targetCalories = safeNum(targets.target_calories);
+        const targetProtein = safeNum(targets.target_protein);
+        const targetFat = safeNum(targets.target_fat);
+        const targetCarbs = safeNum(targets.target_carbs);
+
+        const rings = [
+            { r: 54, width: 8, value: calories, target: targetCalories, className: 'text-blue-500' },
+            { r: 42, width: 6, value: protein, target: targetProtein, className: 'text-amber-500' },
+            { r: 30, width: 5, value: fat, target: targetFat, className: 'text-lime-500' },
+        ];
+
+        const arcs = rings.map((ring) => {
+            const circumference = 2 * Math.PI * ring.r;
+            const offset = circumference * (1 - ratio(ring.value, ring.target));
+            const track = `<circle class="nutrition-ring__track" cx="60" cy="60" r="${ring.r}" stroke-width="${ring.width}" fill="none" stroke="currentColor" />`;
+            const progress = `<circle class="nutrition-ring__arc ${ring.className}" cx="60" cy="60" r="${ring.r}" stroke-width="${ring.width}" fill="none" stroke="currentColor" stroke-linecap="round" stroke-dasharray="${circumference.toFixed(2)}" stroke-dashoffset="${offset.toFixed(2)}" />`;
+            return track + progress;
+        }).join('');
+
+        const legendItem = (label, value, target, colorClass) => `
+            <span class="flex items-center gap-1 whitespace-nowrap">
+                <span class="w-2 h-2 rounded-full ${colorClass}"></span>${label}
+                <span class="font-semibold text-surface-900 dark:text-zinc-100">${Math.round(value)}</span>
+                <span class="text-surface-500 dark:text-surface-400">/ ${Math.round(target)}г</span>
+            </span>
+        `;
 
         return `
-            <div class="relative flex items-center justify-center" style="--donut-color: ${color}; --donut-track: ${trackColor}; --donut-pct: ${pctClamped}%;">
-                <div class="caloric-donut">
-                    <div class="caloric-donut__track"></div>
-                    <div class="caloric-donut__progress"></div>
-                    <div class="caloric-donut__center flex items-center justify-center">
-                        <div class="text-center">
-                            <p class="text-xl font-bold text-surface-900 dark:text-zinc-100 leading-tight">${rounded}</p>
-                            <p class="text-[10px] text-surface-500 dark:text-surface-400 leading-tight">/ ${roundedTarget} ккал</p>
-                        </div>
+            <div class="flex flex-col items-center">
+                <div class="relative w-36 h-36 flex items-center justify-center" role="img"
+                     aria-label="Калории ${Math.round(calories)} из ${Math.round(targetCalories)} ккал, белки ${Math.round(protein)} из ${Math.round(targetProtein)} грамм, жиры ${Math.round(fat)} из ${Math.round(targetFat)} грамм, углеводы ${Math.round(carbs)} из ${Math.round(targetCarbs)} грамм">
+                    <svg class="nutrition-ring w-full h-full" viewBox="0 0 120 120" aria-hidden="true">
+                        ${arcs}
+                    </svg>
+                    <div class="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none px-6">
+                        <p class="text-2xl font-bold text-surface-900 dark:text-zinc-100 leading-none">${Math.round(calories)}</p>
+                        <p class="text-[10px] text-surface-500 dark:text-surface-400 mt-1 leading-tight">/ ${Math.round(targetCalories)} ${escapeHtml(caption)}</p>
                     </div>
+                </div>
+                <div class="flex items-center justify-center gap-3 mt-3 text-[11px] text-surface-600 dark:text-surface-300">
+                    ${legendItem('Б', protein, targetProtein, 'bg-amber-500')}
+                    ${legendItem('Ж', fat, targetFat, 'bg-lime-500')}
+                    ${legendItem('У', carbs, targetCarbs, 'bg-sky-500')}
                 </div>
             </div>
         `;
+    },
+
+    /**
+     * Resolves a displayable photo URL for a meal. Server-side paths are
+     * stored on disk (e.g. "./uploads/thumbnails/ab12.jpg") and served by
+     * the /uploads static mount, so only the tail after "uploads/" is needed.
+     */
+    mealPhotoUrl(meal) {
+        if (meal.blob) {
+            try {
+                return URL.createObjectURL(meal.blob);
+            } catch (error) {
+                console.warn('[Components] Failed to create object URL for meal blob:', error);
+            }
+        }
+        const direct = meal.image_url || meal.photo_url;
+        if (direct) return direct;
+
+        const stored = meal.photo_thumbnail_path || meal.photo_path;
+        if (!stored) return null;
+        const normalized = String(stored).replace(/\\/g, '/');
+        const marker = normalized.lastIndexOf('/uploads/');
+        const relative = marker >= 0 ? normalized.slice(marker + '/uploads/'.length) : normalized.replace(/^\/+/, '');
+        if (!relative || relative.includes('..')) return null;
+        return `/uploads/${relative}`;
     },
 
     mealCard(meal, app) {
@@ -96,19 +184,13 @@ export const Components = {
         `;
     },
 
-    mealCarouselCard(meal, app) {
+    mealCardPhoto(meal, app) {
         const isPending = meal.status === 'pending' || meal.status === 'processing' || meal.sync_status === DB.SYNC_STATUS.PENDING;
         const isFailed = meal.sync_status === DB.SYNC_STATUS.FAILED;
         const day = meal.eaten_at ? new Date(meal.eaten_at) : (meal.created_at ? new Date(meal.created_at) : null);
 
-        const mealTypeLabel = (type) => {
-            const map = { breakfast: 'Завтрак', lunch: 'Обед', dinner: 'Ужин', snack: 'Перекус' };
-            if (!type) return 'Приём пищи';
-            return map[type] || type;
-        };
-
         const dishName = meal.dish_name || (isPending ? 'Анализ...' : 'Блюдо');
-        const mealType = mealTypeLabel(meal.meal_type);
+        const mealType = this.mealTypeLabel(meal.meal_type);
         const timeLabel = day ? Utils.formatTime(day) : '';
 
         const calories = Math.round(meal.calories || 0);
@@ -120,103 +202,101 @@ export const Components = {
         const sodium = Math.round(meal.sodium_mg || 0);
 
         const hasMacros = calories > 0 || protein > 0 || fat > 0 || carbs > 0;
-        const blobSrc = meal.blob ? URL.createObjectURL(meal.blob) : null;
-        const imgSrc = meal.image_url || meal.photo_url || blobSrc || null;
-        const safeSrc = imgSrc ? String(imgSrc).replace(/'/g, '%27') : null;
+        const photoSrc = this.mealPhotoUrl(meal);
+        const safeSrc = photoSrc ? String(photoSrc).replace(/'/g, '%27').replace(/"/g, '%22') : null;
 
         let qualityScore = null;
         if (!isPending && !isFailed && hasMacros) {
             qualityScore = Utils.computeQualityScore({ calories, protein, fat, carbs });
         }
-        const grade = qualityScore !== null ? Utils.qualityGrade(qualityScore) : { label: isPending ? 'Очередь' : '—', color: 'text-amber-400' };
 
         const aiText = meal.ai_insight || meal.notes || (isPending ? 'Идёт анализ изображения...' : 'AI-анализ пока недоступен');
         const escName = escapeHtml(dishName);
         const escAi = escapeHtml(aiText);
+        const escType = escapeHtml(mealType);
+        const escTime = escapeHtml(timeLabel);
+        const mealId = meal.id ?? '';
 
         const qualityBadge = qualityScore !== null
-            ? `<div class="flex items-center gap-1 bg-black/30 backdrop-blur rounded-lg px-2 py-1">
+            ? `<div class="inline-flex items-center gap-1 bg-white/15 backdrop-blur rounded-full px-2 py-0.5 mt-2 w-fit">
                    <span class="text-xs font-bold text-white">${qualityScore}</span>
-                   <span class="text-[9px] text-white/50">/100</span>
+                   <span class="text-[9px] text-white/60">/100</span>
                </div>`
             : isPending
-                ? `<div class="flex items-center gap-1 bg-amber-500/20 backdrop-blur rounded-lg px-2 py-1">
-                       <span class="text-xs font-medium text-amber-300">${grade.label}</span>
+                ? `<div class="inline-flex items-center gap-1 bg-amber-500/25 backdrop-blur rounded-full px-2 py-0.5 mt-2 w-fit">
+                       <span class="text-[10px] font-medium text-amber-200">${isFailed ? 'Ошибка синхронизации' : 'Очередь'}</span>
                    </div>`
                 : '';
 
-        const frontImage = safeSrc
-            ? `<div class="absolute inset-0 bg-cover bg-center" style="background-image: url('${safeSrc}');"></div>`
+        const background = safeSrc
+            ? `<div class="meal-card-photo absolute inset-0" style="background-image: url('${safeSrc}');"></div>`
             : `<div class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-surface-300 to-surface-400 dark:from-white/5 dark:to-white/10">
-                   <svg class="w-12 h-12 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                   <svg class="w-12 h-12 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/>
                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 13a3 3 0 100-6 3 3 0 010 6z"/>
                    </svg>
                </div>`;
 
-        const macroClass = (v) => v > 0 ? 'text-white' : 'text-white/40';
+        const macroPill = (value, unit, label) => `
+            <span class="flex-1 text-center px-2 py-1.5 bg-white/10 rounded-xl">
+                <p class="text-sm font-bold text-white leading-tight">${value > 0 ? `${value}${unit}` : '—'}</p>
+                <p class="text-[9px] text-white/60 leading-tight mt-0.5">${label}</p>
+            </span>
+        `;
 
-return `
-            <div class="snap-start w-80 shrink-0">
-                <div class="flip-card" data-meal-id="${meal.id || ''}">
-                    <div class="flip-card-inner relative w-full aspect-[4/3]">
-                        <div class="flip-card-face flip-card-front flex flex-col justify-end ${isFailed ? 'ring-2 ring-red-500/30' : ''}">
-                            ${frontImage}
-                            <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-transparent"></div>
-                            <div class="relative p-4">
-                                <div class="flex items-end justify-between">
-                                    <div class="flex flex-col">
-                                        <h3 class="font-bold text-white text-lg leading-tight">${escName}</h3>
-                                        <p class="text-sm text-white/80 mt-0.5">${mealType} · ${timeLabel}</p>
-                                    </div>
-                                    ${qualityBadge}
-                                </div>
-                                <div class="grid grid-cols-4 gap-1.5 mt-3 text-center">
-                                    <div><p class="text-sm font-bold text-white">${calories || '—'}</p><p class="text-[9px] text-white/50">Ккал</p></div>
-                                    <div><p class="text-sm font-bold ${macroClass(protein)}">${protein || '—'}г</p><p class="text-[9px] text-white/60">Б</p></div>
-                                    <div><p class="text-sm font-bold ${macroClass(fat)}">${fat || '—'}г</p><p class="text-[9px] text-white/60">Ж</p></div>
-                                    <div><p class="text-sm font-bold ${macroClass(carbs)}">${carbs || '—'}г</p><p class="text-[9px] text-white/60">У</p></div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="flip-card-face flip-card-back p-4 flex flex-col">
-                            <div class="mb-4">
-                                <h4 class="text-xs font-semibold text-surface-400 dark:text-surface-300 uppercase tracking-wider mb-2.5">Состав блюда</h4>
-                                <div class="grid grid-cols-2 gap-2">
-                                    <div class="glass dark:bg-zinc-900/40 rounded-xl p-3 text-center">
-                                        <p class="text-xl font-bold text-surface-900 dark:text-zinc-100">${calories || '—'}</p>
-                                        <p class="text-[10px] text-surface-500">Ккал</p>
-                                    </div>
-                                    <div class="glass dark:bg-zinc-900/40 rounded-xl p-3 text-center">
-                                        <p class="text-xl font-bold text-surface-900 dark:text-zinc-100">${protein || '—'}г</p>
-                                        <p class="text-[10px] text-surface-500">Белки</p>
-                                    </div>
-                                    <div class="glass dark:bg-zinc-900/40 rounded-xl p-3 text-center">
-                                        <p class="text-xl font-bold text-surface-900 dark:text-zinc-100">${fat || '—'}г</p>
-                                        <p class="text-[10px] text-surface-500">Жиры</p>
-                                    </div>
-                                    <div class="glass dark:bg-zinc-900/40 rounded-xl p-3 text-center">
-                                        <p class="text-xl font-bold text-surface-900 dark:text-zinc-100">${carbs || '—'}г</p>
-                                        <p class="text-[10px] text-surface-500">Углеводы</p>
-                                    </div>
-                                </div>
-                                ${fiber > 0
-                                    ? `<p class="text-xs text-surface-500 dark:text-surface-400 mt-2.5">Клетчатка: ${fiber}г · Сахар: ${sugar}г · Натрий: ${sodium}мг</p>`
-                                    : ''}
-                            </div>
-                            <div class="glass-strong dark:bg-zinc-900/60 rounded-xl p-3 mb-4 flex-1 overflow-y-auto">
-                                <p class="text-xs text-surface-500 dark:text-zinc-300 italic leading-relaxed">${escAi}</p>
-                            </div>
-                            <div class="flex gap-2">
-                                <button data-action="edit-meal" data-meal-id="${meal.id}" class="flex-1 py-2 text-sm font-medium text-surface-700 dark:text-surface-300 hover:bg-surface-200 dark:hover:bg-white/10 rounded-lg transition-colors">Редактировать</button>
-                                <button data-action="delete-meal" data-meal-id="${meal.id}" class="flex-1 py-2 text-sm font-medium text-red-500 hover:bg-red-500/10 rounded-lg transition-colors">Удалить</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+        const actions = `
+            <div class="meal-card-menu hidden absolute top-11 right-2 z-20 w-40 rounded-xl overflow-hidden bg-zinc-900/95 backdrop-blur border border-white/10 shadow-xl">
+                <button type="button" data-action="edit-meal" data-meal-id="${mealId}"
+                        class="w-full px-3 py-2.5 text-left text-sm text-white/90 hover:bg-white/10 transition-colors">Редактировать</button>
+                <button type="button" data-action="delete-meal" data-meal-id="${mealId}"
+                        class="w-full px-3 py-2.5 text-left text-sm text-red-400 hover:bg-red-500/15 transition-colors border-t border-white/10">Удалить</button>
             </div>
         `;
+
+        return `
+            <article class="snap-start w-64 shrink-0" data-meal-id="${mealId}">
+                <div class="meal-card relative w-full aspect-[3/4] rounded-2xl overflow-hidden bg-surface-900 dark:bg-zinc-900 ${isFailed ? 'ring-2 ring-red-500/40' : ''}">
+                    ${background}
+                    <div class="meal-card-overlay absolute inset-0"></div>
+
+                    <div class="relative h-full p-4 flex flex-col justify-between">
+                        <div class="flex items-start justify-between gap-2">
+                            <div class="flex items-center gap-2 min-w-0">
+                                <span class="inline-flex items-center justify-center w-7 h-7 shrink-0 rounded-lg bg-white/15 backdrop-blur text-white">
+                                    ${this.mealTypeIcon(meal.meal_type)}
+                                </span>
+                                <span class="text-sm font-medium text-white/90 truncate">${escType}</span>
+                            </div>
+                            ${timeLabel ? `<time class="text-xs text-white/70 shrink-0">${escTime}</time>` : ''}
+                        </div>
+
+                        <div class="flex-1 flex flex-col justify-end pt-4">
+                            <h3 class="text-lg font-semibold text-white leading-tight line-clamp-2">${escName}</h3>
+                            <p class="text-xs text-white/75 mt-1 line-clamp-2">${escAi}</p>
+                            ${qualityBadge}
+                        </div>
+
+                        <div class="flex items-center gap-1.5 pt-3 mt-3 border-t border-white/15">
+                            ${macroPill(calories, '', 'Ккал')}
+                            ${macroPill(protein, 'г', 'Белки')}
+                            ${macroPill(fat, 'г', 'Жиры')}
+                            ${macroPill(carbs, 'г', 'Углеводы')}
+                        </div>
+                        ${fiber > 0
+                            ? `<p class="text-[10px] text-white/60 mt-2">Клетчатка: ${fiber}г · Сахар: ${sugar}г · Натрий: ${sodium}мг</p>`
+                            : ''}
+                    </div>
+
+                    <button type="button" data-action="toggle-meal-menu" aria-label="Действия" aria-expanded="false"
+                            class="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/35 backdrop-blur flex items-center justify-center text-white/80 hover:text-white hover:bg-black/50 transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"/></svg>
+                    </button>
+                    ${actions}
+                </div>
+            </article>
+        `;
     },
+
 
     sparkline(data, height = 72, label = 'Динамика тоннажа (кг)') {
         if (!data || data.length === 0) return '<div class="text-xs text-surface-400 h-20 flex items-center justify-center">Нет истории тренировок</div>';

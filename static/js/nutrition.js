@@ -54,18 +54,18 @@ export const Nutrition = {
         return { serverMeals, summary, pendingMeals, failedItems, fromCache };
     },
 
-    async loadPeriodData(period) {
+    async loadPeriodData(period, date) {
         if (period === 'day') return null;
         const token = this.app.state.tokens.access;
         const endpoint = period === 'week' ? '/nutrition/week' : '/nutrition/month';
         try {
-            const data = await API.get(endpoint, token);
+            const data = await API.get(`${endpoint}?date=${date || this.selectedDate}`, token);
             if (data && typeof data === 'object') {
                 return {
-                    calories: data.total_calories || data.avg_calories || 0,
-                    protein: data.total_protein_g || data.avg_protein_g || 0,
-                    fat: data.total_fat_g || data.avg_fat_g || 0,
-                    carbs: data.total_carbs_g || data.avg_carbs_g || 0,
+                    calories: data.avg_calories ?? data.total_calories ?? 0,
+                    protein: data.avg_protein_g ?? data.total_protein_g ?? 0,
+                    fat: data.avg_fat_g ?? data.total_fat_g ?? 0,
+                    carbs: data.avg_carbs_g ?? data.total_carbs_g ?? 0,
                 };
             }
         } catch (error) {
@@ -81,55 +81,71 @@ export const Nutrition = {
         return Utils.formatDate(d);
     },
 
+    periodRangeLabel(dateISO, period) {
+        const d = new Date(dateISO);
+        if (period === 'week') {
+            const start = new Date(d);
+            const weekday = (start.getDay() + 6) % 7;
+            start.setDate(start.getDate() - weekday);
+            const end = new Date(start);
+            end.setDate(start.getDate() + 6);
+            return `${start.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })} — ${end.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}`;
+        }
+        if (period === 'month') {
+            const month = d.toLocaleDateString('ru-RU', { month: 'long' });
+            return `${month.charAt(0).toUpperCase()}${month.slice(1)} ${d.getFullYear()}`;
+        }
+        return this.formatDateLabel(dateISO);
+    },
+
+    /**
+     * Label above the ring: the period name plus the range it covers.
+     * Day keeps the existing "Сегодня"/date wording.
+     */
+    periodTitle(dateISO, period) {
+        if (period === 'day') return `Питание за ${this.formatDateLabel(dateISO)}`;
+        const noun = period === 'week' ? 'Неделя' : 'Месяц';
+        return `Питание · ${noun}: ${this.periodRangeLabel(dateISO, period)}`;
+    },
+
     changeDate(delta) {
         const today = new Date().toISOString().split('T')[0];
         if (delta > 0 && this.selectedDate >= today) {
             return;
         }
         const current = new Date(this.selectedDate);
-        current.setDate(current.getDate() + delta);
+        if (this.period === 'week') {
+            current.setDate(current.getDate() + delta * 7);
+        } else if (this.period === 'month') {
+            current.setMonth(current.getMonth() + delta);
+        } else {
+            current.setDate(current.getDate() + delta);
+        }
         this.selectedDate = current.toISOString().split('T')[0];
         this.render(this.app.elements.pageContent, this.app, this.selectedDate);
     },
 
-    renderMacroBar(label, current, target, unit, colorClass = 'bg-primary-600 dark:bg-zinc-100') {
-        const pct = Math.min(100, (target > 0 ? (current / target) * 100 : 0));
-        const rounded = Math.min(current, target);
+    renderDateNav(dateISO, dateLabel, fromCache = false) {
+        const today = new Date().toISOString().split('T')[0];
+        const isCurrent = dateISO >= today;
         return `
-            <div class="mb-3">
-                <div class="flex items-center justify-between mb-1">
-                    <span class="text-xs font-medium text-surface-600 dark:text-surface-400">${label}</span>
-                    <span class="text-xs text-surface-500">${Math.round(rounded)} / ${target} ${unit}</span>
+            <div class="flex items-center justify-between mb-4" id="date-nav">
+                <button id="date-prev" data-action="date-prev" aria-label="Предыдущий период" class="btn-press w-10 h-10 rounded-xl glass flex items-center justify-center text-surface-700 dark:text-surface-300 shrink-0">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                </button>
+                <div class="flex flex-col items-center min-w-0">
+                    <div class="flex items-center gap-1.5">
+                        <h2 class="text-xl font-bold text-surface-900 dark:text-zinc-100 truncate">${dateLabel}</h2>
+                        <label class="relative inline-flex items-center justify-center w-8 h-8 rounded-lg text-surface-500 dark:text-surface-400 hover:text-surface-900 dark:hover:text-zinc-100 transition-colors" for="date-picker" aria-label="Выбрать дату">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3M3.5 9.5h17M5 5h14a1.5 1.5 0 011.5 1.5v12A1.5 1.5 0 0119 20H5a1.5 1.5 0 01-1.5-1.5v-12A1.5 1.5 0 015 5z"/></svg>
+                            <input type="date" id="date-picker" value="${dateISO}" max="${today}" class="date-picker absolute inset-0 opacity-0 cursor-pointer">
+                        </label>
+                    </div>
+                    <span class="text-xs text-amber-500" id="date-offline-hint" ${fromCache ? '' : 'hidden'}>Оффлайн</span>
                 </div>
-                <div class="h-2 bg-surface-200 dark:bg-white/10 rounded-full overflow-hidden">
-                    <div class="h-full ${colorClass} rounded-full transition-all" style="width: ${pct}%"></div>
-                </div>
-            </div>
-        `;
-    },
-
-    renderCompactMacros(summary, targets) {
-        const items = [
-            { label: 'Б', value: summary.protein, target: targets.target_protein, color: 'bg-blue-500' },
-            { label: 'Ж', value: summary.fat, target: targets.target_fat, color: 'bg-amber-500' },
-            { label: 'У', value: summary.carbs, target: targets.target_carbs, color: 'bg-lime-500' },
-        ];
-        return `
-            <div class="grid grid-cols-3 gap-2">
-                ${items.map((item) => {
-                    const pct = item.target > 0 ? Math.min(100, (item.value / item.target) * 100) : 0;
-                    return `
-                        <div class="flex flex-col items-center gap-1.5">
-                            <div class="relative w-full h-16 bg-surface-200 dark:bg-white/5 rounded-lg overflow-hidden flex items-end">
-                                <div class="w-full ${item.color} opacity-80 macro-mini-fill" style="height: ${Math.max(pct, 4)}%"></div>
-                            </div>
-                            <div class="text-center">
-                                <p class="text-[10px] font-bold text-surface-900 dark:text-zinc-100 leading-tight">${Math.round(item.value)}г</p>
-                                <p class="text-[9px] text-surface-400 leading-tight">${item.label} · ${Math.round(item.target)}г</p>
-                            </div>
-                        </div>
-                    `;
-                }).join('')}
+                <button id="date-next" data-action="date-next" aria-label="Следующий период" class="btn-press w-10 h-10 rounded-xl glass flex items-center justify-center text-surface-700 dark:text-surface-300 shrink-0 ${isCurrent ? 'opacity-50 cursor-not-allowed' : ''}">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                </button>
             </div>
         `;
     },
@@ -141,10 +157,11 @@ export const Nutrition = {
             { value: 'month', label: 'Месяц' },
         ];
         return `
-            <div class="flex items-center gap-1 bg-surface-100 dark:bg-white/5 rounded-lg p-1 mb-3">
+            <div class="flex items-center gap-1 bg-surface-100 dark:bg-white/5 rounded-xl p-1 mb-3" role="group" aria-label="Период аналитики">
                 ${options.map((opt) => `
                     <button type="button" data-action="set-period" data-period="${opt.value}"
-                            class="period-pill flex-1 py-1.5 text-xs font-semibold rounded-md transition-colors ${this.period === opt.value ? 'active' : 'text-surface-500 dark:text-surface-400'}">
+                            aria-pressed="${this.period === opt.value}"
+                            class="period-pill flex-1 py-2 text-xs font-semibold rounded-lg transition-colors ${this.period === opt.value ? 'active' : 'text-surface-500 dark:text-surface-400'}">
                         ${opt.label}
                     </button>
                 `).join('')}
@@ -154,15 +171,15 @@ export const Nutrition = {
 
     renderMealTypeChips() {
         const types = [
-            { value: 'breakfast', label: 'Завтрак', icon: '🍳' },
-            { value: 'lunch', label: 'Обед', icon: '🍜' },
-            { value: 'dinner', label: 'Ужин', icon: '🍽️' },
-            { value: 'snack', label: 'Перекус', icon: '🍎' },
+            { value: 'breakfast', label: 'Завтрак' },
+            { value: 'lunch', label: 'Обед' },
+            { value: 'dinner', label: 'Ужин' },
+            { value: 'snack', label: 'Перекус' },
         ];
         return types.map((t) => `
-            <button type="button" data-action="set-meal-type" data-type="${t.value}"
-                    class="meal-type-chip flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border border-surface-200 dark:border-white/10 text-[10px] font-medium text-surface-600 dark:text-surface-400 transition-colors">
-                <span class="text-base leading-none">${t.icon}</span>
+            <button type="button" data-action="set-meal-type" data-type="${t.value}" aria-pressed="${this.selectedMealType === t.value}"
+                    class="meal-type-chip flex flex-col items-center justify-center gap-1 py-2.5 rounded-xl border border-surface-200 dark:border-white/10 text-[10px] font-medium text-surface-600 dark:text-surface-400 transition-colors">
+                ${Components.mealTypeIcon(t.value, 'w-5 h-5')}
                 <span>${t.label}</span>
             </button>
         `).join('');
@@ -190,6 +207,7 @@ export const Nutrition = {
             };
 
             const dateLabel = this.formatDateLabel(this.selectedDate);
+            const periodTitle = this.periodTitle(this.selectedDate, this.period);
 
             const sortedMeals = serverMeals
                 .slice()
@@ -207,38 +225,28 @@ export const Nutrition = {
                     return tb - ta;
                 });
 
-            const carouselCards = sortedMeals.map((meal) => Components.mealCarouselCard(meal, app)).join('');
+            const carouselCards = sortedMeals.map((meal) => Components.mealCardPhoto(meal, app)).join('');
 
-            const dailyScore = (summary.calories > 0 || summary.protein > 0 || summary.fat > 0 || summary.carbs > 0)
-                ? Utils.computeQualityScore({
-                    calories: summary.calories,
-                    protein: summary.protein,
-                    fat: summary.fat,
-                    carbs: summary.carbs,
-                })
-                : null;
-            const dailyGrade = dailyScore !== null
-                ? Utils.qualityGrade(dailyScore)
-                : { label: 'Нет данных', color: 'text-surface-400' };
+            const hasMacros = (data) => data.calories > 0 || data.protein > 0 || data.fat > 0 || data.carbs > 0;
+            const scoreFor = (data) => (hasMacros(data) ? Utils.computeQualityScore(data) : null);
+            const gradeFor = (score) => (score !== null ? Utils.qualityGrade(score) : { label: 'Нет данных', color: 'text-surface-400' });
 
             let displaySummary = summary;
-            let displayScore = dailyScore;
-            let displayGrade = dailyGrade;
+            let displayScore = scoreFor(summary);
+            let displayGrade = gradeFor(displayScore);
+            let periodHint = '';
             if (this.period !== 'day') {
-                const avg = await this.loadPeriodData(this.period);
+                const avg = await this.loadPeriodData(this.period, this.selectedDate);
                 if (avg) {
                     displaySummary = avg;
-                    displayScore = (avg.calories > 0 || avg.protein > 0 || avg.fat > 0 || avg.carbs > 0)
-                        ? Utils.computeQualityScore({
-                            calories: avg.calories,
-                            protein: avg.protein,
-                            fat: avg.fat,
-                            carbs: avg.carbs,
-                        })
-                        : null;
-                    displayGrade = displayScore !== null
-                        ? Utils.qualityGrade(displayScore)
-                        : { label: 'Нет данных', color: 'text-surface-400' };
+                    displayScore = scoreFor(avg);
+                    displayGrade = gradeFor(displayScore);
+                    periodHint = 'Среднее за период';
+                } else {
+                    displaySummary = { calories: 0, protein: 0, fat: 0, carbs: 0 };
+                    displayScore = null;
+                    displayGrade = gradeFor(null);
+                    periodHint = 'Нет данных за период';
                 }
             }
 
@@ -246,42 +254,27 @@ export const Nutrition = {
 
             let html = `
                 <div class="p-4 pb-20 safe-area-inset-top">
-                    <!-- 1. Header & Date Selector -->
-                    <div class="flex items-center justify-between mb-4">
-                        <button id="date-prev" data-action="date-prev" class="btn-press w-10 h-10 rounded-xl glass flex items-center justify-center text-surface-700 dark:text-surface-300">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
-                        </button>
-                        <div class="flex flex-col items-center">
-                            <h2 class="text-xl font-bold text-surface-900 dark:text-zinc-100">${dateLabel}</h2>
-                            ${fromCache ? '<span class="text-xs text-amber-500">Оффлайн</span>' : ''}
-                        </div>
-                        <button id="date-next" data-action="date-next" class="btn-press w-10 h-10 rounded-xl glass flex items-center justify-center text-surface-700 dark:text-surface-300">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-                        </button>
-                    </div>
+                    <!-- 1. Diary navigation: prev / date + picker / next -->
+                    ${this.renderDateNav(this.selectedDate, dateLabel, fromCache)}
 
-                    <!-- 2. Compact Nutrition Dashboard -->
+                    <!-- 2. Analytics period selector (День / Неделя / Месяц) -->
+                    ${this.renderPeriodSelector()}
+
+                    <!-- 3. Unified kcal/macro ring widget -->
                     <div class="glass-strong rounded-2xl p-4 mb-4">
-                        <div class="flex items-center justify-between mb-2">
-                            <h3 class="text-xs font-semibold text-surface-400 uppercase tracking-wider">Питание за ${dateLabel}</h3>
-                            <div class="flex items-center gap-1.5 bg-surface-100 dark:bg-white/5 rounded-lg px-2 py-1">
+                        <div class="flex items-center justify-between mb-3 gap-3">
+                            <h3 class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider truncate">${periodTitle}</h3>
+                            <div class="flex items-center gap-1.5 bg-surface-100 dark:bg-white/5 rounded-lg px-2 py-1 shrink-0">
                                 <span class="text-xs font-bold text-surface-900 dark:text-zinc-100">${displayScore !== null ? displayScore : '—'}</span>
                                 <span class="text-[10px] text-surface-500 dark:text-surface-400">/100</span>
                                 <span class="text-[10px] font-medium ${displayGrade.color}">${displayGrade.label}</span>
                             </div>
                         </div>
-                        ${this.renderPeriodSelector()}
-                        <div class="flex items-center gap-4">
-                            <div class="flex-shrink-0">
-                                ${Components.caloricDonut(displaySummary.calories, targets.target_calories, '#3b82f6', '#d4d4d8')}
-                            </div>
-                            <div class="flex-1">
-                                ${this.renderCompactMacros(displaySummary, targets)}
-                            </div>
-                        </div>
+                        ${Components.nutritionRing(displaySummary, targets)}
+                        ${periodHint ? `<p class="text-[11px] text-center text-surface-500 dark:text-surface-400 mt-2">${periodHint}</p>` : ''}
                     </div>
 
-                    <!-- 3. Failed sync items -->
+                    <!-- 4. Failed sync items -->
                     ${failedItems.length > 0
                         ? `
                         <div class="mb-4">
@@ -300,19 +293,19 @@ export const Nutrition = {
                         `
                         : ''}
 
-                    <!-- 4. Pending meals -->
+                    <!-- 5. Pending meals -->
                     ${pendingSorted.length > 0
                         ? `
                         <div class="mb-4">
                             <h4 class="text-xs font-semibold text-amber-500 uppercase tracking-wider mb-2">Ожидают синхронизации</h4>
                             <div class="meal-carousel flex gap-3 overflow-x-auto snap-x snap-mandatory -mx-4 px-4 pb-2">
-                                ${pendingSorted.map((meal) => Components.mealCarouselCard(meal, app)).join('')}
+                                ${pendingSorted.map((meal) => Components.mealCardPhoto(meal, app)).join('')}
                             </div>
                         </div>
                         `
                         : ''}
 
-                    <!-- 5. Food Carousel or Empty state -->
+                    <!-- 6. Food Carousel or Empty state -->
                     ${totalMeals === 0
                         ? `
                         <div class="text-center py-12">
@@ -336,7 +329,7 @@ export const Nutrition = {
                             : ''}
                         `}
 
-                    <!-- 6. Actions Section (below carousel) -->
+                    <!-- 7. Actions Section (below carousel) -->
                     <div class="mt-6">
                         <h3 class="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-3">Тип приёма пищи</h3>
                         <div class="grid grid-cols-4 gap-2 mb-4" id="meal-type-selector">
@@ -370,7 +363,7 @@ export const Nutrition = {
             this.bindPhotoInput();
             this.bindManualEntry();
             this.bindMealActions();
-            this.bindFlipCards();
+            this.bindMealMenus();
 
             const retryBtn = container.querySelector('#retry-failed');
             if (retryBtn) {
@@ -399,33 +392,87 @@ export const Nutrition = {
         }
     },
 
-    bindFlipCards() {
+    /**
+     * Three-dot menus on meal cards. One menu open at a time; clicking the
+     * toggle again, pressing Escape, or clicking outside closes it.
+     */
+    bindMealMenus() {
+        this.unbindMealMenus();
         const container = this.app.elements.pageContent;
-        container.querySelectorAll('.flip-card').forEach((card) => {
-            card.addEventListener('click', (e) => {
-                if (e.target.closest('[data-action="edit-meal"], [data-action="delete-meal"]')) return;
-                const inner = card.querySelector('.flip-card-inner');
-                if (inner) inner.classList.toggle('flipped');
+        const triggers = container.querySelectorAll('[data-action="toggle-meal-menu"]');
+
+        const closeAll = (except = null) => {
+            triggers.forEach((trigger) => {
+                if (trigger === except) return;
+                const menu = trigger.parentElement?.querySelector('.meal-card-menu');
+                menu?.classList.add('hidden');
+                trigger.setAttribute('aria-expanded', 'false');
             });
+        };
+
+        triggers.forEach((trigger) => {
+            trigger.onclick = (e) => {
+                e.stopPropagation();
+                const menu = trigger.parentElement?.querySelector('.meal-card-menu');
+                if (!menu) return;
+                const willOpen = menu.classList.contains('hidden');
+                closeAll(trigger);
+                menu.classList.toggle('hidden', !willOpen);
+                trigger.setAttribute('aria-expanded', String(willOpen));
+            };
         });
+
+        container.querySelectorAll('.meal-card-menu').forEach((menu) => {
+            menu.onclick = (e) => e.stopPropagation();
+        });
+
+        this._closeMealMenus = (e) => {
+            if (e.target.closest('[data-action="toggle-meal-menu"]')) return;
+            closeAll();
+        };
+        this._closeMealMenusKeydown = (e) => {
+            if (e.key === 'Escape') closeAll();
+        };
+        document.addEventListener('click', this._closeMealMenus);
+        document.addEventListener('keydown', this._closeMealMenusKeydown);
+    },
+
+    unbindMealMenus() {
+        if (this._closeMealMenus) {
+            document.removeEventListener('click', this._closeMealMenus);
+            this._closeMealMenus = null;
+        }
+        if (this._closeMealMenusKeydown) {
+            document.removeEventListener('keydown', this._closeMealMenusKeydown);
+            this._closeMealMenusKeydown = null;
+        }
     },
 
     bindDateNav() {
-        const prev = this.app.elements.pageContent.querySelector('#date-prev');
-        const next = this.app.elements.pageContent.querySelector('#date-next');
+        const container = this.app.elements.pageContent;
+        const prev = container.querySelector('#date-prev');
+        const next = container.querySelector('#date-next');
+        const picker = container.querySelector('#date-picker');
         const today = new Date().toISOString().split('T')[0];
-        const isToday = this.selectedDate >= today;
+        const isCurrent = this.selectedDate >= today;
 
         if (prev) {
             prev.onclick = () => this.changeDate(-1);
-            prev.disabled = false;
-            prev.classList.remove('opacity-50', 'cursor-not-allowed');
         }
         if (next) {
-            next.onclick = () => this.changeDate(1);
-            next.disabled = isToday;
-            next.classList.toggle('opacity-50', isToday);
-            next.classList.toggle('cursor-not-allowed', isToday);
+            next.onclick = () => {
+                if (this.selectedDate >= today) return;
+                this.changeDate(1);
+            };
+        }
+        if (picker) {
+            picker.value = this.selectedDate;
+            picker.onchange = (e) => {
+                const value = e.target.value;
+                if (!value) return;
+                this.selectedDate = value > today ? today : value;
+                this.render(container, this.app, this.selectedDate);
+            };
         }
     },
 

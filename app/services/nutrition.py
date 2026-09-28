@@ -1,7 +1,7 @@
 import os
 import uuid
 import shutil
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Optional, List
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -301,4 +301,70 @@ async def get_daily_nutrition_summary(
         "protein_g": float(row.protein_g),
         "fat_g": float(row.fat_g),
         "carbs_g": float(row.carbs_g),
+    }
+
+
+def get_period_bounds(target_date: date, period: str) -> tuple[date, date]:
+    """Return the inclusive [start, end] dates of the week or month containing target_date.
+
+    Weeks start on Monday, matching the frontend period label.
+    """
+    if period == "month":
+        start = target_date.replace(day=1)
+        if start.month == 12:
+            next_month = start.replace(year=start.year + 1, month=1)
+        else:
+            next_month = start.replace(month=start.month + 1)
+        return start, next_month - timedelta(days=1)
+
+    start = target_date - timedelta(days=target_date.weekday())
+    return start, start + timedelta(days=6)
+
+
+async def get_period_nutrition_summary(
+    db: AsyncSession,
+    user_id: int,
+    target_date: date,
+    period: str,
+) -> dict:
+    """Get aggregated nutrition for a week or month, as totals and per-day averages."""
+    start_date, end_date = get_period_bounds(target_date, period)
+    start_dt = datetime.combine(start_date, datetime.min.time())
+    end_dt = datetime.combine(end_date, datetime.max.time())
+    days = (end_date - start_date).days + 1
+
+    result = await db.execute(
+        select(
+            func.coalesce(func.sum(Meal.calories), 0).label("calories"),
+            func.coalesce(func.sum(Meal.protein_g), 0).label("protein_g"),
+            func.coalesce(func.sum(Meal.fat_g), 0).label("fat_g"),
+            func.coalesce(func.sum(Meal.carbs_g), 0).label("carbs_g"),
+        )
+        .where(
+            Meal.user_id == user_id,
+            Meal.eaten_at >= start_dt,
+            Meal.eaten_at <= end_dt,
+            Meal.status == MealStatus.COMPLETED,
+        )
+    )
+    row = result.one()
+
+    total_calories = float(row.calories)
+    total_protein = float(row.protein_g)
+    total_fat = float(row.fat_g)
+    total_carbs = float(row.carbs_g)
+
+    return {
+        "period": period,
+        "start_date": start_date,
+        "end_date": end_date,
+        "days": days,
+        "total_calories": total_calories,
+        "total_protein_g": total_protein,
+        "total_fat_g": total_fat,
+        "total_carbs_g": total_carbs,
+        "avg_calories": total_calories / days,
+        "avg_protein_g": total_protein / days,
+        "avg_fat_g": total_fat / days,
+        "avg_carbs_g": total_carbs / days,
     }
