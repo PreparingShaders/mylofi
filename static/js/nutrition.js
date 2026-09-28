@@ -10,6 +10,7 @@ export const Nutrition = {
     selectedDate: null,
     period: 'day',
     selectedMealType: null,
+    _addMealModalState: null,
 
     async loadData(date) {
         const token = this.app.state.tokens.access;
@@ -185,7 +186,7 @@ export const Nutrition = {
         `).join('');
     },
 
-    async render(container, app, dateOverride = null) {
+async render(container, app, dateOverride = null) {
         this.app = app;
         if (dateOverride) {
             this.selectedDate = dateOverride;
@@ -242,93 +243,86 @@ export const Nutrition = {
 
             const totalMeals = sortedMeals.length + pendingSorted.length;
 
+            // Compute quality score for the metric bar
+            const qualityScore = totalMeals > 0 ? Utils.computeQualityScore(displaySummary) : null;
+
             let html = `
-                <div class="p-4 pb-32 safe-area-inset-top">
-                    <div class="flex justify-between items-center gap-2 mb-4">
-                        ${this.renderDateNav(this.selectedDate, dateLabel, fromCache)}
-                        ${this.renderPeriodSelector()}
+                <div class="single-viewport safe-area-inset-top safe-area-inset-bottom">
+                    <!-- HEADER -->
+                    <div class="viewport-header p-4 pb-3">
+                        <div class="flex justify-between items-center gap-2 mb-3">
+                            ${this.renderDateNav(this.selectedDate, dateLabel, fromCache)}
+                            ${this.renderPeriodSelector()}
+                        </div>
+
+                        <!-- Period Title -->
+                        <h3 class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider truncate mb-2">${periodTitle}</h3>
+
+                        <!-- 5-Column Metric Bar -->
+                        ${Components.nutritionMetricsBar(displaySummary, targets, qualityScore)}
+                        ${periodHint ? `<p class="text-[11px] text-center text-surface-500 dark:text-surface-400 mt-1">${periodHint}</p>` : ''}
                     </div>
 
-                    <!-- 3. Unified kcal/macro ring widget -->
-                    <div class="glass-strong rounded-2xl p-4 mb-4">
-                        <h3 class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider truncate mb-3">${periodTitle}</h3>
-                        ${Components.nutritionRing(displaySummary, targets)}
-                        ${periodHint ? `<p class="text-[11px] text-center text-surface-500 dark:text-surface-400 mt-2">${periodHint}</p>` : ''}
-                    </div>
-
-                    <!-- 4. Failed sync items -->
-                    ${failedItems.length > 0
-                        ? `
-                        <div class="mb-4">
-                            <div class="flex items-center justify-between mb-2">
-                                <h3 class="text-xs font-semibold text-red-400 uppercase tracking-wider">Ошибка синхронизации</h3>
-                                <button id="clear-failed" class="text-xs text-red-500 hover:text-red-400">Очистить все</button>
-                            </div>
-                            ${failedItems.map((item) => `
-                                <div class="glass rounded-xl p-3 mb-2">
-                                    <p class="text-sm text-surface-600 dark:text-surface-300">${item.endpoint || 'Запрос'}</p>
-                                    <p class="text-xs text-surface-500 truncate">${item.error || 'Неизвестная ошибка'}</p>
-                                </div>
-                            `).join('')}
-                            <button id="retry-failed" class="w-full py-2 mt-2 bg-sky-500 hover:bg-sky-600 text-white text-sm font-medium rounded-xl">Повторить сейчас</button>
-                        </div>
-                        `
-                        : ''}
-
-                    <!-- 5. Pending meals -->
-                    ${pendingSorted.length > 0
-                        ? `
-                        <div class="mb-4">
-                            <h4 class="text-xs font-semibold text-amber-500 uppercase tracking-wider mb-2">Ожидают синхронизации</h4>
-                            <div class="meal-carousel flex gap-3 overflow-x-auto snap-x snap-mandatory -mx-4 px-4 pb-2">
-                                ${pendingSorted.map((meal) => Components.mealCardPhoto(meal, app)).join('')}
-                            </div>
-                        </div>
-                        `
-                        : ''}
-
-                    <!-- 6. Food Carousel or Empty state -->
-                    ${totalMeals === 0
-                        ? `
-                        <div class="text-center py-12">
-                            <div class="w-16 h-16 rounded-full glass flex items-center justify-center mx-auto mb-4">
-                                <svg class="w-8 h-8 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6l4 2M4 12a8 8 0 1116 0 8 8 0 01-16 0z"/></svg>
-                            </div>
-                            <h3 class="text-lg font-semibold text-surface-900 dark:text-zinc-100 mb-2">Нет приёмов пищи</h3>
-                            <p class="text-sm text-surface-500">Сфотографируйте блюдо, чтобы начать</p>
-                        </div>
-                        `
-                        : `
-                        ${sortedMeals.length > 0
+                    <!-- CENTER CAROUSEL -->
+                    <div class="viewport-content flex-1 overflow-x-auto snap-x snap-mandatory px-4 pb-4 -mx-4" id="meal-carousel">
+                        ${pendingSorted.length > 0
                             ? `
-                            <div class="mb-4">
-                                <h3 class="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-2">Приёмы пищи</h3>
-                            </div>
-                            <div class="meal-carousel flex gap-3 overflow-x-auto snap-x snap-mandatory -mx-4 px-4 pb-2" id="meal-carousel">
-                                ${carouselCards}
+                            <div class="flex gap-3 snap-none min-w-0">
+                                <div class="w-64 shrink-0 flex items-center justify-center">
+                                    <span class="text-xs text-amber-500 font-medium">Ожидают синхронизации</span>
+                                </div>
+                                ${pendingSorted.map((meal) => Components.mealCardPhoto(meal, app)).join('')}
                             </div>
                             `
                             : ''}
-                        `}
-
-                    <!-- 7. Actions Section (below carousel) -->
-                    <div class="mt-6">
-                        <h3 class="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-3">Тип приёма пищи</h3>
-                        <div class="grid grid-cols-4 gap-2 mb-4" id="meal-type-selector">
-                            ${this.renderMealTypeChips()}
-                        </div>
-
-                        <label class="block text-xs text-surface-500 mb-1">Заметки (необязательно)</label>
-                        <textarea id="photo-notes" placeholder="Например: обед, завтрак..." class="w-full px-3 py-2 rounded-xl glass-input text-sm resize-none" rows="2"></textarea>
+                        ${totalMeals === 0
+                            ? `
+                            <div class="flex items-center justify-center h-full min-w-full px-8">
+                                <div class="text-center">
+                                    <div class="w-16 h-16 rounded-full glass flex items-center justify-center mx-auto mb-3">
+                                        <svg class="w-8 h-8 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6l4 2M4 12a8 8 0 1116 0 8 8 0 01-16 0z"/></svg>
+                                    </div>
+                                    <h3 class="text-lg font-semibold text-surface-900 dark:text-zinc-100 mb-1">Нет приёмов пищи</h3>
+                                    <p class="text-sm text-surface-500">Нажмите "Добавить приём пищи", чтобы начать</p>
+                                </div>
+                            </div>
+                            `
+                            : `
+                            <div class="flex gap-3 snap-none min-w-0">
+                                ${carouselCards}
+                            </div>
+                            `
+                        }
                     </div>
-                </div>
 
-                <div class="fixed inset-x-0 bottom-0 z-10 p-4 safe-area-inset-bottom bg-surface-50 dark:bg-zinc-950 shadow-lg">
-                    <label for="photo-input" class="btn-press cursor-pointer flex flex-col items-center gap-2 py-3 glass rounded-xl text-center transition-all">
-                        <svg class="w-7 h-7 text-primary-600 dark:text-zinc-100" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812-1.22A2 2 0 018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 13a3 3 0 100-6 3 3 0 010 6z"/></svg>
-                        <span class="text-sm font-medium text-surface-900 dark:text-zinc-100">Сфотографировать</span>
-                        <input type="file" id="photo-input" accept="image/*" class="hidden">
-                    </label>
+                    <!-- FAILED SYNC ITEMS (inline if any) -->
+                    ${failedItems.length > 0
+                        ? `
+                        <div class="viewport-content px-4 pb-2 -mx-4" id="failed-items-section">
+                            <div class="glass rounded-xl p-3 mb-2 border border-red-500/20">
+                                <div class="flex items-center justify-between mb-2">
+                                    <h3 class="text-xs font-semibold text-red-400 uppercase tracking-wider">Ошибка синхронизации</h3>
+                                    <button id="clear-failed" class="text-xs text-red-500 hover:text-red-400">Очистить все</button>
+                                </div>
+                                ${failedItems.map((item) => `
+                                    <div class="glass rounded-lg p-2 mb-1">
+                                        <p class="text-sm text-surface-600 dark:text-surface-300">${item.endpoint || 'Запрос'}</p>
+                                        <p class="text-xs text-surface-500 truncate">${item.error || 'Неизвестная ошибка'}</p>
+                                    </div>
+                                `).join('')}
+                                <button id="retry-failed" class="w-full py-2 mt-1 bg-sky-500 hover:bg-sky-600 text-white text-sm font-medium rounded-xl">Повторить сейчас</button>
+                            </div>
+                        </div>
+                        `
+                        : ''}
+
+                    <!-- BOTTOM CTA -->
+                    <div class="viewport-footer p-4 pt-2">
+                        <button type="button" id="add-meal-btn" data-action="open-add-meal-modal" class="btn-press w-full flex items-center justify-center gap-2 py-3.5 glass rounded-xl text-center transition-all bg-primary-600 hover:bg-primary-700 text-white shadow-lg shadow-primary-600/30">
+                            <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                            <span class="text-sm font-semibold">Добавить приём пищи</span>
+                        </button>
+                    </div>
                 </div>
             `;
 
@@ -336,32 +330,11 @@ export const Nutrition = {
 
             this.bindDateNav();
             this.bindPeriodSelector();
-            this.bindMealTypeSelector();
-            this.bindPhotoInput();
-            this.bindMealActions();
+            this.bindFlipCards();
             this.bindMealMenus();
+            this.bindAddMealModal();
+            this.bindFailedItems();
 
-            const retryBtn = container.querySelector('#retry-failed');
-            if (retryBtn) {
-                retryBtn.onclick = async () => {
-                    retryBtn.disabled = true;
-                    retryBtn.textContent = 'Синхронизация...';
-                    try {
-                        await SyncEngine.processQueue();
-                    } catch (e) {
-                        console.error('[Nutrition] Retry failed:', e);
-                    }
-                    this.app.renderPage('nutrition');
-                };
-            }
-
-            const clearBtn = container.querySelector('#clear-failed');
-            if (clearBtn) {
-                clearBtn.onclick = async () => {
-                    await SyncEngine.clearQueue();
-                    this.app.renderPage('nutrition');
-                };
-            }
         } catch (error) {
             console.error('[Nutrition] Render error:', error);
             container.innerHTML = Components.errorState('Ошибка загрузки данных');
@@ -424,6 +397,204 @@ export const Nutrition = {
         }
     },
 
+    bindFlipCards() {
+        const container = this.app.elements.pageContent;
+        container.querySelectorAll('[data-action="flip-card"]').forEach((btn) => {
+            btn.onclick = (e) => {
+                e.stopPropagation();
+                const card = btn.closest('.meal-card-3d');
+                if (card) {
+                    const inner = card.querySelector('.meal-card-inner');
+                    if (inner) {
+                        inner.classList.toggle('is-flipped');
+                    }
+                }
+            };
+        });
+    },
+
+    bindAddMealModal() {
+        const container = this.app.elements.pageContent;
+
+        // Open modal
+        const openBtn = container.querySelector('#add-meal-btn');
+        if (openBtn) {
+            openBtn.onclick = () => this.openAddMealModal();
+        }
+    },
+
+    openAddMealModal() {
+        if (this._addMealModalState) return;
+
+        const modalHtml = Components.addMealModal();
+        const modalContainer = document.createElement('div');
+        modalContainer.innerHTML = modalHtml;
+        const modalEl = modalContainer.firstElementChild;
+        document.body.appendChild(modalEl);
+
+        this._addMealModalState = {
+            modalEl,
+            selectedMealType: null,
+        };
+
+        // Animate in
+        requestAnimationFrame(() => {
+            modalEl.classList.add('opacity-100');
+            modalEl.querySelector('#add-meal-modal')?.classList.remove('translate-y-full');
+        });
+
+        // Bind events
+        this.bindAddMealModalEvents(modalEl);
+    },
+
+    closeAddMealModal() {
+        if (!this._addMealModalState) return;
+
+        const { modalEl } = this._addMealModalState;
+        modalEl.classList.remove('opacity-100');
+        modalEl.querySelector('#add-meal-modal')?.classList.add('translate-y-full');
+
+        setTimeout(() => {
+            modalEl.remove();
+            this._addMealModalState = null;
+        }, 250);
+    },
+
+    bindAddMealModalEvents(modalEl) {
+        const state = this._addMealModalState;
+
+        // Close button
+        modalEl.querySelector('[data-action="close-add-meal-modal"]')?.addEventListener('click', () => {
+            this.closeAddMealModal();
+        });
+
+        // Backdrop click to close
+        modalEl.addEventListener('click', (e) => {
+            if (e.target === modalEl) {
+                this.closeAddMealModal();
+            }
+        });
+
+        // Escape key
+        const onKeydown = (e) => {
+            if (e.key === 'Escape') {
+                this.closeAddMealModal();
+                document.removeEventListener('keydown', onKeydown);
+            }
+        };
+        document.addEventListener('keydown', onKeydown);
+
+        // Meal type selection
+        modalEl.querySelectorAll('[data-action="set-modal-meal-type"]').forEach((btn) => {
+            btn.onclick = () => {
+                state.selectedMealType = btn.dataset.type;
+                modalEl.querySelectorAll('[data-action="set-modal-meal-type"]').forEach((b) => {
+                    b.classList.toggle('active', b.dataset.type === state.selectedMealType);
+                });
+            };
+        });
+
+        // Camera button
+        modalEl.querySelector('[data-action="modal-camera"]')?.addEventListener('click', () => {
+            const input = modalEl.querySelector('#modal-photo-input');
+            if (input) {
+                input.setAttribute('capture', 'environment');
+                input.click();
+            }
+        });
+
+        // Gallery button
+        modalEl.querySelector('[data-action="modal-gallery"]')?.addEventListener('click', () => {
+            const input = modalEl.querySelector('#modal-photo-input');
+            if (input) {
+                input.removeAttribute('capture');
+                input.click();
+            }
+        });
+
+        // File input change
+        const photoInput = modalEl.querySelector('#modal-photo-input');
+        if (photoInput) {
+            photoInput.onchange = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    this.handleModalPhotoUpload(file, state);
+                }
+            };
+        }
+    },
+
+    async handleModalPhotoUpload(file, state) {
+        if (!state.selectedMealType) {
+            this.app.showToast('Выберите тип приёма пищи', 'error');
+            return;
+        }
+
+        const notesInput = this._addMealModalState.modalEl.querySelector('#modal-meal-notes');
+        const notes = notesInput ? notesInput.value || null : null;
+        const token = this.app.state.tokens.access;
+
+        Camera.app = this.app;
+        let compressedBlob = file;
+
+        try {
+            const compressed = await Utils.compressImage(file);
+            if (compressed) {
+                compressedBlob = compressed;
+            }
+        } catch (compressError) {
+            console.warn('[Nutrition] Compression failed, using original:', compressError);
+        }
+
+        const formData = new FormData();
+        formData.append('file', compressedBlob, 'photo.webp');
+        formData.append('meal_type', state.selectedMealType);
+        if (notes) formData.append('notes', notes);
+
+        try {
+            await API.post('/nutrition/photos', formData, token, true);
+            this.app.showToast('Фото загружено, идёт анализ', 'success');
+            this.closeAddMealModal();
+        } catch (error) {
+            if (error?.isNetworkError || error?.offlineQueued) {
+                await Camera.queueOfflineMeal(compressedBlob, notes, state.selectedMealType);
+                this.app.showToast('Нет связи. Фото сохранено локально и будет загружено при появлении связи', 'info');
+                this.closeAddMealModal();
+            } else {
+                console.error('[Nutrition] Upload error:', error);
+                this.app.showToast(error.data?.detail || 'Ошибка загрузки', 'error');
+            }
+        }
+
+        this.render(this.app.elements.pageContent, this.app, this.selectedDate);
+    },
+
+    bindFailedItems() {
+        const container = this.app.elements.pageContent;
+
+        const retryBtn = container.querySelector('#retry-failed');
+        if (retryBtn) {
+            retryBtn.onclick = async () => {
+                retryBtn.disabled = true;
+                retryBtn.textContent = 'Синхронизация...';
+                try {
+                    await SyncEngine.processQueue();
+                } catch (e) {
+                    console.error('[Nutrition] Retry failed:', e);
+                }
+                this.app.renderPage('nutrition');
+            };
+        }
+
+        const clearBtn = container.querySelector('#clear-failed');
+        if (clearBtn) {
+            clearBtn.onclick = async () => {
+                await SyncEngine.clearQueue();
+                this.app.renderPage('nutrition');
+            };
+        }
+    },
+
     bindDateNav() {
         const container = this.app.elements.pageContent;
         const prev = container.querySelector('#date-prev');
@@ -462,32 +633,6 @@ export const Nutrition = {
         });
     },
 
-    bindMealTypeSelector() {
-        const container = this.app.elements.pageContent;
-        container.querySelectorAll('[data-action="set-meal-type"]').forEach((btn) => {
-            btn.onclick = () => {
-                this.selectedMealType = btn.dataset.type;
-                this.bindMealTypeSelector();
-            };
-        });
-        // Update active state
-        container.querySelectorAll('[data-action="set-meal-type"]').forEach((btn) => {
-            const isActive = btn.dataset.type === this.selectedMealType;
-            btn.classList.toggle('active', isActive);
-        });
-    },
-
-    bindPhotoInput() {
-        const input = this.app.elements.pageContent.querySelector('#photo-input');
-        if (!input) return;
-        input.onchange = (e) => {
-            const file = e.target.files[0];
-            if (file) {
-                this.uploadPhoto(file);
-            }
-        };
-    },
-
     bindMealActions() {
         const container = this.app.elements.pageContent;
 
@@ -520,51 +665,5 @@ export const Nutrition = {
                 }
             };
         });
-    },
-
-    async uploadPhoto(file) {
-        if (!this.selectedMealType) {
-            this.app.showToast('Выберите тип приёма пищи', 'error');
-            return;
-        }
-        const notesInput = this.app.elements.pageContent.querySelector('#photo-notes');
-        const notes = notesInput ? notesInput.value || null : null;
-        const token = this.app.state.tokens.access;
-
-        Camera.app = this.app;
-        let compressedBlob = file;
-
-        try {
-            const compressed = await Utils.compressImage(file);
-            if (compressed) {
-                compressedBlob = compressed;
-            }
-        } catch (compressError) {
-            console.warn('[Nutrition] Compression failed, using original:', compressError);
-        }
-
-        const formData = new FormData();
-        formData.append('file', compressedBlob, 'photo.webp');
-        formData.append('meal_type', this.selectedMealType);
-        if (notes) formData.append('notes', notes);
-
-        try {
-            await API.post('/nutrition/photos', formData, token, true);
-            this.app.showToast('Фото загружено, идёт анализ', 'success');
-        } catch (error) {
-            if (error?.isNetworkError || error?.offlineQueued) {
-                await Camera.queueOfflineMeal(compressedBlob, notes, this.selectedMealType);
-                this.app.showToast('Нет связи. Фото сохранено локально и будет загружено при появлении связи', 'info');
-            } else {
-                console.error('[Nutrition] Upload error:', error);
-                this.app.showToast(error.data?.detail || 'Ошибка загрузки', 'error');
-            }
-        }
-
-        const input = this.app.elements.pageContent.querySelector('#photo-input');
-        if (input) input.value = '';
-        if (notesInput) notesInput.value = '';
-
-        this.render(this.app.elements.pageContent, this.app, this.selectedDate);
     },
 };

@@ -81,11 +81,10 @@ export const Components = {
     },
 
     /**
-     * Unified kcal/macro widget: a single SVG ring segmented by macro
-     * proportion (protein / fat / carbs), with the quality score and
-     * total calories centered inside, plus external macro labels below.
+     * Ultra-compact 5-column metric bar replacing the circular ring.
+     * Columns: Calories, Protein, Fat, Carbs, Quality Score.
      */
-    nutritionRing(summary = {}, targets = {}, caption = 'ккал') {
+    nutritionMetricsBar(summary = {}, targets = {}, scoreOverride = null) {
         const safeNum = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
 
         const calories = safeNum(summary.calories);
@@ -94,65 +93,41 @@ export const Components = {
         const carbs = safeNum(summary.carbs);
 
         const targetCalories = safeNum(targets.target_calories);
+        const targetProtein = safeNum(targets.target_protein);
+        const targetFat = safeNum(targets.target_fat);
+        const targetCarbs = safeNum(targets.target_carbs);
 
         const hasMacros = calories > 0 || protein > 0 || fat > 0 || carbs > 0;
-        const score = hasMacros ? Utils.computeQualityScore({ calories, protein, fat, carbs }) : null;
+        const score = scoreOverride !== null ? scoreOverride : (hasMacros ? Utils.computeQualityScore({ calories, protein, fat, carbs }) : null);
         const gradeObj = score !== null ? Utils.qualityGrade(score) : { label: 'Нет данных', color: 'text-surface-400' };
 
-        const mc = Utils.computeMacroCalories({ protein, fat, carbs });
-        const totalMacroCal = mc.protein + mc.fat + mc.carbs;
+        const pct = (current, target) => target > 0 ? Math.min(100, Math.round((current / target) * 100)) : 0;
 
-        const segments = [
-            { label: 'Б', value: mc.protein, grams: protein, color: 'amber-500', dot: 'bg-amber-500' },
-            { label: 'Ж', value: mc.fat, grams: fat, color: 'lime-500', dot: 'bg-lime-500' },
-            { label: 'У', value: mc.carbs, grams: carbs, color: 'sky-500', dot: 'bg-sky-500' },
+        const metricColumns = [
+            { label: 'Ккал', value: Math.round(calories), target: targetCalories, pct: pct(calories, targetCalories), color: 'amber-500' },
+            { label: 'Белки', value: Math.round(protein), target: targetProtein, pct: pct(protein, targetProtein), color: 'amber-500', unit: 'г' },
+            { label: 'Жиры', value: Math.round(fat), target: targetFat, pct: pct(fat, targetFat), color: 'lime-500', unit: 'г' },
+            { label: 'Углеводы', value: Math.round(carbs), target: targetCarbs, pct: pct(carbs, targetCarbs), color: 'sky-500', unit: 'г' },
+            { label: 'Качество', value: score !== null ? score : '—', target: 100, pct: score !== null ? score : 0, color: 'purple-500' },
         ];
 
-        const cx = 50, cy = 50, r = 42, strokeWidth = 8;
-        const startBase = -Math.PI / 2;
-        const polar = (angle) => ({
-            x: cx + r * Math.cos(angle),
-            y: cy + r * Math.sin(angle),
-        });
-
-        let cursor = startBase;
-        const segmentPaths = segments.map((seg) => {
-            const fraction = totalMacroCal > 0 ? seg.value / totalMacroCal : 0;
-            if (fraction <= 0) return '';
-            const segStart = cursor;
-            const segEnd = cursor + fraction * 2 * Math.PI;
-            cursor = segEnd;
-
-            const s = polar(segStart);
-            const e = polar(segEnd);
-            const largeArc = fraction > 0.5 ? 1 : 0;
-            return `<path class="nutrition-ring__segment text-${seg.color}" d="M ${s.x.toFixed(2)} ${s.y.toFixed(2)} A ${r} ${r} 0 ${largeArc} 1 ${e.x.toFixed(2)} ${e.y.toFixed(2)}" stroke-width="${strokeWidth}" fill="none" stroke-linecap="round"/>`;
-        }).join('');
-
-        const legendItem = (label, grams, dotClass) => `
-            <span class="flex items-center gap-1.5 whitespace-nowrap">
-                <span class="w-2 h-2 rounded-full ${dotClass}"></span>
-                <span class="text-surface-600 dark:text-surface-300">${label} ${Math.round(grams)}г</span>
-            </span>
-        `;
+        const columnHtml = metricColumns.map((col) => `
+            <div class="flex flex-col items-center gap-0.5 min-w-0">
+                <span class="text-[9px] font-medium text-surface-400 dark:text-surface-500 uppercase tracking-wider">${escapeHtml(col.label)}</span>
+                <span class="text-xs font-bold text-surface-900 dark:text-zinc-100 leading-none whitespace-nowrap">
+                    ${col.value}${col.unit ? ' ' + escapeHtml(col.unit) : ''}
+                    ${col.target > 0 && col.value !== '—' ? `<span class="text-[8px] font-normal text-surface-400 dark:text-surface-500 ml-0.5">/ ${Math.round(col.target)}${col.unit ? ' ' + escapeHtml(col.unit) : ''}</span>` : ''}
+                </span>
+                <div class="w-full h-1 bg-surface-200 dark:bg-white/10 rounded-full overflow-hidden" role="progressbar" aria-valuenow="${col.pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${escapeHtml(col.label)} ${col.pct}%">
+                    <div class="h-full bg-${col.color} rounded-full transition-all duration-500 ease-out" style="width: ${col.pct}%"></div>
+                </div>
+            </div>
+        `).join('');
 
         return `
-            <div class="flex flex-col items-center">
-                <div class="relative w-36 h-36 flex items-center justify-center" role="img"
-                     aria-label="Калории ${Math.round(calories)} из ${Math.round(targetCalories)} ккал, белки ${Math.round(protein)}г, жиры ${Math.round(fat)}г, углеводы ${Math.round(carbs)}г, оценка ${score !== null ? score : '—'}">
-                    <svg class="nutrition-ring w-full h-full" viewBox="0 0 100 100" aria-hidden="true">
-                        <circle class="nutrition-ring__track" cx="50" cy="50" r="42" stroke-width="8" fill="none" stroke="currentColor"/>
-                        ${segmentPaths}
-                    </svg>
-                    <div class="absolute inset-0 flex flex-col items-center justify-center text-center px-6 pointer-events-none">
-                        <p class="text-2xl font-bold text-surface-900 dark:text-zinc-100 leading-none">${score !== null ? `${score} / ${gradeObj.label}` : `— / ${gradeObj.label}`}</p>
-                        <p class="text-sm text-surface-500 dark:text-surface-400 mt-1 leading-tight">${Math.round(calories)} ${escapeHtml(caption)}</p>
-                    </div>
-                </div>
-                <div class="flex items-center justify-center gap-3 mt-3 text-xs text-surface-600 dark:text-surface-300">
-                    ${legendItem('Б', protein, 'bg-amber-500')}
-                    ${legendItem('Ж', fat, 'bg-lime-500')}
-                    ${legendItem('У', carbs, 'bg-sky-500')}
+            <div class="glass-strong rounded-xl p-2.5 mb-3" role="region" aria-label="Показатели питания">
+                <div class="grid grid-cols-5 gap-1.5 text-center">
+                    ${columnHtml}
                 </div>
             </div>
         `;
@@ -213,6 +188,7 @@ export const Components = {
         const protein = Math.round(meal.protein_g || meal.protein || 0);
         const fat = Math.round(meal.fat_g || meal.fat || 0);
         const carbs = Math.round(meal.carbs_g || meal.carbs || 0);
+        const qualityScore = meal.quality_score !== undefined ? meal.quality_score : (meal.ingredients ? Utils.computeQualityScore({ calories, protein: meal.protein_g || meal.protein, fat: meal.fat_g || meal.fat, carbs: meal.carbs_g || meal.carbs }) : null);
 
         const photoSrc = this.mealPhotoUrl(meal);
         const safeSrc = photoSrc ? String(photoSrc).replace(/'/g, '%27').replace(/"/g, '%22') : null;
@@ -222,37 +198,124 @@ export const Components = {
         const escTime = escapeHtml(timeLabel);
         const mealId = meal.id ?? '';
 
-        const thumbnail = safeSrc
-            ? `<div class="meal-card-photo shrink-0 w-24 h-full" style="background-image: url('${safeSrc}');"></div>`
-            : `<div class="shrink-0 w-24 h-full flex items-center justify-center bg-gradient-to-br from-surface-300 to-surface-400 dark:from-white/5 dark:to-white/10">
-                   <svg class="w-8 h-8 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/>
-                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 13a3 3 0 100-6 3 3 0 010 6z"/>
-                   </svg>
-               </div>`;
+        // Front face background
+        const frontBackground = safeSrc
+            ? `style="background-image: url('${safeSrc}');"`
+            : `class="bg-gradient-to-br from-surface-800 to-surface-900 dark:from-zinc-800 dark:to-zinc-900"`;
+
+        // Quality score badge
+        const qualityBadge = qualityScore !== null
+            ? `<span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-white/20 backdrop-blur text-xs font-semibold text-white">${qualityScore}</span>`
+            : '';
+
+        // Back face: ingredients & details
+        let ingredientsHtml = '';
+        if (meal.ingredients && Array.isArray(meal.ingredients) && meal.ingredients.length > 0) {
+            ingredientsHtml = meal.ingredients.map(ing => `
+                <div class="flex items-center justify-between py-1.5 border-b border-white/10 last:border-0">
+                    <span class="text-sm text-white/80">${escapeHtml(ing.name || 'Ингредиент')}</span>
+                    <span class="text-xs text-white/60 font-mono">${Math.round(ing.amount || 0)}г</span>
+                </div>
+            `).join('');
+        } else if (meal.notes) {
+            ingredientsHtml = `<p class="text-sm text-white/70 whitespace-pre-wrap">${escapeHtml(meal.notes)}</p>`;
+        } else {
+            ingredientsHtml = '<p class="text-sm text-white/50 text-center py-4">Детали недоступны</p>';
+        }
+
+        // Micronutrients if available
+        const fiber = meal.fiber_g !== undefined ? Math.round(meal.fiber_g) : null;
+        const sugar = meal.sugar_g !== undefined ? Math.round(meal.sugar_g) : null;
+        const sodium = meal.sodium_mg !== undefined ? Math.round(meal.sodium_mg) : null;
+
+        const micronutrientsHtml = (fiber !== null || sugar !== null || sodium !== null)
+            ? `
+                <div class="grid grid-cols-3 gap-2 pt-3 border-t border-white/10">
+                    ${fiber !== null ? `<div class="text-center"><p class="text-xs font-bold text-white">${fiber}г</p><p class="text-[9px] text-white/50">Клетчатка</p></div>` : ''}
+                    ${sugar !== null ? `<div class="text-center"><p class="text-xs font-bold text-white">${sugar}г</p><p class="text-[9px] text-white/50">Сахар</p></div>` : ''}
+                    ${sodium !== null ? `<div class="text-center"><p class="text-xs font-bold text-white">${sodium}мг</p><p class="text-[9px] text-white/50">Натрий</p></div>` : ''}
+                </div>
+            `
+            : '';
 
         return `
-            <article class="snap-start h-28" data-meal-id="${mealId}">
-                <div class="meal-card relative flex items-center gap-2 rounded-2xl overflow-hidden bg-surface-900 dark:bg-zinc-900 w-64 shrink-0 h-full ${isFailed ? 'ring-2 ring-red-500/40' : ''}">
-                    ${thumbnail}
-                    <div class="relative flex-1 flex flex-col h-full p-2.5 min-w-0">
-                        <div class="flex items-center justify-between gap-2 min-w-0">
-                            <div class="flex items-center gap-1.5 min-w-0">
-                                <span class="inline-flex items-center justify-center w-6 h-6 shrink-0 rounded-lg bg-white/15 text-white">
-                                    ${this.mealTypeIcon(meal.meal_type, 'w-3 h-3')}
-                                </span>
-                                <span class="text-xs font-medium text-white/80 truncate">${escType}</span>
+            <article class="snap-start w-full" data-meal-id="${mealId}">
+                <div class="meal-card-3d relative w-full h-full min-h-[260px] max-h-[320px] perspective-card ${isFailed ? 'ring-2 ring-red-500/40' : ''}" data-meal-id="${mealId}">
+                    <div class="meal-card-inner relative w-full h-full transform-style-preserve-3d transition-transform duration-500 ease-out" data-action="flip-card">
+                        <!-- FRONT FACE -->
+                        <div class="meal-card-front absolute inset-0 backface-hidden rounded-2xl overflow-hidden bg-zinc-900">
+                            <div class="absolute inset-0 meal-card-overlay"></div>
+                            <div ${frontBackground} class="absolute inset-0 bg-cover bg-center"></div>
+
+                            <div class="relative z-10 h-full flex flex-col p-4">
+                                <!-- Top row: meal type, time, menu -->
+                                <div class="flex items-start justify-between">
+                                    <div class="flex items-center gap-2">
+                                        <span class="inline-flex items-center justify-center w-7 h-7 shrink-0 rounded-lg bg-white/20 backdrop-blur text-white">
+                                            ${this.mealTypeIcon(meal.meal_type, 'w-4 h-4')}
+                                        </span>
+                                        <span class="text-xs font-medium text-white/90">${escType}</span>
+                                    </div>
+                                    ${timeLabel ? `<time class="text-xs text-white/70 shrink-0">${escTime}</time>` : ''}
+                                    <button type="button" data-action="toggle-meal-menu" aria-expanded="false" aria-label="Меню блюда" class="w-8 h-8 rounded-lg glass flex items-center justify-center text-white/80 hover:text-white transition-colors shrink-0">
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01"/></svg>
+                                    </button>
+                                </div>
+
+                                <!-- Center: Dish name + AI insight -->
+                                <div class="flex-1 flex flex-col justify-center min-h-0">
+                                    <h3 class="text-xl font-bold text-white leading-tight truncate">${escName}</h3>
+                                    ${meal.ai_insight ? `<p class="text-sm text-white/70 mt-2 line-clamp-2">${escapeHtml(meal.ai_insight)}</p>` : ''}
+                                </div>
+
+                                <!-- Bottom: Quality badge + macro pills -->
+                                <div class="flex items-center justify-between mt-4 pt-3 border-t border-white/10">
+                                    ${qualityBadge}
+                                    <div class="flex items-center gap-2 text-xs">
+                                        <span class="font-medium text-white/90">${calories} ккал</span>
+                                        <span class="text-white/70">Б ${protein}г</span>
+                                        <span class="text-white/70">Ж ${fat}г</span>
+                                        <span class="text-white/70">У ${carbs}г</span>
+                                    </div>
+                                </div>
+
+                                <!-- Menu dropdown -->
+                                <div class="meal-card-menu hidden absolute bottom-full right-0 mb-2 w-40 glass-strong rounded-xl py-1.5 shadow-xl border border-white/10 z-20">
+                                    <button type="button" data-action="edit-meal" data-meal-id="${mealId}" class="w-full px-3 py-2 text-left text-sm text-white hover:bg-white/10 rounded-md">Редактировать</button>
+                                    <button type="button" data-action="delete-meal" data-meal-id="${mealId}" class="w-full px-3 py-2 text-left text-sm text-red-400 hover:bg-red-400/10 rounded-md">Удалить</button>
+                                </div>
                             </div>
-                            ${timeLabel ? `<time class="text-xs text-white/60 shrink-0">${escTime}</time>` : ''}
                         </div>
 
-                        <h3 class="text-sm font-semibold text-white leading-tight truncate mt-1">${escName}</h3>
+                        <!-- BACK FACE -->
+                        <div class="meal-card-back absolute inset-0 backface-hidden rotate-y-180 rounded-2xl overflow-hidden bg-zinc-900 p-4 flex flex-col">
+                            <div class="flex items-center justify-between mb-4">
+                                <h4 class="text-lg font-semibold text-white">Детали блюда</h4>
+                                <button type="button" data-action="flip-card" class="w-8 h-8 rounded-lg glass flex items-center justify-center text-white/80 hover:text-white transition-colors" aria-label="Назад">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                                </button>
+                            </div>
 
-                        <div class="flex items-center gap-2 mt-auto text-xs">
-                            <span class="font-medium text-white/80">${calories}ккал</span>
-                            <span class="text-white/70">Б ${protein}г</span>
-                            <span class="text-white/70">Ж ${fat}г</span>
-                            <span class="text-white/70">У ${carbs}г</span>
+                            <div class="flex-1 overflow-y-auto space-y-3">
+                                <div>
+                                    <p class="text-xs font-medium text-white/50 uppercase tracking-wider mb-2">Ингредиенты</p>
+                                    ${ingredientsHtml}
+                                </div>
+
+                                ${micronutrientsHtml}
+
+                                ${meal.notes && !meal.ingredients ? `
+                                    <div class="pt-3 border-t border-white/10">
+                                        <p class="text-xs font-medium text-white/50 uppercase tracking-wider mb-2">Заметки</p>
+                                        <p class="text-sm text-white/80 whitespace-pre-wrap">${escapeHtml(meal.notes)}</p>
+                                    </div>
+                                ` : ''}
+                            </div>
+
+                            <div class="flex gap-2 mt-4 pt-3 border-t border-white/10">
+                                <button type="button" data-action="edit-meal" data-meal-id="${mealId}" class="flex-1 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-sm font-medium transition-colors">Редактировать</button>
+                                <button type="button" data-action="delete-meal" data-meal-id="${mealId}" class="flex-1 py-2.5 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-400 text-sm font-medium transition-colors">Удалить</button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -386,5 +449,64 @@ export const Components = {
             });
             cancelBtn.focus();
         });
+    },
+
+    /**
+     * Bottom sheet modal for adding a new meal.
+     * Returns HTML string for the modal content.
+     */
+    addMealModal() {
+        return `
+            <div class="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end">
+                <div class="w-full glass-strong rounded-t-2xl p-4 safe-area-inset-bottom animate-slide-up" id="add-meal-modal">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-bold text-surface-900 dark:text-surface-50">Новый приём пищи</h3>
+                        <button type="button" data-action="close-add-meal-modal" class="w-8 h-8 rounded-xl glass flex items-center justify-center text-surface-500 hover:text-surface-900 dark:hover:text-surface-50 transition-colors">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                        </button>
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="block text-xs font-medium text-surface-500 dark:text-surface-400 mb-2">Тип приёма пищи</label>
+                        <div class="grid grid-cols-4 gap-2" role="group" aria-label="Выберите тип приёма пищи">
+                            <button type="button" data-action="set-modal-meal-type" data-type="breakfast" class="modal-meal-type-chip px-3 py-2 rounded-xl border border-surface-200 dark:border-white/10 text-[10px] font-medium text-surface-600 dark:text-surface-400 transition-colors">
+                                ${Components.mealTypeIcon('breakfast', 'w-4 h-4 mx-auto mb-1')}
+                                Завтрак
+                            </button>
+                            <button type="button" data-action="set-modal-meal-type" data-type="lunch" class="modal-meal-type-chip px-3 py-2 rounded-xl border border-surface-200 dark:border-white/10 text-[10px] font-medium text-surface-600 dark:text-surface-400 transition-colors">
+                                ${Components.mealTypeIcon('lunch', 'w-4 h-4 mx-auto mb-1')}
+                                Обед
+                            </button>
+                            <button type="button" data-action="set-modal-meal-type" data-type="dinner" class="modal-meal-type-chip px-3 py-2 rounded-xl border border-surface-200 dark:border-white/10 text-[10px] font-medium text-surface-600 dark:text-surface-400 transition-colors">
+                                ${Components.mealTypeIcon('dinner', 'w-4 h-4 mx-auto mb-1')}
+                                Ужин
+                            </button>
+                            <button type="button" data-action="set-modal-meal-type" data-type="snack" class="modal-meal-type-chip px-3 py-2 rounded-xl border border-surface-200 dark:border-white/10 text-[10px] font-medium text-surface-600 dark:text-surface-400 transition-colors">
+                                ${Components.mealTypeIcon('snack', 'w-4 h-4 mx-auto mb-1')}
+                                Перекус
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <label for="modal-meal-notes" class="block text-xs font-medium text-surface-500 dark:text-surface-400 mb-1">Заметки (необязательно)</label>
+                        <textarea id="modal-meal-notes" placeholder="Например: Творог 1%, Без сахара" class="w-full px-3 py-2 rounded-xl glass-input text-sm resize-none" rows="2"></textarea>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <button type="button" data-action="modal-camera" class="flex flex-col items-center justify-center gap-2 py-4 rounded-xl glass border border-surface-200 dark:border-white/10 transition-colors hover:bg-surface-100 dark:hover:bg-white/5">
+                            <svg class="w-7 h-7 text-primary-600 dark:text-zinc-100" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 13a3 3 0 100-6 3 3 0 010 6z"/></svg>
+                            <span class="text-sm font-medium text-surface-900 dark:text-zinc-100">Сделать фото</span>
+                        </button>
+                        <button type="button" data-action="modal-gallery" class="flex flex-col items-center justify-center gap-2 py-4 rounded-xl glass border border-surface-200 dark:border-white/10 transition-colors hover:bg-surface-100 dark:hover:bg-white/5">
+                            <svg class="w-7 h-7 text-primary-600 dark:text-zinc-100" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                            <span class="text-sm font-medium text-surface-900 dark:text-zinc-100">Выбрать из галереи</span>
+                        </button>
+                    </div>
+
+                    <input type="file" id="modal-photo-input" accept="image/*" class="hidden" capture="environment">
+                </div>
+            </div>
+        `;
     }
 };
