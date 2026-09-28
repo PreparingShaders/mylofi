@@ -1,9 +1,30 @@
 console.log("[DEBUG] Loaded camera.js");
 import { API } from './api.js';
 import { DB } from './db.js';
+import { SyncEngine } from './sync.js';
+import { Utils } from './utils.js';
 
 export const Camera = {
     app: null,
+
+    async handleSyncedMeal(item, response, { failed = false } = {}) {
+        if (failed || !item || item.store !== 'meals') return;
+        if (!item.tempId || !response || !response.id) return;
+        try {
+            const existing = await DB.getMeal(response.id) || await DB.getMeal(item.tempId);
+            const merged = {
+                ...(existing || {}),
+                ...response,
+                blob: existing?.blob ?? null,
+                sync_status: DB.SYNC_STATUS.SYNCED,
+                updated_at: Date.now(),
+            };
+            await DB.saveMeal(merged);
+            window.dispatchEvent(new CustomEvent('mylofi:meal-synced', { detail: { mealId: response.id } }));
+        } catch (error) {
+            console.error('[Camera] Failed to merge synced meal:', error);
+        }
+    },
 
     async render(container, app) {
         this.app = app;
@@ -54,29 +75,100 @@ export const Camera = {
             if (!selectedFile) return;
 
             const notes = container.querySelector('#photo-notes')?.value || null;
+            const token = this.app.state.tokens.access;
             uploadBtn.disabled = true;
-            uploadBtn.textContent = 'Загрузка...';
+            uploadBtn.textContent = 'Сжатие...';
 
+            let compressedBlob = null;
             try {
-                const formData = new FormData();
-                formData.append('file', selectedFile);
-                if (notes) formData.append('notes', notes);
+                compressedBlob = await Utils.compressImage(selectedFile);
+                if (compressedBlob) {
+                    const originalSize = Utils.fileSizeLabel(selectedFile.size);
+                    const compressedSize = Utils.fileSizeLabel(compressedBlob.size);
+                    console.log(`[Camera] Compressed ${originalSize} → ${compressedSize}`);
+                }
+            } catch (compressError) {
+                console.warn('[Camera] Compression failed, using original:', compressError);
+                compressedBlob = selectedFile;
+            }
 
-                const response = await API.post('/nutrition/photos', formData, this.app.state.tokens.access, true);
+            if (navigator.onLine) {
+                uploadBtn.textContent = 'Загрузка...';
+                try {
+                    const formData = new FormData();
+                    formData.append('file', compressedBlob, 'photo.webp');
+                    if (notes) formData.append('notes', notes);
 
-                this.app.showToast('Фото загружено, идёт анализ', 'success');
+                    await API.post('/nutrition/photos', formData, token, true);
+
+                    this.app.showToast('Фото загружено, идёт анализ', 'success');
+                    input.value = '';
+                    selectedFile = null;
+                    uploadBtn.disabled = false;
+                    uploadBtn.textContent = 'Готово — загрузить';
+
+                    if (window.App && window.App.showPage) {
+                        window.App.showPage('nutrition');
+                    }
+                } catch (error) {
+                    if (error?.isNetworkError || error?.offlineQueued) {
+                        await this.queueOfflineMeal(compressedBlob, notes);
+                        this.app.showToast('Нет связи. Фото сохранено локально и будет загружено при появлении связи', 'info');
+                        input.value = '';
+                        selectedFile = null;
+                        uploadBtn.disabled = false;
+                        uploadBtn.textContent = 'Готово — загрузить';
+                    } else {
+                        console.error('[Camera] Upload error:', error);
+                        this.app.showToast(error.data?.detail || 'Ошибка загрузки', 'error');
+                        uploadBtn.disabled = false;
+                        uploadBtn.textContent = 'Готово — загрузить';
+                    }
+                }
+            } else {
+                await this.queueOfflineMeal(compressedBlob, notes);
+                this.app.showToast('Оффлайн режим — фото сохранено локально и будет загружено при появлении связи', 'info');
                 input.value = '';
                 selectedFile = null;
-
-                if (window.App && window.App.showPage) {
-                    window.App.showPage('nutrition');
-                }
-            } catch (error) {
-                console.error('[Camera] Upload error:', error);
-                this.app.showToast(error.data?.detail || 'Ошибка загрузки', 'error');
                 uploadBtn.disabled = false;
                 uploadBtn.textContent = 'Готово — загрузить';
             }
         });
-    }
+    },
+
+    async queueOfflineMeal(blob, notes) {
+        await DB.init();
+        const tempId = DB.generateTempId();
+        const meal = {
+            id: tempId,
+            blob: blob,
+            notes: notes || null,
+            dish_name: null,
+            calories: null,
+            status: 'pending',
+            sync_status: DB.SYNC_STATUS.PENDING,
+            eaten_at: new Date().toISOString(),
+            updated_at: Date.now(),
+        };
+
+        const syncItem = {
+            endpoint: '/nutrition/photos',
+            method: 'POST',
+            isFormData: true,
+            formData: {
+                blob: blob,
+                filename: 'photo.webp',
+                fields: notes ? { notes } : {},
+            },
+            tempId,
+            store: 'meals',
+            accessToken: this.app.state.tokens.access || null,
+        };
+
+        await DB.atomicWrite('meals', meal, syncItem);
+
+        if (window.App && typeof window.App.updateNetworkBanner === 'function') {
+            window.App.updateNetworkBanner();
+        }
+    },
 };

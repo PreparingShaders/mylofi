@@ -1,5 +1,6 @@
 console.log("[DEBUG] Loaded components.js");
 import { Utils } from './utils.js';
+import { DB } from './db.js';
 
 let sparklineSeq = 0;
 
@@ -43,6 +44,19 @@ export const Components = {
         return `<div class="p-8 text-center text-surface-500 dark:text-surface-400">${message}</div>`;
     },
 
+    networkBanner(state = 'online') {
+        const labels = {
+            online: 'Онлайн',
+            offline: 'Оффлайн режим — изменения сохранены локально',
+            syncing: 'Синхронизация...',
+        };
+        const label = labels[state] || labels.online;
+        const dot = state === 'syncing'
+            ? '<svg class="w-3.5 h-3.5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke-width="2"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>'
+            : '<span class="w-2 h-2 rounded-full block"></span>';
+        return `<span class="flex items-center gap-1.5">${dot}<span>${label}</span></span>`;
+    },
+
     progressRing(value, max, size = 120, strokeWidth = 10, color = 'primary-600 dark:text-zinc-200', bgColor = 'surface-300 dark:text-zinc-800', label = null) {
         const radius = (size - strokeWidth) / 2;
         const circumference = 2 * Math.PI * radius;
@@ -57,11 +71,18 @@ export const Components = {
     },
 
     mealCard(meal, app) {
-        const isPending = meal.status === 'pending' || meal.status === 'processing';
+        const isPending = meal.status === 'pending' || meal.status === 'processing' || meal.sync_status === DB.SYNC_STATUS.PENDING;
+        const isFailed = meal.sync_status === DB.SYNC_STATUS.FAILED;
         return `
-            <div class="glass rounded-2xl p-4 mb-4">
+            <div class="glass rounded-2xl p-4 mb-4 ${isFailed ? 'border border-red-500/30' : ''}">
                 <h3 class="font-semibold">${meal.dish_name || (isPending ? 'Анализ...' : 'Блюдо')}</h3>
                 <p class="text-surface-600 dark:text-surface-300">${Math.round(meal.calories || 0)} Ккал</p>
+                ${isPending && meal.notes
+                    ? `<p class="text-xs text-surface-500 mt-1">${meal.notes}</p>`
+                    : ''}
+                ${isPending
+                    ? '<span class="inline-block mt-1 text-xs text-amber-500">Ожидает синхронизации</span>'
+                    : ''}
             </div>
         `;
     },

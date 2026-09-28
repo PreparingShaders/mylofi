@@ -1,4 +1,6 @@
 console.log("[DEBUG] Loaded api.js");
+import { SyncEngine } from './sync.js';
+
 const API_BASE = `${window.location.origin}/api/v1`;
 
 const OFFLINE_QUEUE_KEY = 'offline_sync_queue';
@@ -84,47 +86,31 @@ class APIClient {
     }
     
     readQueue() {
-        try {
-            const raw = localStorage.getItem(OFFLINE_QUEUE_KEY);
-            if (!raw) return [];
-            const parsed = JSON.parse(raw);
-            return Array.isArray(parsed) ? parsed.filter(item => item && item.method && item.endpoint) : [];
-        } catch (error) {
-            console.warn('[API] Failed to read offline queue:', error);
-            return [];
-        }
+        return SyncEngine.getPendingItems();
     }
 
-    writeQueue(queue) {
-        try {
-            localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
-        } catch (error) {
-            console.error('[API] Failed to persist offline queue:', error);
-        }
+    writeQueue() {
+        // No-op: SyncEngine owns persistence in IndexedDB (sync_queue store).
     }
 
     hasPendingRequests() {
-        return this.readQueue().length > 0;
+        return SyncEngine.getPendingCount();
     }
 
-    enqueueRequest(method, endpoint, data, accessToken, options = {}) {
-        const queue = this.readQueue();
-        const item = {
+    async enqueueRequest(method, endpoint, data, accessToken, options = {}) {
+        const item = await SyncEngine.enqueue({
             method,
             endpoint,
             data: data ?? null,
             accessToken: accessToken ?? null,
-            queuedAt: new Date().toISOString(),
-        };
-        if (options.offlineSessionKey) item.offlineSessionKey = options.offlineSessionKey;
-        if (options.prepend) {
-            queue.unshift(item);
-        } else {
-            queue.push(item);
-        }
-        this.writeQueue(queue);
+            offlineSessionKey: options.offlineSessionKey ?? null,
+            tempId: options.tempId ?? null,
+            store: options.store ?? null,
+            formData: options.formData ?? null,
+            prepend: options.prepend || false,
+        });
         this.invalidateReadCache(endpoint);
-        console.log(`[API] Queued offline request: ${method} ${endpoint} (queue: ${queue.length})`);
+        console.log(`[API] Queued offline request: ${method} ${endpoint}`);
         return item;
     }
 
@@ -134,15 +120,7 @@ class APIClient {
 
     // Attaches metadata to the most recently queued matching request
     markQueuedRequest(method, endpoint, extra) {
-        const queue = this.readQueue();
-        for (let i = queue.length - 1; i >= 0; i -= 1) {
-            if (queue[i].method === method && queue[i].endpoint === endpoint) {
-                queue[i] = { ...queue[i], ...extra };
-                this.writeQueue(queue);
-                return queue[i];
-            }
-        }
-        return null;
+        return SyncEngine.markQueued(endpoint, method, extra);
     }
 
     static readCacheKey(endpoint) {
@@ -251,73 +229,28 @@ class APIClient {
         }
     }
 
+    async replayQueuedItem(item) {
+        const accessToken = item.accessToken || window.App?.state?.tokens?.access || null;
+        let data = item.payload ?? item.data ?? null;
+        const isFormData = Boolean(item.isFormData || item.formData);
+
+        if (isFormData && item.formData) {
+            const fd = new FormData();
+            if (item.formData.blob instanceof Blob) {
+                fd.append('file', item.formData.blob, item.formData.filename || 'photo.webp');
+            }
+            const fields = item.formData.fields || {};
+            for (const [key, value] of Object.entries(fields)) {
+                if (value !== undefined && value !== null) fd.append(key, value);
+            }
+            data = fd;
+        }
+
+        return this.request(item.method, item.endpoint, data, accessToken, isFormData, true);
+    }
+
     async processOfflineQueue() {
-        if (this.processingQueue) return;
-        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-            console.log('[API] Still offline, skipping queue processing');
-            return;
-        }
-        this.processingQueue = true;
-
-        try {
-            let synced = 0;
-
-            for (;;) {
-                const queue = this.readQueue();
-                if (!queue.length) break;
-
-                let item = queue[0];
-                if (typeof this.itemResolver === 'function') {
-                    const resolved = this.itemResolver(item);
-                    if (resolved === false) {
-                        console.warn('[API] Queued request not ready for replay yet, keeping queue intact');
-                        break;
-                    }
-                    if (resolved && resolved !== item) {
-                        item = resolved;
-                        queue[0] = item;
-                        this.writeQueue(queue);
-                    }
-                }
-
-                const token = item.accessToken || window.App?.state?.tokens?.access || null;
-                let response = null;
-                let failed = false;
-
-                try {
-                    response = await this.request(item.method, item.endpoint, item.data, token, false, true);
-                } catch (error) {
-                    // Transient failures (offline, token refresh issue) keep the item for a later retry
-                    if (!error?.status || error.status < 400) {
-                        console.warn('[API] Replay deferred, keeping queue intact:', error?.message);
-                        return;
-                    }
-                    failed = true;
-                    console.error('[API] Dropping permanently failed queued request:', item, error);
-                }
-
-                queue.shift();
-                this.writeQueue(queue);
-                this.invalidateReadCache(item.endpoint);
-                synced += 1;
-
-                if (typeof this.onItemSynced === 'function') {
-                    try {
-                        await this.onItemSynced(item, failed ? null : response, { failed });
-                    } catch (hookError) {
-                        console.error('[API] Post-sync hook failed:', hookError);
-                    }
-                }
-            }
-
-            if (synced) {
-                console.log(`[API] Offline queue synced: ${synced} request(s)`);
-                window.App?.showToast?.(`Синхронизировано изменений: ${synced}`, 'success');
-                window.dispatchEvent(new CustomEvent('mylofi:offline-sync', { detail: { synced } }));
-            }
-        } finally {
-            this.processingQueue = false;
-        }
+        return SyncEngine.processQueue();
     }
 
     async request(method, endpoint, data = null, accessToken = null, isFormData = false, skipEnqueue = false) {
@@ -336,7 +269,7 @@ class APIClient {
             const normalized = this.normalizeError(error, method, url);
             if (normalized?.isNetworkError && !skipEnqueue && this.isQueueable(method, data, isFormData)) {
                 try {
-                    this.enqueueRequest(method, endpoint, data, accessToken);
+                    await this.enqueueRequest(method, endpoint, data, accessToken);
                 } catch (queueError) {
                     console.error('[API] Failed to queue request:', queueError);
                 }

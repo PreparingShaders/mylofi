@@ -20,5 +20,54 @@ export const Utils = {
         return {
             calories: Math.max(0, (targets.target_calories || 0) - (consumed.total_calories || 0)),
         };
+    },
+
+    compressImage(file, maxWidth = 1024, maxHeight = 1024, quality = 0.78) {
+        return new Promise((resolve, reject) => {
+            if (!file || !(file instanceof Blob)) {
+                reject(new Error('compressImage: expected a Blob/File'));
+                return;
+            }
+
+            const image = new Image();
+            image.onload = () => {
+                let { width, height } = image;
+                if (width > height) {
+                    if (width > maxWidth) {
+                        height = Math.round((height * maxWidth) / width);
+                        width = maxWidth;
+                    }
+                } else {
+                    if (height > maxHeight) {
+                        width = Math.round((width * maxHeight) / height);
+                        height = maxHeight;
+                    }
+                }
+
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(image, 0, 0, width, height);
+
+                canvas.toBlob((blob) => {
+                    if (!blob) {
+                        reject(new Error('compressImage: canvas export failed'));
+                        return;
+                    }
+                    resolve(blob);
+                }, 'image/webp', quality);
+            };
+            image.onerror = (error) => reject(error);
+            image.src = URL.createObjectURL(file);
+        });
+    },
+
+    fileSizeLabel(bytes) {
+        if (!bytes || bytes <= 0) return '0 КБ';
+        const units = ['Б', 'КБ', 'МБ', 'ГБ'];
+        const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+        const value = parseFloat((bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1));
+        return `${value} ${units[i]}`;
     }
 };

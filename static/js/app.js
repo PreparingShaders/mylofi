@@ -6,6 +6,7 @@ import { Workouts } from './workouts.js';
 import { Profile, THEME_OPTION_BASE, THEME_OPTION_ACTIVE, THEME_OPTION_IDLE } from './profile.js';
 import { Camera } from './camera.js';
 import { DB } from './db.js';
+import { SyncEngine } from './sync.js';
 import { Components } from './components.js';
 import { Utils } from './utils.js';
 import { Theme } from './theme.js';
@@ -45,18 +46,21 @@ const App = {
         this.setupEventListeners();
         this.setupOfflineSync();
         this.loadTokens();
+        this.setupNetworkBanner();
 
         // DB init is non-critical
         try {
             await DB.init();
+            await this.initSyncEngine();
         } catch (e) {
-            console.warn('[App] DB init failed:', e);
+            console.warn('[App] DB/Sync init failed:', e);
         }
 
         if (this.state.tokens.access) {
             console.log('[App] Token found, validating...');
             try {
                 await this.validateToken();
+                await this.initSyncEngine();
             } catch (e) {
                 console.error('[App] Token validation failed:', e);
                 this.showScreen('landing');
@@ -69,34 +73,63 @@ const App = {
         console.log('[App] Initialized');
     },
 
-    setupOfflineSync() {
-        window.addEventListener('online', () => {
+    async initSyncEngine() {
+        const onItemSynced = async (item, response, meta) => {
+            try { await Workouts.handleSyncedItem(item, response, meta); } catch (e) { console.error('[App] handleSyncedItem:', e); }
+            try { await Camera.handleSyncedMeal(item, response, meta); } catch (e) { console.error('[App] handleSyncedMeal:', e); }
+        };
+        const onOnline = () => {
             this.state.isOnline = true;
-            console.log('[App] Network restored, flushing offline queue');
-            this.flushOfflineQueue();
+            this.updateNetworkBanner();
+            this.flushOfflineQueue().then(() => this.updateNetworkBanner()).catch(() => {});
+        };
+        SyncEngine.setReplayFn((item) => API.replayQueuedItem(item));
+        SyncEngine.setHooks({
+            itemResolver: (item) => Workouts.resolveQueuedItem(item),
+            onItemSynced,
+            onOnline,
         });
+        SyncEngine.init({
+            replayFn: (item) => API.replayQueuedItem(item),
+            itemResolver: (item) => Workouts.resolveQueuedItem(item),
+            onItemSynced,
+            onOnline,
+        });
+    },
 
+    setupOfflineSync() {
         window.addEventListener('offline', () => {
             this.state.isOnline = false;
+            this.updateNetworkBanner();
             console.log('[App] Network lost, requests will be queued locally');
         });
 
-        API.itemResolver = (item) => Workouts.resolveQueuedItem(item);
-        API.onItemSynced = (item, response, meta) => Workouts.handleSyncedItem(item, response, meta);
-
         // Lists rendered from the read cache are stale right after a sync
         window.addEventListener('mylofi:offline-sync', () => {
+            this.updateNetworkBanner();
             if (this.state.currentScreen !== 'main') return;
-            if (['workouts', 'history', 'statistics', 'templates'].includes(this.state.currentPage)) {
+            if (['nutrition', 'workouts', 'history', 'statistics', 'templates'].includes(this.state.currentPage)) {
                 this.renderPage(this.state.currentPage);
             }
         });
+
+        // Background sync completion from the service worker
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.addEventListener('message', (event) => {
+                if (event.data?.type === 'SYNC_COMPLETE') {
+                    this.updateNetworkBanner();
+                    if (this.state.currentScreen === 'main' && ['nutrition', 'workouts', 'history'].includes(this.state.currentPage)) {
+                        this.renderPage(this.state.currentPage);
+                    }
+                }
+            });
+        }
     },
 
     async flushOfflineQueue() {
         if (!this.state.tokens.access) return;
         try {
-            await API.processOfflineQueue();
+            await SyncEngine.processQueue();
         } catch (e) {
             console.error('[App] Offline queue processing failed:', e);
         }
@@ -117,7 +150,49 @@ const App = {
         };
         console.log('[App] Cache elements:', this.elements);
     },
-    
+
+    setupNetworkBanner() {
+        this.elements.networkBanner = document.getElementById('network-banner');
+        if (this.elements.networkBanner) return;
+
+        const banner = document.createElement('div');
+        banner.id = 'network-banner';
+        banner.className = 'fixed top-0 left-0 right-0 z-40 px-4 py-2 text-sm font-medium transition-all duration-200 hidden';
+        banner.innerHTML = Components.networkBanner('online');
+        document.body.appendChild(banner);
+        this.elements.networkBanner = banner;
+        this.updateNetworkBanner();
+    },
+
+    async updateNetworkBanner() {
+        const banner = this.elements.networkBanner;
+        if (!banner) return;
+
+        let state = this.state.isOnline ? 'online' : 'offline';
+        if (this.state.isOnline) {
+            const pending = await SyncEngine.getPendingCount().catch(() => 0);
+            if (pending > 0 && SyncEngine.processing) {
+                state = 'syncing';
+            }
+        }
+
+        banner.innerHTML = Components.networkBanner(state);
+        banner.classList.remove('bg-emerald-500', 'bg-amber-500', 'bg-sky-500');
+        banner.classList.remove('hidden');
+
+        if (state === 'online') {
+            banner.classList.add('bg-emerald-500', 'text-white');
+        } else if (state === 'syncing') {
+            banner.classList.add('bg-sky-500', 'text-white');
+        } else {
+            banner.classList.add('bg-amber-500', 'text-white');
+        }
+    },
+
+    isAIOnline() {
+        return this.state.isOnline;
+    },
+
     loadTokens() {
         this.state.tokens.access = localStorage.getItem('access_token');
         this.state.tokens.refresh = localStorage.getItem('refresh_token');

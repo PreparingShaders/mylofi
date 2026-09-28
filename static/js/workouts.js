@@ -228,14 +228,14 @@ export const Workouts = {
             const token = this.app?.state?.tokens?.access || null;
 
             // Replay offline edits against the real sets before any queued complete/cancel request
-            pendingPatches.forEach(({ setId, patch }) => {
+            for (const { setId, patch } of pendingPatches) {
                 const realSetId = setIdMap[String(setId)];
                 if (!realSetId) {
                     console.warn('[Workouts] Skipping offline patch for unmapped set', setId);
-                    return;
+                    continue;
                 }
-                API.enqueueRequest('PATCH', `/workouts/sets/${realSetId}`, patch, token, { prepend: true });
-            });
+                await API.enqueueRequest('PATCH', `/workouts/sets/${realSetId}`, patch, token, { prepend: true });
+            }
 
             const localOrder = (session.exercises || []).map(ex => ex.name);
             const remoteOrder = remoteExercises.map(ex => ex.name);
@@ -246,7 +246,7 @@ export const Workouts = {
                     const remoteEx = findRemoteExercise(localEx, i);
                     return remoteEx ? { id: remoteEx.id, order: i } : null;
                 }).filter(Boolean);
-                API.enqueueRequest('PATCH', `/workouts/sessions/${response.id}`, { exercises: reordered }, token, { prepend: true });
+                await API.enqueueRequest('PATCH', `/workouts/sessions/${response.id}`, { exercises: reordered }, token, { prepend: true });
             }
 
             console.log(`[Workouts] Local session "${session.key}" synced to session ${response.id}`);
@@ -255,15 +255,15 @@ export const Workouts = {
             }));
         }
 
-        if (!API.readQueue().some(queued => queued.offlineSessionKey === session.key)) {
+        if (!(await API.readQueue()).some(queued => queued.offlineSessionKey === session.key)) {
             this.clearLocalSession();
         }
     },
 
-    startLocalSessionFromTemplate(app, template, createEndpoint) {
+    async startLocalSessionFromTemplate(app, template, createEndpoint) {
         const session = this.buildLocalSessionFromTemplate(template);
         this.saveLocalSession(session);
-        API.markQueuedRequest('POST', createEndpoint, { offlineSessionKey: session.key });
+        await API.markQueuedRequest('POST', createEndpoint, { offlineSessionKey: session.key });
         app?.showToast(OFFLINE_START_MESSAGE, 'info');
         return session;
     },
@@ -570,7 +570,7 @@ export const Workouts = {
                 } catch (err) {
                     const template = templates.find(t => t.id === templateId);
                     if (err?.offlineQueued && template) {
-                        const localSession = this.startLocalSessionFromTemplate(app, template, startEndpoint);
+                        const localSession = await this.startLocalSessionFromTemplate(app, template, startEndpoint);
                         await this.renderWorkoutScreen(container, app, localSession.key);
                         return;
                     }
@@ -1519,7 +1519,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 } catch (err) {
                     const template = templates.find(t => t.id === templateId);
                     if (err?.offlineQueued && template) {
-                        const localSession = this.startLocalSessionFromTemplate(app, template, startEndpoint);
+                        const localSession = await this.startLocalSessionFromTemplate(app, template, startEndpoint);
                         await this.renderWorkoutScreen(app.elements.pageContent, app, localSession.key);
                         return;
                     }
