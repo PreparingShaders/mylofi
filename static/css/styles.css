@@ -329,3 +329,44 @@ input, select, textarea:focus {
     color: #09090b;
     border-color: #fafafa;
 }
+
+/* ============ Landing Page (Lofi + Dark Minimal) ============ */
+
+/* Deep dark lofi background (#0F0F12) */
+.landing-page {
+    background: #0f0f12;
+}
+
+/* Ambient glow blobs (rendered as absolutely positioned divs) */
+.landing-glow {
+    filter: blur(96px);
+}
+
+/* Pulsing service indicator dot */
+@keyframes pulse-purple {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.35;
+        transform: scale(1.25);
+    }
+}
+.animate-pulse-purple {
+    animation: pulse-purple 2s ease-in-out infinite;
+}
+
+/* Glassmorphism with lighter blur for landing */
+.landing-glass {
+    background: rgba(255, 255, 255, 0.04);
+    -webkit-backdrop-filter: blur(3px) saturate(160%);
+    backdrop-filter: blur(3px) saturate(160%);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.landing-glass-strong {
+    background: rgba(15, 15, 18, 0.6);
+    -webkit-backdrop-filter: blur(4px) saturate(150%);
+    backdrop-filter: blur(4px) saturate(150%);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+}
