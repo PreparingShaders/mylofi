@@ -260,6 +260,12 @@ export const Components = {
         // so the old per-macro row is dropped to avoid duplication.
         const macroPills = '';
 
+        // AI analysis is bound 1:1 to its meal and rendered inside the card front face.
+        const insight = meal.ai_insight;
+        const aiInsightHtml = (typeof insight === 'string' && insight.trim())
+            ? escapeHtml(insight.trim())
+            : '<span class="text-white/50">Нет данных анализа для отображения</span>';
+
         return `
             <article class="snap-center shrink-0 meal-card-slot" data-meal-id="${mealId}">
                 <div class="meal-card-3d relative w-full h-full perspective-card ${isFailed ? 'ring-2 ring-red-500/40' : ''}" data-meal-id="${mealId}">
@@ -268,37 +274,47 @@ export const Components = {
                         <div class="meal-card-front absolute inset-0 backface-hidden rounded-2xl overflow-hidden bg-zinc-900">
                             <div ${frontBackground} class="absolute inset-0 bg-cover bg-center"></div>
                             <!-- Adaptive contrast scrims: top for badges, bottom for text -->
-                            <div class="meal-card-scrim absolute inset-x-0 top-0 h-28 pointer-events-none"></div>
+                            <div class="meal-card-scrim absolute inset-x-0 top-0 h-20 pointer-events-none"></div>
                             <div class="meal-card-gradient absolute inset-x-0 bottom-0 h-1/2 pointer-events-none"></div>
 
                             <div class="relative z-10 h-full flex flex-col p-4">
                                 <!-- Top row: meal type + time + date -->
                                 <div class="flex items-start">
-                                    <div class="glass-badge inline-flex items-center gap-1.5 rounded-full pl-1.5 pr-3 py-1 min-w-0">
-                                        <span class="inline-flex items-center justify-center w-5 h-5 shrink-0 rounded-full bg-white/15 text-white">
-                                            ${this.mealTypeIcon(meal.meal_type, 'w-3 h-3')}
+                                    <div class="glass-badge inline-flex items-center gap-1.5 rounded-full pl-2 pr-3.5 py-1.5 min-w-0">
+                                        <span class="inline-flex items-center justify-center w-6 h-6 shrink-0 rounded-full bg-white/15 text-white">
+                                            ${this.mealTypeIcon(meal.meal_type, 'w-3.5 h-3.5')}
                                         </span>
-                                        <span class="text-[11px] font-semibold text-white truncate">${escType}</span>
-                                        ${timeLabel ? `<span class="text-[11px] text-white/60 shrink-0">· ${escTime}</span>` : ''}
-                                        ${dateLabel ? `<span class="text-[11px] text-white/40 shrink-0">${escDate}</span>` : ''}
+                                        <span class="text-xs font-semibold text-white truncate">${escType}</span>
+                                        ${timeLabel ? `<span class="text-xs text-white/60 shrink-0">· ${escTime}</span>` : ''}
+                                        ${dateLabel ? `<span class="text-xs text-white/40 shrink-0">${escDate}</span>` : ''}
                                     </div>
                                 </div>
 
-                                <!-- Center: Dish name + AI insight -->
-                                <div class="flex-1 flex flex-col justify-center min-h-0">
+                                <!-- Dish name -->
+                                <div class="mt-2 shrink-0">
                                     <h3 class="text-shadow-subtle text-xl font-bold text-white leading-tight truncate">${escName}</h3>
-                                    ${meal.ai_insight ? `<p class="text-shadow-subtle text-sm text-white/75 mt-1.5 line-clamp-2">${escapeHtml(meal.ai_insight)}</p>` : ''}
+                                </div>
+
+                                <!-- AI analysis for this meal -->
+                                <div class="flex-1 min-h-0 mt-2">
+                                    <div class="h-full rounded-2xl border border-white/10 bg-black/45 backdrop-blur-[2px] px-3 py-2.5 flex flex-col min-h-0">
+                                        <div class="flex items-center gap-1.5 mb-1.5 shrink-0">
+                                            <svg class="w-4 h-4 text-primary-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                                            <h4 class="text-[11px] font-semibold text-white/70 uppercase tracking-wider">ИИ-анализ</h4>
+                                        </div>
+                                        <p class="text-shadow-subtle text-sm text-white/85 leading-relaxed flex-1 min-h-0 overflow-y-auto" data-no-flip>${aiInsightHtml}</p>
+                                    </div>
                                 </div>
 
                                 <!-- Bottom: Full КБЖУ pill badge -->
-                                <div class="flex items-center">
-                                    <div class="glass-badge inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/10">
-                                        <span class="text-xs font-semibold text-white">${escCal} ккал</span>
-                                        <span class="text-xs text-white/70">Б ${escP}г</span>
-                                        <span class="text-xs text-white/70">·</span>
-                                        <span class="text-xs text-white/70">Ж ${escF}г</span>
-                                        <span class="text-xs text-white/70">·</span>
-                                        <span class="text-xs text-white/70">У ${escC}г</span>
+                                <div class="flex items-center mt-3 shrink-0">
+                                    <div class="glass-badge inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border border-white/10">
+                                        <span class="text-sm font-semibold text-white">${escCal} ккал</span>
+                                        <span class="text-sm text-white/70">Б ${escP}г</span>
+                                        <span class="text-sm text-white/70">·</span>
+                                        <span class="text-sm text-white/70">Ж ${escF}г</span>
+                                        <span class="text-sm text-white/70">·</span>
+                                        <span class="text-sm text-white/70">У ${escC}г</span>
                                     </div>
                                 </div>
                             </div>
@@ -415,7 +431,7 @@ export const Components = {
         return new Promise((resolve) => {
             const host = document.getElementById('modals') || document.body;
             const backdrop = document.createElement('div');
-            backdrop.className = 'fixed inset-0 z-50 bg-black/40 backdrop-blur-md flex items-center justify-center p-4 pointer-events-auto opacity-0 transition-opacity duration-200';
+            backdrop.className = 'fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 pointer-events-auto opacity-0 transition-opacity duration-200';
             backdrop.innerHTML = `
                 <div class="glass-strong rounded-2xl p-6 max-w-sm w-full mx-4 transform transition-all duration-200 scale-95 opacity-0 flex flex-col">
                     <h3 class="text-lg font-bold text-surface-900 dark:text-surface-50 mb-2">${escapeHtml(title)}</h3>

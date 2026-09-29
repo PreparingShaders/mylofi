@@ -250,9 +250,9 @@ async render(container, app, dateOverride = null) {
             const qualityScore = totalMeals > 0 ? Utils.computeQualityScore(displaySummary) : null;
 
             let html = `
-                <div class="single-viewport px-4 pt-[calc(env(safe-area-inset-top)+8px)] pb-32">
+                <div class="single-viewport px-4 pt-4 pb-32">
                     <!-- HEADER -->
-                    <div class="viewport-header p-2 pt-1 pb-1">
+                    <div class="viewport-header p-1 pt-0 pb-1">
                         <div class="flex justify-between items-center gap-2 mb-1">
                             ${this.renderDateNav(this.selectedDate, dateLabel, fromCache)}
                             ${this.renderPeriodSelector()}
@@ -266,8 +266,8 @@ async render(container, app, dateOverride = null) {
                         ${periodHint ? `<p class="text-[11px] text-center text-surface-500 dark:text-surface-400 mt-1">${periodHint}</p>` : ''}
                     </div>
 
-                    <!-- CENTER CAROUSEL -->
-                    <div class="meal-carousel h-[360px] min-h-0 flex-shrink-0 overflow-x-auto snap-x snap-mandatory scroll-smooth -mx-4 px-4 pb-2 touch-pan-x" id="meal-carousel">
+                    <!-- CENTER CAROUSEL: 1 card = 1 meal + its AI analysis -->
+                    <div class="meal-carousel h-[320px] min-h-0 flex-shrink-0 overflow-x-auto snap-x snap-mandatory scroll-smooth -mx-4 px-4 pb-2 touch-pan-x" id="meal-carousel">
                         ${pendingSorted.length > 0
                             ? `
                             <div class="flex gap-3 snap-none min-w-0 h-full items-center">
@@ -348,6 +348,8 @@ async render(container, app, dateOverride = null) {
         const container = this.app.elements.pageContent;
         container.querySelectorAll('[data-action="flip-card"]').forEach((btn) => {
             btn.onclick = (e) => {
+                // Scrolling the in-card AI analysis must not trigger the 3D flip.
+                if (e.target.closest('[data-no-flip]')) return;
                 e.stopPropagation();
                 const card = btn.closest('.meal-card-3d');
                 if (card) {
