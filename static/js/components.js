@@ -113,20 +113,20 @@ export const Components = {
 
         const columnHtml = metricColumns.map((col) => `
             <div class="flex flex-col items-center gap-0.5 min-w-0">
-                <span class="text-[9px] font-medium text-surface-400 dark:text-surface-500 uppercase tracking-wider">${escapeHtml(col.label)}</span>
-                <span class="text-xs font-bold text-surface-900 dark:text-zinc-100 leading-none whitespace-nowrap">
+                <span class="text-[10px] font-medium text-surface-400 dark:text-surface-500 uppercase tracking-wider">${escapeHtml(col.label)}</span>
+                <span class="text-sm font-bold text-surface-900 dark:text-zinc-100 leading-none whitespace-nowrap">
                     ${col.value}${col.unit ? ' ' + escapeHtml(col.unit) : ''}
-                    ${col.target > 0 && col.value !== '—' ? `<span class="text-[8px] font-normal text-surface-400 dark:text-surface-500 ml-0.5">/ ${Math.round(col.target)}${col.unit ? ' ' + escapeHtml(col.unit) : ''}</span>` : ''}
+                    ${col.target > 0 && col.value !== '—' ? `<span class="text-[9px] font-normal text-surface-400 dark:text-surface-500 ml-0.5">/ ${Math.round(col.target)}${col.unit ? ' ' + escapeHtml(col.unit) : ''}</span>` : ''}
                 </span>
-                <div class="w-full h-1 bg-surface-200 dark:bg-white/10 rounded-full overflow-hidden" role="progressbar" aria-valuenow="${col.pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${escapeHtml(col.label)} ${col.pct}%">
+                <div class="w-full h-1.5 bg-surface-200 dark:bg-white/10 rounded-full overflow-hidden" role="progressbar" aria-valuenow="${col.pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${escapeHtml(col.label)} ${col.pct}%">
                     <div class="h-full bg-${col.color} rounded-full transition-all duration-500 ease-out" style="width: ${col.pct}%"></div>
                 </div>
             </div>
         `).join('');
 
         return `
-            <div class="glass-strong rounded-xl p-2.5 mb-3" role="region" aria-label="Показатели питания">
-                <div class="grid grid-cols-5 gap-1.5 text-center">
+            <div class="glass-strong rounded-xl p-3 mb-3" role="region" aria-label="Показатели питания">
+                <div class="grid grid-cols-5 gap-2 text-center">
                     ${columnHtml}
                 </div>
             </div>
@@ -209,9 +209,8 @@ export const Components = {
             ? `style="background-image: url('${safeSrc}');"`
             : `class="bg-gradient-to-br from-surface-800 to-surface-900 dark:from-zinc-800 dark:to-zinc-900"`;
 
-        // Quality score is no longer rendered on the front face; the unified
-        // КБЖУ pill carries the macro breakdown instead.
-        const qualityBadge = '';
+        // Unified top chip label: date · time · meal type
+        const chipLabel = [escDate, escTime, escType].filter(Boolean).join(' · ');
 
         // Back face: ingredients & details
         let ingredientsHtml = '';
@@ -278,15 +277,13 @@ export const Components = {
                             <div class="meal-card-gradient absolute inset-x-0 bottom-0 h-1/2 pointer-events-none"></div>
 
                             <div class="relative z-10 h-full flex flex-col p-4">
-                                <!-- Top row: meal type + time + date -->
+                                <!-- Top row: meal type chip with date, time, and meal type -->
                                 <div class="flex items-start">
                                     <div class="glass-badge inline-flex items-center gap-1.5 rounded-full pl-2 pr-3.5 py-1.5 min-w-0">
                                         <span class="inline-flex items-center justify-center w-6 h-6 shrink-0 rounded-full bg-white/15 text-white">
                                             ${this.mealTypeIcon(meal.meal_type, 'w-3.5 h-3.5')}
                                         </span>
-                                        <span class="text-xs font-semibold text-white truncate">${escType}</span>
-                                        ${timeLabel ? `<span class="text-xs text-white/60 shrink-0">· ${escTime}</span>` : ''}
-                                        ${dateLabel ? `<span class="text-xs text-white/40 shrink-0">${escDate}</span>` : ''}
+                                        <span class="text-xs font-semibold text-white truncate">${chipLabel}</span>
                                     </div>
                                 </div>
 
@@ -295,27 +292,16 @@ export const Components = {
                                     <h3 class="text-shadow-subtle text-xl font-bold text-white leading-tight truncate">${escName}</h3>
                                 </div>
 
-                                <!-- AI analysis for this meal -->
-                                <div class="flex-1 min-h-0 mt-2">
-                                    <div class="h-full rounded-2xl border border-white/10 bg-black/45 backdrop-blur-[2px] px-3 py-2.5 flex flex-col min-h-0">
-                                        <div class="flex items-center gap-1.5 mb-1.5 shrink-0">
-                                            <svg class="w-4 h-4 text-primary-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                                            <h4 class="text-[11px] font-semibold text-white/70 uppercase tracking-wider">ИИ-анализ</h4>
-                                        </div>
-                                        <p class="text-shadow-subtle text-sm text-white/85 leading-relaxed flex-1 min-h-0 overflow-y-auto" data-no-flip>${aiInsightHtml}</p>
-                                    </div>
-                                </div>
+                                <!-- Spacer to push AI analysis to bottom -->
+                                <div class="flex-1 min-h-0"></div>
 
-                                <!-- Bottom: Full КБЖУ pill badge -->
-                                <div class="flex items-center mt-3 shrink-0">
-                                    <div class="glass-badge inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border border-white/10">
-                                        <span class="text-sm font-semibold text-white">${escCal} ккал</span>
-                                        <span class="text-sm text-white/70">Б ${escP}г</span>
-                                        <span class="text-sm text-white/70">·</span>
-                                        <span class="text-sm text-white/70">Ж ${escF}г</span>
-                                        <span class="text-sm text-white/70">·</span>
-                                        <span class="text-sm text-white/70">У ${escC}г</span>
+                                <!-- Bottom-anchored AI analysis -->
+                                <div class="shrink-0 mt-3 rounded-2xl border border-white/10 bg-black/45 backdrop-blur-[2px] px-3 py-2.5">
+                                    <div class="flex items-center gap-1.5 mb-1.5 shrink-0">
+                                        <svg class="w-4 h-4 text-primary-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                                        <h4 class="text-[11px] font-semibold text-white/70 uppercase tracking-wider">ИИ-анализ</h4>
                                     </div>
+                                    <p class="text-shadow-subtle text-sm text-white/85 leading-relaxed" data-no-flip>${aiInsightHtml}</p>
                                 </div>
                             </div>
                         </div>

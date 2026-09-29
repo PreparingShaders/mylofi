@@ -267,7 +267,7 @@ async render(container, app, dateOverride = null) {
                     </div>
 
                     <!-- CENTER CAROUSEL: 1 card = 1 meal + its AI analysis -->
-                    <div class="meal-carousel h-[320px] min-h-0 flex-shrink-0 overflow-x-auto snap-x snap-mandatory scroll-smooth -mx-4 px-4 pb-2 touch-pan-x" id="meal-carousel">
+                    <div class="meal-carousel flex-shrink-0 overflow-x-auto snap-x snap-mandatory scroll-smooth -mx-4 px-4 pb-2 touch-pan-x" id="meal-carousel">
                         ${pendingSorted.length > 0
                             ? `
                             <div class="flex gap-3 snap-none min-w-0 h-full items-center">

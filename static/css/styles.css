@@ -107,8 +107,8 @@
 /* Compact card sizing: the carousel height is fixed (see .meal-carousel), cards
    scale with the viewport and never exceed the available content box height. */
 .meal-card-slot {
-    width: min(88vw, 380px);
-    height: min(100%, clamp(240px, 42dvh, 290px));
+    width: min(88vw, 340px);
+    height: clamp(340px, 55dvh, 440px);
 }
 
 /* Meal carousel: fixed height so the per-card AI analysis and CTA stay on screen */
@@ -126,6 +126,7 @@
     padding-bottom: 0.5rem;
     flex: 0 0 auto;
     min-height: 0;
+    height: clamp(360px, 60dvh, 480px);
 }
 .meal-carousel::-webkit-scrollbar {
     display: none;
