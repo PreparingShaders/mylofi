@@ -231,103 +231,254 @@ const App = {
     
     renderLanding() {
         console.log('[App] Rendering landing...');
-        this.elements.screens.landing.innerHTML = `
-            <div class="landing-page min-h-screen flex flex-col text-zinc-100 font-sans relative overflow-hidden">
-                <!-- Ambient glow blobs -->
-                <div class="absolute -top-20 -left-24 w-80 h-80 bg-gradient-to-br from-purple-500 to-indigo-600 opacity-[0.08] landing-glow rounded-full pointer-events-none"></div>
-                <div class="absolute -bottom-20 -right-24 w-80 h-80 bg-gradient-to-tl from-fuchsia-500 to-purple-600 opacity-[0.06] landing-glow rounded-full pointer-events-none"></div>
+        const card = (icon, title, text, extra = '') => `
+            <article class="landing-glass-strong rounded-2xl p-6 shadow-sm">
+                <div class="w-12 h-12 rounded-xl bg-lime-500/10 text-lime-400 flex items-center justify-center mb-4">
+                    ${icon}
+                </div>
+                <h3 class="text-base sm:text-lg font-semibold text-zinc-100 mb-2">${title}</h3>
+                <p class="text-sm text-zinc-400 leading-relaxed">${text}</p>
+                ${extra}
+            </article>
+        `;
 
-                <div class="relative z-10 flex-1 flex flex-col max-w-5xl mx-auto px-6 pt-safe-top">
-                    <!-- Header -->
-                    <header class="flex items-center justify-between h-16">
-                        <div class="flex items-center gap-3">
-                            <div class="relative flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500/20 to-indigo-500/20">
-                                <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 8A6 6 0 006 8c0 4-3 6-3 6h18s-3-2-3-6"></path>
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 18a2 2 0 100 4 2 2 0 000-4zm4 0a2 2 0 100 4 2 2 0 000-4z"></path>
-                                </svg>
-                                <div class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-purple-500 animate-pulse-purple shadow-lg shadow-purple-500/50"></div>
+        this.elements.screens.landing.innerHTML = `
+            <div class="landing-page h-full w-full overflow-y-auto overflow-x-hidden">
+                <div class="relative min-h-full flex flex-col text-zinc-100 font-sans">
+                    <!-- Ambient glow blobs -->
+                    <div class="absolute -top-20 -left-24 w-80 h-80 bg-gradient-to-br from-lime-500 to-emerald-600 opacity-[0.08] landing-glow rounded-full pointer-events-none"></div>
+                    <div class="absolute -bottom-20 -right-24 w-80 h-80 bg-gradient-to-tl from-lime-400 to-emerald-600 opacity-[0.06] landing-glow rounded-full pointer-events-none"></div>
+
+                    <!-- Sticky header -->
+                    <header class="sticky top-0 z-40 border-b border-zinc-800/60 bg-zinc-950/80 backdrop-blur-md">
+                        <div class="max-w-5xl mx-auto w-full px-6">
+                            <div class="flex items-center justify-between h-16">
+                                <div class="flex items-center gap-3">
+                                    <div class="relative flex items-center justify-center w-10 h-10 rounded-xl bg-lime-500/10 border border-lime-500/20 shadow-[0_0_20px_rgba(132,204,22,0.18)]">
+                                        <svg class="w-5 h-5 text-lime-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 8A6 6 0 006 8c0 4-3 6-3 6h18s-3-2-3-6"></path>
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 18a2 2 0 100 4 2 2 0 000-4zm4 0a2 2 0 100 4 2 2 0 000-4z"></path>
+                                        </svg>
+                                        <div class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-lime-500 animate-pulse-lime shadow-lg shadow-lime-500/50"></div>
+                                    </div>
+                                    <span class="text-lg sm:text-xl font-bold text-zinc-100">MyLofi.live</span>
+                                </div>
+
+                                <!-- Desktop navigation -->
+                                <div class="hidden md:flex items-center gap-3">
+                                    <nav class="flex items-center gap-1 mr-2">
+                                        <a href="#landing-nutrition" class="px-3 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors">Питание</a>
+                                        <a href="#landing-workouts" class="px-3 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors">Тренировки</a>
+                                        <a href="#landing-synergy" class="px-3 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors">ИИ-Синергия</a>
+                                    </nav>
+                                    <button data-action="show-auth" class="px-5 py-2.5 rounded-xl border border-zinc-800 text-sm font-medium text-zinc-300 hover:text-zinc-100 hover:border-zinc-700 hover:bg-zinc-900 transition-all">
+                                        Войти
+                                    </button>
+                                    <button data-action="show-register" class="px-5 py-2.5 rounded-xl bg-lime-500 text-zinc-950 text-sm font-semibold shadow-[0_0_20px_rgba(132,204,22,0.25)] hover:bg-lime-400 transition-all btn-press">
+                                        Создать дневник
+                                    </button>
+                                </div>
+
+                                <!-- Mobile hamburger -->
+                                <button data-action="toggle-landing-menu" aria-label="Открыть меню" aria-expanded="false" class="md:hidden w-10 h-10 flex items-center justify-center rounded-xl border border-zinc-800 text-zinc-300 hover:text-lime-400 hover:border-zinc-700 transition-colors">
+                                    <svg class="landing-menu-icon-bars w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16"></path>
+                                    </svg>
+                                    <svg class="landing-menu-icon-close w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6l12 12M18 6L6 18"></path>
+                                    </svg>
+                                </button>
                             </div>
-                            <span class="text-xl font-bold text-zinc-100">MyLofi.live</span>
-                        </div>
-                        <div class="flex items-center gap-3">
-                            <button data-action="show-auth" class="px-5 py-2.5 rounded-xl border border-white/10 text-sm font-medium text-zinc-300 hover:text-zinc-100 hover:border-white/20 transition-all">
-                                Войти
-                            </button>
-                            <button data-action="show-register" class="px-5 py-2.5 rounded-xl bg-purple-600 text-white text-sm font-semibold shadow-lg shadow-purple-500/30 hover:bg-purple-700 transition-all btn-press">
-                                Начать
-                            </button>
                         </div>
                     </header>
 
-                    <!-- Hero Section -->
-                    <section class="flex-1 flex flex-col items-center text-center py-12">
-                        <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full landing-glass border border-white/10 mb-8">
-                            <span class="w-1.5 h-1.5 rounded-full bg-purple-400"></span>
-                            <span class="text-xs font-medium text-zinc-300">Трекинг в твоём собственном ритме</span>
-                        </div>
-
-                        <h1 class="text-4xl sm:text-5xl font-bold text-zinc-100 mb-6 max-w-2xl leading-tight">
-                            Твой умный нутрициолог и журнал тренировок
-                        </h1>
-
-                        <p class="text-lg text-zinc-400 max-w-xl mb-10 leading-relaxed">
-                            Контролируй КБЖУ, фиксируй рабочий вес и следи за прогрессом без суеты и лишнего шума в стильном тёмном интерфейсе
-                        </p>
-
-                        <div class="flex flex-col sm:flex-row gap-4">
-                            <button data-action="show-register" class="px-8 py-3.5 rounded-xl bg-purple-600 text-white font-semibold shadow-lg shadow-purple-500/30 hover:bg-purple-700 transition-all btn-press">
-                                Создать дневник
-                            </button>
-                            <button data-action="show-auth" class="px-8 py-3.5 rounded-xl border border-white/10 text-zinc-200 font-medium hover:bg-white/5 transition-all btn-press">
-                                Уже есть аккаунт
-                            </button>
-                        </div>
-                    </section>
-
-                    <!-- Features Grid -->
-                    <section class="grid grid-cols-1 md:grid-cols-3 gap-6 pb-12">
-                        <div class="landing-glass-strong rounded-2xl p-6 border border-white/10">
-                            <div class="w-12 h-12 rounded-xl bg-purple-500/10 flex items-center justify-center mb-4">
-                                <svg class="w-6 h-6 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0019.07 7H20a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path>
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 13a3 3 0 100-6 3 3 0 000 6z"></path>
-                                </svg>
+                    <!-- Mobile menu overlay -->
+                    <div data-landing-menu class="md:hidden">
+                        <div data-landing-menu-backdrop data-action="close-landing-menu" class="landing-menu-backdrop fixed inset-0 z-40 bg-zinc-950/70 backdrop-blur-sm"></div>
+                        <div data-landing-menu-panel class="landing-menu fixed left-0 right-0 top-0 z-50 pt-safe-top bg-zinc-950/95 backdrop-blur-xl border-b border-zinc-800 shadow-[0_20px_40px_-20px_rgba(0,0,0,0.9)]">
+                            <div class="flex items-center justify-between h-16 px-6">
+                                <span class="text-lg font-bold text-zinc-100">MyLofi.live</span>
+                                <button data-action="close-landing-menu" aria-label="Закрыть меню" class="w-10 h-10 flex items-center justify-center rounded-xl border border-zinc-800 text-zinc-300 hover:text-lime-400 hover:border-zinc-700 transition-colors">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6l12 12M18 6L6 18"></path>
+                                    </svg>
+                                </button>
                             </div>
-                            <h3 class="text-lg font-semibold text-zinc-100 mb-2">Учёт питания</h3>
-                            <p class="text-sm text-zinc-400 leading-relaxed">Быстрый подсчёт калорий и макронутриентов, анализ блюд через ИИ и наглядный дневник рациона.</p>
+                            <nav class="px-6 pb-6 flex flex-col gap-1">
+                                <a data-action="close-landing-menu" href="#landing-nutrition" class="px-4 py-3 rounded-xl text-sm font-medium text-zinc-300 hover:text-zinc-100 hover:bg-zinc-900 transition-colors">Питание</a>
+                                <a data-action="close-landing-menu" href="#landing-workouts" class="px-4 py-3 rounded-xl text-sm font-medium text-zinc-300 hover:text-zinc-100 hover:bg-zinc-900 transition-colors">Тренировки</a>
+                                <a data-action="close-landing-menu" href="#landing-synergy" class="px-4 py-3 rounded-xl text-sm font-medium text-zinc-300 hover:text-zinc-100 hover:bg-zinc-900 transition-colors">ИИ-Синергия</a>
+                                <div class="h-px bg-zinc-800 my-3"></div>
+                                <button data-action="show-auth" class="w-full px-4 py-3 rounded-xl border border-zinc-800 text-sm font-medium text-zinc-300 hover:text-zinc-100 hover:bg-zinc-900 transition-colors">
+                                    Войти
+                                </button>
+                                <button data-action="show-register" class="w-full px-4 py-3 rounded-xl bg-lime-500 text-zinc-950 text-sm font-semibold shadow-[0_0_20px_rgba(132,204,22,0.25)] hover:bg-lime-400 transition-all btn-press">
+                                    Создать дневник
+                                </button>
+                            </nav>
                         </div>
+                    </div>
 
-                        <div class="landing-glass-strong rounded-2xl p-6 border border-white/10">
-                            <div class="w-12 h-12 rounded-xl bg-indigo-500/10 flex items-center justify-center mb-4">
-                                <svg class="w-6 h-6 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7.5 12a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"></path>
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.5 12a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"></path>
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v6M2.5 12h19"></path>
-                                </svg>
-                            </div>
-                            <h3 class="text-lg font-semibold text-zinc-100 mb-2">Дневник зала</h3>
-                            <p class="text-sm text-zinc-400 leading-relaxed">Удобный ввод подходов, повторов и весов, отслеживание прогрессирующей нагрузки.</p>
-                        </div>
+                    <!-- Page body -->
+                    <div class="relative z-10 flex-1 w-full">
 
-                        <div class="landing-glass-strong rounded-2xl p-6 border border-white/10">
-                            <div class="w-12 h-12 rounded-xl bg-fuchsia-500/10 flex items-center justify-center mb-4">
-                                <svg class="w-6 h-6 text-fuchsia-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"></path>
-                                </svg>
+                        <!-- Hero -->
+                        <section class="max-w-5xl mx-auto w-full px-6 pt-16 pb-20 sm:pt-24 sm:pb-24 flex flex-col items-center text-center">
+                            <span class="text-xs font-semibold text-lime-400 uppercase tracking-wider bg-lime-500/10 border border-lime-500/20 px-3 py-1 rounded-full mb-8">
+                                ИИ-нутрициолог и журнал тренировок
+                            </span>
+
+                            <h1 class="text-3xl sm:text-4xl lg:text-5xl font-bold text-zinc-100 tracking-tight leading-tight mb-6 max-w-3xl">
+                                Твой умный нутрициолог и журнал тренировок
+                            </h1>
+
+                            <p class="text-sm sm:text-base text-zinc-400 leading-relaxed max-w-2xl mb-10">
+                                Контролируй КБЖУ, фиксируй рабочий вес и следи за прогрессом без суеты в лаконичном тёмном интерфейсе
+                            </p>
+
+                            <div class="flex flex-col sm:flex-row gap-4">
+                                <button data-action="show-register" class="px-6 sm:px-8 py-3.5 rounded-xl bg-lime-500 text-zinc-950 font-semibold shadow-[0_0_20px_rgba(132,204,22,0.25)] hover:bg-lime-400 transition-all btn-press">
+                                    Начать использовать
+                                </button>
+                                <button data-action="show-auth" class="px-6 sm:px-8 py-3.5 rounded-xl border border-zinc-800 text-zinc-200 font-medium hover:bg-zinc-900 hover:border-zinc-700 transition-all btn-press">
+                                    Уже есть аккаунт
+                                </button>
                             </div>
-                            <h3 class="text-lg font-semibold text-zinc-100 mb-2">Lofi-философия</h3>
-                            <p class="text-sm text-zinc-400 leading-relaxed">Тёмная тема по умолчанию, лаконичный дизайн без визуального шума для полного фокуса на результате.</p>
-                        </div>
-                    </section>
+                        </section>
+
+                        <!-- Section 1: Питание -->
+                        <section id="landing-nutrition" class="scroll-mt-20 max-w-5xl mx-auto w-full px-6 py-16 sm:py-20">
+                            <p class="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">Питание и рацион</p>
+                            <h2 class="text-2xl sm:text-3xl font-bold text-zinc-100 tracking-tight mb-3 max-w-2xl">
+                                Глубокая ИИ-оценка качества еды, а не просто цифры
+                            </h2>
+                            <p class="text-sm sm:text-base text-zinc-400 leading-relaxed max-w-2xl mb-10">
+                                Одно фото — и в дневнике появляется не только расклад по КБЖУ, но и полный разбор того, что ты ешь.
+                            </p>
+
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                ${card(`
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0019.07 7H20a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 13a3 3 0 100-6 3 3 0 000 6z"></path>
+                                    </svg>`,
+                                    'КБЖУ из фото',
+                                    'Сфотографируй блюдо — ИИ распознает состав и сразу добавит калории, белки, жиры и углеводы в дневник.')}
+                                ${card(`
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                    </svg>`,
+                                    'Оценка качества еды',
+                                    'Разбор жирнокислотного состава, чистоты ингредиентов и нутриентной плотности каждого приёма пищи.')}
+                                ${card(`
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                                    </svg>`,
+                                    'Итоговый балл 0–100',
+                                    'Оценка влияния рациона на здоровье: насколько блюдо насыщает, а насколько перегружает организм.')}
+                            </div>
+                        </section>
+
+                        <!-- Section 2: Тренировки -->
+                        <section id="landing-workouts" class="scroll-mt-20 max-w-5xl mx-auto w-full px-6 py-16 sm:py-20">
+                            <p class="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">Тренировки и объём</p>
+                            <h2 class="text-2xl sm:text-3xl font-bold text-zinc-100 tracking-tight mb-3 max-w-2xl">
+                                Прогрессивная нагрузка под контролем
+                            </h2>
+                            <p class="text-sm sm:text-base text-zinc-400 leading-relaxed max-w-2xl mb-10">
+                                Собери свою программу, фиксируй каждую рабочую сессию и видишь, как растёт объём от недели к неделе.
+                            </p>
+
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                ${card(`
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7.5 12a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"></path>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.5 12a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"></path>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v6M2.5 12h19"></path>
+                                    </svg>`,
+                                    'Конструктор и журнал',
+                                    'Собери собственную программу тренировок и фиксируй подходы, повторы и рабочий вес в пару касаний.')}
+                                ${card(`
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V5m0 14a2 2 0 100 4 2 2 0 000-4zm0-14a2 2 0 100-4 2 2 0 000 4zm6 0v14m0 0a2 2 0 100 4 2 2 0 000-4zm0-18a2 2 0 100-4 2 2 0 000 4z"></path>
+                                    </svg>`,
+                                    'Тоннаж и прогрессия',
+                                    'Общий объём, количество подходов и серия недель подряд — динамика нагрузки без ручных расчётов.')}
+                                ${card(`
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                    </svg>`,
+                                    'Разбор и восстановление',
+                                    'Автоматический анализ выполненной тренировки и персональные рекомендации по восстановлению.',
+                                    '<span class="inline-flex items-center mt-4 text-[10px] font-semibold uppercase tracking-wider text-lime-400 bg-lime-500/10 border border-lime-500/20 px-2.5 py-1 rounded-full">Скоро</span>')}
+                            </div>
+                        </section>
+
+                        <!-- Section 3: Синергия -->
+                        <section id="landing-synergy" class="scroll-mt-20 max-w-5xl mx-auto w-full px-6 py-16 sm:py-20">
+                            <p class="text-xs font-semibold text-lime-400 uppercase tracking-wider mb-2">Уникальная синергия</p>
+                            <h2 class="text-2xl sm:text-3xl font-bold text-zinc-100 tracking-tight mb-3 max-w-2xl">
+                                Связка питания и тренировок в одном ИИ-ядре
+                            </h2>
+                            <p class="text-sm sm:text-base text-zinc-400 leading-relaxed max-w-2xl mb-10">
+                                MyLofi анализирует не два журнала по отдельности, а их взаимосвязь — то, что не умеет ни одно изолированное приложение.
+                            </p>
+
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                ${card(`
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 010 5.656l-3 3a4 4 0 01-5.656-5.656l1.5-1.5"></path>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.172 13.828a4 4 0 010-5.656l3-3a4 4 0 015.656 5.656l-1.5 1.5"></path>
+                                    </svg>`,
+                                    'Сквозной анализ данных',
+                                    'ИИ сопоставляет твой рацион с фактической нагрузкой и видит картину целиком, а не два разрыва журнала.')}
+                                ${card(`
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                                    </svg>`,
+                                    'Точечные корректировки',
+                                    'Находит узкие места и слабые звенья восстановления, подсказывая, сколько калорий или объёма добавить именно тебе.')}
+                            </div>
+                        </section>
+
+                        <!-- Final CTA -->
+                        <section class="max-w-5xl mx-auto w-full px-6 py-16 sm:py-20">
+                            <div class="landing-glass rounded-3xl p-8 sm:p-12 text-center shadow-sm">
+                                <h2 class="text-2xl sm:text-3xl font-bold text-zinc-100 tracking-tight mb-3 max-w-2xl mx-auto">
+                                    Начни свой путь к осознанному фитнесу
+                                </h2>
+                                <p class="text-sm sm:text-base text-zinc-400 leading-relaxed max-w-xl mx-auto mb-8">
+                                    Один аккаунт — дневник питания, журнал тренировок и ИИ-анализ, работающие вместе.
+                                </p>
+                                <button data-action="show-register" class="px-6 sm:px-8 py-3.5 rounded-xl bg-lime-500 text-zinc-950 font-semibold shadow-[0_0_20px_rgba(132,204,22,0.25)] hover:bg-lime-400 transition-all btn-press">
+                                    Начать использовать
+                                </button>
+                            </div>
+                        </section>
+                    </div>
+
+                    <!-- Footer -->
+                    <footer class="relative z-10 text-center py-6 px-6 text-xs text-zinc-500">
+                        © mylofi.live
+                    </footer>
                 </div>
-
-                <!-- Footer -->
-                <footer class="text-center py-6 text-xs text-zinc-500">
-                    © mylofi.live — Осознанный фитнес и нутрициология
-                </footer>
             </div>
         `;
+    },
+
+    toggleLandingMenu(force) {
+        const root = this.elements.screens.landing;
+        if (!root) return;
+        const toggleBtn = root.querySelector('[data-action="toggle-landing-menu"]');
+        const backdrop = root.querySelector('[data-landing-menu-backdrop]');
+        const panel = root.querySelector('[data-landing-menu-panel]');
+        if (!toggleBtn || !backdrop || !panel) return;
+
+        const isOpen = force ?? !panel.classList.contains('is-open');
+        panel.classList.toggle('is-open', isOpen);
+        backdrop.classList.toggle('is-open', isOpen);
+        toggleBtn.classList.toggle('is-open', isOpen);
+        toggleBtn.setAttribute('aria-expanded', String(isOpen));
     },
     
     showScreen(screenName) {
@@ -390,18 +541,30 @@ const App = {
                 this.showPage(navItem.dataset.page);
             }
         });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') this.toggleLandingMenu(false);
+        });
     },
 
     async handleAction(action, event) {
         console.log(`[App] Action: ${action}`);
         switch (action) {
             case 'show-auth':
+                this.toggleLandingMenu(false);
                 this.showScreen('auth');
                 Auth.renderLogin(this.elements.screens.auth, this);
                 break;
             case 'show-register':
+                this.toggleLandingMenu(false);
                 this.showScreen('auth');
                 Auth.renderRegister(this.elements.screens.auth, this);
+                break;
+            case 'toggle-landing-menu':
+                this.toggleLandingMenu();
+                break;
+            case 'close-landing-menu':
+                this.toggleLandingMenu(false);
                 break;
             case 'view-history':
                 this.showPage('history');

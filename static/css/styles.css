@@ -330,11 +330,19 @@ input, select, textarea:focus {
     border-color: #fafafa;
 }
 
-/* ============ Landing Page (Lofi + Dark Minimal) ============ */
+/* ============ Landing Page (Graphite + Neon Lime) ============ */
 
-/* Deep dark lofi background (#0F0F12) */
+/* Matte dark graphite canvas (zinc-950) and smooth in-page anchor scrolling */
 .landing-page {
-    background: #0f0f12;
+    background: #09090b;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+}
+
+/* Safe top padding (notebook/phone notch) on the landing mobile sheet */
+.pt-safe-top {
+    padding-top: env(safe-area-inset-top, 0px);
 }
 
 /* Ambient glow blobs (rendered as absolutely positioned divs) */
@@ -343,7 +351,7 @@ input, select, textarea:focus {
 }
 
 /* Pulsing service indicator dot */
-@keyframes pulse-purple {
+@keyframes pulse-lime {
     0%, 100% {
         opacity: 1;
         transform: scale(1);
@@ -353,20 +361,62 @@ input, select, textarea:focus {
         transform: scale(1.25);
     }
 }
-.animate-pulse-purple {
-    animation: pulse-purple 2s ease-in-out infinite;
+.animate-pulse-lime {
+    animation: pulse-lime 2s ease-in-out infinite;
 }
 
-/* Glassmorphism with lighter blur for landing */
-.landing-glass {
-    background: rgba(255, 255, 255, 0.04);
-    -webkit-backdrop-filter: blur(3px) saturate(160%);
-    backdrop-filter: blur(3px) saturate(160%);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-}
+/* Graphite surface for feature cards (zinc-900 at 90%) */
 .landing-glass-strong {
-    background: rgba(15, 15, 18, 0.6);
-    -webkit-backdrop-filter: blur(4px) saturate(150%);
-    backdrop-filter: blur(4px) saturate(150%);
-    border: 1px solid rgba(255, 255, 255, 0.10);
+    background: rgba(24, 24, 27, 0.9);
+    -webkit-backdrop-filter: blur(8px) saturate(140%);
+    backdrop-filter: blur(8px) saturate(140%);
+    border: 1px solid rgba(39, 39, 42, 1);
+}
+
+/* Slightly deeper graphite surface for banners and the final CTA block */
+.landing-glass {
+    background: rgba(24, 24, 27, 0.6);
+    -webkit-backdrop-filter: blur(12px) saturate(150%);
+    backdrop-filter: blur(12px) saturate(150%);
+    border: 1px solid rgba(39, 39, 42, 1);
+}
+
+/* Neon lime halo used behind primary CTAs and glow accents */
+.landing-lime-glow {
+    box-shadow: 0 0 20px rgba(132, 204, 22, 0.25);
+}
+
+/* ============ Landing Mobile Menu ============ */
+
+.landing-menu-backdrop,
+.landing-menu {
+    display: none;
+}
+.landing-menu-backdrop.is-open {
+    display: block;
+    animation: landing-fade-in 0.2s ease-out;
+}
+.landing-menu.is-open {
+    display: block;
+    animation: landing-slide-down 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes landing-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+@keyframes landing-slide-down {
+    from { opacity: 0; transform: translateY(-12px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Hamburger <-> cross icon swap driven by the toggle button's open state */
+.landing-menu-icon-close {
+    display: none;
+}
+.is-open > .landing-menu-icon-bars {
+    display: none;
+}
+.is-open > .landing-menu-icon-close {
+    display: block;
 }
