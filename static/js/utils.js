@@ -9,6 +9,7 @@ export const Utils = {
         return outputArray;
     },
     formatDate(dateString) { return new Date(dateString).toLocaleDateString('ru-RU'); },
+    formatDayMonth(date) { return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }); },
     formatTime(dateString) { return new Date(dateString).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }); },
     formatDuration(seconds) {
         const h = Math.floor(seconds / 3600).toString().padStart(2, '0');

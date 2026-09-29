@@ -183,6 +183,7 @@ export const Components = {
         const dishName = meal.dish_name || (isPending ? 'Анализ...' : 'Блюдо');
         const mealType = this.mealTypeLabel(meal.meal_type);
         const timeLabel = day ? Utils.formatTime(day) : '';
+        const dateLabel = day ? Utils.formatDayMonth(day) : '';
 
         const calories = Math.round(meal.calories || 0);
         const protein = Math.round(meal.protein_g || meal.protein || 0);
@@ -196,6 +197,11 @@ export const Components = {
         const escName = escapeHtml(dishName);
         const escType = escapeHtml(mealType);
         const escTime = escapeHtml(timeLabel);
+        const escDate = escapeHtml(dateLabel);
+        const escCal = escapeHtml(String(calories));
+        const escP = escapeHtml(String(protein));
+        const escF = escapeHtml(String(fat));
+        const escC = escapeHtml(String(carbs));
         const mealId = meal.id ?? '';
 
         // Front face background
@@ -203,10 +209,9 @@ export const Components = {
             ? `style="background-image: url('${safeSrc}');"`
             : `class="bg-gradient-to-br from-surface-800 to-surface-900 dark:from-zinc-800 dark:to-zinc-900"`;
 
-        // Quality score badge
-        const qualityBadge = qualityScore !== null
-            ? `<span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-white/20 backdrop-blur text-xs font-semibold text-white">${qualityScore}</span>`
-            : '';
+        // Quality score is no longer rendered on the front face; the unified
+        // КБЖУ pill carries the macro breakdown instead.
+        const qualityBadge = '';
 
         // Back face: ingredients & details
         let ingredientsHtml = '';
@@ -223,98 +228,106 @@ export const Components = {
             ingredientsHtml = '<p class="text-sm text-white/50 text-center py-4">Детали недоступны</p>';
         }
 
-        // Micronutrients if available
+// Micronutrients if available
         const fiber = meal.fiber_g !== undefined ? Math.round(meal.fiber_g) : null;
         const sugar = meal.sugar_g !== undefined ? Math.round(meal.sugar_g) : null;
         const sodium = meal.sodium_mg !== undefined ? Math.round(meal.sodium_mg) : null;
 
         const micronutrientsHtml = (fiber !== null || sugar !== null || sodium !== null)
             ? `
-                <div class="grid grid-cols-3 gap-2 pt-3 border-t border-white/10">
-                    ${fiber !== null ? `<div class="text-center"><p class="text-xs font-bold text-white">${fiber}г</p><p class="text-[9px] text-white/50">Клетчатка</p></div>` : ''}
-                    ${sugar !== null ? `<div class="text-center"><p class="text-xs font-bold text-white">${sugar}г</p><p class="text-[9px] text-white/50">Сахар</p></div>` : ''}
-                    ${sodium !== null ? `<div class="text-center"><p class="text-xs font-bold text-white">${sodium}мг</p><p class="text-[9px] text-white/50">Натрий</p></div>` : ''}
+                <div class="mt-4 pt-4 border-t border-white/10">
+                    <p class="text-xs font-medium text-white/50 uppercase tracking-wider mb-3">Микронутриенты</p>
+                    <div class="grid grid-cols-3 gap-2">
+                        ${fiber !== null ? `<div class="text-center p-2 rounded-lg bg-white/5"><p class="text-xs font-bold text-white">${fiber}г</p><p class="text-[9px] text-white/50">Клетчатка</p></div>` : ''}
+                        ${sugar !== null ? `<div class="text-center p-2 rounded-lg bg-white/5"><p class="text-xs font-bold text-white">${sugar}г</p><p class="text-[9px] text-white/50">Сахар</p></div>` : ''}
+                        ${sodium !== null ? `<div class="text-center p-2 rounded-lg bg-white/5"><p class="text-xs font-bold text-white">${sodium}мг</p><p class="text-[9px] text-white/50">Натрий</p></div>` : ''}
+                    </div>
                 </div>
             `
             : '';
 
+        // Notes section
+        const notesHtml = meal.notes
+            ? `
+                <div class="mt-4 pt-4 border-t border-white/10">
+                    <p class="text-xs font-medium text-white/50 uppercase tracking-wider mb-2">Заметки</p>
+                    <p class="text-sm text-white/80 whitespace-pre-wrap leading-relaxed">${escapeHtml(meal.notes)}</p>
+                </div>
+            `
+            : '';
+
+        // Macro pills are now rendered inside the unified КБЖУ pill at the bottom,
+        // so the old per-macro row is dropped to avoid duplication.
+        const macroPills = '';
+
         return `
-            <article class="snap-start w-full" data-meal-id="${mealId}">
-                <div class="meal-card-3d relative w-full h-full min-h-[260px] max-h-[320px] perspective-card ${isFailed ? 'ring-2 ring-red-500/40' : ''}" data-meal-id="${mealId}">
+            <article class="snap-center shrink-0 meal-card-slot" data-meal-id="${mealId}">
+                <div class="meal-card-3d relative w-full h-full perspective-card ${isFailed ? 'ring-2 ring-red-500/40' : ''}" data-meal-id="${mealId}">
                     <div class="meal-card-inner relative w-full h-full transform-style-preserve-3d transition-transform duration-500 ease-out" data-action="flip-card">
                         <!-- FRONT FACE -->
                         <div class="meal-card-front absolute inset-0 backface-hidden rounded-2xl overflow-hidden bg-zinc-900">
-                            <div class="absolute inset-0 meal-card-overlay"></div>
                             <div ${frontBackground} class="absolute inset-0 bg-cover bg-center"></div>
+                            <!-- Adaptive contrast scrims: top for badges, bottom for text -->
+                            <div class="meal-card-scrim absolute inset-x-0 top-0 h-28 pointer-events-none"></div>
+                            <div class="meal-card-gradient absolute inset-x-0 bottom-0 h-1/2 pointer-events-none"></div>
 
                             <div class="relative z-10 h-full flex flex-col p-4">
-                                <!-- Top row: meal type, time, menu -->
-                                <div class="flex items-start justify-between">
-                                    <div class="flex items-center gap-2">
-                                        <span class="inline-flex items-center justify-center w-7 h-7 shrink-0 rounded-lg bg-white/20 backdrop-blur text-white">
-                                            ${this.mealTypeIcon(meal.meal_type, 'w-4 h-4')}
+                                <!-- Top row: meal type + time + date -->
+                                <div class="flex items-start">
+                                    <div class="glass-badge inline-flex items-center gap-1.5 rounded-full pl-1.5 pr-3 py-1 min-w-0">
+                                        <span class="inline-flex items-center justify-center w-5 h-5 shrink-0 rounded-full bg-white/15 text-white">
+                                            ${this.mealTypeIcon(meal.meal_type, 'w-3 h-3')}
                                         </span>
-                                        <span class="text-xs font-medium text-white/90">${escType}</span>
+                                        <span class="text-[11px] font-semibold text-white truncate">${escType}</span>
+                                        ${timeLabel ? `<span class="text-[11px] text-white/60 shrink-0">· ${escTime}</span>` : ''}
+                                        ${dateLabel ? `<span class="text-[11px] text-white/40 shrink-0">${escDate}</span>` : ''}
                                     </div>
-                                    ${timeLabel ? `<time class="text-xs text-white/70 shrink-0">${escTime}</time>` : ''}
-                                    <button type="button" data-action="toggle-meal-menu" aria-expanded="false" aria-label="Меню блюда" class="w-8 h-8 rounded-lg glass flex items-center justify-center text-white/80 hover:text-white transition-colors shrink-0">
-                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01"/></svg>
-                                    </button>
                                 </div>
 
                                 <!-- Center: Dish name + AI insight -->
                                 <div class="flex-1 flex flex-col justify-center min-h-0">
-                                    <h3 class="text-xl font-bold text-white leading-tight truncate">${escName}</h3>
-                                    ${meal.ai_insight ? `<p class="text-sm text-white/70 mt-2 line-clamp-2">${escapeHtml(meal.ai_insight)}</p>` : ''}
+                                    <h3 class="text-shadow-subtle text-xl font-bold text-white leading-tight truncate">${escName}</h3>
+                                    ${meal.ai_insight ? `<p class="text-shadow-subtle text-sm text-white/75 mt-1.5 line-clamp-2">${escapeHtml(meal.ai_insight)}</p>` : ''}
                                 </div>
 
-                                <!-- Bottom: Quality badge + macro pills -->
-                                <div class="flex items-center justify-between mt-4 pt-3 border-t border-white/10">
-                                    ${qualityBadge}
-                                    <div class="flex items-center gap-2 text-xs">
-                                        <span class="font-medium text-white/90">${calories} ккал</span>
-                                        <span class="text-white/70">Б ${protein}г</span>
-                                        <span class="text-white/70">Ж ${fat}г</span>
-                                        <span class="text-white/70">У ${carbs}г</span>
+                                <!-- Bottom: Full КБЖУ pill badge -->
+                                <div class="flex items-center">
+                                    <div class="glass-badge inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/10">
+                                        <span class="text-xs font-semibold text-white">${escCal} ккал</span>
+                                        <span class="text-xs text-white/70">Б ${escP}г</span>
+                                        <span class="text-xs text-white/70">·</span>
+                                        <span class="text-xs text-white/70">Ж ${escF}г</span>
+                                        <span class="text-xs text-white/70">·</span>
+                                        <span class="text-xs text-white/70">У ${escC}г</span>
                                     </div>
-                                </div>
-
-                                <!-- Menu dropdown -->
-                                <div class="meal-card-menu hidden absolute bottom-full right-0 mb-2 w-40 glass-strong rounded-xl py-1.5 shadow-xl border border-white/10 z-20">
-                                    <button type="button" data-action="edit-meal" data-meal-id="${mealId}" class="w-full px-3 py-2 text-left text-sm text-white hover:bg-white/10 rounded-md">Редактировать</button>
-                                    <button type="button" data-action="delete-meal" data-meal-id="${mealId}" class="w-full px-3 py-2 text-left text-sm text-red-400 hover:bg-red-400/10 rounded-md">Удалить</button>
                                 </div>
                             </div>
                         </div>
 
                         <!-- BACK FACE -->
-                        <div class="meal-card-back absolute inset-0 backface-hidden rotate-y-180 rounded-2xl overflow-hidden bg-zinc-900 p-4 flex flex-col">
-                            <div class="flex items-center justify-between mb-4">
-                                <h4 class="text-lg font-semibold text-white">Детали блюда</h4>
-                                <button type="button" data-action="flip-card" class="w-8 h-8 rounded-lg glass flex items-center justify-center text-white/80 hover:text-white transition-colors" aria-label="Назад">
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                        <div class="meal-card-back absolute inset-0 backface-hidden rotate-y-180 rounded-2xl overflow-hidden bg-zinc-900 p-3.5 flex flex-col">
+                            <div class="flex items-center justify-between mb-3 shrink-0">
+                                <h4 class="text-base font-semibold text-white truncate">Детали блюда</h4>
+                                <button type="button" data-action="flip-card" class="glass-badge w-7 h-7 rounded-full flex items-center justify-center text-white/85 hover:text-white transition-colors shrink-0" aria-label="Назад">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                                 </button>
                             </div>
 
-                            <div class="flex-1 overflow-y-auto space-y-3">
+                            <div class="flex-1 overflow-y-auto min-h-0 space-y-3">
+                                <!-- Ingredients Section -->
                                 <div>
-                                    <p class="text-xs font-medium text-white/50 uppercase tracking-wider mb-2">Ингредиенты</p>
+                                    <p class="text-[10px] font-medium text-white/50 uppercase tracking-wider mb-1">Состав / Ингредиенты</p>
                                     ${ingredientsHtml}
                                 </div>
 
                                 ${micronutrientsHtml}
 
-                                ${meal.notes && !meal.ingredients ? `
-                                    <div class="pt-3 border-t border-white/10">
-                                        <p class="text-xs font-medium text-white/50 uppercase tracking-wider mb-2">Заметки</p>
-                                        <p class="text-sm text-white/80 whitespace-pre-wrap">${escapeHtml(meal.notes)}</p>
-                                    </div>
-                                ` : ''}
+                                ${notesHtml}
                             </div>
 
-                            <div class="flex gap-2 mt-4 pt-3 border-t border-white/10">
-                                <button type="button" data-action="edit-meal" data-meal-id="${mealId}" class="flex-1 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-sm font-medium transition-colors">Редактировать</button>
-                                <button type="button" data-action="delete-meal" data-meal-id="${mealId}" class="flex-1 py-2.5 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-400 text-sm font-medium transition-colors">Удалить</button>
+                            <div class="flex gap-2 mt-3 pt-3 border-t border-white/10 shrink-0">
+                                <button type="button" data-action="edit-meal" data-meal-id="${mealId}" class="flex-1 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-sm font-medium transition-colors">Редактировать</button>
+                                <button type="button" data-action="delete-meal" data-meal-id="${mealId}" class="flex-1 py-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-400 text-sm font-medium transition-colors">Удалить</button>
                             </div>
                         </div>
                     </div>
@@ -452,59 +465,70 @@ export const Components = {
     },
 
     /**
-     * Bottom sheet modal for adding a new meal.
+     * New Meal Modal with photo preview, meal type selection, notes, and explicit submit.
      * Returns HTML string for the modal content.
      */
-    addMealModal() {
+    newMealModal() {
+        const mealTypes = [
+            { value: 'breakfast', label: 'Завтрак' },
+            { value: 'lunch', label: 'Обед' },
+            { value: 'dinner', label: 'Ужин' },
+            { value: 'snack', label: 'Перекус' },
+        ];
+
         return `
-            <div class="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end">
-                <div class="w-full glass-strong rounded-t-2xl p-4 safe-area-inset-bottom animate-slide-up" id="add-meal-modal">
-                    <div class="flex items-center justify-between mb-4">
-                        <h3 class="text-lg font-bold text-surface-900 dark:text-surface-50">Новый приём пищи</h3>
-                        <button type="button" data-action="close-add-meal-modal" class="w-8 h-8 rounded-xl glass flex items-center justify-center text-surface-500 hover:text-surface-900 dark:hover:text-surface-50 transition-colors">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            <div class="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-3" data-action="close-new-meal-modal">
+                <div class="w-full max-w-xs sm:max-w-sm glass-strong rounded-2xl p-4 animate-slide-up flex flex-col gap-3" role="dialog" aria-modal="true" aria-labelledby="new-meal-title" data-action="stop-propagation">
+                    <div class="flex items-center justify-between">
+                        <h3 id="new-meal-title" class="text-base font-bold text-surface-900 dark:text-surface-50">Новый приём пищи</h3>
+                        <button type="button" data-action="close-new-meal-modal" aria-label="Закрыть" class="w-8 h-8 -mr-1 -mt-1 rounded-xl flex items-center justify-center text-surface-500 hover:text-surface-900 dark:hover:text-surface-50 transition-colors shrink-0">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                         </button>
                     </div>
 
-                    <div class="mb-4">
-                        <label class="block text-xs font-medium text-surface-500 dark:text-surface-400 mb-2">Тип приёма пищи</label>
-                        <div class="grid grid-cols-4 gap-2" role="group" aria-label="Выберите тип приёма пищи">
-                            <button type="button" data-action="set-modal-meal-type" data-type="breakfast" class="modal-meal-type-chip px-3 py-2 rounded-xl border border-surface-200 dark:border-white/10 text-[10px] font-medium text-surface-600 dark:text-surface-400 transition-colors">
-                                ${Components.mealTypeIcon('breakfast', 'w-4 h-4 mx-auto mb-1')}
-                                Завтрак
-                            </button>
-                            <button type="button" data-action="set-modal-meal-type" data-type="lunch" class="modal-meal-type-chip px-3 py-2 rounded-xl border border-surface-200 dark:border-white/10 text-[10px] font-medium text-surface-600 dark:text-surface-400 transition-colors">
-                                ${Components.mealTypeIcon('lunch', 'w-4 h-4 mx-auto mb-1')}
-                                Обед
-                            </button>
-                            <button type="button" data-action="set-modal-meal-type" data-type="dinner" class="modal-meal-type-chip px-3 py-2 rounded-xl border border-surface-200 dark:border-white/10 text-[10px] font-medium text-surface-600 dark:text-surface-400 transition-colors">
-                                ${Components.mealTypeIcon('dinner', 'w-4 h-4 mx-auto mb-1')}
-                                Ужин
-                            </button>
-                            <button type="button" data-action="set-modal-meal-type" data-type="snack" class="modal-meal-type-chip px-3 py-2 rounded-xl border border-surface-200 dark:border-white/10 text-[10px] font-medium text-surface-600 dark:text-surface-400 transition-colors">
-                                ${Components.mealTypeIcon('snack', 'w-4 h-4 mx-auto mb-1')}
-                                Перекус
-                            </button>
+                    <!-- Photo preview, revealed only once a file is picked -->
+                    <div id="new-meal-preview-container" class="hidden relative rounded-xl overflow-hidden bg-zinc-800 aspect-[4/3]">
+                        <img id="new-meal-img" src="" alt="Предпросмотр блюда" class="absolute inset-0 w-full h-full object-cover">
+                        <button type="button" id="new-meal-remove-img" data-action="remove-new-meal-img" class="absolute top-2 right-2 w-7 h-7 rounded-full glass-badge text-white flex items-center justify-center hover:bg-black/60 transition-colors" aria-label="Удалить фото">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                        </button>
+                    </div>
+
+                    <!-- Photo source buttons, hidden while a preview is shown -->
+                    <div id="new-meal-source-btns" class="grid grid-cols-2 gap-2">
+                        <button type="button" data-action="new-meal-camera" class="flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-surface-200 dark:border-white/10 text-sm font-medium text-surface-900 dark:text-zinc-100 transition-colors hover:bg-surface-100 dark:hover:bg-white/5">
+                            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 13a3 3 0 100-6 3 3 0 010 6z"/></svg>
+                            <span>Камера</span>
+                        </button>
+                        <button type="button" data-action="new-meal-gallery" class="flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-surface-200 dark:border-white/10 text-sm font-medium text-surface-900 dark:text-zinc-100 transition-colors hover:bg-surface-100 dark:hover:bg-white/5">
+                            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                            <span>Галерея</span>
+                        </button>
+                    </div>
+
+                    <input type="file" id="new-meal-photo-input" accept="image/*" class="hidden" capture="environment">
+
+                    <div>
+                        <span class="block text-[11px] font-medium text-surface-500 dark:text-surface-400 mb-1.5">Тип приёма пищи</span>
+                        <div class="grid grid-cols-4 gap-1.5" role="group" aria-label="Выберите тип приёма пищи">
+                            ${mealTypes.map((t) => `
+                                <button type="button" data-action="set-new-meal-type" data-type="${t.value}" aria-pressed="false"
+                                        class="new-meal-type-chip px-1 py-1.5 rounded-lg border border-surface-200 dark:border-white/10 text-[11px] font-medium text-surface-600 dark:text-surface-400 transition-colors whitespace-nowrap">
+                                    ${t.label}
+                                </button>
+                            `).join('')}
                         </div>
                     </div>
 
-                    <div class="mb-4">
-                        <label for="modal-meal-notes" class="block text-xs font-medium text-surface-500 dark:text-surface-400 mb-1">Заметки (необязательно)</label>
-                        <textarea id="modal-meal-notes" placeholder="Например: Творог 1%, Без сахара" class="w-full px-3 py-2 rounded-xl glass-input text-sm resize-none" rows="2"></textarea>
+                    <div>
+                        <label for="new-meal-notes" class="block text-[11px] font-medium text-surface-500 dark:text-surface-400 mb-1.5">Заметки <span class="opacity-60">(необязательно)</span></label>
+                        <textarea id="new-meal-notes" placeholder="Например: Творог 1%, без сахара" class="w-full px-3 py-2 rounded-xl glass-input text-sm resize-none" rows="2"></textarea>
                     </div>
 
-                    <div class="grid grid-cols-2 gap-3">
-                        <button type="button" data-action="modal-camera" class="flex flex-col items-center justify-center gap-2 py-4 rounded-xl glass border border-surface-200 dark:border-white/10 transition-colors hover:bg-surface-100 dark:hover:bg-white/5">
-                            <svg class="w-7 h-7 text-primary-600 dark:text-zinc-100" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 13a3 3 0 100-6 3 3 0 010 6z"/></svg>
-                            <span class="text-sm font-medium text-surface-900 dark:text-zinc-100">Сделать фото</span>
-                        </button>
-                        <button type="button" data-action="modal-gallery" class="flex flex-col items-center justify-center gap-2 py-4 rounded-xl glass border border-surface-200 dark:border-white/10 transition-colors hover:bg-surface-100 dark:hover:bg-white/5">
-                            <svg class="w-7 h-7 text-primary-600 dark:text-zinc-100" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                            <span class="text-sm font-medium text-surface-900 dark:text-zinc-100">Выбрать из галереи</span>
-                        </button>
-                    </div>
-
-                    <input type="file" id="modal-photo-input" accept="image/*" class="hidden" capture="environment">
+                    <button type="button" id="new-meal-submit" data-action="submit-new-meal" class="w-full flex items-center justify-center gap-2 py-3 glass rounded-xl text-center transition-all bg-primary-600 hover:bg-primary-700 text-white shadow-lg shadow-primary-600/30 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-primary-600 disabled:shadow-none" disabled>
+                        <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+                        <span class="text-sm font-semibold">Отправить / Анализировать</span>
+                    </button>
                 </div>
             </div>
         `;

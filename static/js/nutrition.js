@@ -10,7 +10,7 @@ export const Nutrition = {
     selectedDate: null,
     period: 'day',
     selectedMealType: null,
-    _addMealModalState: null,
+    _newMealModalState: null,
 
     async loadData(date) {
         const token = this.app.state.tokens.access;
@@ -195,6 +195,9 @@ async render(container, app, dateOverride = null) {
             this.selectedDate = new Date().toISOString().split('T')[0];
         }
 
+        // Close any open modal before re-rendering
+        this.closeNewMealModal();
+
         container.innerHTML = Components.loadingSpinner();
 
         try {
@@ -247,16 +250,16 @@ async render(container, app, dateOverride = null) {
             const qualityScore = totalMeals > 0 ? Utils.computeQualityScore(displaySummary) : null;
 
             let html = `
-                <div class="single-viewport safe-area-inset-top safe-area-inset-bottom">
+                <div class="single-viewport px-4 pt-[calc(env(safe-area-inset-top)+8px)] pb-32">
                     <!-- HEADER -->
-                    <div class="viewport-header p-4 pb-3">
-                        <div class="flex justify-between items-center gap-2 mb-3">
+                    <div class="viewport-header p-2 pt-1 pb-1">
+                        <div class="flex justify-between items-center gap-2 mb-1">
                             ${this.renderDateNav(this.selectedDate, dateLabel, fromCache)}
                             ${this.renderPeriodSelector()}
                         </div>
 
                         <!-- Period Title -->
-                        <h3 class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider truncate mb-2">${periodTitle}</h3>
+                        <h3 class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider truncate mb-1">${periodTitle}</h3>
 
                         <!-- 5-Column Metric Bar -->
                         ${Components.nutritionMetricsBar(displaySummary, targets, qualityScore)}
@@ -264,12 +267,12 @@ async render(container, app, dateOverride = null) {
                     </div>
 
                     <!-- CENTER CAROUSEL -->
-                    <div class="viewport-content flex-1 overflow-x-auto snap-x snap-mandatory px-4 pb-4 -mx-4" id="meal-carousel">
+                    <div class="meal-carousel h-[360px] min-h-0 flex-shrink-0 overflow-x-auto snap-x snap-mandatory scroll-smooth -mx-4 px-4 pb-2 touch-pan-x" id="meal-carousel">
                         ${pendingSorted.length > 0
                             ? `
-                            <div class="flex gap-3 snap-none min-w-0">
-                                <div class="w-64 shrink-0 flex items-center justify-center">
-                                    <span class="text-xs text-amber-500 font-medium">Ожидают синхронизации</span>
+                            <div class="flex gap-3 snap-none min-w-0 h-full items-center">
+                                <div class="w-48 shrink-0 flex items-center justify-center">
+                                    <span class="text-xs text-amber-500 font-medium text-center">Ожидают синхронизации</span>
                                 </div>
                                 ${pendingSorted.map((meal) => Components.mealCardPhoto(meal, app)).join('')}
                             </div>
@@ -288,7 +291,7 @@ async render(container, app, dateOverride = null) {
                             </div>
                             `
                             : `
-                            <div class="flex gap-3 snap-none min-w-0">
+                            <div class="flex gap-3 snap-none min-w-0 h-full items-center">
                                 ${carouselCards}
                             </div>
                             `
@@ -317,7 +320,7 @@ async render(container, app, dateOverride = null) {
                         : ''}
 
                     <!-- BOTTOM CTA -->
-                    <div class="viewport-footer p-4 pt-2">
+                    <div class="viewport-footer p-3 pt-1">
                         <button type="button" id="add-meal-btn" data-action="open-add-meal-modal" class="btn-press w-full flex items-center justify-center gap-2 py-3.5 glass rounded-xl text-center transition-all bg-primary-600 hover:bg-primary-700 text-white shadow-lg shadow-primary-600/30">
                             <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                             <span class="text-sm font-semibold">Добавить приём пищи</span>
@@ -331,69 +334,13 @@ async render(container, app, dateOverride = null) {
             this.bindDateNav();
             this.bindPeriodSelector();
             this.bindFlipCards();
-            this.bindMealMenus();
             this.bindAddMealModal();
+            this.bindMealActions();
             this.bindFailedItems();
 
         } catch (error) {
             console.error('[Nutrition] Render error:', error);
             container.innerHTML = Components.errorState('Ошибка загрузки данных');
-        }
-    },
-
-    /**
-     * Three-dot menus on meal cards. One menu open at a time; clicking the
-     * toggle again, pressing Escape, or clicking outside closes it.
-     */
-    bindMealMenus() {
-        this.unbindMealMenus();
-        const container = this.app.elements.pageContent;
-        const triggers = container.querySelectorAll('[data-action="toggle-meal-menu"]');
-
-        const closeAll = (except = null) => {
-            triggers.forEach((trigger) => {
-                if (trigger === except) return;
-                const menu = trigger.parentElement?.querySelector('.meal-card-menu');
-                menu?.classList.add('hidden');
-                trigger.setAttribute('aria-expanded', 'false');
-            });
-        };
-
-        triggers.forEach((trigger) => {
-            trigger.onclick = (e) => {
-                e.stopPropagation();
-                const menu = trigger.parentElement?.querySelector('.meal-card-menu');
-                if (!menu) return;
-                const willOpen = menu.classList.contains('hidden');
-                closeAll(trigger);
-                menu.classList.toggle('hidden', !willOpen);
-                trigger.setAttribute('aria-expanded', String(willOpen));
-            };
-        });
-
-        container.querySelectorAll('.meal-card-menu').forEach((menu) => {
-            menu.onclick = (e) => e.stopPropagation();
-        });
-
-        this._closeMealMenus = (e) => {
-            if (e.target.closest('[data-action="toggle-meal-menu"]')) return;
-            closeAll();
-        };
-        this._closeMealMenusKeydown = (e) => {
-            if (e.key === 'Escape') closeAll();
-        };
-        document.addEventListener('click', this._closeMealMenus);
-        document.addEventListener('keydown', this._closeMealMenusKeydown);
-    },
-
-    unbindMealMenus() {
-        if (this._closeMealMenus) {
-            document.removeEventListener('click', this._closeMealMenus);
-            this._closeMealMenus = null;
-        }
-        if (this._closeMealMenusKeydown) {
-            document.removeEventListener('keydown', this._closeMealMenusKeydown);
-            this._closeMealMenusKeydown = null;
         }
     },
 
@@ -419,84 +366,96 @@ async render(container, app, dateOverride = null) {
         // Open modal
         const openBtn = container.querySelector('#add-meal-btn');
         if (openBtn) {
-            openBtn.onclick = () => this.openAddMealModal();
+            openBtn.onclick = () => this.openNewMealModal();
         }
     },
 
-    openAddMealModal() {
-        if (this._addMealModalState) return;
+    openNewMealModal() {
+        if (this._newMealModalState) return;
 
-        const modalHtml = Components.addMealModal();
+        const modalHtml = Components.newMealModal();
         const modalContainer = document.createElement('div');
         modalContainer.innerHTML = modalHtml;
         const modalEl = modalContainer.firstElementChild;
         document.body.appendChild(modalEl);
 
-        this._addMealModalState = {
+        this._newMealModalState = {
             modalEl,
+            selectedFile: null,
             selectedMealType: null,
+            previewUrl: null,
         };
 
         // Animate in
         requestAnimationFrame(() => {
             modalEl.classList.add('opacity-100');
-            modalEl.querySelector('#add-meal-modal')?.classList.remove('translate-y-full');
         });
 
         // Bind events
-        this.bindAddMealModalEvents(modalEl);
+        this.bindNewMealModalEvents(modalEl);
     },
 
-    closeAddMealModal() {
-        if (!this._addMealModalState) return;
+    closeNewMealModal() {
+        if (!this._newMealModalState) return;
 
-        const { modalEl } = this._addMealModalState;
+        const { modalEl, previewUrl } = this._newMealModalState;
+        // Revoke the object URL before the modal leaves the DOM so a preview
+        // that is never submitted does not leak its blob.
+        if (previewUrl) {
+            URL.revokeObjectURL(previewUrl);
+        }
         modalEl.classList.remove('opacity-100');
-        modalEl.querySelector('#add-meal-modal')?.classList.add('translate-y-full');
 
         setTimeout(() => {
             modalEl.remove();
-            this._addMealModalState = null;
-        }, 250);
+            this._newMealModalState = null;
+        }, 200);
     },
 
-    bindAddMealModalEvents(modalEl) {
-        const state = this._addMealModalState;
+    bindNewMealModalEvents(modalEl) {
+        const state = this._newMealModalState;
 
-        // Close button
-        modalEl.querySelector('[data-action="close-add-meal-modal"]')?.addEventListener('click', () => {
-            this.closeAddMealModal();
+        // Close button & backdrop
+        modalEl.querySelector('[data-action="close-new-meal-modal"]')?.addEventListener('click', () => {
+            this.closeNewMealModal();
         });
 
-        // Backdrop click to close
         modalEl.addEventListener('click', (e) => {
-            if (e.target === modalEl) {
-                this.closeAddMealModal();
+            if (e.target === modalEl || e.target.dataset.action === 'close-new-meal-modal') {
+                this.closeNewMealModal();
             }
+        });
+
+        // Stop propagation on modal content
+        modalEl.querySelector('[data-action="stop-propagation"]')?.addEventListener('click', (e) => {
+            e.stopPropagation();
         });
 
         // Escape key
         const onKeydown = (e) => {
             if (e.key === 'Escape') {
-                this.closeAddMealModal();
+                this.closeNewMealModal();
                 document.removeEventListener('keydown', onKeydown);
             }
         };
         document.addEventListener('keydown', onKeydown);
 
         // Meal type selection
-        modalEl.querySelectorAll('[data-action="set-modal-meal-type"]').forEach((btn) => {
+        modalEl.querySelectorAll('[data-action="set-new-meal-type"]').forEach((btn) => {
             btn.onclick = () => {
                 state.selectedMealType = btn.dataset.type;
-                modalEl.querySelectorAll('[data-action="set-modal-meal-type"]').forEach((b) => {
-                    b.classList.toggle('active', b.dataset.type === state.selectedMealType);
+                modalEl.querySelectorAll('[data-action="set-new-meal-type"]').forEach((b) => {
+                    const isActive = b.dataset.type === state.selectedMealType;
+                    b.classList.toggle('active', isActive);
+                    b.setAttribute('aria-pressed', String(isActive));
                 });
+                this.updateNewMealSubmitState(modalEl, state);
             };
         });
 
         // Camera button
-        modalEl.querySelector('[data-action="modal-camera"]')?.addEventListener('click', () => {
-            const input = modalEl.querySelector('#modal-photo-input');
+        modalEl.querySelector('[data-action="new-meal-camera"]')?.addEventListener('click', () => {
+            const input = modalEl.querySelector('#new-meal-photo-input');
             if (input) {
                 input.setAttribute('capture', 'environment');
                 input.click();
@@ -504,41 +463,111 @@ async render(container, app, dateOverride = null) {
         });
 
         // Gallery button
-        modalEl.querySelector('[data-action="modal-gallery"]')?.addEventListener('click', () => {
-            const input = modalEl.querySelector('#modal-photo-input');
+        modalEl.querySelector('[data-action="new-meal-gallery"]')?.addEventListener('click', () => {
+            const input = modalEl.querySelector('#new-meal-photo-input');
             if (input) {
                 input.removeAttribute('capture');
                 input.click();
             }
         });
 
+        // Remove image button
+        modalEl.querySelector('[data-action="remove-new-meal-img"]')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.clearNewMealImage(modalEl, state);
+        });
+
         // File input change
-        const photoInput = modalEl.querySelector('#modal-photo-input');
+        const photoInput = modalEl.querySelector('#new-meal-photo-input');
         if (photoInput) {
             photoInput.onchange = (e) => {
                 const file = e.target.files[0];
                 if (file) {
-                    this.handleModalPhotoUpload(file, state);
+                    this.handleNewMealFileSelect(file, modalEl, state);
                 }
             };
         }
+
+        // Submit button
+        modalEl.querySelector('[data-action="submit-new-meal"]')?.addEventListener('click', () => {
+            this.handleNewMealSubmit(modalEl, state);
+        });
     },
 
-    async handleModalPhotoUpload(file, state) {
-        if (!state.selectedMealType) {
-            this.app.showToast('Выберите тип приёма пищи', 'error');
+    handleNewMealFileSelect(file, modalEl, state) {
+        // Validate file type
+        if (!file.type.startsWith('image/')) {
+            this.app.showToast('Выберите изображение', 'error');
             return;
         }
 
-        const notesInput = this._addMealModalState.modalEl.querySelector('#modal-meal-notes');
-        const notes = notesInput ? notesInput.value || null : null;
+        state.selectedFile = file;
+
+        const previewContainer = modalEl.querySelector('#new-meal-preview-container');
+        const preview = modalEl.querySelector('#new-meal-img');
+        const sourceBtns = modalEl.querySelector('#new-meal-source-btns');
+
+        // Revoke the previous preview so re-picking a photo does not leak.
+        if (state.previewUrl) {
+            URL.revokeObjectURL(state.previewUrl);
+        }
+        state.previewUrl = URL.createObjectURL(file);
+
+        preview.src = state.previewUrl;
+        previewContainer.classList.remove('hidden');
+        sourceBtns.classList.add('hidden');
+
+        this.updateNewMealSubmitState(modalEl, state);
+    },
+
+    clearNewMealImage(modalEl, state) {
+        const previewContainer = modalEl.querySelector('#new-meal-preview-container');
+        const preview = modalEl.querySelector('#new-meal-img');
+        const sourceBtns = modalEl.querySelector('#new-meal-source-btns');
+        const photoInput = modalEl.querySelector('#new-meal-photo-input');
+
+        if (state.previewUrl) {
+            URL.revokeObjectURL(state.previewUrl);
+            state.previewUrl = null;
+        }
+        preview.removeAttribute('src');
+        previewContainer.classList.add('hidden');
+        sourceBtns.classList.remove('hidden');
+        photoInput.value = '';
+        state.selectedFile = null;
+
+        this.updateNewMealSubmitState(modalEl, state);
+    },
+
+    updateNewMealSubmitState(modalEl, state) {
+        const submitBtn = modalEl.querySelector('#new-meal-submit');
+        if (submitBtn) {
+            const hasFile = !!state.selectedFile;
+            const hasMealType = !!state.selectedMealType;
+            submitBtn.disabled = !(hasFile && hasMealType);
+        }
+    },
+
+    async handleNewMealSubmit(modalEl, state) {
+        if (!state.selectedFile || !state.selectedMealType) {
+            return;
+        }
+
+        const notesInput = modalEl.querySelector('#new-meal-notes');
+        const notes = notesInput ? notesInput.value.trim() || null : null;
         const token = this.app.state.tokens.access;
 
-        Camera.app = this.app;
-        let compressedBlob = file;
+        const submitBtn = modalEl.querySelector('#new-meal-submit');
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `
+            <svg class="animate-spin w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+            <span class="text-sm font-semibold">Загрузка...</span>
+        `;
+
+        let compressedBlob = state.selectedFile;
 
         try {
-            const compressed = await Utils.compressImage(file);
+            const compressed = await Utils.compressImage(state.selectedFile);
             if (compressed) {
                 compressedBlob = compressed;
             }
@@ -554,16 +583,22 @@ async render(container, app, dateOverride = null) {
         try {
             await API.post('/nutrition/photos', formData, token, true);
             this.app.showToast('Фото загружено, идёт анализ', 'success');
-            this.closeAddMealModal();
+            this.closeNewMealModal();
         } catch (error) {
             if (error?.isNetworkError || error?.offlineQueued) {
                 await Camera.queueOfflineMeal(compressedBlob, notes, state.selectedMealType);
                 this.app.showToast('Нет связи. Фото сохранено локально и будет загружено при появлении связи', 'info');
-                this.closeAddMealModal();
+                this.closeNewMealModal();
             } else {
                 console.error('[Nutrition] Upload error:', error);
                 this.app.showToast(error.data?.detail || 'Ошибка загрузки', 'error');
             }
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = `
+                <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+                <span class="text-sm font-semibold">Отправить / Анализировать</span>
+            `;
         }
 
         this.render(this.app.elements.pageContent, this.app, this.selectedDate);
@@ -633,11 +668,19 @@ async render(container, app, dateOverride = null) {
         });
     },
 
+    /**
+     * Edit/delete handlers for every card action button (front menu and back
+     * face). Both stop propagation and prevent default: the flip listener is
+     * bound on the .meal-card-inner ancestor, so without this the click would
+     * bubble up and rotate the card instead of running the action.
+     */
     bindMealActions() {
         const container = this.app.elements.pageContent;
 
         container.querySelectorAll('[data-action="edit-meal"]').forEach((btn) => {
             btn.onclick = (e) => {
+                e.stopPropagation();
+                e.preventDefault();
                 const mealId = btn.dataset.mealId;
                 this.app.showToast(`Редактирование: ${mealId}`, 'info');
             };
@@ -646,6 +689,7 @@ async render(container, app, dateOverride = null) {
         container.querySelectorAll('[data-action="delete-meal"]').forEach((btn) => {
             btn.onclick = async (e) => {
                 e.stopPropagation();
+                e.preventDefault();
                 const mealId = btn.dataset.mealId;
                 const confirmed = await Components.confirmModal({
                     title: 'Удалить блюдо?',

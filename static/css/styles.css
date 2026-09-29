@@ -71,21 +71,61 @@
     background-repeat: no-repeat;
     background-color: #27272a;
 }
-.meal-card-overlay {
-    background: linear-gradient(
-        to top,
-        rgba(0, 0, 0, 0.88) 0%,
-        rgba(0, 0, 0, 0.55) 45%,
-        rgba(0, 0, 0, 0.12) 75%,
-        rgba(0, 0, 0, 0.35) 100%
-    );
+
+/* Floating badge on top of a photo: blurred glass pill that stays readable
+   on both very dark and very light food photography. */
+.glass-badge {
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
-/* Enlarged meal carousel with peek effect */
+/* Adaptive contrast: bottom scrim keeps titles and macros legible on light
+   photos (rice, bananas) without dimming the whole card. */
+.meal-card-gradient {
+    background: linear-gradient(
+        to top,
+        rgba(0, 0, 0, 0.85) 0%,
+        rgba(0, 0, 0, 0.55) 22%,
+        rgba(0, 0, 0, 0.22) 50%,
+        rgba(0, 0, 0, 0) 74%
+    );
+}
+.meal-card-scrim {
+    background: linear-gradient(
+        to bottom,
+        rgba(0, 0, 0, 0.55) 0%,
+        rgba(0, 0, 0, 0.18) 45%,
+        rgba(0, 0, 0, 0) 100%
+    );
+}
+.text-shadow-subtle {
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+/* Adaptive card sizing: the carousel flexes, cards scale with the viewport
+   so there is no dead vertical space above the CTA on short phones. */
+.meal-card-slot {
+    width: min(86vw, 320px);
+    height: clamp(220px, 42dvh, 360px);
+}
+
+/* Meal carousel */
 .meal-carousel {
-    padding-left: 0.5rem;
-    padding-right: 0.5rem;
+    display: flex;
+    align-items: center;
     gap: 1rem;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x;
+    padding-left: 1rem;
+    padding-right: 1rem;
+    padding-bottom: 1rem;
+    flex: 1 1 0%;
+    min-height: 0;
 }
 .meal-carousel::-webkit-scrollbar {
     display: none;
@@ -94,8 +134,38 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
 }
-.meal-carousel .snap-start {
-    scroll-snap-align: start;
+.meal-carousel > * {
+    scroll-snap-align: center;
+    flex-shrink: 0;
+}
+
+/* Meal card 3D flip */
+.perspective-card {
+    perspective: 1000px;
+}
+.transform-style-preserve-3d {
+    transform-style: preserve-3d;
+}
+.backface-hidden {
+    backface-visibility: hidden;
+}
+.rotate-y-180 {
+    transform: rotateY(180deg);
+}
+.meal-card-inner.is-flipped {
+    transform: rotateY(180deg);
+}
+.meal-card-front,
+.meal-card-back {
+    backface-visibility: hidden;
+}
+/* Backface safety: keep both faces clipped to the card bounds so the
+   3D flip never reveals content bleeding past the card edges. */
+.meal-card-front,
+.meal-card-back {
+    will-change: transform;
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
 }
 
 /* Smooth transitions */
@@ -212,36 +282,9 @@ input, select, textarea:focus {
     border-color: #fafafa;
 }
 
-/* ============ 3D Flip Card ============ */
-.perspective-card {
-    perspective: 1000px;
-}
-.transform-style-preserve-3d {
-    transform-style: preserve-3d;
-}
-.backface-hidden {
-    backface-visibility: hidden;
-}
-.rotate-y-180 {
-    transform: rotateY(180deg);
-}
-.meal-card-inner.is-flipped {
-    transform: rotateY(180deg);
-}
-.meal-card-front,
-.meal-card-back {
-    backface-visibility: hidden;
-}
-
-/* Meal card overlay gradient */
-.meal-card-overlay {
-    background: linear-gradient(
-        to top,
-        rgba(0, 0, 0, 0.88) 0%,
-        rgba(0, 0, 0, 0.55) 45%,
-        rgba(0, 0, 0, 0.12) 75%,
-        rgba(0, 0, 0, 0.35) 100%
-    );
+/* Progress bar in metric columns */
+.grid-cols-5 .h-1 > div {
+    transition: width 0.5s ease-out;
 }
 
 /* ============ Single Viewport Layout (iPhone 13 mini) ============ */
@@ -274,28 +317,14 @@ input, select, textarea:focus {
     flex-shrink: 0;
 }
 
-/* Modal slide up animation */
-@keyframes slideUp {
-    from { opacity: 0; transform: translateY(20px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-.animate-slide-up {
-    animation: slideUp 0.3s ease-out;
-}
-
-/* Modal meal type chip active state */
-.modal-meal-type-chip.active {
+/* New meal modal type chip active state */
+.new-meal-type-chip.active {
     background: #18181b;
     color: #fafafa;
     border-color: #18181b;
 }
-.dark .modal-meal-type-chip.active {
+.dark .new-meal-type-chip.active {
     background: #fafafa;
     color: #09090b;
     border-color: #fafafa;
-}
-
-/* Progress bar in metric columns */
-.grid-cols-5 .h-1 > div {
-    transition: width 0.5s ease-out;
 }
