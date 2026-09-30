@@ -332,6 +332,38 @@ input, select, textarea:focus {
     box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.3);
 }
 
+/* Anthropometrics sheet: selected chip (neon lime) and the live KBZhU preview */
+.anthro-chip[aria-pressed="true"] {
+    background: rgba(132, 204, 22, 0.14);
+    color: #4d7c0f;
+    border-color: #84cc16;
+    box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.25);
+}
+.dark .anthro-chip[aria-pressed="true"] {
+    background: rgba(132, 204, 22, 0.16);
+    color: #d9f99d;
+    border-color: #84cc16;
+    box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.3);
+}
+.anthro-preview {
+    background: rgba(113, 113, 122, 0.07);
+    border: 1px solid rgba(113, 113, 122, 0.14);
+}
+.dark .anthro-preview {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.08);
+}
+/* PRO status card: a quiet lime wash so the tier reads at a glance without
+   repeating the per-limit bars, which carry no meaning without a quota. */
+.tariff-pro-card {
+    background: linear-gradient(135deg, rgba(132, 204, 22, 0.12), rgba(132, 204, 22, 0.03));
+    border: 1px solid rgba(132, 204, 22, 0.32);
+}
+.dark .tariff-pro-card {
+    background: linear-gradient(135deg, rgba(132, 204, 22, 0.14), rgba(132, 204, 22, 0.03));
+    border-color: rgba(132, 204, 22, 0.28);
+}
+
 /* ============ Subscription Plan & Usage (Profile) ============ */
 .plan-badge {
     display: inline-flex;

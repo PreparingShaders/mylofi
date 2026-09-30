@@ -11,6 +11,8 @@ from app.schemas import (
     UserResponse,
     UserMe,
     UserUpdate,
+    AnthropometricsUpdate,
+    AnthropometricsResponse,
     UsageResponse,
     Token,
     RefreshTokenRequest,
@@ -96,6 +98,11 @@ from app.services.limits import (
     can_use_meal_ai,
     consume_meal_ai,
     count_workout_templates,
+)
+from app.services.nutrition_targets import (
+    calculate_macro_targets,
+    normalize_activity_level,
+    normalize_goal,
 )
 from app.models import User, Meal
 from app.ws.manager import manager, get_websocket_user
@@ -275,6 +282,63 @@ async def update_current_user(
     return current_user
 
 
+@router.patch("/users/me/anthropometrics", response_model=AnthropometricsResponse)
+async def update_anthropometrics(
+    data: AnthropometricsUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Store the anthropometrics and recalculate the target KBZhU and macros"""
+    activity_level = normalize_activity_level(data.activity_level)
+    goal = normalize_goal(data.goal.value)
+
+    current_user.gender = data.gender.value
+    current_user.age = data.age
+    current_user.height_cm = data.height_cm
+    current_user.weight_kg = data.weight_kg
+    current_user.activity_level = activity_level
+    current_user.goal = goal
+    current_user.target_weight_kg = data.target_weight_kg
+    current_user.updated_at = datetime.now(timezone.utc)
+
+    targets = calculate_macro_targets(
+        weight_kg=current_user.weight_kg,
+        height_cm=current_user.height_cm,
+        age=current_user.age,
+        gender=current_user.gender,
+        activity_level=activity_level,
+        goal=goal,
+    )
+
+    # The schema validates the four formula inputs, so a None result would mean
+    # the service contract broke rather than that the client sent bad data.
+    if targets is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Не удалось рассчитать норму калорий: проверьте пол, возраст, рост и вес",
+        )
+
+    current_user.target_calories = targets.calories
+    current_user.target_protein_g = targets.protein_g
+    current_user.target_fat_g = targets.fat_g
+    current_user.target_carbs_g = targets.carbs_g
+
+    await db.commit()
+    await db.refresh(current_user)
+
+    return {
+        "user": current_user,
+        "targets": {
+            "bmr": targets.bmr,
+            "tdee": targets.tdee,
+            "calories": targets.calories,
+            "protein_g": targets.protein_g,
+            "fat_g": targets.fat_g,
+            "carbs_g": targets.carbs_g,
+        },
+    }
+
+
 @router.get("/users/me/usage", response_model=UsageResponse)
 async def get_usage_info(
     db: AsyncSession = Depends(get_db),
@@ -295,6 +359,21 @@ async def activate_pro(
 ):
     """Activate the PRO plan for the current user"""
     current_user.is_premium = True
+    current_user.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(current_user)
+
+    template_count = await count_workout_templates(db, current_user.id)
+    return build_usage_snapshot(current_user, template_count)
+
+
+@router.post("/users/me/toggle-pro", response_model=UsageResponse)
+async def toggle_pro(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Dev/testing switch between the Free and PRO tiers"""
+    current_user.is_premium = not bool(current_user.is_premium)
     current_user.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(current_user)

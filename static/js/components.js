@@ -542,5 +542,130 @@ export const Components = {
                 </div>
             </div>
         `;
+    },
+
+    /**
+     * Anthropometrics & target KBZhU bottom sheet. Pre-filled from the user
+     * record; the caller recalculates the preview on every change.
+     * Returns HTML string for the modal content.
+     */
+    anthropometricsModal(user = {}) {
+        const genders = [
+            { value: 'male', label: 'Мужской' },
+            { value: 'female', label: 'Женский' },
+        ];
+        const activities = [
+            { value: 'sedentary', label: 'Минимальная (сидячий образ)' },
+            { value: 'light', label: 'Низкая (1-2 тренировки)' },
+            { value: 'moderate', label: 'Средняя (3-4 тренировки)' },
+            { value: 'active', label: 'Высокая (5-6 тренировок)' },
+            { value: 'athlete', label: 'Очень высокая (7+)' },
+        ];
+        const goals = [
+            { value: 'lose', label: 'Снизить' },
+            { value: 'maintain', label: 'Поддерживать' },
+            { value: 'gain', label: 'Набрать' },
+        ];
+
+        const currentGender = genders.some((g) => g.value === user.gender) ? user.gender : 'male';
+        const currentActivity = activities.some((a) => a.value === user.activity_level) ? user.activity_level : 'moderate';
+        const currentGoal = goals.some((g) => g.value === user.goal) ? user.goal : 'maintain';
+
+        const genderChips = genders.map(({ value, label }) => `
+            <button type="button" data-action="set-anthro-gender" data-value="${value}" aria-pressed="${value === currentGender}"
+                    class="anthro-chip px-3 py-2.5 rounded-xl bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/10 text-xs font-semibold text-zinc-600 dark:text-zinc-400 transition-all hover:border-lime-500/50 whitespace-nowrap">
+                ${label}
+            </button>
+        `).join('');
+
+        const goalChips = goals.map(({ value, label }) => `
+            <button type="button" data-action="set-anthro-goal" data-value="${value}" aria-pressed="${value === currentGoal}"
+                    class="anthro-chip px-3 py-2.5 rounded-xl bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/10 text-xs font-semibold text-zinc-600 dark:text-zinc-400 transition-all hover:border-lime-500/50 whitespace-nowrap">
+                ${label}
+            </button>
+        `).join('');
+
+        const activityOptions = activities.map(({ value, label }) => `
+            <option value="${value}" ${value === currentActivity ? 'selected' : ''}>${label}</option>
+        `).join('');
+
+        const fieldClass = 'w-full px-3 py-2.5 rounded-xl bg-zinc-100 dark:bg-zinc-800/80 border border-zinc-200 dark:border-white/10 text-zinc-900 dark:text-zinc-100 text-sm focus:border-lime-500 focus:outline-none';
+        const labelClass = 'block text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold mb-1.5';
+
+        return `
+            <div class="drum-sheet fixed inset-0 z-50 pointer-events-auto">
+                <div class="drum-sheet-backdrop absolute inset-0 bg-black/40 dark:bg-black/60" data-action="close-anthropometrics-modal"></div>
+                <div class="drum-sheet-panel absolute bottom-0 left-0 right-0 bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 rounded-t-2xl border-t border-zinc-200 dark:border-white/10 flex flex-col drum-sheet-safe" role="dialog" aria-modal="true" aria-labelledby="anthro-title">
+                    <div class="flex flex-col gap-3.5 px-4 pt-0 pb-1">
+                        <div class="w-10 h-1 rounded-full bg-zinc-300 dark:bg-white/20 mx-auto drum-sheet-handle flex-shrink-0"></div>
+
+                        <div class="flex items-start justify-between gap-3">
+                            <div class="min-w-0">
+                                <div class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-500 font-semibold truncate">АНТРОПОМЕТРИКА</div>
+                                <h3 id="anthro-title" class="text-base font-bold text-zinc-900 dark:text-zinc-100 truncate">Целевая норма КБЖУ</h3>
+                            </div>
+                            <button type="button" data-action="close-anthropometrics-modal" aria-label="Закрыть" class="w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0 flex items-center justify-center hover:text-zinc-900 dark:hover:text-zinc-50 transition-colors">
+                                ✕
+                            </button>
+                        </div>
+
+                        <div>
+                            <div class="${labelClass}">Пол</div>
+                            <div class="grid grid-cols-2 gap-1.5" role="group" aria-label="Пол">
+                                ${genderChips}
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2.5">
+                            <div>
+                                <label for="anthro-age" class="${labelClass}">Возраст</label>
+                                <input type="number" inputmode="numeric" id="anthro-age" data-field="age" min="10" max="100" placeholder="30"
+                                       value="${escapeHtml(user.age ?? '')}" class="${fieldClass}">
+                            </div>
+                            <div>
+                                <label for="anthro-height" class="${labelClass}">Рост, см</label>
+                                <input type="number" inputmode="decimal" id="anthro-height" data-field="height" min="100" max="250" step="0.5" placeholder="175"
+                                       value="${escapeHtml(user.height_cm ?? '')}" class="${fieldClass}">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2.5">
+                            <div>
+                                <label for="anthro-weight" class="${labelClass}">Вес, кг</label>
+                                <input type="number" inputmode="decimal" id="anthro-weight" data-field="weight" min="30" max="300" step="0.1" placeholder="70"
+                                       value="${escapeHtml(user.weight_kg ?? '')}" class="${fieldClass}">
+                            </div>
+                            <div>
+                                <label for="anthro-target-weight" class="${labelClass}">Целевой вес, кг <span class="opacity-60 normal-case tracking-normal">(необязательно)</span></label>
+                                <input type="number" inputmode="decimal" id="anthro-target-weight" data-field="target_weight" min="30" max="300" step="0.1" placeholder="—"
+                                       value="${escapeHtml(user.target_weight_kg ?? '')}" class="${fieldClass}">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label for="anthro-activity" class="${labelClass}">Активность</label>
+                            <select id="anthro-activity" data-field="activity" class="${fieldClass}">
+                                ${activityOptions}
+                            </select>
+                        </div>
+
+                        <div>
+                            <div class="${labelClass}">Цель</div>
+                            <div class="grid grid-cols-3 gap-1.5" role="group" aria-label="Цель">
+                                ${goalChips}
+                            </div>
+                        </div>
+
+                        <div id="anthro-preview" class="anthro-preview rounded-xl p-3"></div>
+
+                        <button type="button" id="anthro-submit" data-action="save-anthropometrics"
+                                class="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-lime-500 hover:bg-lime-400 text-zinc-950 font-semibold text-base shadow-lg shadow-lime-500/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-lime-500 disabled:shadow-none" disabled>
+                            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                            <span>Сохранить и пересчитать</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
     }
 };

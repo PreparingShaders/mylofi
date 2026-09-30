@@ -612,6 +612,12 @@ const App = {
             case 'activate-pro':
                 await Profile.activatePro(this.elements.pageContent);
                 break;
+            case 'toggle-pro':
+                await Profile.togglePro(this.elements.pageContent);
+                break;
+            case 'edit-anthropometrics':
+                Profile.openAnthropometricsModal();
+                break;
         }
     },
 

@@ -1,25 +1,29 @@
-# Plan: Tiered Usage Limits & Subscription Logic (Free vs PRO)
+# Plan: Profile UI Enhancements & Tiered Limits (Dev PRO Toggle, Clean Tariff Block, Anthropometrics & KBZhU Form)
 
 ## Goal
-Implement a usage-based limit system for Free tier users and display active usage counts on the Profile page, supporting Free vs PRO tiers without any emojis in UI text, labels, or badges.
+Refine the Profile page and backend logic to support:
+1. Dev/Testing PRO subscription toggle (`POST /api/v1/users/me/toggle-pro`).
+2. Clean Tariff & Usage UI: Conditional rendering for PRO members (clean status card, no repeated "Без ограничений" spam) vs Free users (active usage progress bars).
+3. Anthropometrics & Target KBZhU Section: Storage of gender, age, height, weight, activity, goal, and Mifflin-St Jeor macro calculation modal/form.
 
 ## Affected Boundaries & Files
-1. **Database Model (`app/models/__init__.py`)**: Add subscription and usage tracking fields (`is_premium`, `meal_ai_daily_count`, `last_meal_ai_date`, `last_workout_ai_analysis_at`, `last_nutrition_ai_analysis_at`, `created_workouts_count`).
-2. **Pydantic Schemas (`app/schemas/__init__.py`)**: Expose subscription status and usage counters in `UserResponse`.
-3. **Feature Gate Logic (`app/services/limits.py`)**: Implement daily reset checks and limit validation functions (`can_use_meal_ai`, `can_create_workout_template`, `can_run_workout_ai`, `can_run_nutrition_ai`, `can_use_combined_ai`).
-4. **Profile UI & JS (`static/js/profile.js` & HTML)**: Render subscription status badge ("Free Plan" or "PRO Member"), usage progress bars, text counters, and the "Активировать PRO" button.
+1. **Backend Route (`app/api/v1/routes.py` or user routes)**: Add `POST /api/v1/users/me/toggle-pro` endpoint.
+2. **Database Models & Schemas (`app/models/__init__.py`, `app/schemas/__init__.py`)**: Add fields: `is_premium`, `age`, `goal` ('lose'/'maintain'/'gain'), `meal_ai_daily_count`, `last_meal_ai_date`, etc.
+3. **Profile Frontend (`static/js/profile.js`, `static/index.html`)**:
+   - PRO toggle button / badge click handler.
+   - Clean PRO status card vs Free progress bars card.
+   - Anthropometrics & Target KBZhU card and calculation modal with Mifflin-St Jeor formula.
 
-## Detailed Requirements & Constraints
-- Strictly no emojis in UI text, labels, or badges.
-- Daily reset at midnight for `meal_ai_daily_count`.
-- Free tier limits:
-  - Meal AI recognition: 5 photo analyses per day.
-  - Workout routines creation: Max 3 custom templates.
-  - Weekly AI workout analysis: 1 analysis per 7 days.
-  - Weekly AI nutrition analysis: 1 analysis per 7 days.
-  - Combined AI analysis: PRO only.
+## Detailed Requirements
+- Dev PRO Toggle: Endpoint to toggle `user.is_premium`. Frontend button to switch between Free and PRO.
+- Clean Tariff UI:
+  - If PRO: Badge "PRO Member", descriptive text, "Сбросить до Free (Dev)" button.
+  - If Free: Progress bars for Meal AI (X / 5) and Workout Templates (Y / 3), "Активировать PRO" button.
+- Anthropometrics & KBZhU Form:
+  - Display Gender, Age, Height, Weight, Activity, Goal, and daily target Calories, Protein, Fat, Carbs.
+  - Interactive modal to update and recalculate automatically.
 
 ## Validation Plan
-1. Inspect database model and schema migrations / initialization.
-2. Verify feature gate helper functions handle daily resets and premium bypass correctly.
-3. Verify Profile UI correctly renders progress bars, counters, and subscription badge without emojis.
+1. Test backend PRO toggle endpoint via API / frontend click.
+2. Verify UI adapts correctly between PRO and Free states.
+3. Test Mifflin-St Jeor calculation logic and form updates.

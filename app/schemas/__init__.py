@@ -23,6 +23,17 @@ class WorkoutSessionStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class Gender(str, Enum):
+    MALE = "male"
+    FEMALE = "female"
+
+
+class UserGoal(str, Enum):
+    LOSE = "lose"
+    MAINTAIN = "maintain"
+    GAIN = "gain"
+
+
 # Auth schemas
 class TokenBase(BaseModel):
     access_token: str
@@ -63,7 +74,10 @@ class UserBase(BaseModel):
     weight_kg: Optional[float] = None
     birth_date: Optional[datetime] = None
     gender: Optional[str] = None
+    age: Optional[int] = None
     activity_level: Optional[str] = None
+    goal: Optional[str] = None
+    target_weight_kg: Optional[float] = None
     target_calories: Optional[int] = None
     target_protein_g: Optional[float] = None
     target_fat_g: Optional[float] = None
@@ -80,12 +94,36 @@ class UserUpdate(BaseModel):
     weight_kg: Optional[float] = None
     birth_date: Optional[datetime] = None
     gender: Optional[str] = None
+    age: Optional[int] = None
     activity_level: Optional[str] = None
+    goal: Optional[str] = None
+    target_weight_kg: Optional[float] = None
     target_calories: Optional[int] = None
     target_protein_g: Optional[float] = None
     target_fat_g: Optional[float] = None
     target_carbs_g: Optional[float] = None
     push_subscription: Optional[str] = None
+
+
+class AnthropometricsUpdate(BaseModel):
+    """Full anthropometrics payload; target macros are recalculated from it."""
+
+    gender: Gender
+    age: int = Field(ge=10, le=100)
+    height_cm: float = Field(ge=100, le=250)
+    weight_kg: float = Field(ge=30, le=300)
+    activity_level: str = Field(default="moderate", max_length=50)
+    goal: UserGoal = UserGoal.MAINTAIN
+    target_weight_kg: Optional[float] = Field(None, ge=30, le=300)
+
+
+class MacroTargetsResponse(BaseModel):
+    bmr: int
+    tdee: int
+    calories: int
+    protein_g: float
+    fat_g: float
+    carbs_g: float
 
 
 class UserResponse(UserBase):
@@ -134,6 +172,11 @@ class UsageResponse(BaseModel):
 
 class UserMe(UserResponse):
     pass
+
+
+class AnthropometricsResponse(BaseModel):
+    user: UserMe
+    targets: MacroTargetsResponse
 
 
 # Nutrition schemas
@@ -435,6 +478,8 @@ __all__ = [
     "UserRole",
     "MealStatus",
     "WorkoutSessionStatus",
+    "Gender",
+    "UserGoal",
     "Token",
     "TokenPayload",
     "UserRegister",
@@ -445,6 +490,9 @@ __all__ = [
     "UserUpdate",
     "UserResponse",
     "UserMe",
+    "AnthropometricsUpdate",
+    "MacroTargetsResponse",
+    "AnthropometricsResponse",
     "UsageLimitEntry",
     "UsageLimits",
     "UsageResponse",

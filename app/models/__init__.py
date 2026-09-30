@@ -51,9 +51,12 @@ class User(Base):
     weight_kg: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     birth_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     gender: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    age: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     activity_level: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    goal: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
     # Target macros
+    target_weight_kg: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     target_calories: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     target_protein_g: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     target_fat_g: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
