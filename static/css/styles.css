@@ -330,6 +330,185 @@ input, select, textarea:focus {
     border-color: #fafafa;
 }
 
+/* ============ Drum Picker Bottom Sheet (workout weight/reps) ============ */
+/* Item height and half-viewport padding are mirrored in JS (DRUM_ITEM_HEIGHT),
+   so index math and scroll-snap stay in sync. Compact viewports shrink the item
+   height to 36px; JS reads the live value from --drum-item-height. */
+.drum-sheet-panel {
+    max-height: 88dvh;
+    overflow-y: auto;
+    animation: drum-sheet-in 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.drum-sheet-safe {
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+}
+.drum-sheet-handle {
+    margin-top: 0.5rem;
+    margin-bottom: 0.25rem;
+}
+.drum-sheet-backdrop {
+    animation: drum-fade-in 0.2s ease-out;
+}
+@keyframes drum-sheet-in {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+}
+@keyframes drum-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+.drum {
+    --drum-item-height: 40px;
+    --drum-viewport: 200px;
+    height: var(--drum-viewport);
+    padding: 80px 0;
+    overflow-y: auto;
+    scroll-snap-type: y mandatory;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+.drum::-webkit-scrollbar {
+    display: none;
+}
+.drum-item {
+    height: var(--drum-item-height);
+    line-height: var(--drum-item-height);
+    scroll-snap-align: center;
+    text-align: center;
+    font-weight: 600;
+    color: #71717a;
+    will-change: transform, opacity;
+}
+.drum-item.is-selected {
+    color: #f4f4f5;
+}
+.drum-value {
+    font-variant-numeric: tabular-nums;
+}
+.drum-group-dim {
+    opacity: 0.35;
+}
+.drum-overlay-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 40px;
+    margin-top: -20px;
+    border-top: 2px solid #84cc16;
+    border-bottom: 2px solid #84cc16;
+    border-radius: 12px;
+    background: rgba(132, 204, 22, 0.08);
+    box-shadow: 0 0 16px rgba(132, 204, 22, 0.18);
+    pointer-events: none;
+}
+.drum-mask {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 56px;
+    pointer-events: none;
+}
+.drum-mask-top {
+    top: 0;
+    background: linear-gradient(to bottom, #18181b 10%, rgba(24, 24, 27, 0));
+}
+.drum-mask-bottom {
+    bottom: 0;
+    background: linear-gradient(to top, #18181b 10%, rgba(24, 24, 27, 0));
+}
+/* Neon highlight for the input currently owned by the picker and the set that
+   receives focus after saving */
+.drum-source-active,
+.drum-next-set {
+    border-color: #84cc16 !important;
+    box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.3);
+}
+/* Set inputs are picker triggers, not text fields: no tap flash, no double-tap zoom */
+input[data-field="weight"],
+input[data-field="reps"] {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* Compact viewports (iPhone Mini/SE, short Android, split screen): tighten the
+   sheet so header, presets, picker and save button always stay visible without
+   scrolling. Selectors are scoped to .drum-sheet to outrank the Tailwind
+   utilities used in the markup. */
+@media (max-height: 720px) {
+    .drum-sheet .drum-sheet-panel {
+        max-height: 92dvh;
+    }
+    .drum-sheet .drum-sheet-safe {
+        padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
+    }
+    .drum-sheet .drum-sheet-handle {
+        margin-top: 0.25rem;
+        margin-bottom: 0;
+    }
+    .drum-sheet .drum-sheet-header {
+        padding-top: 0;
+        padding-bottom: 0.375rem;
+    }
+    .drum-sheet .drum-sheet-eyebrow {
+        font-size: 10px;
+    }
+    .drum-sheet .drum-sheet-title {
+        font-size: 0.9375rem;
+        line-height: 1.25rem;
+    }
+    .drum-sheet .drum-sheet-presets {
+        padding-left: 0.75rem;
+        padding-right: 0.75rem;
+    }
+    .drum-sheet .drum-preset-btn {
+        flex: 1 1 0;
+        min-width: 0;
+        padding-top: 0.375rem;
+        padding-bottom: 0.375rem;
+        font-size: 0.75rem;
+    }
+    .drum-sheet .drum-sheet-labels {
+        margin-top: 0.375rem;
+        margin-bottom: 0.125rem;
+    }
+    .drum-sheet .drum-sheet-picker {
+        padding-left: 0.75rem;
+        padding-right: 0.75rem;
+    }
+    .drum-sheet .drum-sheet-actions {
+        margin-top: 0.375rem;
+        padding-left: 0.75rem;
+        padding-right: 0.75rem;
+    }
+    .drum-sheet .drum-save-btn {
+        padding-top: 0.5rem;
+        padding-bottom: 0.5rem;
+    }
+    .drum-sheet .drum {
+        --drum-item-height: 36px;
+        --drum-viewport: 180px;
+        /* (viewport - itemHeight) / 2 keeps the snap offset linear */
+        padding: 72px 0;
+    }
+    .drum-sheet .drum.drum-value {
+        font-size: 1.25rem;
+    }
+    .drum-sheet .drum-overlay-line {
+        height: 36px;
+        margin-top: -18px;
+    }
+    .drum-sheet .drum-mask {
+        height: 48px;
+    }
+}
+
 /* ============ Landing Page (Graphite + Neon Lime) ============ */
 
 /* Matte dark graphite canvas (zinc-950) and smooth in-page anchor scrolling */

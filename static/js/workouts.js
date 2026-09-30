@@ -18,6 +18,27 @@ const QUICK_GOALS = [
     { value: 'endurance', title: 'Выносливость', subtitle: 'Лёгкий вес, много подходов, 2×15' },
 ];
 
+// Drum picker geometry: must stay in sync with .drum / .drum-item in styles.css.
+// The live item height is read from --drum-item-height so compact viewports can
+// shrink it without breaking the scroll-snap index math.
+const DRUM_ITEM_HEIGHT = 40;
+const DRUM_WEIGHT_MAX = 300;
+// Decimal drum holds integer tenths (0-9) instead of quarter fractions, so every
+// step is exactly representable and never produces `undefined` labels.
+const DRUM_TENTHS_MAX = 9;
+const DRUM_TENTHS = Array.from({ length: DRUM_TENTHS_MAX + 1 }, (_, i) => i);
+const DRUM_WEIGHT_MAX_TENTHS = DRUM_WEIGHT_MAX * 10 + DRUM_TENTHS_MAX;
+const DRUM_REPS_MAX = 50;
+const DRUM_PRESETS = [1, 2.5, 5];
+
+const drumClampTenths = (tenths) => Math.min(DRUM_WEIGHT_MAX_TENTHS, Math.max(0, Math.round(tenths)));
+const drumTenthsToWeight = (tenths) => drumClampTenths(tenths) / 10;
+const drumWeightToTenths = (weight) => drumClampTenths((Number(weight) || 0) * 10);
+const drumWholeFromTenths = (tenths) => Math.floor(drumClampTenths(tenths) / 10);
+const drumTenthsFromTenths = (tenths) => drumClampTenths(tenths) % 10;
+
+let DRUM_KEYDOWN_HANDLER = null;
+
 const LOCAL_SESSION_KEY = 'offline_local_session';
 const LOCAL_CLOSED_SESSIONS_KEY = 'offline_closed_sessions';
 const LOCAL_SESSION_PLACEHOLDER = '__local_session__';
@@ -909,18 +930,18 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
                                  <div class="flex-1 min-w-[60px] flex flex-col">
                                      <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Вес</label>
-                                     <input type="number" min="0" step="0.5" placeholder="—"
+                                     <input type="number" min="0" step="0.1" placeholder="—" inputmode="none" readonly
                                             value="${set.weight_kg != null && set.weight_kg > 0 ? set.weight_kg : ''}"
-                                            class="w-full h-12 text-center text-xl font-bold rounded-xl glass-input focus:border-primary-500 focus:outline-none ${set.is_completed ? SET_DIM.join(' ') : ''}"
-                                            data-field="weight" ${set.is_completed ? 'readonly' : ''}>
+                                            class="w-full h-12 text-center text-xl font-bold rounded-xl glass-input focus:border-primary-500 focus:outline-none cursor-pointer ${set.is_completed ? SET_DIM.join(' ') : ''}"
+                                            data-field="weight">
                                  </div>
 
                                  <div class="flex-1 min-w-[60px] flex flex-col">
                                      <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Повт</label>
-                                     <input type="number" min="0" placeholder="—"
+                                     <input type="number" min="1" placeholder="—" inputmode="none" readonly
                                             value="${set.reps != null && set.reps > 0 ? set.reps : ''}"
-                                            class="w-full h-12 text-center text-xl font-bold rounded-xl glass-input focus:border-primary-500 focus:outline-none ${set.is_completed ? SET_DIM.join(' ') : ''}"
-                                            data-field="reps" ${set.is_completed ? 'readonly' : ''}>
+                                            class="w-full h-12 text-center text-xl font-bold rounded-xl glass-input focus:border-primary-500 focus:outline-none cursor-pointer ${set.is_completed ? SET_DIM.join(' ') : ''}"
+                                            data-field="reps">
                                  </div>
 
                                   <button data-action="toggle-set" data-completed="${set.is_completed ? 'true' : 'false'}"
@@ -1089,8 +1110,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         row.querySelectorAll('input').forEach(inp => inp.classList.add(...SET_DIM));
                         row.querySelectorAll('label').forEach(lbl => lbl.classList.add(...SET_DIM));
 
-                        row.querySelector('[data-field="weight"]').readOnly = true;
-                        row.querySelector('[data-field="reps"]').readOnly = true;
+                        row.querySelectorAll('input').forEach(inp => { inp.readOnly = true; });
                         button.disabled = false;
                         
                         const exerciseContainer = button.closest('.snap-center');
@@ -1114,8 +1134,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         row.querySelectorAll('input').forEach(inp => inp.classList.remove(...SET_DIM));
                         row.querySelectorAll('label').forEach(lbl => lbl.classList.remove(...SET_DIM));
 
-                        row.querySelector('[data-field="weight"]').readOnly = false;
-                        row.querySelector('[data-field="reps"]').readOnly = false;
+                        row.querySelectorAll('input').forEach(inp => { inp.readOnly = true; });
                         button.textContent = '✓';
                         button.disabled = false;
                     }
@@ -1253,6 +1272,26 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             input.addEventListener('blur', () => scheduleSave(input, true));
         });
 
+        // Weight/reps are entered through the drum picker bottom sheet, never the
+        // native keyboard (inputs stay readOnly and inputmode="none")
+        container.querySelectorAll('[data-field="weight"], [data-field="reps"]').forEach(input => {
+            const openPicker = (e) => {
+                e?.preventDefault();
+                input.blur();
+                const row = input.closest('[data-set-id]');
+                const toggle = row?.querySelector('[data-action="toggle-set"]');
+                if (toggle?.dataset.completed === 'true') {
+                    app.showToast('Снимите отметку о выполнении, чтобы изменить подход', 'info');
+                    return;
+                }
+                this.openDrumPicker(input, { app });
+            };
+            input.addEventListener('click', openPicker);
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') openPicker(e);
+            });
+        });
+
         // Complete workout
         // Handled by App.js
 
@@ -1302,6 +1341,261 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             this.stopWorkoutTimer();
             app.showPage('workouts');
         });
+    },
+
+    // Writes a value into a set input and replays the native input/change events
+    // so the debounced persistence pipeline of bindWorkoutScreenEvents runs.
+    setInputValue(input, value) {
+        if (!input) return;
+        const next = value == null ? '' : String(value);
+        if (input.value === next) return;
+        input.value = next;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+    },
+
+    // Renders a weight in tenths without float noise: 12.5 -> "12.5", 12 -> "12".
+    formatDrumWeight(value) {
+        return drumTenthsToWeight(drumWeightToTenths(value)).toFixed(1).replace(/\.0$/, '') || '0';
+    },
+
+    // Drum picker bottom sheet: whole weight (0-300), tenths (.0-.9) and reps (1-50).
+    openDrumPicker(input, { app } = {}) {
+        if (!input) return;
+        document.getElementById('drumPickerModal')?.remove();
+        if (DRUM_KEYDOWN_HANDLER) {
+            document.removeEventListener('keydown', DRUM_KEYDOWN_HANDLER);
+            DRUM_KEYDOWN_HANDLER = null;
+        }
+
+        const field = input.dataset.field === 'reps' ? 'reps' : 'weight';
+        const row = input.closest('[data-set-id]');
+        const card = input.closest('[data-exercise-id]');
+        const weightInput = row?.querySelector('[data-field="weight"]') || null;
+        const repsInput = row?.querySelector('[data-field="reps"]') || null;
+
+        const exerciseName = (card?.querySelector('h3')?.textContent || '').trim();
+        const setNumber = (row?.querySelector('span.font-bold')?.textContent || '').trim();
+
+        const startWeight = Math.max(0, parseFloat(weightInput?.value) || 0);
+        const startReps = Math.min(DRUM_REPS_MAX, Math.max(1, parseInt(repsInput?.value, 10) || 1));
+
+        let weightTenths = drumWeightToTenths(startWeight);
+        let reps = startReps;
+
+        const modal = document.createElement('div');
+        modal.id = 'drumPickerModal';
+        modal.className = 'drum-sheet fixed inset-0 z-[60] pointer-events-auto';
+        modal.innerHTML = `
+            <div class="drum-sheet-backdrop absolute inset-0 bg-black/60" data-action="drum-picker-close"></div>
+            <div class="drum-sheet-panel absolute bottom-0 left-0 right-0 bg-zinc-900 text-zinc-100 rounded-t-2xl border-t border-white/10 flex flex-col drum-sheet-safe">
+                <div class="w-10 h-1 rounded-full bg-white/20 mx-auto drum-sheet-handle flex-shrink-0"></div>
+                <div class="flex items-start justify-between gap-3 px-4 pt-1 pb-2 drum-sheet-header">
+                    <div class="min-w-0">
+                        <div class="drum-sheet-eyebrow text-[11px] uppercase tracking-wider text-zinc-500 font-semibold truncate">${exerciseName}</div>
+                        <div class="drum-sheet-title text-base font-bold text-zinc-100 truncate">${field === 'reps' ? 'Повторения' : 'Вес'}${setNumber ? ` · подход ${setNumber}` : ''}</div>
+                    </div>
+                    <button type="button" data-action="drum-picker-close" class="w-8 h-8 rounded-xl bg-white/5 text-zinc-400 text-sm flex-shrink-0">✕</button>
+                </div>
+
+                <div class="px-4 drum-sheet-presets ${field === 'reps' ? 'hidden' : ''}" data-role="drum-presets">
+                    <div class="flex flex-wrap gap-2">
+                        ${DRUM_PRESETS.map(delta => `
+                            <button type="button" data-preset="${delta}" class="drum-preset-btn flex-1 min-w-0 whitespace-nowrap py-2 rounded-xl bg-white/5 border border-white/10 text-zinc-200 text-sm font-semibold btn-press">
+                                +${String(delta).replace('.', ',')} кг
+                            </button>
+                        `).join('')}
+                    </div>
+                </div>
+
+                <div class="flex gap-3 px-5 mt-2 mb-1 drum-sheet-labels">
+                    <div class="flex-1 text-[10px] uppercase tracking-wider text-zinc-500 text-center font-semibold">Вес</div>
+                    <div class="flex-1 text-[10px] uppercase tracking-wider text-zinc-500 text-center font-semibold">Повторения</div>
+                </div>
+
+                <div class="relative px-4 drum-sheet-picker">
+                    <div class="drum-overlay-line"></div>
+                    <div class="flex gap-3">
+                        <div class="flex-1 flex gap-1 min-w-0 ${field === 'reps' ? 'drum-group-dim' : ''}" data-drum-group="weight">
+                            <div class="flex-1 min-w-0 drum drum-value text-2xl" data-drum="whole"></div>
+                            <div class="w-12 flex-shrink-0 drum drum-value text-2xl" data-drum="tenths"></div>
+                        </div>
+                        <div class="flex-1 min-w-0 drum drum-value text-2xl ${field === 'weight' ? 'drum-group-dim' : ''}" data-drum-group="reps" data-drum="reps"></div>
+                    </div>
+                    <div class="drum-mask drum-mask-top"></div>
+                    <div class="drum-mask drum-mask-bottom"></div>
+                </div>
+
+                <div class="px-4 mt-2 drum-sheet-actions">
+                    <button type="button" data-action="drum-picker-save" class="drum-save-btn w-full py-3 rounded-2xl bg-lime-500 text-zinc-950 font-bold text-sm shadow-md btn-press">
+                        Сохранить подход
+                    </button>
+                </div>
+            </div>
+        `;
+
+        const onKeydown = (e) => {
+            if (e.key === 'Escape') close();
+        };
+
+        const close = () => {
+            if (DRUM_KEYDOWN_HANDLER) document.removeEventListener('keydown', DRUM_KEYDOWN_HANDLER);
+            DRUM_KEYDOWN_HANDLER = null;
+            input.classList.remove('drum-source-active');
+            modal.remove();
+        };
+
+        const fillDrum = (name, values, formatter) => {
+            const drum = modal.querySelector(`[data-drum="${name}"]`);
+            if (!drum) return null;
+            drum.innerHTML = values.map((v, i) => `<div class="drum-item">${formatter(v, i)}</div>`).join('');
+            return drum;
+        };
+
+        const wholeDrum = fillDrum('whole', Array.from({ length: DRUM_WEIGHT_MAX + 1 }, (_, i) => i), v => String(v));
+        const tenthsDrum = fillDrum('tenths', DRUM_TENTHS, v => `.${v}`);
+        const repsDrum = fillDrum('reps', Array.from({ length: DRUM_REPS_MAX }, (_, i) => i + 1), v => String(v));
+
+        // Live item height so the compact (36px) layout keeps index math exact.
+        const getItemHeight = (drum) => {
+            const css = parseFloat(getComputedStyle(drum).getPropertyValue('--drum-item-height'));
+            return Number.isFinite(css) && css > 0 ? css : DRUM_ITEM_HEIGHT;
+        };
+
+        // Snap offset: with padding == (clientHeight - itemHeight) / 2 the first and
+        // last items both reach the indicator, so index maps linearly to scrollTop.
+        const getBaseOffset = (drum) => {
+            const padTop = parseFloat(getComputedStyle(drum).paddingTop) || 0;
+            return padTop + getItemHeight(drum) / 2 - drum.clientHeight / 2;
+        };
+
+        const getIndex = (drum) => {
+            const count = drum?.children.length || 0;
+            if (!count) return 0;
+            const itemHeight = getItemHeight(drum);
+            return Math.min(count - 1, Math.max(0, Math.round((drum.scrollTop - getBaseOffset(drum)) / itemHeight)));
+        };
+
+        const scrollToIndex = (drum, index, smooth = true) => {
+            const count = drum?.children.length || 0;
+            if (!count) return;
+            const clamped = Math.min(count - 1, Math.max(0, index));
+            drum.scrollTo({ top: getBaseOffset(drum) + clamped * getItemHeight(drum), behavior: smooth ? 'smooth' : 'auto' });
+        };
+
+        // Opacity/scale fade around the centered selection
+        const refreshDrum = (drum) => {
+            const count = drum?.children.length || 0;
+            if (!count) return 0;
+            const index = getIndex(drum);
+            Array.from(drum.children).forEach((item, i) => {
+                const distance = Math.abs(i - index);
+                item.style.opacity = Math.max(0.15, 1 - distance * 0.28).toFixed(2);
+                item.style.transform = `scale(${(1 - Math.min(distance, 4) * 0.06).toFixed(3)})`;
+                item.classList.toggle('is-selected', distance === 0);
+            });
+            return index;
+        };
+
+        const syncFromDrums = () => {
+            weightTenths = drumClampTenths(getIndex(wholeDrum) * 10 + getIndex(tenthsDrum));
+            reps = getIndex(repsDrum) + 1;
+            return weightTenths;
+        };
+
+        const onScroll = (drum) => {
+            if (drum._drumRaf) return;
+            drum._drumRaf = requestAnimationFrame(() => {
+                drum._drumRaf = null;
+                refreshDrum(drum);
+                syncFromDrums();
+            });
+        };
+
+        [wholeDrum, tenthsDrum, repsDrum].forEach(drum => {
+            if (!drum) return;
+            drum.addEventListener('scroll', () => onScroll(drum), { passive: true });
+        });
+
+        // Presets move the weight in tenths, carrying into the next whole kg
+        // automatically (e.g. 9.7 + 5 -> 14.7).
+        const applyPreset = (delta) => {
+            const nextTenths = drumClampTenths(weightTenths + drumWeightToTenths(delta));
+            scrollToIndex(wholeDrum, drumWholeFromTenths(nextTenths));
+            scrollToIndex(tenthsDrum, drumTenthsFromTenths(nextTenths));
+            syncFromDrums();
+        };
+
+        const save = () => {
+            syncFromDrums();
+            const weight = drumTenthsToWeight(weightTenths);
+            if (field === 'weight' && weightInput) this.setInputValue(weightInput, this.formatDrumWeight(weight));
+            if (repsInput) this.setInputValue(repsInput, reps);
+            close();
+            this.focusNextSetRow(row);
+            app?.showToast(`${exerciseName || 'Подход'}: ${this.formatDrumWeight(weight)} кг × ${reps}`, 'success');
+        };
+
+        modal.addEventListener('click', (e) => {
+            const action = e.target.closest('[data-action]')?.dataset.action;
+            if (action === 'drum-picker-close') close();
+            if (action === 'drum-picker-save') save();
+            const preset = e.target.closest('[data-preset]')?.dataset.preset;
+            if (preset) applyPreset(parseFloat(preset));
+        });
+        DRUM_KEYDOWN_HANDLER = onKeydown;
+        document.addEventListener('keydown', onKeydown);
+
+        (document.getElementById('modals') || document.body).appendChild(modal);
+        input.classList.add('drum-source-active');
+
+        // Position drums on the current values without animation, then paint.
+        // Double rAF so the sheet has been laid out before clientHeight is read.
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+            const startTenths = drumWeightToTenths(startWeight);
+            scrollToIndex(wholeDrum, drumWholeFromTenths(startTenths), false);
+            scrollToIndex(tenthsDrum, drumTenthsFromTenths(startTenths), false);
+            scrollToIndex(repsDrum, startReps - 1, false);
+            [wholeDrum, tenthsDrum, repsDrum].forEach(refreshDrum);
+            syncFromDrums();
+        }));
+    },
+
+    // After saving a set, highlight the next set in the row (or the first set of
+    // the next exercise) so logging continues without extra taps.
+    focusNextSetRow(row) {
+        if (!row) return;
+        const carousel = document.getElementById('carousel');
+        const card = row.closest('[data-exercise-id]');
+        const rows = card ? [...card.querySelectorAll('[data-set-id]')] : [];
+        const index = rows.indexOf(row);
+
+        let targetCard = card;
+        let target = index >= 0 ? rows[index + 1] : null;
+
+        if (!target && carousel && card) {
+            const cards = [...carousel.querySelectorAll('[data-exercise-id]')];
+            const nextCard = cards[cards.indexOf(card) + 1];
+            if (nextCard) {
+                targetCard = nextCard;
+                target = nextCard.querySelector('[data-set-id]');
+            }
+        }
+        if (!target) return;
+
+        target.classList.add('drum-next-set');
+        const nextInput = target.querySelector('[data-field="weight"]') || target.querySelector('[data-field="reps"]');
+        nextInput?.classList.add('drum-source-active');
+        setTimeout(() => {
+            target.classList.remove('drum-next-set');
+            nextInput?.classList.remove('drum-source-active');
+        }, 2400);
+
+        if (carousel && targetCard) {
+            const cardWidth = targetCard.offsetWidth + 16;
+            const cardIndex = [...carousel.querySelectorAll('[data-exercise-id]')].indexOf(targetCard);
+            if (cardIndex > 0) carousel.scrollTo({ left: cardWidth * cardIndex, behavior: 'smooth' });
+        }
     },
 
     async renderHistory(container, app) {
