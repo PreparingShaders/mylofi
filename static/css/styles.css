@@ -333,11 +333,19 @@ input, select, textarea:focus {
 /* ============ Drum Picker Bottom Sheet (workout weight/reps) ============ */
 /* Item height and half-viewport padding are mirrored in JS (DRUM_ITEM_HEIGHT),
    so index math and scroll-snap stay in sync. Compact viewports shrink the item
-   height to 36px; JS reads the live value from --drum-item-height. */
+   height to 36px; JS reads the live value from --drum-item-height.
+   --drum-sheet-bg(+-fade) track the panel surface (white / zinc-900) so the
+   picker fade masks stay invisible against the active theme. */
 .drum-sheet-panel {
+    --drum-sheet-bg: #ffffff;
+    --drum-sheet-bg-fade: rgba(255, 255, 255, 0);
     max-height: 88dvh;
     overflow-y: auto;
     animation: drum-sheet-in 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.dark .drum-sheet-panel {
+    --drum-sheet-bg: #18181b;
+    --drum-sheet-bg-fade: rgba(24, 24, 27, 0);
 }
 .drum-sheet-safe {
     padding-bottom: calc(1rem + env(safe-area-inset-bottom));
@@ -385,7 +393,13 @@ input, select, textarea:focus {
     color: #71717a;
     will-change: transform, opacity;
 }
+.dark .drum-item {
+    color: #a1a1aa;
+}
 .drum-item.is-selected {
+    color: #09090b;
+}
+.dark .drum-item.is-selected {
     color: #f4f4f5;
 }
 .drum-value {
@@ -417,11 +431,11 @@ input, select, textarea:focus {
 }
 .drum-mask-top {
     top: 0;
-    background: linear-gradient(to bottom, #18181b 10%, rgba(24, 24, 27, 0));
+    background: linear-gradient(to bottom, var(--drum-sheet-bg) 10%, var(--drum-sheet-bg-fade));
 }
 .drum-mask-bottom {
     bottom: 0;
-    background: linear-gradient(to top, #18181b 10%, rgba(24, 24, 27, 0));
+    background: linear-gradient(to top, var(--drum-sheet-bg) 10%, var(--drum-sheet-bg-fade));
 }
 /* Neon highlight for the input currently owned by the picker and the set that
    receives focus after saving */

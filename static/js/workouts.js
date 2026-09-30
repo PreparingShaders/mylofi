@@ -1387,21 +1387,21 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         modal.id = 'drumPickerModal';
         modal.className = 'drum-sheet fixed inset-0 z-[60] pointer-events-auto';
         modal.innerHTML = `
-            <div class="drum-sheet-backdrop absolute inset-0 bg-black/60" data-action="drum-picker-close"></div>
-            <div class="drum-sheet-panel absolute bottom-0 left-0 right-0 bg-zinc-900 text-zinc-100 rounded-t-2xl border-t border-white/10 flex flex-col drum-sheet-safe">
-                <div class="w-10 h-1 rounded-full bg-white/20 mx-auto drum-sheet-handle flex-shrink-0"></div>
+            <div class="drum-sheet-backdrop absolute inset-0 bg-black/40 dark:bg-black/60" data-action="drum-picker-close"></div>
+            <div class="drum-sheet-panel absolute bottom-0 left-0 right-0 bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 rounded-t-2xl border-t border-zinc-200 dark:border-white/10 flex flex-col drum-sheet-safe">
+                <div class="w-10 h-1 rounded-full bg-zinc-300 dark:bg-white/20 mx-auto drum-sheet-handle flex-shrink-0"></div>
                 <div class="flex items-start justify-between gap-3 px-4 pt-1 pb-2 drum-sheet-header">
                     <div class="min-w-0">
-                        <div class="drum-sheet-eyebrow text-[11px] uppercase tracking-wider text-zinc-500 font-semibold truncate">${exerciseName}</div>
-                        <div class="drum-sheet-title text-base font-bold text-zinc-100 truncate">${field === 'reps' ? 'Повторения' : 'Вес'}${setNumber ? ` · подход ${setNumber}` : ''}</div>
+                        <div class="drum-sheet-eyebrow text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-500 font-semibold truncate">${exerciseName}</div>
+                        <div class="drum-sheet-title text-base font-bold text-zinc-900 dark:text-zinc-100 truncate">${field === 'reps' ? 'Повторения' : 'Вес'}${setNumber ? ` · подход ${setNumber}` : ''}</div>
                     </div>
-                    <button type="button" data-action="drum-picker-close" class="w-8 h-8 rounded-xl bg-white/5 text-zinc-400 text-sm flex-shrink-0">✕</button>
+                    <button type="button" data-action="drum-picker-close" class="w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0">✕</button>
                 </div>
 
                 <div class="px-4 drum-sheet-presets ${field === 'reps' ? 'hidden' : ''}" data-role="drum-presets">
                     <div class="flex flex-wrap gap-2">
                         ${DRUM_PRESETS.map(delta => `
-                            <button type="button" data-preset="${delta}" class="drum-preset-btn flex-1 min-w-0 whitespace-nowrap py-2 rounded-xl bg-white/5 border border-white/10 text-zinc-200 text-sm font-semibold btn-press">
+                            <button type="button" data-preset="${delta}" class="drum-preset-btn flex-1 min-w-0 whitespace-nowrap py-2 rounded-xl bg-zinc-100 border border-zinc-200 text-zinc-700 dark:bg-white/5 dark:border-white/10 dark:text-zinc-200 text-sm font-semibold btn-press">
                                 +${String(delta).replace('.', ',')} кг
                             </button>
                         `).join('')}

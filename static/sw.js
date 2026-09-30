@@ -1,6 +1,6 @@
-const SHELL_CACHE = 'mylofi-shell-v10';
-const RUNTIME_CACHE = 'mylofi-runtime-v10';
-const CATALOG_CACHE = 'mylofi-catalog-v10';
+const SHELL_CACHE = 'mylofi-shell-v11';
+const RUNTIME_CACHE = 'mylofi-runtime-v11';
+const CATALOG_CACHE = 'mylofi-catalog-v11';
 const CURRENT_CACHES = [SHELL_CACHE, RUNTIME_CACHE, CATALOG_CACHE];
 
 const OFFLINE_FALLBACK_HTML = '<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>mylofi — офлайн</title><link rel="stylesheet" href="/static/css/styles.css"></head><body><div class="min-h-screen flex items-center justify-center p-4"><div class="text-center"><h1 class="text-2xl font-bold mb-2">Офлайн</h1><p class="text-surface-500">Проверьте подключение к интернету. Данные, сохранённые локально, будут синхронизированы при возвращении связи.</p></div></div></body></html>';
