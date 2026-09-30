@@ -90,6 +90,8 @@ from app.services.workout import (
     build_workout_session,
     get_workout_statistics,
     get_last_exercise_sets,
+    get_filtered_tonnage,
+    get_workout_session_detail,
 )
 from app.services.exercise_data import MUSCLE_GROUPS, EQUIPMENT
 from app.services.limits import (
@@ -870,6 +872,43 @@ async def get_workout_statistics_endpoint(
 ):
     """Get workout statistics for current user"""
     return await get_workout_statistics(db, current_user.id)
+
+
+@router.get("/workouts/tonnage")
+async def get_tonnage_endpoint(
+    period: str = Query("week", description="Preset window: week, month or all"),
+    start_date: Optional[str] = Query(None, description="Range start, YYYY-MM-DD (overrides period)"),
+    end_date: Optional[str] = Query(None, description="Range end, YYYY-MM-DD (overrides period)"),
+    muscle_group: Optional[str] = Query(None, description="Filter by catalog muscle group"),
+    exercise_name: Optional[str] = Query(None, description="Filter by exercise name"),
+    template_id: Optional[int] = Query(None, description="Filter by source template"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Exact tonnage (weight_kg * reps) over completed sets, with a period-over-period delta"""
+    return await get_filtered_tonnage(
+        db,
+        current_user.id,
+        period=period,
+        start_date=start_date,
+        end_date=end_date,
+        muscle_group=muscle_group,
+        exercise_name=exercise_name,
+        template_id=template_id,
+    )
+
+
+@router.get("/workouts/history/{session_id}")
+async def get_workout_history_detail_endpoint(
+    session_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Detailed history for a single session: metrics, delta, summary and per-exercise trends"""
+    detail = await get_workout_session_detail(db, current_user.id, session_id)
+    if not detail:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return detail
 
 
 @router.patch("/workouts/sets/{set_id}")

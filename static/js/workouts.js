@@ -11,7 +11,6 @@ const SET_DIM = ['text-surface-400', 'dark:text-surface-600'];
 const SET_NUMBER_IDLE = 'text-surface-500';
 
 const LOCK_ICON = '<svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>';
-const WEEK_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const QUICK_GOALS = [
     { value: 'strength', title: 'Сила', subtitle: 'Базовые движения, 3×5' },
     { value: 'hypertrophy', title: 'Набор массы', subtitle: 'Компаундные + изоляция, 3×10' },
@@ -51,6 +50,432 @@ export const Workouts = {
     app: null,
     workoutTimerInterval: null,
     recentSessions: [],
+    stats: null,
+    tonnageData: null,
+    tonnageState: { period: 'week', filters: { start_date: '', end_date: '', muscle_group: '', exercise_name: '', template_id: '' } },
+
+    escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    },
+
+    getTonnageState() {
+        if (!this.tonnageState) {
+            this.tonnageState = { period: 'week', filters: { start_date: '', end_date: '', muscle_group: '', exercise_name: '', template_id: '' } };
+        }
+        if (!this.tonnageState.filters) this.tonnageState.filters = { start_date: '', end_date: '', muscle_group: '', exercise_name: '', template_id: '' };
+        return this.tonnageState;
+    },
+
+    buildTonnageQuery() {
+        const { period, filters } = this.getTonnageState();
+        const params = new URLSearchParams({ period });
+        Object.entries(filters).forEach(([key, value]) => {
+            if (value !== '' && value !== null && value !== undefined) params.set(key, value);
+        });
+        return `/workouts/tonnage?${params.toString()}`;
+    },
+
+    countActiveTonnageFilters() {
+        const { filters } = this.getTonnageState();
+        return Object.values(filters).filter(v => v !== '' && v !== null && v !== undefined).length;
+    },
+
+    // Local mirror of get_filtered_tonnage over the already-loaded history, used
+    // when the endpoint is unreachable (offline) so the module is never empty.
+    computeLocalTonnage(sessions) {
+        const { period, filters } = this.getTonnageState();
+        const now = new Date();
+        const completed = (sessions || []).filter(s => s.status === 'completed' || !s.status);
+        // `all` is unbounded on the server; bound it to the earliest known
+        // session so the chart does not open with decades of empty buckets.
+        const earliest = completed
+            .map(s => new Date(s.completed_at || s.started_at))
+            .filter(d => !isNaN(d.getTime()))
+            .reduce((min, d) => (min === null || d < min ? d : min), null);
+
+        let start;
+        if (filters.start_date) start = new Date(`${filters.start_date}T00:00:00Z`);
+        else if (period === 'month') start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+        else if (period === 'all') start = earliest ? new Date(Date.UTC(earliest.getUTCFullYear(), earliest.getUTCMonth(), 1)) : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+        else start = new Date(now.getTime() - 7 * 86400000);
+
+        const end = filters.end_date ? new Date(`${filters.end_date}T23:59:59Z`) : now;
+        const needle = (filters.exercise_name || '').trim().toLowerCase();
+        const templateId = filters.template_id ? parseInt(filters.template_id) : null;
+
+        const bucketMap = new Map();
+        const granularity = period === 'all' ? 'month' : 'day';
+        const cursor = new Date(start);
+        cursor.setUTCHours(0, 0, 0, 0);
+        const last = new Date(end);
+        last.setUTCHours(0, 0, 0, 0);
+        while (cursor <= last) {
+            const key = granularity === 'month'
+                ? `${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, '0')}`
+                : cursor.toISOString().slice(0, 10);
+            bucketMap.set(key, {
+                key,
+                label: granularity === 'month'
+                    ? `${cursor.toLocaleDateString('ru-RU', { month: 'short', timeZone: 'UTC' })} ${cursor.getUTCFullYear()}`
+                    : `${cursor.getUTCDate()} ${cursor.toLocaleDateString('ru-RU', { month: 'short', timeZone: 'UTC' })}`,
+                tonnage_kg: 0,
+                workouts: 0,
+                sets_count: 0,
+            });
+            cursor.setUTCDate(cursor.getUTCDate() + 1);
+        }
+
+        let total = 0;
+        let workouts = 0;
+        let sets = 0;
+        (sessions || []).forEach(session => {
+            if (session.status && session.status !== 'completed') return;
+            if (templateId && session.template_id !== templateId) return;
+            const stamp = new Date(session.completed_at || session.started_at);
+            if (isNaN(stamp.getTime()) || stamp < start || stamp > end) return;
+
+            let sessionTonnage = 0;
+            let sessionSets = 0;
+            (session.exercises || []).forEach(ex => {
+                if (needle && !(ex.name || '').trim().toLowerCase().includes(needle)) return;
+                (ex.sets || []).forEach(set => {
+                    if (!set.is_completed) return;
+                    sessionTonnage += (set.weight_kg || 0) * (set.reps || 0);
+                    sessionSets += 1;
+                });
+            });
+            if (sessionTonnage <= 0) return;
+
+            total += sessionTonnage;
+            sets += sessionSets;
+            workouts += 1;
+            const key = granularity === 'month'
+                ? stamp.toISOString().slice(0, 7)
+                : stamp.toISOString().slice(0, 10);
+            const bucket = bucketMap.get(key);
+            if (bucket) {
+                bucket.tonnage_kg += sessionTonnage;
+                bucket.sets_count += sessionSets;
+                bucket.workouts += 1;
+            }
+        });
+
+        const series = [...bucketMap.values()].map(bucket => ({ ...bucket, tonnage_kg: Math.round(bucket.tonnage_kg * 10) / 10 }));
+        return {
+            period,
+            total_tonnage_kg: Math.round(total * 10) / 10,
+            workouts_count: workouts,
+            sets_count: sets,
+            avg_tonnage_kg: workouts ? Math.round((total / workouts) * 10) / 10 : 0,
+            previous_total_tonnage_kg: null,
+            delta_kg: null,
+            delta_percent: null,
+            granularity,
+            series,
+        };
+    },
+
+    renderTonnageModule(data) {
+        const { period } = this.getTonnageState();
+        const hasFilters = this.countActiveTonnageFilters() > 0;
+        const fallback = !data;
+        const payload = data || this.computeLocalTonnage(this.recentSessions);
+        const total = Math.round(payload.total_tonnage_kg || 0);
+        const deltaPercent = payload.delta_percent;
+
+        const tabs = [
+            { value: 'week', label: 'Неделя' },
+            { value: 'month', label: 'Месяц' },
+            { value: 'all', label: 'Всё время' },
+        ];
+
+        const streakWeeks = Number(this.stats?.current_streak_weeks) || 0;
+
+        return `
+            <div class="glass rounded-2xl p-4">
+                <div class="flex justify-between items-center gap-2 mb-3">
+                    <div class="flex items-baseline gap-2 min-w-0">
+                        <h3 class="text-sm font-semibold text-surface-500 uppercase tracking-wider truncate">Общий тоннаж</h3>
+                        ${streakWeeks > 0 ? `<span class="text-[11px] font-semibold text-primary-600 dark:text-primary-400 flex-shrink-0">Серия: ${streakWeeks} нед.</span>` : ''}
+                    </div>
+                    <button type="button" data-action="tonnage-open-filters"
+                            class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold flex-shrink-0 ${hasFilters
+                                ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400'
+                                : 'glass text-surface-500 dark:text-surface-400'}">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 2v-5.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"/></svg>
+                        Фильтры${hasFilters ? ` · ${this.countActiveTonnageFilters()}` : ''}
+                    </button>
+                </div>
+
+                <div class="flex gap-1 p-1 rounded-xl bg-surface-100 dark:bg-white/5 mb-3">
+                    ${tabs.map(tab => `
+                        <button type="button" data-action="tonnage-period" data-period="${tab.value}"
+                                class="flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${period === tab.value
+                                    ? 'bg-surface-900 text-white dark:bg-zinc-100 dark:text-zinc-950'
+                                    : 'text-surface-500 dark:text-surface-400'}">
+                            ${tab.label}
+                        </button>
+                    `).join('')}
+                </div>
+
+                <div class="grid grid-cols-3 gap-2 text-center mb-3">
+                    <div class="bg-surface-50 dark:bg-white/5 p-2.5 rounded-xl">
+                        <div class="text-xs text-surface-400">Тоннаж</div>
+                        <div class="text-lg font-bold">${(total / 1000).toFixed(total >= 1000 ? 1 : 2)} т</div>
+                    </div>
+                    <div class="bg-surface-50 dark:bg-white/5 p-2.5 rounded-xl">
+                        <div class="text-xs text-surface-400">Тренировок</div>
+                        <div class="text-lg font-bold">${payload.workouts_count || 0}</div>
+                    </div>
+                    <div class="bg-surface-50 dark:bg-white/5 p-2.5 rounded-xl">
+                        <div class="text-xs text-surface-400">Ср. за тренировку</div>
+                        <div class="text-lg font-bold">${Math.round(payload.avg_tonnage_kg || 0)} кг</div>
+                    </div>
+                </div>
+
+                ${Components.tonnageLineChart(payload.series)}
+
+                <div class="mt-3 pt-3 border-t border-surface-200 dark:border-white/10 text-xs text-surface-500 dark:text-surface-400 flex items-center justify-between gap-2">
+                    <span>${deltaPercent === null || deltaPercent === undefined
+                        ? 'Нет данных для сравнения с прошлым периодом'
+                        : `К прошлому периоду: <span class="${deltaPercent >= 0 ? 'text-lime-600 dark:text-lime-400' : 'text-rose-500 dark:text-rose-400'} font-semibold">${deltaPercent >= 0 ? '+' : ''}${deltaPercent}%</span>`}</span>
+                    <button type="button" data-action="view-statistics"
+                            class="flex-shrink-0 text-xs font-semibold text-primary-600 dark:text-primary-400">Вся статистика →</button>
+                </div>
+                ${fallback ? '<div class="mt-1.5 text-[10px] text-amber-600 dark:text-amber-400 text-right">офлайн-данные</div>' : ''}
+            </div>
+        `;
+    },
+
+    bindTonnageModuleEvents(container, app) {
+        container.querySelectorAll('[data-action="tonnage-period"]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                this.getTonnageState().period = btn.dataset.period;
+                this.refreshTonnageModule(app)
+                    .catch(error => console.warn('[Workouts] Tonnage refresh failed:', error));
+            });
+        });
+        container.querySelectorAll('[data-action="tonnage-open-filters"]').forEach(btn => {
+            btn.addEventListener('click', () => this.showTonnageFiltersSheet(app));
+        });
+        container.querySelectorAll('[data-action="view-statistics"]').forEach(btn => {
+            btn.addEventListener('click', () => app.showPage('statistics'));
+        });
+        container.querySelectorAll('[data-role="tonnage-chart"]').forEach(chart => {
+            this.bindTonnageChart(chart);
+        });
+    },
+
+    // Hover / tap indicators for the tonnage area chart. The chart markup owns
+    // the geometry (slot x/y per point); this only drives the marker, the guide
+    // line and the readout, and falls back to the last point on pointer leave.
+    bindTonnageChart(chart) {
+        let points = [];
+        try {
+            points = JSON.parse(chart.dataset.points || '[]');
+        } catch (error) {
+            console.warn('[Workouts] Malformed tonnage chart data:', error);
+            return;
+        }
+        if (!points.length) return;
+
+        const marker = chart.querySelector('[data-tonnage-marker]');
+        const guide = chart.querySelector('[data-tonnage-guide]');
+        const readout = chart.querySelector('[data-tonnage-readout]');
+        const surface = chart.querySelector('[data-tonnage-surface]');
+        const defaultIndex = points.length - 1;
+
+        const formatValue = (value) => `${Math.round(value).toLocaleString('ru-RU')} кг`;
+
+        const show = (index) => {
+            const point = points[index];
+            if (!point) return;
+            if (marker) {
+                marker.style.left = `${point.x}%`;
+                marker.style.top = `${point.y}%`;
+                marker.classList.remove('opacity-0');
+            }
+            if (guide) {
+                guide.style.left = `${point.x}%`;
+                guide.classList.remove('opacity-0');
+            }
+            if (readout) {
+                readout.textContent = point.label ? `${point.label}: ${formatValue(point.value)}` : formatValue(point.value);
+            }
+        };
+
+        chart.querySelectorAll('[data-tonnage-hit]').forEach(hit => {
+            const index = Number(hit.dataset.tonnageHit);
+            hit.addEventListener('pointerenter', () => show(index));
+            // Touch devices have no hover, so a tap pins the same indicator.
+            hit.addEventListener('pointerdown', () => show(index));
+        });
+
+        surface?.addEventListener('pointerleave', () => show(defaultIndex));
+    },
+
+    async refreshTonnageModule(app) {
+        const host = document.getElementById('tonnage-module');
+        if (!host) return;
+        try {
+            const data = await API.get(this.buildTonnageQuery(), app.state.tokens.access);
+            this.tonnageData = data;
+        } catch (error) {
+            console.warn('[Workouts] Tonnage request failed, falling back to local history:', error);
+            this.tonnageData = null;
+        }
+        // The dashboard may have navigated away while the request was in flight
+        const current = document.getElementById('tonnage-module');
+        if (!current) return;
+        current.innerHTML = this.renderTonnageModule(this.tonnageData);
+        this.bindTonnageModuleEvents(current, app);
+    },
+
+    // Bottom sheet with the advanced tonnage filters: date range, muscle group,
+    // exercise and source template.
+    async showTonnageFiltersSheet(app) {
+        this.app = app;
+        const state = this.getTonnageState();
+        const token = app.state.tokens?.access || null;
+        // Re-opening replaces the previous sheet: close it through its own
+        // handler so the body scroll lock is released instead of leaking.
+        this.closeTonnageFiltersSheet();
+
+        let meta = { muscle_groups: {} };
+        let templates = [];
+        const exerciseNames = [...new Set(
+            (this.recentSessions || []).flatMap(s => (s.exercises || []).map(ex => ex.name).filter(Boolean))
+        )].sort((a, b) => a.localeCompare(b, 'ru'));
+
+        // Catalog meta and templates are optional: the sheet must still work
+        // offline with whatever is already known client-side.
+        if (navigator.onLine !== false) {
+            const [metaResult, templatesResult] = await Promise.all([
+                API.get('/workouts/exercises/meta', token).catch(() => null),
+                API.get('/workouts/templates', token).catch(() => null),
+            ]);
+            if (metaResult) meta = metaResult;
+            if (Array.isArray(templatesResult)) templates = templatesResult;
+        }
+
+        const filters = state.filters;
+        const groupOptions = Object.entries(meta.muscle_groups || {});
+
+        const sheet = document.createElement('div');
+        sheet.id = 'tonnageFiltersSheet';
+        sheet.className = 'drum-sheet fixed inset-0 z-[60] pointer-events-auto';
+        sheet.innerHTML = `
+            <div class="drum-sheet-backdrop absolute inset-0 bg-black/40 dark:bg-black/60" data-action="tonnage-filters-close"></div>
+            <div class="drum-sheet-panel absolute bottom-0 left-0 right-0 bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 rounded-t-2xl border-t border-zinc-200 dark:border-white/10 flex flex-col drum-sheet-safe" role="dialog" aria-modal="true" aria-labelledby="tonnage-filters-title">
+                <div class="w-10 h-1 rounded-full bg-zinc-300 dark:bg-white/20 mx-auto drum-sheet-handle flex-shrink-0"></div>
+                <div class="flex items-start justify-between gap-3 px-4 pt-1 pb-2">
+                    <div class="min-w-0">
+                        <div class="text-[11px] uppercase tracking-wider text-zinc-500 font-semibold">Тоннаж</div>
+                        <div id="tonnage-filters-title" class="text-base font-bold">Фильтры</div>
+                    </div>
+                    <button type="button" data-action="tonnage-filters-close" class="w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0">✕</button>
+                </div>
+
+                <div class="px-4 pb-4 overflow-y-auto space-y-4">
+                    <div>
+                        <label class="text-[11px] uppercase tracking-wider text-zinc-500 font-semibold">Период (даты)</label>
+                        <div class="grid grid-cols-2 gap-2 mt-1.5">
+                            <input type="date" data-filter="start_date" value="${this.escapeHtml(filters.start_date)}"
+                                   class="px-3 py-2.5 text-sm glass-input rounded-xl">
+                            <input type="date" data-filter="end_date" value="${this.escapeHtml(filters.end_date)}"
+                                   class="px-3 py-2.5 text-sm glass-input rounded-xl">
+                        </div>
+                        <p class="text-[11px] text-zinc-500 mt-1.5">Указанные даты заменяют переключатель «Неделя / Месяц / Всё время».</p>
+                    </div>
+
+                    <div>
+                        <label class="text-[11px] uppercase tracking-wider text-zinc-500 font-semibold" for="tonnage-filter-group">Группа мышц</label>
+                        <select id="tonnage-filter-group" data-filter="muscle_group" class="w-full px-3 py-2.5 text-sm glass-input rounded-xl mt-1.5">
+                            <option value="">Любая</option>
+                            ${groupOptions.map(([slug, label]) => `
+                                <option value="${slug}" ${filters.muscle_group === slug ? 'selected' : ''}>${this.escapeHtml(label)}</option>
+                            `).join('')}
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="text-[11px] uppercase tracking-wider text-zinc-500 font-semibold" for="tonnage-filter-exercise">Упражнение</label>
+                        <input id="tonnage-filter-exercise" type="text" list="tonnage-exercise-options" data-filter="exercise_name"
+                               value="${this.escapeHtml(filters.exercise_name)}" placeholder="Любое упражнение"
+                               class="w-full px-3 py-2.5 text-sm glass-input rounded-xl mt-1.5">
+                        <datalist id="tonnage-exercise-options">
+                            ${exerciseNames.map(name => `<option value="${this.escapeHtml(name)}"></option>`).join('')}
+                        </datalist>
+                    </div>
+
+                    <div>
+                        <label class="text-[11px] uppercase tracking-wider text-zinc-500 font-semibold" for="tonnage-filter-template">Шаблон</label>
+                        <select id="tonnage-filter-template" data-filter="template_id" class="w-full px-3 py-2.5 text-sm glass-input rounded-xl mt-1.5">
+                            <option value="">Любой</option>
+                            ${templates.map(t => `
+                                <option value="${t.id}" ${String(filters.template_id) === String(t.id) ? 'selected' : ''}>${this.escapeHtml(t.name)}</option>
+                            `).join('')}
+                        </select>
+                    </div>
+                </div>
+
+                <div class="px-4 pb-4 pt-2 flex gap-2 border-t border-zinc-200 dark:border-white/10">
+                    <button type="button" data-action="tonnage-filters-reset"
+                            class="flex-1 py-3 rounded-2xl glass text-sm font-semibold">Сбросить</button>
+                    <button type="button" data-action="tonnage-filters-apply"
+                            class="flex-1 py-3 rounded-2xl bg-lime-500 text-zinc-950 font-bold text-sm shadow-md btn-press">Применить</button>
+                </div>
+            </div>
+        `;
+
+        const onKeydown = (e) => {
+            if (e.key === 'Escape') close();
+        };
+        // Scroll lock: remember whether the body was already locked by another
+        // sheet so closing this one never unlocks scrolling we do not own.
+        const bodyWasLocked = document.body.classList.contains('overflow-hidden');
+        let closed = false;
+        const close = () => {
+            if (closed) return;
+            closed = true;
+            document.removeEventListener('keydown', onKeydown);
+            if (!bodyWasLocked) document.body.classList.remove('overflow-hidden');
+            sheet.remove();
+            if (this._tonnageFiltersClose === close) this._tonnageFiltersClose = null;
+        };
+        this._tonnageFiltersClose = close;
+
+        sheet.addEventListener('click', (e) => {
+            const action = e.target.closest('[data-action]')?.dataset.action;
+            if (action === 'tonnage-filters-close') close();
+            if (action === 'tonnage-filters-reset') {
+                state.filters = { start_date: '', end_date: '', muscle_group: '', exercise_name: '', template_id: '' };
+                close();
+                this.refreshTonnageModule(app);
+            }
+            if (action === 'tonnage-filters-apply') {
+                sheet.querySelectorAll('[data-filter]').forEach(input => {
+                    state.filters[input.dataset.filter] = input.value || '';
+                });
+                close();
+                this.refreshTonnageModule(app);
+            }
+        });
+        document.addEventListener('keydown', onKeydown);
+
+        (document.getElementById('modals') || document.body).appendChild(sheet);
+        document.body.classList.add('overflow-hidden');
+    },
+
+    // Safe to call when no filters sheet is open.
+    closeTonnageFiltersSheet() {
+        this._tonnageFiltersClose?.();
+    },
 
     getLocalSession() {
         try {
@@ -366,6 +791,9 @@ export const Workouts = {
         this.app = app;
         try {
         this.stopWorkoutTimer();
+        // The filters sheet lives in the shared #modals host, so release its
+        // scroll lock if it survived a navigation.
+        this.closeTonnageFiltersSheet();
         let activeSession;
         let stats = null;
         let templates = [];
@@ -391,64 +819,9 @@ export const Workouts = {
 
         const recentSessions = (historyData?.sessions || []).filter(s => s.status === 'completed');
         this.recentSessions = recentSessions;
-
-        let statsWidget = '';
-        if (stats && stats.total_workouts > 0) {
-            const week = this.getWeekActivity(recentSessions);
-            const trainedThisWeek = week.filter(d => d.count > 0).length;
-            statsWidget = `
-                <div class="glass rounded-2xl p-4 mb-6">
-                    <div class="flex justify-between items-center mb-3">
-                        <h3 class="font-semibold text-sm text-surface-500 uppercase tracking-wider">Прогресс и объём</h3>
-                        <span class="text-xs text-primary-600 dark:text-primary-400 font-medium">Серия: ${stats.current_streak_weeks} нед.</span>
-                    </div>
-                    <div class="grid grid-cols-3 gap-2 text-center mb-4">
-                        <div class="bg-surface-50 dark:bg-white/5 p-2.5 rounded-xl">
-                            <div class="text-xs text-surface-400">Тренировок</div>
-                            <div class="text-lg font-bold">${stats.total_workouts}</div>
-                        </div>
-                        <div class="bg-surface-50 dark:bg-white/5 p-2.5 rounded-xl">
-                            <div class="text-xs text-surface-400">Тоннаж</div>
-                            <div class="text-lg font-bold">${(stats.total_volume_kg / 1000).toFixed(1)} т</div>
-                        </div>
-                        <div class="bg-surface-50 dark:bg-white/5 p-2.5 rounded-xl">
-                            <div class="text-xs text-surface-400">Подходов</div>
-                            <div class="text-lg font-bold">${stats.total_sets}</div>
-                        </div>
-                    </div>
-
-                    <div class="glass p-3 rounded-2xl">
-                        <div class="flex items-center justify-between mb-2">
-                            <span class="text-[11px] font-semibold text-surface-500 uppercase tracking-wider">Неделя</span>
-                            <span class="text-[11px] text-surface-500 dark:text-surface-400">${trainedThisWeek} из 7 дней</span>
-                        </div>
-                        <div class="grid grid-cols-7 gap-1.5">
-                            ${week.map((day, i) => `
-                                <div class="flex flex-col items-center gap-1"
-                                     title="${day.dayNum} ${WEEK_LABELS[i]}: ${day.count} тренировок, ${Math.round(day.volume)} кг">
-                                    <span class="text-[10px] font-medium ${day.isToday ? 'text-primary-600 dark:text-primary-400' : 'text-surface-400'}">${WEEK_LABELS[i]}</span>
-                                    <div class="w-full h-10 rounded-xl flex flex-col items-center justify-center leading-none transition-colors
-                                                ${day.count > 0
-                                                    ? 'bg-primary-600 text-white dark:bg-zinc-100 dark:text-zinc-950 shadow-sm'
-                                                    : day.isToday
-                                                        ? 'bg-primary-50 dark:bg-primary-900/40 text-primary-600 dark:text-primary-300 border border-primary-200 dark:border-primary-800'
-                                                        : 'glass text-surface-300 dark:text-surface-500'}">
-                                        <span class="text-sm font-bold">${day.dayNum}</span>
-                                        ${day.count > 0 ? `<span class="text-[9px] opacity-90 mt-0.5">×${day.count}</span>` : ''}
-                                    </div>
-                                </div>
-                            `).join('')}
-                        </div>
-                    </div>
-
-                    <div class="flex justify-end mt-3">
-                        <button data-action="view-statistics" class="text-xs font-semibold text-primary-600 dark:text-primary-400">
-                            Вся статистика →
-                        </button>
-                    </div>
-                </div>
-            `;
-        }
+        // Kept on the instance so the tonnage module can surface the streak
+        // without rendering a second, redundant stats block.
+        this.stats = stats;
 
         const hasActiveSession = !!activeSession;
         const activeMetrics = this.getWorkoutMetrics(activeSession || { exercises: [] });
@@ -457,42 +830,46 @@ export const Workouts = {
             : 0;
         const records = this.getPersonalRecords(recentSessions);
 
-        let templatesWidget = '';
-        if (templates && templates.length > 0) {
-            templatesWidget = `
-                <div class="mb-6">
-                    <div class="flex justify-between items-center mb-3">
-                        <h3 class="text-sm font-semibold text-surface-500 uppercase tracking-wider">Мои шаблоны</h3>
-                        <span class="text-xs text-primary-600 dark:text-primary-400 font-medium">${templates.length} шт.</span>
-                    </div>
-                    <div class="flex overflow-x-auto snap-x snap-mandatory gap-3 pb-2 scrollbar-none -mx-4 px-4">
-                        ${templates.map(t => `
-                            <div class="min-w-[220px] max-w-[240px] snap-center glass border ${hasActiveSession ? 'border-surface-200/70 dark:border-white/10 opacity-60' : ''} rounded-2xl p-4 flex flex-col justify-between shadow-sm">
-                                <div class="flex-1 cursor-pointer" data-action="view-template" data-template-id="${t.id}">
-                                    <h4 class="font-bold text-base truncate mb-1" title="${t.name}">${t.name}</h4>
-                                    <p class="text-xs text-surface-500 dark:text-surface-400 mb-2">${t.exercises.length} упр.</p>
-                                    <div class="text-[11px] text-surface-400 truncate mb-3">
-                                        ${t.exercises.map(ex => ex.name).join(', ')}
-                                    </div>
-                                </div>
-                                <button data-action="start-template" data-template-id="${t.id}" ${hasActiveSession ? 'disabled' : ''}
-                                        class="w-full py-2 flex items-center justify-center gap-1.5 ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'bg-primary-600 text-white'} rounded-xl text-xs font-semibold text-center shadow-sm">
-                                    ${hasActiveSession ? `${LOCK_ICON}<span>Активна тренировка</span>` : '<span>Начать тренировку →</span>'}
-                                </button>
-                            </div>
-                        `).join('')}
-                    </div>
+        const templatesWidget = `
+            <div class="mb-6">
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="text-sm font-semibold text-surface-500 uppercase tracking-wider">Мои тренировки</h3>
+                    <span class="text-xs text-primary-600 dark:text-primary-400 font-medium">${templates.length} шт.</span>
                 </div>
-            `;
-        }
+                ${templates.length === 0
+                    ? `<div class="glass rounded-2xl p-5 text-center">
+                        <p class="text-sm text-surface-500 dark:text-surface-400 mb-3">Пока нет своих тренировок</p>
+                        <button data-action="show-build-workout" class="px-4 py-2 bg-primary-600 text-white rounded-xl text-sm font-semibold">Собрать первую →</button>
+                    </div>`
+                    : `<div class="flex overflow-x-auto snap-x snap-mandatory gap-3 pb-2 scrollbar-none -mx-4 px-4">
+                    ${templates.map(t => `
+                        <div class="min-w-[220px] max-w-[240px] snap-center glass border ${hasActiveSession ? 'border-surface-200/70 dark:border-white/10 opacity-60' : ''} rounded-2xl p-4 flex flex-col justify-between shadow-sm">
+                            <div class="flex-1 cursor-pointer" data-action="view-template" data-template-id="${t.id}">
+                                <h4 class="font-bold text-base truncate mb-1" title="${this.escapeHtml(t.name)}">${this.escapeHtml(t.name)}</h4>
+                                <p class="text-xs text-surface-500 dark:text-surface-400 mb-2">${t.exercises.length} упр.</p>
+                                <div class="text-[11px] text-surface-400 truncate mb-3">
+                                    ${t.exercises.map(ex => ex.name).join(', ')}
+                                </div>
+                            </div>
+                            <button data-action="start-template" data-template-id="${t.id}" ${hasActiveSession ? 'disabled' : ''}
+                                    class="w-full py-2 flex items-center justify-center gap-1.5 ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'bg-primary-600 text-white'} rounded-xl text-xs font-semibold text-center shadow-sm">
+                                ${hasActiveSession ? `${LOCK_ICON}<span>Активна тренировка</span>` : '<span>Начать тренировку →</span>'}
+                            </button>
+                        </div>
+                    `).join('')}
+                </div>`}
+            </div>
+        `;
 
         let html = `
             <div class="p-4">
                 <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-xl font-bold">Мои тренировки</h2>
+                    <h2 class="text-xl font-bold">Тренировки</h2>
                 </div>
 
-                ${statsWidget}
+                <div id="tonnage-module" class="mb-6">
+                    ${this.renderTonnageModule(this.tonnageData)}
+                </div>
 
                 ${activeSession
                     ? `<div class="bg-lime-50 dark:bg-lime-900/20 border border-lime-200 dark:border-lime-800 rounded-xl p-4 mb-6 shadow-sm">
@@ -503,7 +880,7 @@ export const Workouts = {
                                 <span id="dashboard-workout-timer">${this.formatTimer(this.getElapsedSeconds(activeSession))}</span>
                             </span>
                         </div>
-                        <p class="text-sm text-surface-600 dark:text-surface-300 mb-3">${activeSession.name || 'Без названия'}</p>
+                        <p class="text-sm text-surface-600 dark:text-surface-300 mb-3">${this.escapeHtml(activeSession.name || 'Без названия')}</p>
                         <div class="mb-3">
                             <div class="flex items-center justify-between gap-2 mb-1">
                                 <span class="text-xs font-semibold text-surface-600 dark:text-surface-300">Сделано ${activeMetrics.completed} из ${activeMetrics.total} подходов (${activePercent}%)</span>
@@ -521,7 +898,7 @@ export const Workouts = {
                     : ''}
 
                 <div class="mb-6">
-                    <h3 class="text-sm font-semibold text-surface-500 uppercase tracking-wider mb-3">Действия</h3>
+                    <h3 class="text-sm font-semibold text-surface-500 uppercase tracking-wider mb-3">Быстрый старт</h3>
                     <div class="flex overflow-x-auto snap-x snap-mandatory gap-3 pb-3 scrollbar-none -mx-4 px-4">
                         <!-- Card 1: Build Custom -->
                         <div class="min-w-[240px] max-w-[260px] snap-center glass border rounded-2xl p-4 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="show-build-workout">
@@ -549,7 +926,19 @@ export const Workouts = {
                                 : '<span class="mt-4 text-xs font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-3 py-2 rounded-xl text-center">Начать сразу →</span>'}
                         </div>
 
-                        <!-- Card 3: Personal Records -->
+                        <!-- Card 3: History -->
+                        <div class="min-w-[240px] max-w-[260px] snap-center glass border rounded-2xl p-4 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="view-history">
+                            <div>
+                                <div class="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-3">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                                </div>
+                                <h4 class="font-bold text-lg mb-1">История</h4>
+                                <p class="text-xs text-surface-500 dark:text-surface-400">${recentSessions.length > 0 ? `Завершено ${recentSessions.length} тренировок, детальный разбор` : 'Хронология тренировок и разбор каждой'}</p>
+                            </div>
+                            <span class="mt-4 text-xs font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-3 py-2 rounded-xl text-center">Открыть историю →</span>
+                        </div>
+
+                        <!-- Card 4: Personal Records -->
                         <div class="min-w-[240px] max-w-[260px] snap-center glass border rounded-2xl p-4 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="view-records">
                             <div>
                                 <div class="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-3">
@@ -569,6 +958,12 @@ export const Workouts = {
 
         container.innerHTML = html;
 
+        this.bindTonnageModuleEvents(container, app);
+        // Fire-and-forget: the module already rendered from the local history
+        // fallback, so the dashboard stays interactive while the API call runs.
+        this.refreshTonnageModule(app).catch(error =>
+            console.warn('[Workouts] Tonnage refresh failed:', error));
+
         container.querySelectorAll('[data-action="show-build-workout"]').forEach(el => {
             el.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -580,9 +975,6 @@ export const Workouts = {
         });
         container.querySelectorAll('[data-action="view-records"]').forEach(el => {
             el.addEventListener('click', () => this.renderPersonalRecords(container, app, records));
-        });
-        container.querySelectorAll('[data-action="view-statistics"]').forEach(el => {
-            el.addEventListener('click', () => app.showPage('statistics'));
         });
         container.querySelectorAll('[data-action="view-templates"]').forEach(el => {
             el.addEventListener('click', () => app.showPage('templates'));
@@ -657,36 +1049,6 @@ export const Workouts = {
         const startTime = new Date(session.started_at).getTime();
         if (isNaN(startTime)) return 0;
         return Math.max(0, Math.floor((Date.now() - startTime) / 1000));
-    },
-
-    getWeekActivity(sessions) {
-        const now = new Date();
-        const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        monday.setDate(monday.getDate() - ((now.getDay() + 6) % 7));
-
-        const dayVolume = (session) => (session.exercises || []).reduce((sum, ex) =>
-            sum + (ex.sets || []).reduce((s, set) =>
-                s + (set.is_completed ? (set.weight_kg || 0) * (set.reps || 0) : 0), 0), 0);
-
-        return WEEK_LABELS.map((_, i) => {
-            const date = new Date(monday);
-            date.setDate(monday.getDate() + i);
-            const daySessions = (sessions || []).filter(s => {
-                const stamp = s.completed_at || s.started_at;
-                if (!stamp) return false;
-                const d = new Date(stamp);
-                return d.getFullYear() === date.getFullYear()
-                    && d.getMonth() === date.getMonth()
-                    && d.getDate() === date.getDate();
-            });
-            return {
-                date,
-                dayNum: date.getDate(),
-                count: daySessions.length,
-                volume: daySessions.reduce((sum, s) => sum + dayVolume(s), 0),
-                isToday: date.toDateString() === now.toDateString(),
-            };
-        });
     },
 
     getPersonalRecords(sessions) {
@@ -1598,14 +1960,23 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         }
     },
 
-    async renderHistory(container, app) {
+    // Chronological history: newest first, grouped by month, with a
+    // "load more" page that keeps the sessions already on screen.
+    async renderHistory(container, app, { limit = 20, append = false } = {}) {
         this.app = app;
+        this.stopWorkoutTimer();
+
+        const historyState = this.historyState || { limit: limit, total: 0, sessions: [] };
+        if (!append) historyState.limit = limit;
+        this.historyState = historyState;
+
         let data;
         try {
-            data = await API.get('/workouts/history?limit=20', app.state.tokens.access);
+            data = await API.get(`/workouts/history?limit=${historyState.limit}`, app.state.tokens.access);
         } catch (error) {
             console.error('[Workouts] History load error:', error);
-            container.innerHTML = Components.errorState('Ошибка загрузки истории');
+            if (!append) container.innerHTML = Components.errorState('Ошибка загрузки истории');
+            else this.renderHistoryList(container, app, historyState, true);
             return;
         }
 
@@ -1614,37 +1985,238 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             return;
         }
 
-        const sessions = data?.sessions || [];
+        historyState.sessions = (data?.sessions || [])
+            .slice()
+            .sort((a, b) => new Date(b.completed_at || b.started_at) - new Date(a.completed_at || a.started_at));
+        historyState.total = data?.total || 0;
 
-        let html = `
+        this.renderHistoryList(container, app, historyState, false);
+    },
+
+    renderHistoryList(container, app, historyState, failed) {
+        const sessions = historyState.sessions || [];
+        const hasMore = sessions.length < (historyState.total || 0);
+        this.recentSessions = sessions.filter(s => s.status === 'completed');
+
+        const groups = new Map();
+        sessions.forEach(session => {
+            const stamp = new Date(session.completed_at || session.started_at);
+            const label = isNaN(stamp.getTime())
+                ? 'Без даты'
+                : stamp.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+            if (!groups.has(label)) groups.set(label, []);
+            groups.get(label).push(session);
+        });
+
+        const statusLabel = (status) =>
+            status === 'completed' ? 'Завершена' : status === 'cancelled' ? 'Отменена' : 'Активна';
+
+        const groupBlocks = [...groups.entries()].map(([label, items]) => `
+            <div class="mb-5">
+                <h3 class="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">${this.escapeHtml(label)}</h3>
+                <div class="space-y-2">
+                    ${items.map(session => {
+                        const metrics = this.getWorkoutMetrics(session);
+                        const stamp = new Date(session.completed_at || session.started_at);
+                        return `
+                            <div class="glass rounded-2xl p-4 cursor-pointer btn-press" data-action="open-history-session" data-session-id="${session.id}">
+                                <div class="flex items-start justify-between gap-3">
+                                    <div class="min-w-0 flex-1">
+                                        <h4 class="font-semibold text-sm truncate" title="${this.escapeHtml(session.name || 'Тренировка')}">${this.escapeHtml(session.name || 'Тренировка')}</h4>
+                                        <p class="text-xs text-surface-500 dark:text-surface-400 mt-1">
+                                            ${isNaN(stamp.getTime()) ? '—' : `${Utils.formatDate(stamp.toISOString())} · ${Utils.formatTime(stamp.toISOString())}`}
+                                        </p>
+                                    </div>
+                                    <div class="text-right flex-shrink-0">
+                                        <p class="text-sm font-bold text-primary-600 dark:text-primary-400">${Math.round(metrics.tonnage)} кг</p>
+                                        <p class="text-[11px] text-surface-400">${metrics.completed}/${metrics.total} подх.</p>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-2 mt-2 text-[11px] text-surface-400">
+                                    <span>${Utils.formatDuration(session.duration_seconds || 0)}</span>
+                                    <span>·</span>
+                                    <span>${(session.exercises || []).length} упр.</span>
+                                    <span>·</span>
+                                    <span>${statusLabel(session.status)}</span>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            </div>
+        `).join('');
+
+        const html = `
             <div class="p-4">
                 <div class="flex items-center mb-4">
                     <button data-action="back-to-workouts" class="mr-3 text-surface-500 hover:text-surface-900">←</button>
                     <h2 class="text-xl font-bold">История тренировок</h2>
                 </div>
 
+                ${failed
+                    ? '<div class="text-xs text-amber-600 dark:text-amber-400 mb-3">Не удалось обновить список, показаны ранее загруженные данные</div>'
+                    : ''}
+
                 ${sessions.length === 0
                     ? `<div class="text-center py-8 text-surface-400">Ещё нет тренировок. Начните первую!</div>`
-                    : `<div class="space-y-3">
-                        ${sessions.map(s => `
-                            <div class="glass rounded-xl p-4">
-                                <h3 class="font-semibold">${s.name || 'Тренировка'}</h3>
-                                <p class="text-sm text-surface-500 dark:text-surface-400">
-                                    ${Utils.formatDate(s.started_at)} · ${Utils.formatDuration(s.duration_seconds || 0)}
-                                </p>
-                                <p class="text-xs text-surface-400 dark:text-surface-500 mt-1 capitalize">
-                                    Статус: ${s.status === 'completed' ? 'Завершена' : s.status === 'cancelled' ? 'Отменена' : 'Активна'}
-                                </p>
-                            </div>
-                        `).join('')}
-                    </div>`}
+                    : `${groupBlocks}
+                        ${hasMore ? '<button type="button" data-action="history-load-more" class="w-full py-2.5 glass rounded-xl text-sm font-semibold">Показать ещё</button>' : ''}`}
             </div>
         `;
 
         container.innerHTML = html;
-        container.querySelector('[data-action="back-to-workouts"]')?.addEventListener('click', (e) => {
+
+        container.querySelectorAll('[data-action="open-history-session"]').forEach(card => {
+            card.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const sessionId = parseInt(e.currentTarget.dataset.sessionId);
+                if (!isNaN(sessionId)) this.renderHistoryDetail(container, app, sessionId);
+            });
+        });
+
+        container.querySelector('[data-action="history-load-more"]')?.addEventListener('click', (e) => {
             e.stopPropagation();
-            app.showPage('workouts');
+            historyState.limit += 20;
+            this.renderHistory(container, app, { limit: historyState.limit, append: true });
+        });
+    },
+
+    // Detailed history for one session: summary metrics, delta vs the previous
+    // session, generated summary and per-exercise tonnage / e1RM trend lines.
+    async renderHistoryDetail(container, app, sessionId) {
+        this.app = app;
+        container.innerHTML = Components.loadingSpinner();
+
+        let detail;
+        try {
+            detail = await API.get(`/workouts/history/${sessionId}`, app.state.tokens.access);
+        } catch (error) {
+            console.error('[Workouts] History detail load error:', error);
+            container.innerHTML = Components.errorState('Ошибка загрузки тренировки');
+            return;
+        }
+
+        if (!detail) {
+            container.innerHTML = Components.errorState('Тренировка не найдена');
+            return;
+        }
+
+        const metrics = detail.metrics || {};
+        const delta = detail.delta || {};
+        const deltaPercent = delta.percent;
+        const statusLabel = detail.status === 'completed' ? 'Завершена' : detail.status === 'cancelled' ? 'Отменена' : 'Активна';
+
+        const deltaBlock = deltaPercent === null || deltaPercent === undefined
+            ? `<p class="text-xs text-surface-400">Нет предыдущей тренировки для сравнения</p>`
+            : `<p class="text-sm">
+                    <span class="${deltaPercent >= 0 ? 'text-lime-600 dark:text-lime-400' : 'text-rose-500 dark:text-rose-400'} font-bold">
+                        ${deltaPercent >= 0 ? '+' : ''}${deltaPercent}%
+                    </span>
+                    <span class="text-surface-500 dark:text-surface-400"> к «${this.escapeHtml(delta.previous_session_name || 'прошлой тренировке')}»</span>
+                </p>`;
+
+        const exerciseBlocks = (detail.exercises || []).map(exercise => {
+            const tonnagePoints = (exercise.tonnage_series || []).map(point => point.value);
+            const e1rmPoints = (exercise.e1rm_series || []).map(point => point.value);
+            return `
+                <div class="glass rounded-2xl p-4">
+                    <div class="flex items-start justify-between gap-3 mb-3">
+                        <h4 class="font-semibold text-sm min-w-0 flex-1 break-words" title="${this.escapeHtml(exercise.name)}">${this.escapeHtml(exercise.name)}</h4>
+                        <span class="text-sm font-bold text-primary-600 dark:text-primary-400 flex-shrink-0">${Math.round(exercise.tonnage_kg || 0)} кг</span>
+                    </div>
+
+                    <div class="grid grid-cols-3 gap-2 text-center mb-3">
+                        <div class="bg-surface-50 dark:bg-white/5 p-2 rounded-xl">
+                            <div class="text-[10px] text-surface-400">Подходы</div>
+                            <div class="text-sm font-bold">${exercise.completed_sets}/${exercise.total_sets}</div>
+                        </div>
+                        <div class="bg-surface-50 dark:bg-white/5 p-2 rounded-xl">
+                            <div class="text-[10px] text-surface-400">Повторений</div>
+                            <div class="text-sm font-bold">${exercise.reps || 0}</div>
+                        </div>
+                        <div class="bg-surface-50 dark:bg-white/5 p-2 rounded-xl">
+                            <div class="text-[10px] text-surface-400">≈1 ПМ</div>
+                            <div class="text-sm font-bold">${Math.round(exercise.best_e1rm || 0)} кг</div>
+                        </div>
+                    </div>
+
+                    <div class="space-y-3">
+                        ${tonnagePoints.length > 0 ? Components.sparkline(tonnagePoints, 60, 'Тоннаж по упражнению (кг)') : ''}
+                        ${e1rmPoints.length > 0 ? Components.sparkline(e1rmPoints, 60, 'Оценка 1 ПМ (кг)') : ''}
+                    </div>
+
+                    ${(exercise.sets || []).length > 0 ? `
+                        <div class="mt-3 space-y-1">
+                            ${exercise.sets.map(set => `
+                                <div class="flex items-center gap-2 text-xs ${set.is_completed ? '' : 'text-surface-400'}">
+                                    <span class="w-5 text-center font-semibold">${set.set_number}</span>
+                                    <span class="font-mono ${set.is_completed ? '' : 'line-through'}">${set.weight_kg ?? '—'}×${set.reps ?? '—'}</span>
+                                    ${set.rpe ? `<span class="text-surface-400">RPE ${set.rpe}</span>` : ''}
+                                </div>
+                            `).join('')}
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }).join('');
+
+        container.innerHTML = `
+            <div class="p-4">
+                <div class="flex items-center gap-3 mb-4">
+                    <button data-action="history-detail-back" class="text-surface-500 hover:text-surface-900 text-lg">←</button>
+                    <h2 class="text-xl font-bold truncate flex-1" title="${this.escapeHtml(detail.name || 'Тренировка')}">${this.escapeHtml(detail.name || 'Тренировка')}</h2>
+                </div>
+
+                <p class="text-xs text-surface-500 dark:text-surface-400 mb-4">
+                    ${detail.completed_at
+                        ? `${Utils.formatDate(detail.completed_at)} · ${Utils.formatTime(detail.completed_at)}`
+                        : 'Дата завершения не указана'}
+                    · ${statusLabel}
+                </p>
+
+                <div class="grid grid-cols-2 gap-2 mb-4">
+                    <div class="glass rounded-2xl p-3">
+                        <p class="text-xs text-surface-500 dark:text-surface-400">Тоннаж</p>
+                        <p class="text-2xl font-bold">${Math.round(metrics.tonnage_kg || 0)} кг</p>
+                    </div>
+                    <div class="glass rounded-2xl p-3">
+                        <p class="text-xs text-surface-500 dark:text-surface-400">Длительность</p>
+                        <p class="text-2xl font-bold">${Math.round(metrics.duration_min || 0)} мин</p>
+                    </div>
+                    <div class="glass rounded-2xl p-3">
+                        <p class="text-xs text-surface-500 dark:text-surface-400">Подходы</p>
+                        <p class="text-2xl font-bold">${metrics.completed_sets || 0}<span class="text-sm font-normal text-surface-400">/${metrics.total_sets || 0}</span></p>
+                    </div>
+                    <div class="glass rounded-2xl p-3">
+                        <p class="text-xs text-surface-500 dark:text-surface-400">Выполнено</p>
+                        <p class="text-2xl font-bold">${metrics.completion_percent || 0}%</p>
+                    </div>
+                </div>
+
+                <div class="glass rounded-2xl p-4 mb-4">
+                    <h3 class="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-1.5">Динамика тоннажа</h3>
+                    ${deltaBlock}
+                </div>
+
+                ${detail.summary ? `
+                    <div class="glass rounded-2xl p-4 mb-4">
+                        <h3 class="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-1.5">Резюме</h3>
+                        <p class="text-sm text-surface-700 dark:text-surface-300 leading-relaxed">${this.escapeHtml(detail.summary)}</p>
+                    </div>
+                ` : ''}
+
+                <h3 class="text-sm font-semibold text-surface-500 uppercase tracking-wider mb-3">
+                    Упражнения (${(detail.exercises || []).length})
+                </h3>
+                ${(detail.exercises || []).length === 0
+                    ? '<div class="text-center py-6 text-surface-400 text-sm">В тренировке нет упражнений</div>'
+                    : `<div class="space-y-3">${exerciseBlocks}</div>`}
+            </div>
+        `;
+
+        container.querySelector('[data-action="history-detail-back"]')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.renderHistory(container, app, { limit: this.historyState?.limit || 20 });
         });
     },
 

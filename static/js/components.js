@@ -3,6 +3,7 @@ import { Utils } from './utils.js';
 import { DB } from './db.js';
 
 let sparklineSeq = 0;
+let tonnageChartSeq = 0;
 
 function escapeHtml(value) {
     return String(value ?? '')
@@ -401,6 +402,105 @@ export const Components = {
                         </svg>
                         <div class="absolute pointer-events-none -translate-x-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full border-2 border-surface-50 dark:border-zinc-900 bg-surface-500 dark:bg-zinc-200 shadow-[0_0_4px_rgba(113,113,122,0.55)] dark:shadow-[0_0_8px_rgba(228,228,231,0.45)]" style="left: ${lastX}%; top: ${lastY}%;"></div>
                     </div>
+                </div>
+            </div>
+        `;
+    },
+
+    /**
+     * Smooth area line chart for the tonnage module. `series` is the dense
+     * bucket list from /workouts/tonnage ({ key, label, tonnage_kg }).
+     *
+     * Points are laid out in equal-width slots so the invisible hover/tap hit
+     * zones tile the plot without overlapping, while the bezier curve and the
+     * marker share the exact same coordinates. Label thinning keeps long ranges
+     * readable on narrow screens. Interaction is bound by the caller on
+     * `[data-role="tonnage-chart"]` (see Workouts.bindTonnageChart).
+     */
+    tonnageLineChart(series = [], { valueKey = 'tonnage_kg', height = 128, emptyText = 'Нет данных за период' } = {}) {
+        const points = (series || []).filter(p => p && p[valueKey] !== undefined && p[valueKey] !== null);
+        if (points.length === 0) {
+            return `<div class="text-xs text-surface-400 h-20 flex items-center justify-center">${escapeHtml(emptyText)}</div>`;
+        }
+
+        const values = points.map(p => Number(p[valueKey]) || 0);
+        const max = Math.max(...values);
+        // Anchor the baseline at zero so empty buckets stay visibly flat.
+        const min = Math.min(0, ...values);
+        const range = (max - min) || 1;
+        const total = values.reduce((sum, v) => sum + v, 0);
+
+        const slot = 100 / points.length;
+        const top = 10;
+        const bottom = 90;
+        const coords = values.map((value, i) => ({
+            x: slot * (i + 0.5),
+            y: bottom - ((value - min) / range) * (bottom - top),
+        }));
+
+        const gradientId = `tonnage-area-${++tonnageChartSeq}`;
+        const linePath = buildSmoothPath(coords);
+        const first = coords[0];
+        const last = coords[coords.length - 1];
+        const areaPath = `${linePath} L ${last.x.toFixed(2)} ${bottom} L ${first.x.toFixed(2)} ${bottom} Z`;
+
+        // Thin labels so long ranges never overlap on mobile.
+        const step = Math.max(1, Math.ceil(points.length / 6));
+        const lastIndex = points.length - 1;
+
+        const chartPoints = points.map((point, i) => ({
+            x: coords[i].x,
+            y: coords[i].y,
+            label: String(point.label ?? point.key ?? ''),
+            value: values[i],
+        }));
+
+        const hits = chartPoints.map((_, i) => `
+            <div class="absolute inset-y-0 cursor-pointer" data-tonnage-hit="${i}"
+                 style="left: ${(i * slot).toFixed(2)}%; width: ${slot.toFixed(2)}%;"></div>
+        `).join('');
+
+        const labels = points.map((point, i) => {
+            const text = (i % step === 0 || i === lastIndex) ? String(point.label ?? '') : '';
+            return `<span class="flex-1 min-w-0 text-[9px] leading-none text-surface-400 dark:text-surface-500 text-center truncate">${escapeHtml(text)}</span>`;
+        }).join('');
+
+        const lastPoint = chartPoints[lastIndex];
+        const defaultReadout = `${lastPoint.label ? `${lastPoint.label}: ` : ''}${Math.round(lastPoint.value).toLocaleString('ru-RU')} кг`;
+
+        return `
+            <div class="w-full select-none text-primary-600 dark:text-zinc-100" data-role="tonnage-chart" data-points='${escapeHtml(JSON.stringify(chartPoints))}'>
+                <div class="relative w-full touch-pan-y" style="height: ${height}px">
+                    <svg class="block w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                        <defs>
+                            <linearGradient id="${gradientId}" x1="0%" y1="100%" x2="0%" y2="0%">
+                                <stop offset="0%" stop-color="currentColor" stop-opacity="0.26"/>
+                                <stop offset="100%" stop-color="currentColor" stop-opacity="0"/>
+                            </linearGradient>
+                        </defs>
+                        <g stroke="currentColor" stroke-opacity="0.10" stroke-width="0.5" stroke-dasharray="3 3" vector-effect="non-scaling-stroke">
+                            <line x1="0" y1="36" x2="100" y2="36"/>
+                            <line x1="0" y1="63" x2="100" y2="63"/>
+                        </g>
+                        ${points.length > 1 ? `
+                            <path d="${areaPath}" fill="url(#${gradientId})" stroke="none"/>
+                            <path d="${linePath}" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+                        ` : ''}
+                    </svg>
+
+                    <div data-tonnage-guide class="pointer-events-none absolute inset-y-0 w-px bg-current opacity-0 transition-opacity duration-150"
+                         style="left: ${last.x.toFixed(2)}%;"></div>
+                    <div data-tonnage-marker class="pointer-events-none absolute w-2.5 h-2.5 rounded-full -translate-x-1/2 -translate-y-1/2 border-2 border-surface-50 dark:border-zinc-900 bg-primary-600 dark:bg-zinc-100 shadow-[0_0_6px_rgba(163,230,53,0.5)] opacity-0 transition-opacity duration-150"
+                         style="left: ${last.x.toFixed(2)}%; top: ${last.y.toFixed(2)}%;"></div>
+
+                    <div data-tonnage-surface class="absolute inset-0">${hits}</div>
+                </div>
+
+                <div class="mt-1.5 flex gap-0.5">${labels}</div>
+
+                <div class="mt-2 flex items-center justify-between gap-2 text-[10px] text-surface-400 dark:text-surface-500">
+                    <span data-tonnage-readout class="font-mono truncate" aria-live="polite">${escapeHtml(defaultReadout)}</span>
+                    <span class="font-mono flex-shrink-0">Всего: ${Math.round(total).toLocaleString('ru-RU')} кг</span>
                 </div>
             </div>
         `;

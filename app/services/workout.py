@@ -1,6 +1,6 @@
-from datetime import datetime, timezone
-from typing import Optional, List
-from sqlalchemy import select, func, or_
+from datetime import datetime, timezone, timedelta, date
+from typing import Optional, List, Dict, Any
+from sqlalchemy import select, func, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -826,6 +826,540 @@ async def get_workout_statistics(
         "current_streak_weeks": current_streak,
         "top_exercises": top_exercises,
     }
+
+
+# ===== Tonnage =====
+# None means "no lower bound" for the `all` preset, which is bounded by the
+# earliest session instead of a fixed number of days.
+TONNAGE_PERIOD_DAYS = {"week": 7, "month": 30, "all": None}
+# Day buckets stay readable for the 7/30 day presets; a multi-year "all time"
+# range would otherwise produce thousands of unusable bars.
+TONNAGE_BUCKET = {"week": "day", "month": "day", "all": "month"}
+MONTH_LABELS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
+
+
+def as_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """Make a datetime timezone-aware in UTC; the DB driver may return naive values."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+    """Parse an ISO-8601 date or datetime, returning None for unusable input."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    # A bare YYYY-MM-DD parses as midnight naive; treat it as UTC so date
+    # filters coming from the browser do not shift by the client offset.
+    return as_utc(parsed)
+
+
+def month_start(value: datetime) -> datetime:
+    return value.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def resolve_tonnage_range(
+    period: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> tuple[datetime, datetime]:
+    """Resolve the effective [start, end] window for a tonnage query.
+
+    An explicit range always wins over the `period` preset so the bottom sheet
+    overrides can narrow or widen the window the inline tabs selected.
+    """
+    now = datetime.now(timezone.utc)
+    explicit_start = parse_iso_datetime(start_date)
+    explicit_end = parse_iso_datetime(end_date)
+
+    if explicit_start or explicit_end:
+        start = explicit_start or month_start(now)
+        end = explicit_end or now
+        if end <= start:
+            end = start + timedelta(days=1)
+        return start, end
+
+    days = TONNAGE_PERIOD_DAYS.get(period or "week", 7)
+    if days is None:
+        # `all` has no lower bound of its own: the caller narrows it to the
+        # earliest session once the data is known, so empty years never appear.
+        return datetime(1970, 1, 1, tzinfo=timezone.utc), now
+    return now - timedelta(days=days), now
+
+
+def build_tonnage_buckets(start: datetime, end: datetime, granularity: str) -> List[dict]:
+    """Build a dense, zero-filled bucket list covering [start, end]."""
+    buckets: List[dict] = []
+    if granularity == "month":
+        year, month = start.year, start.month
+        last_year, last_month = end.year, end.month
+        while (year, month) <= (last_year, last_month):
+            cursor = datetime(year, month, 1, tzinfo=timezone.utc)
+            buckets.append(
+                {
+                    "key": cursor.strftime("%Y-%m"),
+                    "label": f"{MONTH_LABELS[month - 1]} {year}",
+                    "start": cursor,
+                    "tonnage_kg": 0.0,
+                    "sets_count": 0,
+                    "workouts": 0,
+                }
+            )
+            month += 1
+            if month > 12:
+                month = 1
+                year += 1
+        return buckets
+
+    cursor = start.replace(hour=0, minute=0, second=0, microsecond=0)
+    last = end.replace(hour=0, minute=0, second=0, microsecond=0)
+    while cursor <= last:
+        buckets.append(
+            {
+                "key": cursor.strftime("%Y-%m-%d"),
+                "label": f"{cursor.day} {MONTH_LABELS[cursor.month - 1]}",
+                "start": cursor,
+                "tonnage_kg": 0.0,
+                "sets_count": 0,
+                "workouts": 0,
+            }
+        )
+        cursor += timedelta(days=1)
+    return buckets
+
+
+async def get_filtered_tonnage(
+    db: AsyncSession,
+    user_id: int,
+    period: Optional[str] = "week",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    muscle_group: Optional[str] = None,
+    exercise_name: Optional[str] = None,
+    template_id: Optional[int] = None,
+) -> dict:
+    """Aggregate exact tonnage (weight_kg * reps) over completed sets.
+
+    Supports the inline period presets as well as the bottom sheet filters
+    (date range, muscle group, exercise, template). The comparison window is
+    the immediately preceding span of equal length, so the UI can show a delta.
+    """
+    start, end = resolve_tonnage_range(period, start_date, end_date)
+    unbounded = (period or "week") == "all" and not start_date and not end_date
+
+    query = (
+        select(
+            WorkoutSession.id.label("session_id"),
+            WorkoutSession.name.label("name"),
+            WorkoutSession.completed_at.label("completed_at"),
+            WorkoutSession.started_at.label("started_at"),
+            func.coalesce(func.sum(WorkoutSet.weight_kg * WorkoutSet.reps), 0).label("tonnage"),
+            func.count(WorkoutSet.id).label("sets_count"),
+        )
+        .select_from(WorkoutSession)
+        .join(WorkoutSessionExercise, WorkoutSessionExercise.session_id == WorkoutSession.id)
+        .join(WorkoutSet, WorkoutSet.exercise_id == WorkoutSessionExercise.id)
+        .where(
+            WorkoutSession.user_id == user_id,
+            WorkoutSession.status == WorkoutSessionStatus.COMPLETED,
+            WorkoutSet.is_completed.is_(True),
+            WorkoutSet.weight_kg.isnot(None),
+            WorkoutSet.reps.isnot(None),
+        )
+        .group_by(WorkoutSession.id)
+    )
+
+    if exercise_name:
+        # Substring match so the filter behaves like the catalog search box;
+        # LIKE wildcards inside the user input are escaped to stay literal.
+        needle = exercise_name.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        query = query.where(WorkoutSessionExercise.name.ilike(f"%{needle}%"))
+    if template_id:
+        query = query.where(WorkoutSession.template_id == template_id)
+    if muscle_group:
+        # Session exercises are free-text names, so the muscle group is only
+        # resolvable through the catalog (global entry or the user's own).
+        query = query.join(
+            ExerciseCatalog,
+            and_(
+                func.lower(ExerciseCatalog.name) == func.lower(WorkoutSessionExercise.name),
+                or_(ExerciseCatalog.user_id.is_(None), ExerciseCatalog.user_id == user_id),
+            ),
+        ).where(ExerciseCatalog.muscle_group == muscle_group)
+
+    result = await db.execute(query)
+
+    session_rows: List[dict] = []
+    for tonnage_row in result.all():
+        stamp = as_utc(tonnage_row.completed_at) or as_utc(tonnage_row.started_at)
+        if stamp is None:
+            continue
+        session_rows.append(
+            {
+                "session_id": tonnage_row.session_id,
+                "name": tonnage_row.name,
+                "timestamp": stamp,
+                "tonnage": float(tonnage_row.tonnage or 0),
+                "sets_count": int(tonnage_row.sets_count or 0),
+            }
+        )
+
+    # `all` starts at the epoch so no data is missed; pull it back to the
+    # earliest session so the chart does not open with decades of empty bars.
+    if unbounded and session_rows:
+        start = month_start(min(entry["timestamp"] for entry in session_rows))
+    elif unbounded:
+        start = month_start(end)
+
+    window_seconds = max(1.0, (end - start).total_seconds())
+    previous_start = start - timedelta(seconds=window_seconds)
+
+    total_tonnage = 0.0
+    total_sets = 0
+    total_workouts = 0
+    previous_tonnage = 0.0
+    for entry in session_rows:
+        if previous_start <= entry["timestamp"] < start:
+            previous_tonnage += entry["tonnage"]
+        elif start <= entry["timestamp"] <= end:
+            total_tonnage += entry["tonnage"]
+            total_sets += entry["sets_count"]
+            total_workouts += 1
+
+    granularity = TONNAGE_BUCKET.get(period or "week", "day")
+    buckets = build_tonnage_buckets(start, end, granularity)
+    bucket_index = {bucket["key"]: bucket for bucket in buckets}
+
+    def bucket_key_for(stamp: datetime, granularity_key: str) -> Optional[str]:
+        if granularity_key == "month":
+            return stamp.strftime("%Y-%m")
+        return stamp.strftime("%Y-%m-%d")
+
+    for entry in session_rows:
+        if not (start <= entry["timestamp"] <= end):
+            continue
+        bucket = bucket_index.get(bucket_key_for(entry["timestamp"], granularity))
+        if bucket is None:
+            continue
+        bucket["tonnage_kg"] += entry["tonnage"]
+        bucket["sets_count"] += entry["sets_count"]
+        bucket["workouts"] += 1
+
+    for bucket in buckets:
+        bucket["start"] = bucket["start"].isoformat()
+        bucket["tonnage_kg"] = round(bucket["tonnage_kg"], 1)
+
+    delta_kg = total_tonnage - previous_tonnage
+    has_previous = previous_tonnage > 0
+
+    return {
+        "period": period if period in TONNAGE_PERIOD_DAYS else "week",
+        "range": {"start": start.isoformat(), "end": end.isoformat()},
+        "total_tonnage_kg": round(total_tonnage, 1),
+        "workouts_count": total_workouts,
+        "sets_count": total_sets,
+        "avg_tonnage_kg": round(total_tonnage / total_workouts, 1) if total_workouts else 0.0,
+        "previous_total_tonnage_kg": round(previous_tonnage, 1) if has_previous else None,
+        "delta_kg": round(delta_kg, 1) if has_previous else None,
+        "delta_percent": round((delta_kg / previous_tonnage) * 100, 1) if has_previous else None,
+        "granularity": granularity,
+        "series": buckets,
+        "filters": {
+            "start_date": start_date or None,
+            "end_date": end_date or None,
+            "muscle_group": muscle_group or None,
+            "exercise_name": exercise_name or None,
+            "template_id": template_id,
+        },
+    }
+
+
+def estimate_one_rep_max(weight_kg: Optional[float], reps: Optional[int]) -> float:
+    """Epley formula: estimated 1RM from a single set."""
+    if not weight_kg or not reps:
+        return 0.0
+    return weight_kg * (1 + reps / 30)
+
+
+def _session_tonnage(exercises: List[WorkoutSessionExercise], only_completed: bool = True) -> float:
+    total = 0.0
+    for exercise in exercises or []:
+        for workout_set in exercise.sets or []:
+            if only_completed and not workout_set.is_completed:
+                continue
+            total += (workout_set.weight_kg or 0) * (workout_set.reps or 0)
+    return total
+
+
+def _session_best_set(exercises: List[WorkoutSessionExercise]) -> Optional[dict]:
+    best = None
+    for exercise in exercises or []:
+        for workout_set in exercise.sets or []:
+            if not workout_set.is_completed:
+                continue
+            if not workout_set.weight_kg or not workout_set.reps:
+                continue
+            if best is None or workout_set.weight_kg > best["weight_kg"]:
+                best = {
+                    "weight_kg": workout_set.weight_kg,
+                    "reps": workout_set.reps,
+                    "rpe": workout_set.rpe,
+                }
+    return best
+
+
+def build_session_summary_text(detail: dict) -> str:
+    """Rule-based workout summary used where no AI provider is configured.
+
+    Mirrors what an LLM prompt would return for this payload, so the history
+    view always has a readable narrative to show.
+    """
+    metrics = detail.get("metrics", {})
+    delta = detail.get("delta", {})
+    name = detail.get("name") or "Тренировка"
+    tonnage = metrics.get("tonnage_kg", 0)
+    sets_done = metrics.get("completed_sets", 0)
+    sets_total = metrics.get("total_sets", 0)
+    duration_min = metrics.get("duration_min", 0)
+
+    if tonnage <= 0 and sets_done == 0:
+        return f"«{name}»: выполненных подходов с весом нет — тоннаж не зафиксирован."
+
+    parts = [f"«{name}»: {sets_done} из {sets_total} подходов, тоннаж {round(tonnage)} кг"]
+
+    top = detail.get("top_exercise")
+    if top:
+        parts.append(f"основная работа — {top['name']} ({round(top['tonnage_kg'])} кг)")
+
+    best = detail.get("best_set")
+    if best:
+        parts.append(f"лучший подход {best['weight_kg']}×{best['reps']}")
+
+    if duration_min:
+        parts.append(f"время {round(duration_min)} мин")
+
+    delta_percent = delta.get("percent")
+    if delta_percent is not None:
+        direction = "выше" if delta_percent >= 0 else "ниже"
+        parts.append(f"тоннаж на {abs(delta_percent)}% {direction} прошлой тренировки")
+
+    completion = metrics.get("completion_percent", 0)
+    if completion < 100:
+        parts.append(f"выполнено {completion}% плана")
+
+    return ", ".join(parts) + "."
+
+
+async def get_workout_session_detail(
+    db: AsyncSession,
+    user_id: int,
+    session_id: int,
+) -> Optional[dict]:
+    """Detailed history payload for a single workout session.
+
+    Includes summary metrics, the tonnage delta against the previous session,
+    a generated summary, and per-exercise tonnage / estimated-1RM trend lines
+    built from the most recent completed sessions.
+    """
+    session = await get_workout_session(db, session_id, user_id)
+    if not session:
+        return None
+
+    exercises = sorted(session.exercises or [], key=lambda ex: (ex.order or 0, ex.id))
+    metrics = {"tonnage_kg": 0.0, "total_sets": 0, "completed_sets": 0, "exercises_count": len(exercises)}
+    for exercise in exercises:
+        for workout_set in exercise.sets or []:
+            metrics["total_sets"] += 1
+            if not workout_set.is_completed:
+                continue
+            metrics["completed_sets"] += 1
+            metrics["tonnage_kg"] += (workout_set.weight_kg or 0) * (workout_set.reps or 0)
+    metrics["completion_percent"] = (
+        round((metrics["completed_sets"] / metrics["total_sets"]) * 100) if metrics["total_sets"] else 0
+    )
+    metrics["tonnage_kg"] = round(metrics["tonnage_kg"], 1)
+    duration_seconds = session.duration_seconds or 0
+    metrics["duration_seconds"] = duration_seconds
+    metrics["duration_min"] = round(duration_seconds / 60, 1) if duration_seconds else 0
+
+    completed_sessions_result = await db.execute(
+        select(WorkoutSession.id, WorkoutSession.name, WorkoutSession.started_at, WorkoutSession.completed_at)
+        .where(
+            WorkoutSession.user_id == user_id,
+            WorkoutSession.status == WorkoutSessionStatus.COMPLETED,
+        )
+        .order_by(WorkoutSession.started_at.desc())
+        .limit(20)
+    )
+    history_rows = [
+        {
+            "id": row.id,
+            "name": row.name,
+            "timestamp": as_utc(row.completed_at) or as_utc(row.started_at),
+        }
+        for row in completed_sessions_result.all()
+    ]
+    history_ids = [row["id"] for row in history_rows]
+
+    # The trend window is the N most recent sessions, so opening an old session
+    # would otherwise leave its own point out of its trend lines.
+    if session.id not in history_ids:
+        own_timestamp = as_utc(session.completed_at) or as_utc(session.started_at)
+        history_rows.append({"id": session.id, "name": session.name, "timestamp": own_timestamp})
+        history_ids.append(session.id)
+
+    # One query for every exercise/set of the recent sessions, then group in
+    # Python: cheaper and more predictable than a query per exercise.
+    per_session: dict[int, Dict[str, dict]] = {}
+    if history_ids:
+        trend_result = await db.execute(
+            select(
+                WorkoutSessionExercise.session_id.label("session_id"),
+                WorkoutSessionExercise.name.label("name"),
+                func.coalesce(func.sum(WorkoutSet.weight_kg * WorkoutSet.reps), 0).label("tonnage"),
+                func.max(WorkoutSet.weight_kg * (1 + WorkoutSet.reps / 30.0)).label("e1rm"),
+            )
+            .select_from(WorkoutSessionExercise)
+            .join(WorkoutSet, WorkoutSet.exercise_id == WorkoutSessionExercise.id)
+            .where(
+                WorkoutSessionExercise.session_id.in_(history_ids),
+                WorkoutSet.is_completed.is_(True),
+                WorkoutSet.weight_kg.isnot(None),
+                WorkoutSet.reps.isnot(None),
+            )
+            .group_by(WorkoutSessionExercise.session_id, WorkoutSessionExercise.name)
+        )
+        for trend_row in trend_result.all():
+            trend_key = (trend_row.name or "").strip().lower()
+            if not trend_key:
+                continue
+            per_session.setdefault(trend_row.session_id, {})[trend_key] = {
+                "tonnage_kg": float(trend_row.tonnage or 0),
+                "e1rm": float(trend_row.e1rm or 0),
+            }
+
+    history_chronological: List[dict] = sorted(
+        (entry for entry in history_rows if entry["timestamp"] is not None),
+        key=lambda entry: entry["timestamp"],
+    )
+
+    def session_metrics_for(session_id_value: int) -> dict:
+        """Tonnage, sets count and session name for one history entry."""
+        for entry in history_chronological:
+            if entry["id"] == session_id_value:
+                entries = per_session.get(session_id_value, {})
+                return {
+                    "name": entry["name"],
+                    "timestamp": entry["timestamp"],
+                    "tonnage_kg": round(sum(item["tonnage_kg"] for item in entries.values()), 1),
+                }
+        return {"name": None, "timestamp": None, "tonnage_kg": 0.0}
+
+    current_tonnage = metrics["tonnage_kg"]
+
+    # The previous session is the one immediately before this one in
+    # chronological order; the oldest session in the window has none.
+    previous_entry: Optional[dict] = None
+    for index, entry in enumerate(history_chronological):
+        if entry["id"] == session.id:
+            if index > 0:
+                previous_entry = history_chronological[index - 1]
+            break
+
+    previous_tonnage = None
+    delta_percent = None
+    if previous_entry:
+        previous_tonnage = session_metrics_for(previous_entry["id"])["tonnage_kg"]
+        if previous_tonnage > 0:
+            delta_percent = round(((current_tonnage - previous_tonnage) / previous_tonnage) * 100, 1)
+
+    exercise_details: List[dict] = []
+    for exercise in exercises:
+        exercise_key = (exercise.name or "").strip().lower()
+        tonnage = 0.0
+        completed = 0
+        total = 0
+        best_e1rm = 0.0
+        volume_reps = 0
+        for workout_set in exercise.sets or []:
+            total += 1
+            if not workout_set.is_completed:
+                continue
+            completed += 1
+            tonnage += (workout_set.weight_kg or 0) * (workout_set.reps or 0)
+            volume_reps += workout_set.reps or 0
+            best_e1rm = max(best_e1rm, estimate_one_rep_max(workout_set.weight_kg, workout_set.reps))
+
+        tonnage_series = []
+        e1rm_series = []
+        for history_entry in history_chronological:
+            exercise_entry = per_session.get(history_entry["id"], {}).get(exercise_key)
+            if not exercise_entry:
+                continue
+            tonnage_series.append({"session_id": history_entry["id"], "value": round(exercise_entry["tonnage_kg"], 1)})
+            e1rm_series.append({"session_id": history_entry["id"], "value": round(exercise_entry["e1rm"], 1)})
+
+        exercise_details.append(
+            {
+                "id": exercise.id,
+                "name": exercise.name,
+                "notes": exercise.notes,
+                "total_sets": total,
+                "completed_sets": completed,
+                "reps": volume_reps,
+                "tonnage_kg": round(tonnage, 1),
+                "best_e1rm": round(best_e1rm, 1),
+                "best_set": _session_best_set([exercise]),
+                "sets": [
+                    {
+                        "set_number": workout_set.set_number,
+                        "weight_kg": workout_set.weight_kg,
+                        "reps": workout_set.reps,
+                        "rpe": workout_set.rpe,
+                        "is_completed": workout_set.is_completed,
+                    }
+                    for workout_set in sorted(exercise.sets or [], key=lambda s: s.set_number)
+                ],
+                "tonnage_series": tonnage_series,
+                "e1rm_series": e1rm_series,
+            }
+        )
+
+    top_exercise: Optional[dict] = None
+    if exercise_details:
+        top_exercise = max(exercise_details, key=lambda item: float(item["tonnage_kg"]))
+
+    started_at_utc = as_utc(session.started_at)
+    completed_at_utc = as_utc(session.completed_at)
+
+    detail = {
+        "id": session.id,
+        "name": session.name,
+        "status": session.status.value if hasattr(session.status, "value") else session.status,
+        "template_id": session.template_id,
+        "notes": session.notes,
+        "started_at": started_at_utc.isoformat() if started_at_utc else None,
+        "completed_at": completed_at_utc.isoformat() if completed_at_utc else None,
+        "metrics": metrics,
+        "delta": {
+            "previous_session_id": previous_entry["id"] if previous_entry else None,
+            "previous_session_name": previous_entry["name"] if previous_entry else None,
+            "previous_tonnage_kg": previous_tonnage,
+            "tonnage_kg": round(current_tonnage - previous_tonnage, 1) if previous_tonnage is not None else None,
+            "percent": delta_percent,
+        },
+        "best_set": _session_best_set(exercises),
+        "top_exercise": top_exercise,
+        "exercises": exercise_details,
+    }
+    detail["summary"] = build_session_summary_text(detail)
+    return detail
 
 
 async def get_last_exercise_sets(db: AsyncSession, user_id: int, exercise_name: str) -> Optional[List[WorkoutSet]]:
