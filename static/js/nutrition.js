@@ -11,6 +11,7 @@ export const Nutrition = {
     period: 'day',
     selectedMealType: null,
     _newMealModalState: null,
+    _newMealModalClosing: null,
 
     async loadData(date) {
         const token = this.app.state.tokens.access;
@@ -373,7 +374,9 @@ async render(container, app, dateOverride = null) {
     },
 
     openNewMealModal() {
-        if (this._newMealModalState) return;
+        // Guard on the closing element too, so a tap during the slide-out
+        // animation cannot stack a second sheet on top of the first.
+        if (this._newMealModalState || this._newMealModalClosing) return;
 
         const modalHtml = Components.newMealModal();
         const modalContainer = document.createElement('div');
@@ -383,15 +386,15 @@ async render(container, app, dateOverride = null) {
 
         this._newMealModalState = {
             modalEl,
+            panelEl: modalEl.querySelector('.drum-sheet-panel'),
             selectedFile: null,
             selectedMealType: null,
             previewUrl: null,
         };
 
-        // Animate in
-        requestAnimationFrame(() => {
-            modalEl.classList.add('opacity-100');
-        });
+        // Lock background scroll while the sheet is open (restore prior state on close)
+        this._newMealModalState.bodyWasLocked = document.body.classList.contains('overflow-hidden');
+        document.body.classList.add('overflow-hidden');
 
         // Bind events
         this.bindNewMealModalEvents(modalEl);
@@ -400,46 +403,52 @@ async render(container, app, dateOverride = null) {
     closeNewMealModal() {
         if (!this._newMealModalState) return;
 
-        const { modalEl, previewUrl } = this._newMealModalState;
+        const { modalEl, panelEl, previewUrl, onKeydown, bodyWasLocked } = this._newMealModalState;
         // Revoke the object URL before the modal leaves the DOM so a preview
         // that is never submitted does not leak its blob.
         if (previewUrl) {
             URL.revokeObjectURL(previewUrl);
         }
-        modalEl.classList.remove('opacity-100');
+        this._newMealModalState = null;
+        if (onKeydown) {
+            document.removeEventListener('keydown', onKeydown);
+        }
+        if (!bodyWasLocked) {
+            document.body.classList.remove('overflow-hidden');
+        }
 
+        // Slide the panel back out before removing it, mirroring the drum sheet.
+        panelEl?.classList.add('is-closing');
+        modalEl.querySelector('.drum-sheet-backdrop')?.classList.add('is-closing');
+
+        this._newMealModalClosing = modalEl;
         setTimeout(() => {
             modalEl.remove();
-            this._newMealModalState = null;
-        }, 200);
+            if (this._newMealModalClosing === modalEl) {
+                this._newMealModalClosing = null;
+            }
+        }, 220);
     },
 
     bindNewMealModalEvents(modalEl) {
         const state = this._newMealModalState;
 
-        // Close button & backdrop
-        modalEl.querySelector('[data-action="close-new-meal-modal"]')?.addEventListener('click', () => {
+        // Backdrop closes the sheet; the ✕ button sits inside the panel and is
+        // bound directly so panel clicks never bubble into the backdrop handler.
+        modalEl.querySelector('.drum-sheet-backdrop')?.addEventListener('click', () => {
             this.closeNewMealModal();
         });
-
-        modalEl.addEventListener('click', (e) => {
-            if (e.target === modalEl || e.target.dataset.action === 'close-new-meal-modal') {
-                this.closeNewMealModal();
-            }
-        });
-
-        // Stop propagation on modal content
-        modalEl.querySelector('[data-action="stop-propagation"]')?.addEventListener('click', (e) => {
-            e.stopPropagation();
+        modalEl.querySelector('.drum-sheet-panel [data-action="close-new-meal-modal"]')?.addEventListener('click', () => {
+            this.closeNewMealModal();
         });
 
         // Escape key
         const onKeydown = (e) => {
             if (e.key === 'Escape') {
                 this.closeNewMealModal();
-                document.removeEventListener('keydown', onKeydown);
             }
         };
+        state.onKeydown = onKeydown;
         document.addEventListener('keydown', onKeydown);
 
         // Meal type selection

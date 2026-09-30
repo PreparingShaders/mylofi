@@ -479,58 +479,66 @@ export const Components = {
         ];
 
         return `
-            <div class="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-3" data-action="close-new-meal-modal">
-                <div class="w-full max-w-xs sm:max-w-sm glass-strong rounded-2xl p-4 animate-slide-up flex flex-col gap-3" role="dialog" aria-modal="true" aria-labelledby="new-meal-title" data-action="stop-propagation">
-                    <div class="flex items-center justify-between">
-                        <h3 id="new-meal-title" class="text-base font-bold text-surface-900 dark:text-surface-50">Новый приём пищи</h3>
-                        <button type="button" data-action="close-new-meal-modal" aria-label="Закрыть" class="w-8 h-8 -mr-1 -mt-1 rounded-xl flex items-center justify-center text-surface-500 hover:text-surface-900 dark:hover:text-surface-50 transition-colors shrink-0">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-                        </button>
-                    </div>
+            <div class="drum-sheet fixed inset-0 z-50 pointer-events-auto">
+                <div class="drum-sheet-backdrop absolute inset-0 bg-black/40 dark:bg-black/60" data-action="close-new-meal-modal"></div>
+                <div class="drum-sheet-panel absolute bottom-0 left-0 right-0 bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 rounded-t-2xl border-t border-zinc-200 dark:border-white/10 flex flex-col drum-sheet-safe" role="dialog" aria-modal="true" aria-labelledby="new-meal-title">
+                    <div class="flex flex-col gap-3.5 px-4 pt-0 pb-1">
+                        <div class="w-10 h-1 rounded-full bg-zinc-300 dark:bg-white/20 mx-auto drum-sheet-handle flex-shrink-0"></div>
 
-                    <!-- Photo preview, revealed only once a file is picked -->
-                    <div id="new-meal-preview-container" class="hidden relative rounded-xl overflow-hidden bg-zinc-800 aspect-[4/3]">
-                        <img id="new-meal-img" src="" alt="Предпросмотр блюда" class="absolute inset-0 w-full h-full object-cover">
-                        <button type="button" id="new-meal-remove-img" data-action="remove-new-meal-img" class="absolute top-2 right-2 w-7 h-7 rounded-full glass-badge text-white flex items-center justify-center hover:bg-black/60 transition-colors" aria-label="Удалить фото">
-                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-                        </button>
-                    </div>
-
-                    <!-- Photo source buttons, hidden while a preview is shown -->
-                    <div id="new-meal-source-btns" class="grid grid-cols-2 gap-2">
-                        <button type="button" data-action="new-meal-camera" class="flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-surface-200 dark:border-white/10 text-sm font-medium text-surface-900 dark:text-zinc-100 transition-colors hover:bg-surface-100 dark:hover:bg-white/5">
-                            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 13a3 3 0 100-6 3 3 0 010 6z"/></svg>
-                            <span>Камера</span>
-                        </button>
-                        <button type="button" data-action="new-meal-gallery" class="flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-surface-200 dark:border-white/10 text-sm font-medium text-surface-900 dark:text-zinc-100 transition-colors hover:bg-surface-100 dark:hover:bg-white/5">
-                            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                            <span>Галерея</span>
-                        </button>
-                    </div>
-
-                    <input type="file" id="new-meal-photo-input" accept="image/*" class="hidden" capture="environment">
-
-                    <div>
-                        <span class="block text-[11px] font-medium text-surface-500 dark:text-surface-400 mb-1.5">Тип приёма пищи</span>
-                        <div class="grid grid-cols-4 gap-1.5" role="group" aria-label="Выберите тип приёма пищи">
-                            ${mealTypes.map((t) => `
-                                <button type="button" data-action="set-new-meal-type" data-type="${t.value}" aria-pressed="false"
-                                        class="new-meal-type-chip px-1 py-1.5 rounded-lg border border-surface-200 dark:border-white/10 text-[11px] font-medium text-surface-600 dark:text-surface-400 transition-colors whitespace-nowrap">
-                                    ${t.label}
-                                </button>
-                            `).join('')}
+                        <div class="flex items-start justify-between gap-3">
+                            <div class="min-w-0">
+                                <div class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-500 font-semibold truncate">ДОБАВЛЕНИЕ ПИТАНИЯ</div>
+                                <h3 id="new-meal-title" class="text-base font-bold text-zinc-900 dark:text-zinc-100 truncate">Новый приём пищи</h3>
+                            </div>
+                            <button type="button" data-action="close-new-meal-modal" aria-label="Закрыть" class="w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0 flex items-center justify-center hover:text-zinc-900 dark:hover:text-zinc-50 transition-colors">
+                                ✕
+                            </button>
                         </div>
-                    </div>
 
-                    <div>
-                        <label for="new-meal-notes" class="block text-[11px] font-medium text-surface-500 dark:text-surface-400 mb-1.5">Заметки <span class="opacity-60">(необязательно)</span></label>
-                        <textarea id="new-meal-notes" placeholder="Например: Творог 1%, без сахара" class="w-full px-3 py-2 rounded-xl glass-input text-sm resize-none" rows="2"></textarea>
-                    </div>
+                        <!-- Photo preview, revealed only once a file is picked -->
+                        <div id="new-meal-preview-container" class="hidden relative rounded-xl overflow-hidden bg-zinc-800 aspect-[4/3] flex-shrink-0">
+                            <img id="new-meal-img" src="" alt="Предпросмотр блюда" class="absolute inset-0 w-full h-full object-cover">
+                            <button type="button" id="new-meal-remove-img" data-action="remove-new-meal-img" class="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/75 transition-colors" aria-label="Удалить фото">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                            </button>
+                        </div>
 
-                    <button type="button" id="new-meal-submit" data-action="submit-new-meal" class="w-full flex items-center justify-center gap-2 py-3 glass rounded-xl text-center transition-all bg-primary-600 hover:bg-primary-700 text-white shadow-lg shadow-primary-600/30 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-primary-600 disabled:shadow-none" disabled>
-                        <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
-                        <span class="text-sm font-semibold">Отправить / Анализировать</span>
-                    </button>
+                        <!-- Photo source buttons, hidden while a preview is shown -->
+                        <div id="new-meal-source-btns" class="grid grid-cols-2 gap-2.5">
+                            <button type="button" data-action="new-meal-camera" class="flex flex-col items-center justify-center gap-1.5 bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/10 rounded-xl p-3 text-center cursor-pointer hover:border-lime-500/50 transition">
+                                <svg class="w-4 h-4 shrink-0 text-zinc-500 dark:text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 13a3 3 0 100-6 3 3 0 010 6z"/></svg>
+                                <span class="text-xs font-semibold text-zinc-700 dark:text-zinc-200">Камера</span>
+                            </button>
+                            <button type="button" data-action="new-meal-gallery" class="flex flex-col items-center justify-center gap-1.5 bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/10 rounded-xl p-3 text-center cursor-pointer hover:border-lime-500/50 transition">
+                                <svg class="w-4 h-4 shrink-0 text-zinc-500 dark:text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                                <span class="text-xs font-semibold text-zinc-700 dark:text-zinc-200">Галерея</span>
+                            </button>
+                        </div>
+
+                        <input type="file" id="new-meal-photo-input" accept="image/*" class="hidden" capture="environment">
+
+                        <div>
+                            <div class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold mb-1.5">Тип приёма пищи</div>
+                            <div class="grid grid-cols-4 gap-1.5" role="group" aria-label="Выберите тип приёма пищи">
+                                ${mealTypes.map((t) => `
+                                    <button type="button" data-action="set-new-meal-type" data-type="${t.value}" aria-pressed="false"
+                                            class="new-meal-type-chip px-2 py-2 rounded-xl bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/10 text-xs font-semibold text-zinc-600 dark:text-zinc-400 transition-all hover:border-lime-500/50 whitespace-nowrap">
+                                        ${t.label}
+                                    </button>
+                                `).join('')}
+                            </div>
+                        </div>
+
+                        <div>
+                            <label for="new-meal-notes" class="block text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold mb-1.5">Заметки <span class="opacity-60 normal-case tracking-normal">(необязательно)</span></label>
+                            <textarea id="new-meal-notes" placeholder="Например: Творог 1%, без сахара" rows="2" class="w-full px-3 py-2.5 rounded-xl bg-zinc-100 dark:bg-zinc-800/80 border border-zinc-200 dark:border-white/10 text-zinc-900 dark:text-zinc-100 text-sm resize-none focus:border-lime-500 focus:outline-none"></textarea>
+                        </div>
+
+                        <button type="button" id="new-meal-submit" data-action="submit-new-meal" class="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-lime-500 hover:bg-lime-400 text-zinc-950 font-semibold text-base shadow-lg shadow-lime-500/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-lime-500 disabled:shadow-none" disabled>
+                            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+                            <span>Отправить / Анализировать</span>
+                        </button>
+                        </div>
                 </div>
             </div>
         `;

@@ -318,16 +318,18 @@ input, select, textarea:focus {
     flex-shrink: 0;
 }
 
-/* New meal modal type chip active state */
+/* New meal modal type chip active state (neon lime) */
 .new-meal-type-chip.active {
-    background: #18181b;
-    color: #fafafa;
-    border-color: #18181b;
+    background: rgba(132, 204, 22, 0.14);
+    color: #4d7c0f;
+    border-color: #84cc16;
+    box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.25);
 }
 .dark .new-meal-type-chip.active {
-    background: #fafafa;
-    color: #09090b;
-    border-color: #fafafa;
+    background: rgba(132, 204, 22, 0.16);
+    color: #d9f99d;
+    border-color: #84cc16;
+    box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.3);
 }
 
 /* ============ Drum Picker Bottom Sheet (workout weight/reps) ============ */
@@ -357,13 +359,29 @@ input, select, textarea:focus {
 .drum-sheet-backdrop {
     animation: drum-fade-in 0.2s ease-out;
 }
+/* Slide-out on close, applied by the new meal sheet before removal */
+.drum-sheet-panel.is-closing {
+    animation: drum-sheet-out 0.22s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+.drum-sheet-backdrop.is-closing {
+    animation: drum-fade-out 0.22s ease-in forwards;
+    pointer-events: none;
+}
 @keyframes drum-sheet-in {
     from { transform: translateY(100%); }
     to { transform: translateY(0); }
 }
+@keyframes drum-sheet-out {
+    from { transform: translateY(0); }
+    to { transform: translateY(100%); }
+}
 @keyframes drum-fade-in {
     from { opacity: 0; }
     to { opacity: 1; }
+}
+@keyframes drum-fade-out {
+    from { opacity: 1; }
+    to { opacity: 0; }
 }
 .drum {
     --drum-item-height: 40px;
