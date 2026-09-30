@@ -48,18 +48,100 @@ function renderThemeSwitcher() {
     `;
 }
 
+const USAGE_LABELS = {
+    meal_ai: 'Распознавание блюд по фото',
+    workout_templates: 'Шаблоны тренировок',
+    workout_ai: 'ИИ-анализ тренировки',
+    nutrition_ai: 'ИИ-анализ питания',
+    combined_ai: 'Комбинированный ИИ-анализ',
+};
+
+function formatQuota(entry) {
+    if (entry.limit === null || entry.limit === undefined) {
+        return 'Без ограничений';
+    }
+    return `${entry.used} из ${entry.limit}`;
+}
+
+function formatReset(entry) {
+    if (!entry.resets_at) return '';
+    const date = new Date(entry.resets_at);
+    if (Number.isNaN(date.getTime())) return '';
+    return `Обновление: ${date.toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`;
+}
+
+function renderUsageRow(entry) {
+    const label = USAGE_LABELS[entry.code] || entry.code;
+    const percent = Math.max(0, Math.min(entry.percent_used || 0, 100));
+    const barClass = entry.allowed === false
+        ? 'usage-bar__fill usage-bar__fill--limit'
+        : (percent >= 80 ? 'usage-bar__fill usage-bar__fill--warn' : 'usage-bar__fill');
+    const meta = [formatQuota(entry), formatReset(entry)].filter(Boolean).join(' · ');
+
+    return `
+        <div class="mb-3 last:mb-0">
+            <div class="flex items-baseline justify-between gap-3 mb-1.5">
+                <span class="text-sm font-medium text-surface-700 dark:text-zinc-200 truncate">${label}</span>
+                <span class="text-[11px] text-surface-500 dark:text-zinc-400 flex-shrink-0">${meta}</span>
+            </div>
+            <div class="usage-bar" role="progressbar" aria-label="${label}" aria-valuenow="${percent}" aria-valuemin="0" aria-valuemax="100">
+                <div class="${barClass}" style="width: ${percent}%"></div>
+            </div>
+            ${entry.allowed === false ? `<p class="text-[11px] text-surface-500 dark:text-zinc-400 mt-1">${entry.message}</p>` : ''}
+        </div>
+    `;
+}
+
+function renderPlan(usage) {
+    const isPremium = !!usage?.is_premium;
+    const badgeClass = isPremium ? 'plan-badge plan-badge--pro' : 'plan-badge plan-badge--free';
+    const badgeText = isPremium ? 'PRO Member' : 'Free Plan';
+    const limits = usage?.limits || {};
+    const rows = ['meal_ai', 'workout_templates', 'workout_ai', 'nutrition_ai', 'combined_ai']
+        .filter((code) => limits[code])
+        .map((code) => renderUsageRow(limits[code]))
+        .join('');
+
+    const activateButton = isPremium ? '' : `
+        <button type="button" data-action="activate-pro"
+                class="w-full mt-4 flex items-center justify-center gap-2 py-3 rounded-xl bg-lime-500 hover:bg-lime-400 text-zinc-950 font-semibold text-sm transition-all btn-press">
+            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16v2m-1-1h2m-7 6v4m-1-1h2m9-3v2m-1-1h2M9 14l6-6m-8 8l8-8"/></svg>
+            <span>Активировать PRO</span>
+        </button>
+    `;
+
+    return `
+        <div class="glass rounded-2xl p-4 mb-4">
+            <div class="flex items-center justify-between gap-3 mb-3">
+                <h3 class="font-semibold">Тариф</h3>
+                <span class="${badgeClass}">${badgeText}</span>
+            </div>
+            <div class="usage-list">${rows}</div>
+            ${activateButton}
+        </div>
+    `;
+}
+
 export const Profile = {
     app: null,
 
     async render(container, app) {
         this.app = app;
         let user;
+        let usage = null;
         try {
             user = await API.get('/users/me', this.app.state.tokens.access);
         } catch (error) {
             console.error('[Profile] Load error:', error);
             container.innerHTML = Components.errorState('Ошибка загрузки профиля');
             return;
+        }
+
+        // Usage data is non-critical: the profile still renders without it.
+        try {
+            usage = await API.get('/users/me/usage', this.app.state.tokens.access);
+        } catch (error) {
+            console.warn('[Profile] Usage load error:', error);
         }
 
         container.innerHTML = `
@@ -87,6 +169,8 @@ export const Profile = {
                     </p>
                 </div>
 
+                ${renderPlan(usage)}
+
                 <div class="glass rounded-2xl p-4 mb-4">
                     <h3 class="font-semibold mb-3">Целевые макросы</h3>
                     <p class="text-sm text-surface-600 dark:text-surface-300 mb-1">
@@ -102,5 +186,21 @@ export const Profile = {
                 </div>
             </div>
         `;
+    },
+
+    async activatePro(container) {
+        const token = this.app.state.tokens.access;
+        try {
+            await API.post('/users/me/activate-pro', {}, token);
+            this.app.showToast('PRO активирован', 'success');
+            await this.render(container, this.app);
+        } catch (error) {
+            if (error?.offlineQueued) {
+                this.app.showToast('Нет связи. Активация PRO применится при появлении сети', 'info');
+                return;
+            }
+            console.error('[Profile] Activate PRO error:', error);
+            this.app.showToast(error?.data?.detail || error?.message || 'Не удалось активировать PRO', 'error');
+        }
     }
 };

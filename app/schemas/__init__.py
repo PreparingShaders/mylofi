@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from enum import Enum
@@ -94,8 +94,42 @@ class UserResponse(UserBase):
     id: int
     role: UserRole
     is_active: bool
+    is_premium: bool = False
+    meal_ai_daily_count: int = 0
+    last_meal_ai_date: Optional[date] = None
+    last_workout_ai_analysis_at: Optional[datetime] = None
+    last_nutrition_ai_analysis_at: Optional[datetime] = None
+    created_workouts_count: int = 0
     created_at: datetime
     updated_at: datetime
+
+
+class UsageLimitEntry(BaseModel):
+    code: str
+    used: int
+    limit: Optional[int] = None
+    remaining: Optional[int] = None
+    percent_used: int = 0
+    allowed: bool = True
+    message: str
+    resets_at: Optional[datetime] = None
+
+
+class UsageLimits(BaseModel):
+    meal_ai: UsageLimitEntry
+    workout_templates: UsageLimitEntry
+    workout_ai: UsageLimitEntry
+    nutrition_ai: UsageLimitEntry
+    combined_ai: UsageLimitEntry
+
+
+class UsageResponse(BaseModel):
+    is_premium: bool
+    plan: str
+    meal_ai_daily_count: int
+    last_meal_ai_date: Optional[date] = None
+    created_workouts_count: int
+    limits: UsageLimits
 
 
 class UserMe(UserResponse):
@@ -411,6 +445,9 @@ __all__ = [
     "UserUpdate",
     "UserResponse",
     "UserMe",
+    "UsageLimitEntry",
+    "UsageLimits",
+    "UsageResponse",
     "MealBase",
     "MealCreate",
     "MealUpdate",

@@ -609,6 +609,9 @@ const App = {
                 this.showScreen('landing');
                 this.renderLanding();
                 break;
+            case 'activate-pro':
+                await Profile.activatePro(this.elements.pageContent);
+                break;
         }
     },
 

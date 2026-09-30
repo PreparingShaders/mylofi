@@ -19,7 +19,7 @@ const READ_CACHE_RELATIONSHIPS = {
     'workouts/templates': ['workouts/templates'],
     'nutrition/meals': ['nutrition/logs', 'nutrition/summary'],
     'nutrition/photos': ['nutrition/logs', 'nutrition/summary'],
-    'users/me': ['users/me'],
+    'users/me': ['users/me', 'users/me/usage'],
 };
 
 class APIClient {

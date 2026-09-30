@@ -1,10 +1,11 @@
 import enum
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 from sqlalchemy import (
     String,
     Integer,
     Float,
+    Date,
     DateTime,
     ForeignKey,
     Enum,
@@ -60,6 +61,16 @@ class User(Base):
 
     # Push notifications
     push_subscription: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Subscription
+    is_premium: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="0")
+
+    # Usage counters
+    meal_ai_daily_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
+    last_meal_ai_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    last_workout_ai_analysis_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_nutrition_ai_analysis_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_workouts_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

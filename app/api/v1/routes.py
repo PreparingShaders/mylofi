@@ -11,6 +11,7 @@ from app.schemas import (
     UserResponse,
     UserMe,
     UserUpdate,
+    UsageResponse,
     Token,
     RefreshTokenRequest,
     MealCreate,
@@ -89,6 +90,13 @@ from app.services.workout import (
     get_last_exercise_sets,
 )
 from app.services.exercise_data import MUSCLE_GROUPS, EQUIPMENT
+from app.services.limits import (
+    build_usage_snapshot,
+    can_create_workout_template,
+    can_use_meal_ai,
+    consume_meal_ai,
+    count_workout_templates,
+)
 from app.models import User, Meal
 from app.ws.manager import manager, get_websocket_user
 
@@ -267,6 +275,34 @@ async def update_current_user(
     return current_user
 
 
+@router.get("/users/me/usage", response_model=UsageResponse)
+async def get_usage_info(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get tiered usage counters and remaining quota for the current user"""
+    template_count = await count_workout_templates(db, current_user.id)
+    snapshot = build_usage_snapshot(current_user, template_count)
+    # The snapshot may have rolled the daily counter over to the current UTC day.
+    await db.commit()
+    return snapshot
+
+
+@router.post("/users/me/activate-pro", response_model=UsageResponse)
+async def activate_pro(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Activate the PRO plan for the current user"""
+    current_user.is_premium = True
+    current_user.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(current_user)
+
+    template_count = await count_workout_templates(db, current_user.id)
+    return build_usage_snapshot(current_user, template_count)
+
+
 # ===== Nutrition Routes =====
 @router.post("/nutrition/photos", response_model=PhotoUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_meal_photo(
@@ -282,6 +318,14 @@ async def upload_meal_photo(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="File must be an image",
+        )
+
+    # Daily quota for photo recognition (Free: 5 per UTC day)
+    meal_ai_limit = can_use_meal_ai(current_user)
+    if not meal_ai_limit.allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=meal_ai_limit.message,
         )
 
     # Check file size
@@ -308,6 +352,9 @@ async def upload_meal_photo(
     # Create meal record
     meal_data = MealCreate(eaten_at=parsed_eaten_at, notes=notes)
     meal = await create_meal(db, current_user.id, meal_data, photo_path, thumbnail_path)
+
+    consume_meal_ai(current_user)
+    await db.commit()
 
     # TODO: Trigger async vision API processing here
     # For now, meal stays in PENDING status
@@ -494,7 +541,18 @@ async def create_workout_template_endpoint(
     current_user: User = Depends(get_current_user),
 ):
     """Create a new workout template"""
+    # Free tier allows at most 3 custom templates
+    template_count = await count_workout_templates(db, current_user.id)
+    template_limit = can_create_workout_template(current_user, template_count)
+    if not template_limit.allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=template_limit.message,
+        )
+
     template = await create_workout_template(db, current_user.id, template_data)
+    current_user.created_workouts_count = template_count + 1
+    await db.commit()
     return template
 
 
