@@ -2542,6 +2542,39 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         }
     },
 
+    // Fullscreen builder sheet: the name/muscle-group block collapses out of the way
+    // once the exercise catalog is scrolled, leaving the search bar, list and footer
+    // pinned. Hysteresis (20px to collapse, 5px to expand) avoids flicker on rubber-band.
+    bindCollapsibleHeader(sheet) {
+        const header = sheet?.querySelector('#bw-collapsible-header');
+        const list = sheet?.querySelector('#bw-exercise-list');
+        if (!header || !list) return;
+
+        const COLLAPSE_AT = 20;
+        const EXPAND_AT = 5;
+        const HIDE = ['max-h-0', 'opacity-0', 'pointer-events-none', 'mb-0'];
+        const SHOW = ['max-h-96', 'opacity-100', 'mb-3'];
+
+        let collapsed = false;
+        const setCollapsed = (next) => {
+            if (next === collapsed) return;
+            collapsed = next;
+            HIDE.forEach(c => header.classList.toggle(c, next));
+            SHOW.forEach(c => header.classList.toggle(c, !next));
+        };
+
+        list.addEventListener('scroll', () => {
+            // Keep the block pinned while one of its inputs is focused, otherwise the
+            // on-screen keyboard scroll would collapse it out from under the caret.
+            if (header.contains(document.activeElement)) return;
+            const y = list.scrollTop;
+            if (!collapsed && y > COLLAPSE_AT) setCollapsed(true);
+            else if (collapsed && y <= EXPAND_AT) setCollapsed(false);
+        }, { passive: true });
+
+        header.addEventListener('focusin', () => setCollapsed(false));
+    },
+
     closeBuildModal() {
         const m = document.getElementById('build-modal');
         if (m) m.remove();
@@ -2562,8 +2595,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
         const buildHtml = () => `
             <div id="build-modal" class="fixed inset-0 z-50 flex items-end justify-center min-h-screen p-0 sm:p-4 modal-backdrop pointer-events-auto">
-                <div class="w-full max-w-lg h-[88vh] flex flex-col rounded-t-3xl sm:rounded-2xl bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-white/10 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="bw-title">
-                    <div class="w-12 h-1 bg-zinc-300 dark:bg-zinc-700 rounded-full mx-auto my-2 flex-shrink-0"></div>
+                <div id="bw-sheet" class="w-full max-w-lg h-[100dvh] sm:h-[90vh] flex flex-col rounded-t-2xl sm:rounded-3xl bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-white/10 shadow-2xl pt-safe-top" role="dialog" aria-modal="true" aria-labelledby="bw-title">
+                    <div class="w-12 h-1 bg-zinc-300 dark:bg-zinc-700 rounded-full mx-auto mt-2 mb-1 flex-shrink-0"></div>
 
                     <div class="px-4 pb-2 flex justify-between items-start gap-3 flex-shrink-0">
                         <div class="min-w-0">
@@ -2573,7 +2606,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         <button type="button" data-action="close-build-workout" class="w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0">✕</button>
                     </div>
 
-                    <div class="px-4 pb-2 flex-shrink-0 space-y-2.5">
+                    <div id="bw-collapsible-header"
+                         class="px-4 pb-1 flex-shrink-0 space-y-2.5 max-h-96 opacity-100 mb-3 overflow-hidden transition-all duration-300 ease-in-out origin-top">
                         <div>
                             <label class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold mb-1" for="bw-name">Название тренировки</label>
                             <input id="bw-name" type="text" placeholder="Название тренировки" value="Моя тренировка"
@@ -2584,7 +2618,9 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                             <label class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold mb-1" for="bw-group">Группа мышц</label>
                             <select id="bw-group" class="w-full px-3 py-2.5 text-sm glass-input rounded-xl"></select>
                         </div>
+                    </div>
 
+                    <div class="px-4 pb-2 flex-shrink-0 z-10 bg-white/95 dark:bg-zinc-900/95 backdrop-blur-md">
                         <div>
                             <label class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold mb-1" for="bw-search">Поиск и добавление</label>
                             <div class="flex items-center gap-2">
@@ -2596,12 +2632,12 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         </div>
                     </div>
 
-                    <div class="flex-1 min-h-0 overflow-y-auto px-4 py-2 space-y-2">
+                    <div id="bw-exercise-list" class="flex-1 min-h-0 overflow-y-auto px-4 py-2 space-y-2">
                         <div class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold">Доступные упражнения</div>
                         <div id="bw-list" class="space-y-2"></div>
                     </div>
 
-                    <div class="sticky bottom-0 p-4 border-t border-zinc-200 dark:border-white/10 bg-white/95 dark:bg-zinc-900/95 backdrop-blur flex items-center gap-2 flex-shrink-0 drum-sheet-safe">
+                    <div class="sticky bottom-0 p-4 border-t border-zinc-200 dark:border-white/10 bg-white/95 dark:bg-zinc-900/95 backdrop-blur-md flex items-center gap-2 flex-shrink-0 drum-sheet-safe">
                         <button type="button" id="bw-reset"
                                 class="flex-1 py-3 rounded-2xl glass text-sm font-semibold">Сбросить</button>
                         <button id="bw-next"
@@ -2620,6 +2656,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         const nextBtn = document.getElementById('bw-next');
         const resetBtn = document.getElementById('bw-reset');
         const ownBtn = document.getElementById('bw-add-own');
+        this.bindCollapsibleHeader(document.getElementById('bw-sheet'));
 
         const renderGroupOptions = () => {
             groupEl.innerHTML = '';
@@ -2749,12 +2786,12 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
     renderConfigurationScreen(app, selectedExercises, onSave, template = null) {
         const modal = document.getElementById('build-modal');
-        const content = modal.querySelector('.flex.flex-col');
+        const content = document.getElementById('bw-sheet') || modal.querySelector('.flex.flex-col');
         
         const findTemplateEx = (exName) => template?.exercises.find(te => te.name === exName);
 
         content.innerHTML = `
-            <div class="w-12 h-1 bg-zinc-300 dark:bg-zinc-700 rounded-full mx-auto my-2 flex-shrink-0"></div>
+            <div class="w-12 h-1 bg-zinc-300 dark:bg-zinc-700 rounded-full mx-auto mt-2 mb-1 flex-shrink-0"></div>
             <div class="px-4 pb-2 flex justify-between items-start gap-3 flex-shrink-0">
                 <h3 class="text-base font-bold">Настройка упражнений и порядка</h3>
                 <button type="button" data-action="close-build-workout" class="w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0">✕</button>
@@ -2784,7 +2821,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     </div>
                 `}).join('')}
             </div>
-            <div class="sticky bottom-0 p-4 border-t border-zinc-200 dark:border-white/10 bg-white/95 dark:bg-zinc-900/95 backdrop-blur flex-shrink-0 drum-sheet-safe">
+            <div class="sticky bottom-0 p-4 border-t border-zinc-200 dark:border-white/10 bg-white/95 dark:bg-zinc-900/95 backdrop-blur-md flex-shrink-0 drum-sheet-safe">
                 <button id="bw-save-final" class="w-full py-3 bg-lime-500 text-zinc-950 font-bold text-sm rounded-2xl shadow-md btn-press">Сохранить</button>
             </div>
         `;
@@ -2840,8 +2877,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
         const buildHtml = () => `
             <div id="build-modal" class="fixed inset-0 z-50 flex items-end justify-center min-h-screen p-0 sm:p-4 modal-backdrop pointer-events-auto">
-                <div class="w-full max-w-lg h-[88vh] flex flex-col rounded-t-3xl sm:rounded-2xl bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-white/10 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="bw-title">
-                    <div class="w-12 h-1 bg-zinc-300 dark:bg-zinc-700 rounded-full mx-auto my-2 flex-shrink-0"></div>
+                <div id="bw-sheet" class="w-full max-w-lg h-[100dvh] sm:h-[90vh] flex flex-col rounded-t-2xl sm:rounded-3xl bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-white/10 shadow-2xl pt-safe-top" role="dialog" aria-modal="true" aria-labelledby="bw-title">
+                    <div class="w-12 h-1 bg-zinc-300 dark:bg-zinc-700 rounded-full mx-auto mt-2 mb-1 flex-shrink-0"></div>
 
                     <div class="px-4 pb-2 flex justify-between items-start gap-3 flex-shrink-0">
                         <div class="min-w-0">
@@ -2851,7 +2888,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         <button type="button" data-action="close-build-workout" class="w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0">✕</button>
                     </div>
 
-                    <div class="px-4 pb-2 flex-shrink-0 space-y-2.5">
+                    <div id="bw-collapsible-header"
+                         class="px-4 pb-1 flex-shrink-0 space-y-2.5 max-h-96 opacity-100 mb-3 overflow-hidden transition-all duration-300 ease-in-out origin-top">
                         <div>
                             <label class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold mb-1" for="bw-name">Название тренировки</label>
                             <input id="bw-name" type="text" placeholder="Название тренировки" value="${this.escapeHtml(template.name || '')}"
@@ -2862,7 +2900,9 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                             <label class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold mb-1" for="bw-group">Группа мышц</label>
                             <select id="bw-group" class="w-full px-3 py-2.5 text-sm glass-input rounded-xl"></select>
                         </div>
+                    </div>
 
+                    <div class="px-4 pb-2 flex-shrink-0 z-10 bg-white/95 dark:bg-zinc-900/95 backdrop-blur-md">
                         <div>
                             <label class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold mb-1" for="bw-search">Поиск и добавление</label>
                             <div class="flex items-center gap-2">
@@ -2874,12 +2914,12 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         </div>
                     </div>
 
-                    <div class="flex-1 min-h-0 overflow-y-auto px-4 py-2 space-y-2">
+                    <div id="bw-exercise-list" class="flex-1 min-h-0 overflow-y-auto px-4 py-2 space-y-2">
                         <div class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold">Доступные упражнения</div>
                         <div id="bw-list" class="space-y-2"></div>
                     </div>
 
-                    <div class="sticky bottom-0 p-4 border-t border-zinc-200 dark:border-white/10 bg-white/95 dark:bg-zinc-900/95 backdrop-blur flex items-center gap-2 flex-shrink-0 drum-sheet-safe">
+                    <div class="sticky bottom-0 p-4 border-t border-zinc-200 dark:border-white/10 bg-white/95 dark:bg-zinc-900/95 backdrop-blur-md flex items-center gap-2 flex-shrink-0 drum-sheet-safe">
                         <button type="button" id="bw-reset"
                                 class="flex-1 py-3 rounded-2xl glass text-sm font-semibold">Сбросить</button>
                         <button id="bw-next"
@@ -2898,6 +2938,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         const nextBtn = document.getElementById('bw-next');
         const resetBtn = document.getElementById('bw-reset');
         const ownBtn = document.getElementById('bw-add-own');
+        this.bindCollapsibleHeader(document.getElementById('bw-sheet'));
 
         const renderGroupOptions = () => {
             groupEl.innerHTML = '';
