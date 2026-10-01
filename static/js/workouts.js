@@ -2561,42 +2561,52 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         let search = '';
 
         const buildHtml = () => `
-            <div id="build-modal" class="fixed inset-0 z-50 flex items-center justify-center modal-backdrop pointer-events-auto">
-                <div class="glass-strong rounded-2xl mx-4 max-w-2xl w-full max-h-[85vh] flex flex-col">
-                    <div class="p-5 border-b  flex justify-between items-center">
+            <div id="build-modal" class="fixed inset-0 z-50 flex items-end justify-center min-h-screen p-0 sm:p-4 modal-backdrop pointer-events-auto">
+                <div class="w-full max-w-lg h-[88vh] flex flex-col rounded-t-3xl sm:rounded-2xl bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-white/10 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="bw-title">
+                    <div class="w-12 h-1 bg-zinc-300 dark:bg-zinc-700 rounded-full mx-auto my-2 flex-shrink-0"></div>
+
+                    <div class="px-4 pb-2 flex justify-between items-start gap-3 flex-shrink-0">
+                        <div class="min-w-0">
+                            <div class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold">Шаблон</div>
+                            <h3 id="bw-title" class="text-base font-bold">Собрать тренировку</h3>
+                        </div>
+                        <button type="button" data-action="close-build-workout" class="w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0">✕</button>
+                    </div>
+
+                    <div class="px-4 pb-2 flex-shrink-0 space-y-2.5">
                         <div>
-                            <h3 class="text-lg font-bold">Собрать тренировку</h3>
-                            <p class="text-xs text-surface-500">Выберите упражнения из каталога</p>
+                            <label class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold mb-1" for="bw-name">Название тренировки</label>
+                            <input id="bw-name" type="text" placeholder="Название тренировки" value="Моя тренировка"
+                                   class="w-full px-3 py-2.5 text-sm glass-input rounded-xl font-medium">
                         </div>
-                        <button data-action="close-build-workout" class="text-surface-500 hover:text-surface-900 dark:text-surface-400 p-1">✕</button>
+
+                        <div>
+                            <label class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold mb-1" for="bw-group">Группа мышц</label>
+                            <select id="bw-group" class="w-full px-3 py-2.5 text-sm glass-input rounded-xl"></select>
+                        </div>
+
+                        <div>
+                            <label class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold mb-1" for="bw-search">Поиск и добавление</label>
+                            <div class="flex items-center gap-2">
+                                <input id="bw-search" type="text" placeholder="Поиск упражнения..."
+                                       class="flex-1 min-w-0 px-3 py-2.5 text-sm glass-input rounded-xl">
+                                <button id="bw-add-own" type="button" title="Добавить своё упражнение"
+                                        class="w-11 h-11 flex-shrink-0 flex items-center justify-center rounded-xl bg-lime-500 text-zinc-950 font-bold text-xl shadow-md btn-press">+</button>
+                            </div>
+                        </div>
                     </div>
 
-                    <div class="p-4 border-b ">
-                        <input id="bw-name" type="text" placeholder="Название тренировки" value="Моя тренировка"
-                               class="w-full px-3 py-2.5 text-sm glass-input rounded-xl mb-3 font-medium">
-                        
-                        <div class="flex gap-2 overflow-x-auto pb-2 scrollbar-none" id="bw-groups-container">
-                            <!-- Pills will be rendered here -->
-                        </div>
-                        
-                        <div class="flex items-center gap-2 mt-2">
-                            <input id="bw-search" type="text" placeholder="Поиск упражнения..."
-                                   class="flex-1 px-3 py-2 text-sm glass-input rounded-xl">
-                            <button id="bw-add-own" type="button" title="Добавить своё упражнение"
-                                    class="w-10 h-10 flex items-center justify-center glass rounded-xl text-surface-500 dark:text-zinc-400 hover:text-surface-900 dark:hover:text-zinc-100 font-bold">+</button>
-                        </div>
+                    <div class="flex-1 min-h-0 overflow-y-auto px-4 py-2 space-y-2">
+                        <div class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold">Доступные упражнения</div>
+                        <div id="bw-list" class="space-y-2"></div>
                     </div>
 
-                    <div class="p-4 flex-1 overflow-y-auto">
-                        <div class="text-xs font-semibold text-surface-400 mb-2 uppercase tracking-wider">Доступные упражнения</div>
-                        <div id="bw-list" class="space-y-1.5"></div>
-                    </div>
-
-                    <div class="p-4 border-t  flex items-center justify-between gap-3">
-                        <div id="bw-selected-count" class="text-xs text-surface-500 font-medium">Выбрано: 0</div>
+                    <div class="sticky bottom-0 p-4 border-t border-zinc-200 dark:border-white/10 bg-white/95 dark:bg-zinc-900/95 backdrop-blur flex items-center gap-2 flex-shrink-0 drum-sheet-safe">
+                        <button type="button" id="bw-reset"
+                                class="flex-1 py-3 rounded-2xl glass text-sm font-semibold">Сбросить</button>
                         <button id="bw-next"
-                                class="px-6 py-2.5 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl text-sm font-semibold shadow-md disabled:opacity-50 disabled:cursor-not-allowed" disabled>
-                            Далее
+                                class="flex-1 py-3 rounded-2xl bg-lime-500 text-zinc-950 font-bold text-sm shadow-md btn-press disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none" disabled>
+                            Далее (выбрано: 0)
                         </button>
                     </div>
                 </div>
@@ -2604,33 +2614,31 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         `;
 
         app.elements.modals.innerHTML = buildHtml();
-        const groupsContainer = document.getElementById('bw-groups-container');
+        const groupEl = document.getElementById('bw-group');
         const searchEl = document.getElementById('bw-search');
         const listEl = document.getElementById('bw-list');
         const nextBtn = document.getElementById('bw-next');
+        const resetBtn = document.getElementById('bw-reset');
         const ownBtn = document.getElementById('bw-add-own');
 
         const renderGroupOptions = () => {
-            groupsContainer.innerHTML = '';
-            const allBtn = document.createElement('button');
-            allBtn.textContent = 'Все';
-            allBtn.className = `px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all ${filterGroup === '' ? 'bg-surface-900 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'bg-surface-200 dark:bg-white/10 text-surface-700 dark:text-surface-300'}`;
-            allBtn.addEventListener('click', () => { filterGroup = ''; renderGroupOptions(); renderList(); });
-            groupsContainer.appendChild(allBtn);
-
+            groupEl.innerHTML = '';
+            const allOpt = document.createElement('option');
+            allOpt.value = '';
+            allOpt.textContent = 'Любая';
+            groupEl.appendChild(allOpt);
             Object.entries(meta.muscle_groups || {}).forEach(([slug, label]) => {
-                const btn = document.createElement('button');
-                btn.textContent = label;
-                btn.className = `px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all ${filterGroup === slug ? 'bg-surface-900 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'bg-surface-200 dark:bg-white/10 text-surface-700 dark:text-surface-300'}`;
-                btn.addEventListener('click', () => { filterGroup = slug; renderGroupOptions(); renderList(); });
-                groupsContainer.appendChild(btn);
+                const opt = document.createElement('option');
+                opt.value = slug;
+                opt.textContent = label;
+                groupEl.appendChild(opt);
             });
+            groupEl.value = filterGroup;
         };
 
         const updateCreateLabel = () => {
             nextBtn.disabled = selected.length === 0;
-            const countEl = document.getElementById('bw-selected-count');
-            if (countEl) countEl.textContent = `Выбрано: ${selected.length}`;
+            nextBtn.textContent = `Далее (выбрано: ${selected.length})`;
         };
 
         const renderList = () => {
@@ -2641,18 +2649,22 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             });
             listEl.innerHTML = rows.map(ex => {
                 const isSelected = selected.includes(ex.id);
+                const groupLabel = meta.muscle_groups?.[ex.muscle_group] || ex.muscle_group;
+                const equipmentLabel = meta.equipment?.[ex.equipment] || ex.equipment;
                 return `
-                <label class="flex items-center gap-4 p-4 cursor-pointer rounded-2xl border transition-all ${isSelected ? 'bg-primary-50 border-primary-200 dark:bg-primary-900/20 dark:border-primary-800' : 'glass hover:border-surface-300 dark:hover:border-white/20'}">
-                    <input type="checkbox" data-id="${ex.id}" class="w-5 h-5 text-primary-600 rounded"
-                           ${isSelected ? 'checked' : ''}>
-                    <div class="flex-1 min-w-0">
-                        <div class="font-semibold text-sm ${isSelected ? 'text-primary-900 dark:text-primary-100' : 'text-surface-900 dark:text-surface-100'}">${ex.name}</div>
-                        <div class="text-xs text-surface-500 dark:text-surface-400 mt-0.5">
-                            ${meta.muscle_groups?.[ex.muscle_group] || ex.muscle_group} · ${meta.equipment?.[ex.equipment] || ex.equipment}
+                <label class="flex items-center gap-3 p-3.5 cursor-pointer rounded-2xl border transition-all ${isSelected ? 'border-lime-500 bg-lime-500/10 dark:bg-lime-900/20' : 'glass hover:border-zinc-300 dark:hover:border-white/20'}">
+                    <div class="flex-1 min-w-0 text-left">
+                        <div class="font-semibold text-sm text-left text-zinc-900 dark:text-zinc-100 truncate">${ex.name}</div>
+                        <div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-left">
+                            <span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-lg bg-zinc-500/10 dark:bg-white/5 text-zinc-500 dark:text-zinc-400">${groupLabel}</span>
+                            <span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-lg bg-lime-500/15 text-lime-600 dark:text-lime-300">${equipmentLabel}</span>
                         </div>
                     </div>
+                    <span class="flex-shrink-0 w-6 h-6 rounded-lg border flex items-center justify-center text-[11px] font-bold transition-all ${isSelected ? 'bg-lime-500 border-lime-500 text-zinc-950' : 'border-zinc-300 dark:border-white/15 text-transparent'}">✓</span>
+                    <input type="checkbox" data-id="${ex.id}" class="sr-only"
+                           ${isSelected ? 'checked' : ''}>
                 </label>`;
-            }).join('') || '<div class="text-sm text-surface-400 text-center py-6">Ничего не найдено</div>';
+            }).join('') || '<div class="text-sm text-zinc-400 dark:text-zinc-500 text-center py-6">Ничего не найдено</div>';
 
             listEl.querySelectorAll('input[data-id]').forEach(cb => {
                 cb.addEventListener('change', (e) => {
@@ -2665,6 +2677,15 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             });
         };
 
+        groupEl.addEventListener('change', () => {
+            filterGroup = groupEl.value;
+            renderList();
+        });
+        resetBtn.addEventListener('click', () => {
+            selected = [];
+            renderList();
+            updateCreateLabel();
+        });
         searchEl.addEventListener('input', () => {
             search = searchEl.value.trim();
             renderList();
@@ -2733,37 +2754,38 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         const findTemplateEx = (exName) => template?.exercises.find(te => te.name === exName);
 
         content.innerHTML = `
-            <div class="p-5 border-b  flex justify-between items-center">
-                <h3 class="text-lg font-bold">Настройка упражнений и порядка</h3>
-                <button data-action="close-build-workout" class="text-surface-500 hover:text-surface-900 dark:text-surface-400 p-1">✕</button>
+            <div class="w-12 h-1 bg-zinc-300 dark:bg-zinc-700 rounded-full mx-auto my-2 flex-shrink-0"></div>
+            <div class="px-4 pb-2 flex justify-between items-start gap-3 flex-shrink-0">
+                <h3 class="text-base font-bold">Настройка упражнений и порядка</h3>
+                <button type="button" data-action="close-build-workout" class="w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0">✕</button>
             </div>
-            <div class="p-4 flex-1 overflow-y-auto space-y-4" id="config-list">
+            <div class="flex-1 min-h-0 overflow-y-auto px-4 py-2 space-y-2" id="config-list">
                 ${selectedExercises.map((ex, i) => {
                     const te = findTemplateEx(ex.name);
                     return `
-                    <div class="glass p-4 rounded-2xl flex items-center justify-between gap-3" data-ex-id="${ex.id}" data-index="${i}">
+                    <div class="glass p-3.5 rounded-2xl flex items-center justify-between gap-3" data-ex-id="${ex.id}" data-index="${i}">
                         <div class="flex-1 min-w-0">
-                            <h4 class="font-bold mb-2 truncate">${ex.name}</h4>
+                            <h4 class="font-bold mb-2 truncate text-sm">${ex.name}</h4>
                             <div class="grid grid-cols-2 gap-2">
                                 <div>
-                                    <label class="text-xs text-surface-500">Подходы</label>
-                                    <input type="number" value="${te?.target_sets || 3}" class="w-full px-2 py-1 glass-input rounded cfg-sets">
+                                    <label class="text-[10px] uppercase tracking-wider text-surface-500 font-semibold">Подходы</label>
+                                    <input type="number" inputmode="numeric" value="${te?.target_sets || 3}" class="w-full px-2.5 py-2 text-sm glass-input rounded-xl cfg-sets">
                                 </div>
                                 <div>
-                                    <label class="text-xs text-surface-500">Повт.</label>
-                                    <input type="number" value="${te?.target_reps || 10}" class="w-full px-2 py-1 glass-input rounded cfg-reps">
+                                    <label class="text-[10px] uppercase tracking-wider text-surface-500 font-semibold">Повт.</label>
+                                    <input type="number" inputmode="numeric" value="${te?.target_reps || 10}" class="w-full px-2.5 py-2 text-sm glass-input rounded-xl cfg-reps">
                                 </div>
                             </div>
                         </div>
-                        <div class="flex flex-col gap-1.5">
-                            <button type="button" data-action="cfg-move-up" class="px-3.5 py-2 glass rounded-xl text-sm font-bold hover:bg-surface-300 dark:hover:bg-white/10 transition-colors">▲</button>
-                            <button type="button" data-action="cfg-move-down" class="px-3.5 py-2 glass rounded-xl text-sm font-bold hover:bg-surface-300 dark:hover:bg-white/10 transition-colors">▼</button>
+                        <div class="flex flex-col gap-1.5 flex-shrink-0">
+                            <button type="button" data-action="cfg-move-up" aria-label="Выше" class="px-3 py-2 glass rounded-xl text-sm font-bold hover:bg-surface-300 dark:hover:bg-white/10 transition-colors">▲</button>
+                            <button type="button" data-action="cfg-move-down" aria-label="Ниже" class="px-3 py-2 glass rounded-xl text-sm font-bold hover:bg-surface-300 dark:hover:bg-white/10 transition-colors">▼</button>
                         </div>
                     </div>
                 `}).join('')}
             </div>
-            <div class="p-4 border-t ">
-                <button id="bw-save-final" class="w-full py-2.5 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl text-sm font-semibold shadow-md">Сохранить</button>
+            <div class="sticky bottom-0 p-4 border-t border-zinc-200 dark:border-white/10 bg-white/95 dark:bg-zinc-900/95 backdrop-blur flex-shrink-0 drum-sheet-safe">
+                <button id="bw-save-final" class="w-full py-3 bg-lime-500 text-zinc-950 font-bold text-sm rounded-2xl shadow-md btn-press">Сохранить</button>
             </div>
         `;
 
@@ -2817,42 +2839,52 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         let search = '';
 
         const buildHtml = () => `
-            <div id="build-modal" class="fixed inset-0 z-50 flex items-center justify-center modal-backdrop pointer-events-auto">
-                <div class="glass-strong rounded-2xl mx-4 max-w-2xl w-full max-h-[85vh] flex flex-col">
-                    <div class="p-5 border-b  flex justify-between items-center">
+            <div id="build-modal" class="fixed inset-0 z-50 flex items-end justify-center min-h-screen p-0 sm:p-4 modal-backdrop pointer-events-auto">
+                <div class="w-full max-w-lg h-[88vh] flex flex-col rounded-t-3xl sm:rounded-2xl bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-white/10 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="bw-title">
+                    <div class="w-12 h-1 bg-zinc-300 dark:bg-zinc-700 rounded-full mx-auto my-2 flex-shrink-0"></div>
+
+                    <div class="px-4 pb-2 flex justify-between items-start gap-3 flex-shrink-0">
+                        <div class="min-w-0">
+                            <div class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold">Шаблон</div>
+                            <h3 id="bw-title" class="text-base font-bold">Редактировать шаблон</h3>
+                        </div>
+                        <button type="button" data-action="close-build-workout" class="w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0">✕</button>
+                    </div>
+
+                    <div class="px-4 pb-2 flex-shrink-0 space-y-2.5">
                         <div>
-                            <h3 class="text-lg font-bold">Редактировать шаблон</h3>
-                            <p class="text-xs text-surface-500">Измените название или упражнения</p>
+                            <label class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold mb-1" for="bw-name">Название тренировки</label>
+                            <input id="bw-name" type="text" placeholder="Название тренировки" value="${this.escapeHtml(template.name || '')}"
+                                   class="w-full px-3 py-2.5 text-sm glass-input rounded-xl font-medium">
                         </div>
-                        <button data-action="close-build-workout" class="text-surface-500 hover:text-surface-900 dark:text-surface-400 p-1">✕</button>
+
+                        <div>
+                            <label class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold mb-1" for="bw-group">Группа мышц</label>
+                            <select id="bw-group" class="w-full px-3 py-2.5 text-sm glass-input rounded-xl"></select>
+                        </div>
+
+                        <div>
+                            <label class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold mb-1" for="bw-search">Поиск и добавление</label>
+                            <div class="flex items-center gap-2">
+                                <input id="bw-search" type="text" placeholder="Поиск упражнения..."
+                                       class="flex-1 min-w-0 px-3 py-2.5 text-sm glass-input rounded-xl">
+                                <button id="bw-add-own" type="button" title="Добавить своё упражнение"
+                                        class="w-11 h-11 flex-shrink-0 flex items-center justify-center rounded-xl bg-lime-500 text-zinc-950 font-bold text-xl shadow-md btn-press">+</button>
+                            </div>
+                        </div>
                     </div>
 
-                    <div class="p-4 border-b ">
-                        <input id="bw-name" type="text" placeholder="Название тренировки" value="${template.name || ''}"
-                               class="w-full px-4 py-3 text-sm rounded-2xl glass-input mb-4 font-medium">
-                        
-                        <div class="flex gap-2 overflow-x-auto pb-2 scrollbar-none" id="bw-groups-container">
-                            <!-- Pills will be rendered here -->
-                        </div>
-                        
-                        <div class="flex items-center gap-2 mt-2">
-                            <input id="bw-search" type="text" placeholder="Поиск упражнения..."
-                                   class="flex-1 px-4 py-3 text-sm rounded-2xl glass-input">
-                            <button id="bw-add-own" type="button" title="Добавить своё упражнение"
-                                    class="w-12 h-12 flex items-center justify-center glass rounded-2xl text-surface-500 dark:text-zinc-400 hover:text-surface-900 dark:hover:text-zinc-100 font-bold text-xl">+</button>
-                        </div>
+                    <div class="flex-1 min-h-0 overflow-y-auto px-4 py-2 space-y-2">
+                        <div class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold">Доступные упражнения</div>
+                        <div id="bw-list" class="space-y-2"></div>
                     </div>
 
-                    <div class="p-4 flex-1 overflow-y-auto">
-                        <div class="text-xs font-semibold text-surface-400 mb-2 uppercase tracking-wider">Доступные упражнения</div>
-                        <div id="bw-list" class="space-y-1.5"></div>
-                    </div>
-
-                    <div class="p-4 border-t  flex items-center justify-between gap-3">
-                        <div id="bw-selected-count" class="text-xs text-surface-500 font-medium">Выбрано: 0</div>
+                    <div class="sticky bottom-0 p-4 border-t border-zinc-200 dark:border-white/10 bg-white/95 dark:bg-zinc-900/95 backdrop-blur flex items-center gap-2 flex-shrink-0 drum-sheet-safe">
+                        <button type="button" id="bw-reset"
+                                class="flex-1 py-3 rounded-2xl glass text-sm font-semibold">Сбросить</button>
                         <button id="bw-next"
-                                class="px-6 py-2.5 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl text-sm font-semibold shadow-md disabled:opacity-50 disabled:cursor-not-allowed">
-                            Далее
+                                class="flex-1 py-3 rounded-2xl bg-lime-500 text-zinc-950 font-bold text-sm shadow-md btn-press disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none" disabled>
+                            Далее (выбрано: 0)
                         </button>
                     </div>
                 </div>
@@ -2860,33 +2892,33 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         `;
 
         app.elements.modals.innerHTML = buildHtml();
-        const groupsContainer = document.getElementById('bw-groups-container');
+        const groupEl = document.getElementById('bw-group');
         const searchEl = document.getElementById('bw-search');
         const listEl = document.getElementById('bw-list');
         const nextBtn = document.getElementById('bw-next');
+        const resetBtn = document.getElementById('bw-reset');
         const ownBtn = document.getElementById('bw-add-own');
 
         const renderGroupOptions = () => {
-            groupsContainer.innerHTML = '';
-            const allBtn = document.createElement('button');
-            allBtn.textContent = 'Все';
-            allBtn.className = `px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all ${filterGroup === '' ? 'bg-surface-900 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'bg-surface-200 dark:bg-white/10 text-surface-700 dark:text-surface-300'}`;
-            allBtn.addEventListener('click', () => { filterGroup = ''; renderGroupOptions(); renderList(); });
-            groupsContainer.appendChild(allBtn);
-
+            groupEl.innerHTML = '';
+            const allOpt = document.createElement('option');
+            allOpt.value = '';
+            allOpt.textContent = 'Любая';
+            groupEl.appendChild(allOpt);
             Object.entries(meta.muscle_groups || {}).forEach(([slug, label]) => {
-                const btn = document.createElement('button');
-                btn.textContent = label;
-                btn.className = `px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all ${filterGroup === slug ? 'bg-surface-900 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'bg-surface-200 dark:bg-white/10 text-surface-700 dark:text-surface-300'}`;
-                btn.addEventListener('click', () => { filterGroup = slug; renderGroupOptions(); renderList(); });
-                groupsContainer.appendChild(btn);
+                const opt = document.createElement('option');
+                opt.value = slug;
+                opt.textContent = label;
+                groupEl.appendChild(opt);
             });
+            groupEl.value = filterGroup;
         };
 
         const updateCreateLabel = () => {
-            if (nextBtn) nextBtn.disabled = selected.length === 0;
-            const countEl = document.getElementById('bw-selected-count');
-            if (countEl) countEl.textContent = `Выбрано: ${selected.length}`;
+            if (nextBtn) {
+                nextBtn.disabled = selected.length === 0;
+                nextBtn.textContent = `Далее (выбрано: ${selected.length})`;
+            }
         };
 
         const renderList = () => {
@@ -2897,18 +2929,22 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             });
             listEl.innerHTML = rows.map(ex => {
                 const isSelected = selected.includes(ex.id);
+                const groupLabel = meta.muscle_groups?.[ex.muscle_group] || ex.muscle_group;
+                const equipmentLabel = meta.equipment?.[ex.equipment] || ex.equipment;
                 return `
-                <label class="flex items-center gap-4 p-4 cursor-pointer rounded-2xl border transition-all ${isSelected ? 'bg-primary-50 border-primary-200 dark:bg-primary-900/20 dark:border-primary-800' : 'glass hover:border-surface-300 dark:hover:border-white/20'}">
-                    <input type="checkbox" data-id="${ex.id}" class="w-5 h-5 text-primary-600 rounded"
-                           ${isSelected ? 'checked' : ''}>
-                    <div class="flex-1 min-w-0">
-                        <div class="font-semibold text-sm ${isSelected ? 'text-primary-900 dark:text-primary-100' : 'text-surface-900 dark:text-surface-100'}">${ex.name}</div>
-                        <div class="text-xs text-surface-500 dark:text-surface-400 mt-0.5">
-                            ${meta.muscle_groups?.[ex.muscle_group] || ex.muscle_group} · ${meta.equipment?.[ex.equipment] || ex.equipment}
+                <label class="flex items-center gap-3 p-3.5 cursor-pointer rounded-2xl border transition-all ${isSelected ? 'border-lime-500 bg-lime-500/10 dark:bg-lime-900/20' : 'glass hover:border-zinc-300 dark:hover:border-white/20'}">
+                    <div class="flex-1 min-w-0 text-left">
+                        <div class="font-semibold text-sm text-left text-zinc-900 dark:text-zinc-100 truncate">${ex.name}</div>
+                        <div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-left">
+                            <span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-lg bg-zinc-500/10 dark:bg-white/5 text-zinc-500 dark:text-zinc-400">${groupLabel}</span>
+                            <span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-lg bg-lime-500/15 text-lime-600 dark:text-lime-300">${equipmentLabel}</span>
                         </div>
                     </div>
+                    <span class="flex-shrink-0 w-6 h-6 rounded-lg border flex items-center justify-center text-[11px] font-bold transition-all ${isSelected ? 'bg-lime-500 border-lime-500 text-zinc-950' : 'border-zinc-300 dark:border-white/15 text-transparent'}">✓</span>
+                    <input type="checkbox" data-id="${ex.id}" class="sr-only"
+                           ${isSelected ? 'checked' : ''}>
                 </label>`;
-            }).join('') || '<div class="text-sm text-surface-400 text-center py-6">Ничего не найдено</div>';
+            }).join('') || '<div class="text-sm text-zinc-400 dark:text-zinc-500 text-center py-6">Ничего не найдено</div>';
 
             listEl.querySelectorAll('input[data-id]').forEach(cb => {
                 cb.addEventListener('change', (e) => {
@@ -2921,6 +2957,15 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             });
         };
 
+        groupEl.addEventListener('change', () => {
+            filterGroup = groupEl.value;
+            renderList();
+        });
+        resetBtn.addEventListener('click', () => {
+            selected = [];
+            renderList();
+            updateCreateLabel();
+        });
         searchEl.addEventListener('input', () => {
             search = searchEl.value.trim();
             renderList();
