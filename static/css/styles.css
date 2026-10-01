@@ -541,10 +541,8 @@ input, select, textarea:focus {
     bottom: 0;
     background: linear-gradient(to top, var(--drum-sheet-bg) 10%, var(--drum-sheet-bg-fade));
 }
-/* Neon highlight for the input currently owned by the picker and the set that
-   receives focus after saving */
-.drum-source-active,
-.drum-next-set {
+/* Neon highlight for the input currently owned by the picker */
+.drum-source-active {
     border-color: #84cc16 !important;
     box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.3);
 }
@@ -624,6 +622,37 @@ input[data-field="reps"] {
     }
     .drum-sheet .drum-mask {
         height: 48px;
+    }
+}
+
+/* ============ Active Workout Set Rows ============ */
+/* Lime pulse confirming that a set was saved. Only the 1px border and the outer
+   glow animate — the glass surface and the completed (dimmed) text styling of
+   the row children are never touched, so nothing shifts or fades to a hole.
+   JS drops .set-row--saved after SET_SAVED_FLASH_MS, so the row returns to the
+   plain glass look on its own. */
+@keyframes set-saved-pulse {
+    0% {
+        border-color: rgba(132, 204, 22, 0.9);
+        box-shadow: 0 0 0 3px rgba(132, 204, 22, 0.35);
+    }
+    60% {
+        border-color: rgba(132, 204, 22, 0.5);
+        box-shadow: 0 0 14px 4px rgba(132, 204, 22, 0.22);
+    }
+    100% {
+        border-color: rgba(132, 204, 22, 0.35);
+        box-shadow: 0 0 0 0 rgba(132, 204, 22, 0);
+    }
+}
+.set-row--saved {
+    animation: set-saved-pulse 1s ease-out;
+}
+/* No motion requested: hold a static lime border for the flash window */
+@media (prefers-reduced-motion: reduce) {
+    .set-row--saved {
+        animation: none;
+        border-color: rgba(132, 204, 22, 0.85);
     }
 }
 

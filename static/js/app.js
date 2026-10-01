@@ -648,30 +648,14 @@ const App = {
         const applyState = (completed) => {
             btn.dataset.completed = String(completed);
             btn.className = TOGGLE_BASE + ' ' + (completed ? TOGGLE_COMPLETED : TOGGLE_UNCOMPLETED);
-            const weightField = row.querySelector('[data-field="weight"]');
-            const repsField = row.querySelector('[data-field="reps"]');
-            if (weightField) weightField.readOnly = completed;
-            if (repsField) repsField.readOnly = completed;
         };
 
         try {
             await API.patch(`/workouts/sets/${set_id}`, payload, this.state.tokens.access);
 
-            // Update UI state
+            // Update UI state. Weight/reps stay editable when completed and the
+            // carousel is never moved automatically.
             applyState(!wasCompleted);
-            if (!wasCompleted) {
-                // Auto-scroll to next exercise if last set of current exercise
-                const exerciseContainer = row.closest('.snap-center');
-                const allSets = exerciseContainer.querySelectorAll('[data-action="toggle-set"]');
-                const allCompleted = Array.from(allSets).every(b => b.dataset.completed === 'true');
-                if (allCompleted) {
-                    const carousel = document.getElementById('carousel');
-                    if (carousel) {
-                        const cardWidth = exerciseContainer.offsetWidth + 16; // 16 is gap
-                        carousel.scrollBy({ left: cardWidth, behavior: 'smooth' });
-                    }
-                }
-            }
             btn.textContent = '✓';
             btn.disabled = false;
         } catch (e) {

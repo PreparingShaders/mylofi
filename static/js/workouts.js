@@ -10,6 +10,10 @@ const TOGGLE_UNCOMPLETED = 'glass text-surface-400 dark:text-surface-500';
 const SET_DIM = ['text-surface-400', 'dark:text-surface-600'];
 const SET_NUMBER_IDLE = 'text-surface-500';
 
+// Half the tonnage marker (w-2.5) plus its border, used to keep the marker and
+// the guide line inside the plot when the last slot sits at 100%.
+const TONNAGE_MARKER_RADIUS = 6;
+
 const LOCK_ICON = '<svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>';
 const QUICK_GOALS = [
     { value: 'strength', title: 'Сила', subtitle: 'Базовые движения, 3×5' },
@@ -45,6 +49,16 @@ const TEMP_EXERCISE_ID_BASE = -1000;
 const TEMP_SET_ID_BASE = -100000;
 const OFFLINE_START_MESSAGE = 'Нет подключения к интернету. Тренировка создана локально и будет синхронизирована при появлении связи';
 const OFFLINE_COMPLETE_MESSAGE = 'Тренировка завершена! Сеть недоступна, данные будут синхронизированы при появлении связи';
+
+// Shown instead of the drum picker when a set is already checked off.
+const SET_LOCKED_MESSAGE = 'Редактирование заблокировано. Снимите отметку о выполнении';
+// How long a set row keeps the .set-row--saved pulse; must match the CSS.
+const SET_SAVED_FLASH_MS = 1000;
+// Beat between completing the last set of an exercise and advancing the
+// carousel, so the save flash is seen before the card scrolls away.
+const SET_ADVANCE_DELAY_MS = 350;
+// gap-4 between carousel cards, used to derive the horizontal scroll step.
+const CAROUSEL_GAP_PX = 16;
 
 export const Workouts = {
     app: null,
@@ -288,20 +302,32 @@ export const Workouts = {
         const guide = chart.querySelector('[data-tonnage-guide]');
         const readout = chart.querySelector('[data-tonnage-readout]');
         const surface = chart.querySelector('[data-tonnage-surface]');
+        const plot = marker?.parentElement || null;
         const defaultIndex = points.length - 1;
 
         const formatValue = (value) => `${Math.round(value).toLocaleString('ru-RU')} кг`;
 
+        // The marker is 10px wide and centred on its x, so the first/last slot
+        // would push it (and the guide) past the plot on narrow viewports.
+        // Inset by the radius as a share of the measured plot width.
+        const clampX = (x) => {
+            const width = plot?.getBoundingClientRect().width || 0;
+            if (!width) return Math.min(100, Math.max(0, x));
+            const inset = (TONNAGE_MARKER_RADIUS / width) * 100;
+            return Math.min(100 - inset, Math.max(inset, x));
+        };
+
         const show = (index) => {
             const point = points[index];
             if (!point) return;
+            const x = clampX(point.x);
             if (marker) {
-                marker.style.left = `${point.x}%`;
+                marker.style.left = `${x}%`;
                 marker.style.top = `${point.y}%`;
                 marker.classList.remove('opacity-0');
             }
             if (guide) {
-                guide.style.left = `${point.x}%`;
+                guide.style.left = `${x}%`;
                 guide.classList.remove('opacity-0');
             }
             if (readout) {
@@ -317,6 +343,10 @@ export const Workouts = {
         });
 
         surface?.addEventListener('pointerleave', () => show(defaultIndex));
+
+        // Anchor the indicator on the latest point right after mount, so the
+        // chart never opens with a missing/misplaced marker.
+        show(defaultIndex);
     },
 
     async refreshTonnageModule(app) {
@@ -841,18 +871,18 @@ export const Workouts = {
                         <p class="text-sm text-surface-500 dark:text-surface-400 mb-3">Пока нет своих тренировок</p>
                         <button data-action="show-build-workout" class="px-4 py-2 bg-primary-600 text-white rounded-xl text-sm font-semibold">Собрать первую →</button>
                     </div>`
-                    : `<div class="flex overflow-x-auto snap-x snap-mandatory gap-3 pb-2 scrollbar-none -mx-4 px-4">
+                    : `<div class="flex overflow-x-auto snap-x snap-mandatory gap-2.5 pb-2 scrollbar-none -mx-4 px-4">
                     ${templates.map(t => `
-                        <div class="min-w-[220px] max-w-[240px] snap-center glass border ${hasActiveSession ? 'border-surface-200/70 dark:border-white/10 opacity-60' : ''} rounded-2xl p-4 flex flex-col justify-between shadow-sm">
+                        <div class="min-w-[198px] max-w-[216px] snap-center glass border ${hasActiveSession ? 'border-surface-200/70 dark:border-white/10 opacity-60' : ''} rounded-2xl p-3.5 flex flex-col justify-between shadow-sm">
                             <div class="flex-1 cursor-pointer" data-action="view-template" data-template-id="${t.id}">
-                                <h4 class="font-bold text-base truncate mb-1" title="${this.escapeHtml(t.name)}">${this.escapeHtml(t.name)}</h4>
-                                <p class="text-xs text-surface-500 dark:text-surface-400 mb-2">${t.exercises.length} упр.</p>
-                                <div class="text-[11px] text-surface-400 truncate mb-3">
+                                <h4 class="font-bold text-sm truncate mb-1" title="${this.escapeHtml(t.name)}">${this.escapeHtml(t.name)}</h4>
+                                <p class="text-[11px] text-surface-500 dark:text-surface-400 mb-1.5">${t.exercises.length} упр.</p>
+                                <div class="text-[10px] text-surface-400 truncate mb-2.5">
                                     ${t.exercises.map(ex => ex.name).join(', ')}
                                 </div>
                             </div>
                             <button data-action="start-template" data-template-id="${t.id}" ${hasActiveSession ? 'disabled' : ''}
-                                    class="w-full py-2 flex items-center justify-center gap-1.5 ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'bg-primary-600 text-white'} rounded-xl text-xs font-semibold text-center shadow-sm">
+                                    class="w-full py-1.5 flex items-center justify-center gap-1.5 ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'bg-primary-600 text-white'} rounded-xl text-[11px] font-semibold text-center shadow-sm">
                                 ${hasActiveSession ? `${LOCK_ICON}<span>Активна тренировка</span>` : '<span>Начать тренировку →</span>'}
                             </button>
                         </div>
@@ -897,62 +927,62 @@ export const Workouts = {
                     </div>`
                     : ''}
 
+                ${templatesWidget}
+
                 <div class="mb-6">
                     <h3 class="text-sm font-semibold text-surface-500 uppercase tracking-wider mb-3">Быстрый старт</h3>
-                    <div class="flex overflow-x-auto snap-x snap-mandatory gap-3 pb-3 scrollbar-none -mx-4 px-4">
+                    <div class="flex overflow-x-auto snap-x snap-mandatory gap-2.5 pb-3 scrollbar-none -mx-4 px-4">
                         <!-- Card 1: Build Custom -->
-                        <div class="min-w-[240px] max-w-[260px] snap-center glass border rounded-2xl p-4 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="show-build-workout">
+                        <div class="min-w-[216px] max-w-[234px] snap-center glass border rounded-2xl p-3.5 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="show-build-workout">
                             <div>
-                                <div class="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-3">
-                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                                <div class="w-9 h-9 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-2.5">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                                 </div>
-                                <h4 class="font-bold text-lg mb-1">Собрать тренировку</h4>
-                                <p class="text-xs text-surface-500 dark:text-surface-400">Создать и сохранить свой шаблон из каталога (220+)</p>
+                                <h4 class="font-bold text-base mb-1">Собрать тренировку</h4>
+                                <p class="text-[11px] text-surface-500 dark:text-surface-400">Создать и сохранить свой шаблон из каталога (220+)</p>
                             </div>
-                            <span class="mt-4 text-xs font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-3 py-2 rounded-xl text-center">Создать шаблон →</span>
+                            <span class="mt-3 text-[11px] font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-2.5 py-1.5 rounded-xl text-center">Создать шаблон →</span>
                         </div>
 
                         <!-- Card 2: Quick Start -->
-                        <div class="min-w-[240px] max-w-[260px] snap-center glass border ${hasActiveSession ? 'border-surface-200/70 dark:border-white/10' : ''} rounded-2xl p-4 flex flex-col justify-between shadow-sm ${hasActiveSession ? 'opacity-60' : 'cursor-pointer btn-press'}" data-action="${hasActiveSession ? '' : 'quick-start-workout'}">
+                        <div class="min-w-[216px] max-w-[234px] snap-center glass border ${hasActiveSession ? 'border-surface-200/70 dark:border-white/10' : ''} rounded-2xl p-3.5 flex flex-col justify-between shadow-sm ${hasActiveSession ? 'opacity-60' : 'cursor-pointer btn-press'}" data-action="${hasActiveSession ? '' : 'quick-start-workout'}">
                             <div>
-                                <div class="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-3">
-                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                                <div class="w-9 h-9 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-2.5">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                                 </div>
-                                <h4 class="font-bold text-lg mb-1">Быстрый старт</h4>
-                                <p class="text-xs text-surface-500 dark:text-surface-400">Готовая тренировка под цель: сила, масса или выносливость</p>
+                                <h4 class="font-bold text-base mb-1">Быстрый старт</h4>
+                                <p class="text-[11px] text-surface-500 dark:text-surface-400">Готовая тренировка под цель: сила, масса или выносливость</p>
                             </div>
                             ${hasActiveSession
-                                ? `<span class="mt-4 text-xs font-semibold bg-surface-200 dark:bg-white/5 text-surface-500 dark:text-surface-400 px-3 py-2 rounded-xl text-center flex items-center justify-center gap-1.5">${LOCK_ICON}<span>Активна тренировка</span></span>`
-                                : '<span class="mt-4 text-xs font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-3 py-2 rounded-xl text-center">Начать сразу →</span>'}
+                                ? `<span class="mt-3 text-[11px] font-semibold bg-surface-200 dark:bg-white/5 text-surface-500 dark:text-surface-400 px-2.5 py-1.5 rounded-xl text-center flex items-center justify-center gap-1.5">${LOCK_ICON}<span>Активна тренировка</span></span>`
+                                : '<span class="mt-3 text-[11px] font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-2.5 py-1.5 rounded-xl text-center">Начать сразу →</span>'}
                         </div>
 
                         <!-- Card 3: History -->
-                        <div class="min-w-[240px] max-w-[260px] snap-center glass border rounded-2xl p-4 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="view-history">
+                        <div class="min-w-[216px] max-w-[234px] snap-center glass border rounded-2xl p-3.5 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="view-history">
                             <div>
-                                <div class="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-3">
-                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                                <div class="w-9 h-9 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-2.5">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                                 </div>
-                                <h4 class="font-bold text-lg mb-1">История</h4>
-                                <p class="text-xs text-surface-500 dark:text-surface-400">${recentSessions.length > 0 ? `Завершено ${recentSessions.length} тренировок, детальный разбор` : 'Хронология тренировок и разбор каждой'}</p>
+                                <h4 class="font-bold text-base mb-1">История</h4>
+                                <p class="text-[11px] text-surface-500 dark:text-surface-400">${recentSessions.length > 0 ? `Завершено ${recentSessions.length} тренировок, детальный разбор` : 'Хронология тренировок и разбор каждой'}</p>
                             </div>
-                            <span class="mt-4 text-xs font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-3 py-2 rounded-xl text-center">Открыть историю →</span>
+                            <span class="mt-3 text-[11px] font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-2.5 py-1.5 rounded-xl text-center">Открыть историю →</span>
                         </div>
 
                         <!-- Card 4: Personal Records -->
-                        <div class="min-w-[240px] max-w-[260px] snap-center glass border rounded-2xl p-4 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="view-records">
+                        <div class="min-w-[216px] max-w-[234px] snap-center glass border rounded-2xl p-3.5 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="view-records">
                             <div>
-                                <div class="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-3">
-                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-1l2 2 4-4m-5.5-8.5L19 3l2 2-3 3-2-2z"/></svg>
+                                <div class="w-9 h-9 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-2.5">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-1l2 2 4-4m-5.5-8.5L19 3l2 2-3 3-2-2z"/></svg>
                                 </div>
-                                <h4 class="font-bold text-lg mb-1">Личные рекорды (PR)</h4>
-                                <p class="text-xs text-surface-500 dark:text-surface-400">${records.length > 0 ? `Максимумы по ${records.length} упражнениям` : 'Максимальные веса по упражнениям'}</p>
+                                <h4 class="font-bold text-base mb-1">Личные рекорды (PR)</h4>
+                                <p class="text-[11px] text-surface-500 dark:text-surface-400">${records.length > 0 ? `Максимумы по ${records.length} упражнениям` : 'Максимальные веса по упражнениям'}</p>
                             </div>
-                            <span class="mt-4 text-xs font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-3 py-2 rounded-xl text-center">Смотреть рекорды →</span>
+                            <span class="mt-3 text-[11px] font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-2.5 py-1.5 rounded-xl text-center">Смотреть рекорды →</span>
                         </div>
                     </div>
                 </div>
-
-                ${templatesWidget}
             </div>
         `;
 
@@ -1371,7 +1401,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         setTimeout(() => {
             const carousel = document.getElementById('carousel');
             if (carousel) {
-                const cardWidth = carousel.querySelector('.snap-center').offsetWidth + 16; // 16px is gap
+                const cardWidth = carousel.querySelector('.snap-center').offsetWidth + CAROUSEL_GAP_PX;
                 carousel.scrollLeft = cardWidth; 
             }
         }, 100);
@@ -1425,6 +1455,52 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         if (tonnageEl) tonnageEl.textContent = `Суммарный тоннаж: ${Math.round(tonnage)} кг`;
     },
 
+    // Lime pulse on a set row confirming the save. The class is dropped after
+    // SET_SAVED_FLASH_MS, and the reflow lets a second save restart the keyframe.
+    flashSetSaved(row) {
+        if (!row) return;
+        row.classList.remove('set-row--saved');
+        void row.offsetWidth;
+        row.classList.add('set-row--saved');
+        clearTimeout(row._savedFlashTimer);
+        row._savedFlashTimer = setTimeout(() => {
+            row.classList.remove('set-row--saved');
+            row._savedFlashTimer = null;
+        }, SET_SAVED_FLASH_MS);
+    },
+
+    isExerciseComplete(session, exerciseId) {
+        const exercise = (session.exercises || []).find(ex => String(ex.id) === String(exerciseId));
+        const sets = exercise?.sets || [];
+        return sets.length > 0 && sets.every(set => set.is_completed);
+    },
+
+    // Moves the snap carousel one card forward, clamped so it never overshoots
+    // the last card (the "complete workout" card closes the carousel).
+    advanceCarousel(card) {
+        const carousel = document.getElementById('carousel');
+        if (!carousel || !card) return;
+        const max = carousel.scrollWidth - carousel.clientWidth;
+        if (max <= 0) return;
+        const left = Math.min(card.offsetWidth + CAROUSEL_GAP_PX, max - carousel.scrollLeft);
+        if (left <= 0) return;
+        carousel.scrollBy({ left, behavior: 'smooth' });
+    },
+
+    // Scrolls forward only when the toggled set finished the whole exercise.
+    // Completion is re-checked when the timer fires, so a reverted patch or a
+    // quick uncheck cancels the move, and a re-rendered card is skipped.
+    scheduleCarouselAdvance(session, row) {
+        const card = row?.closest('[data-exercise-id]');
+        if (!card) return;
+        const exerciseId = card.dataset.exerciseId;
+        setTimeout(() => {
+            if (!card.isConnected) return;
+            if (!this.isExerciseComplete(session, exerciseId)) return;
+            this.advanceCarousel(card);
+        }, SET_ADVANCE_DELAY_MS);
+    },
+
     bindWorkoutScreenEvents(container, app, session) {
         const isLocal = this.isLocalSession(session);
         const sessionId = isLocal ? session.key : session.id;
@@ -1472,20 +1548,10 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         row.querySelectorAll('input').forEach(inp => inp.classList.add(...SET_DIM));
                         row.querySelectorAll('label').forEach(lbl => lbl.classList.add(...SET_DIM));
 
-                        row.querySelectorAll('input').forEach(inp => { inp.readOnly = true; });
+                        // Completing a set locks its weight/reps until the
+                        // check is cleared; the carousel moves on only through
+                        // scheduleCarouselAdvance below.
                         button.disabled = false;
-                        
-                        const exerciseContainer = button.closest('.snap-center');
-                        const allToggleButtons = exerciseContainer.querySelectorAll('[data-action="toggle-set"]');
-                        const allCompleted = Array.from(allToggleButtons).every(b => b.dataset.completed === 'true');
-                        
-                        if (allCompleted) {
-                            const carousel = document.getElementById('carousel');
-                            if (carousel) {
-                                const cardWidth = exerciseContainer.offsetWidth + 16;
-                                carousel.scrollBy({ left: cardWidth, behavior: 'smooth' });
-                            }
-                        }
                     }
                     else {
                         button.dataset.completed = 'false';
@@ -1496,7 +1562,6 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         row.querySelectorAll('input').forEach(inp => inp.classList.remove(...SET_DIM));
                         row.querySelectorAll('label').forEach(lbl => lbl.classList.remove(...SET_DIM));
 
-                        row.querySelectorAll('input').forEach(inp => { inp.readOnly = true; });
                         button.textContent = '✓';
                         button.disabled = false;
                     }
@@ -1506,6 +1571,10 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 button.textContent = '...';
                 // Optimistic local update so the UI reacts instantly, even offline
                 applyToggleState(isCompleted);
+                if (isCompleted) {
+                    this.flashSetSaved(row);
+                    this.scheduleCarouselAdvance(session, row);
+                }
                 const payload = {
                     is_completed: isCompleted,
                     weight_kg: isNaN(weight_kg) ? null : weight_kg,
@@ -1635,17 +1704,19 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         });
 
         // Weight/reps are entered through the drum picker bottom sheet, never the
-        // native keyboard (inputs stay readOnly and inputmode="none")
+        // native keyboard (inputs stay readOnly and inputmode="none"). A completed
+        // set is locked: the guard runs synchronously before the sheet opens, so a
+        // finished set cannot be rewritten until the checkmark is cleared.
         container.querySelectorAll('[data-field="weight"], [data-field="reps"]').forEach(input => {
             const openPicker = (e) => {
                 e?.preventDefault();
-                input.blur();
                 const row = input.closest('[data-set-id]');
                 const toggle = row?.querySelector('[data-action="toggle-set"]');
                 if (toggle?.dataset.completed === 'true') {
-                    app.showToast('Снимите отметку о выполнении, чтобы изменить подход', 'info');
+                    app?.showToast(SET_LOCKED_MESSAGE, 'info');
                     return;
                 }
+                input.blur();
                 this.openDrumPicker(input, { app });
             };
             input.addEventListener('click', openPicker);
@@ -1893,9 +1964,10 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             const weight = drumTenthsToWeight(weightTenths);
             if (field === 'weight' && weightInput) this.setInputValue(weightInput, this.formatDrumWeight(weight));
             if (repsInput) this.setInputValue(repsInput, reps);
+            // No toast and no focus/scroll jump: the sheet closes in place, the
+            // row keeps its completed state and the pulse confirms the write.
+            this.flashSetSaved(row);
             close();
-            this.focusNextSetRow(row);
-            app?.showToast(`${exerciseName || 'Подход'}: ${this.formatDrumWeight(weight)} кг × ${reps}`, 'success');
         };
 
         modal.addEventListener('click', (e) => {
@@ -1921,43 +1993,6 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             [wholeDrum, tenthsDrum, repsDrum].forEach(refreshDrum);
             syncFromDrums();
         }));
-    },
-
-    // After saving a set, highlight the next set in the row (or the first set of
-    // the next exercise) so logging continues without extra taps.
-    focusNextSetRow(row) {
-        if (!row) return;
-        const carousel = document.getElementById('carousel');
-        const card = row.closest('[data-exercise-id]');
-        const rows = card ? [...card.querySelectorAll('[data-set-id]')] : [];
-        const index = rows.indexOf(row);
-
-        let targetCard = card;
-        let target = index >= 0 ? rows[index + 1] : null;
-
-        if (!target && carousel && card) {
-            const cards = [...carousel.querySelectorAll('[data-exercise-id]')];
-            const nextCard = cards[cards.indexOf(card) + 1];
-            if (nextCard) {
-                targetCard = nextCard;
-                target = nextCard.querySelector('[data-set-id]');
-            }
-        }
-        if (!target) return;
-
-        target.classList.add('drum-next-set');
-        const nextInput = target.querySelector('[data-field="weight"]') || target.querySelector('[data-field="reps"]');
-        nextInput?.classList.add('drum-source-active');
-        setTimeout(() => {
-            target.classList.remove('drum-next-set');
-            nextInput?.classList.remove('drum-source-active');
-        }, 2400);
-
-        if (carousel && targetCard) {
-            const cardWidth = targetCard.offsetWidth + 16;
-            const cardIndex = [...carousel.querySelectorAll('[data-exercise-id]')].indexOf(targetCard);
-            if (cardIndex > 0) carousel.scrollTo({ left: cardWidth * cardIndex, behavior: 'smooth' });
-        }
     },
 
     // Chronological history: newest first, grouped by month, with a

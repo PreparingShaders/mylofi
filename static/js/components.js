@@ -488,9 +488,9 @@ export const Components = {
                         ` : ''}
                     </svg>
 
-                    <div data-tonnage-guide class="pointer-events-none absolute inset-y-0 w-px bg-current opacity-0 transition-opacity duration-150"
+                    <div data-tonnage-guide class="pointer-events-none absolute inset-y-0 w-px bg-current transition-opacity duration-150"
                          style="left: ${last.x.toFixed(2)}%;"></div>
-                    <div data-tonnage-marker class="pointer-events-none absolute w-2.5 h-2.5 rounded-full -translate-x-1/2 -translate-y-1/2 border-2 border-surface-50 dark:border-zinc-900 bg-primary-600 dark:bg-zinc-100 shadow-[0_0_6px_rgba(163,230,53,0.5)] opacity-0 transition-opacity duration-150"
+                    <div data-tonnage-marker class="pointer-events-none absolute w-2.5 h-2.5 rounded-full -translate-x-1/2 -translate-y-1/2 border-2 border-surface-50 dark:border-zinc-900 bg-primary-600 dark:bg-zinc-100 shadow-[0_0_6px_rgba(163,230,53,0.5)] transition-opacity duration-150"
                          style="left: ${last.x.toFixed(2)}%; top: ${last.y.toFixed(2)}%;"></div>
 
                     <div data-tonnage-surface class="absolute inset-0">${hits}</div>
