@@ -5,6 +5,9 @@ import { Components } from './components.js';
 import { Utils } from './utils.js';
 import { Camera } from './camera.js';
 
+// Radius of the trend chart marker in px: the clamp keeps it inside the plot.
+const NUTRITION_MARKER_RADIUS = 5;
+
 export const Nutrition = {
     app: null,
     selectedDate: null,
@@ -39,6 +42,15 @@ export const Nutrition = {
               }
             : { calories: 0, protein: 0, fat: 0, carbs: 0 };
 
+        const targets = data
+            ? {
+                  target_calories: data.target_calories ?? null,
+                  target_protein: data.target_protein_g ?? null,
+                  target_fat: data.target_fat_g ?? null,
+                  target_carbs: data.target_carbs_g ?? null,
+              }
+            : { target_calories: null, target_protein: null, target_fat: null, target_carbs: null };
+
         let pendingMeals = [];
         try {
             pendingMeals = await DB.getMealsByStatus(DB.SYNC_STATUS.PENDING);
@@ -53,7 +65,7 @@ export const Nutrition = {
             console.warn('[Nutrition] Failed to read failed items:', error);
         }
 
-        return { serverMeals, summary, pendingMeals, failedItems, fromCache };
+        return { serverMeals, summary, targets, pendingMeals, failedItems, fromCache };
     },
 
     async loadPeriodData(period, date) {
@@ -68,12 +80,28 @@ export const Nutrition = {
                     protein: data.avg_protein_g ?? data.total_protein_g ?? 0,
                     fat: data.avg_fat_g ?? data.total_fat_g ?? 0,
                     carbs: data.avg_carbs_g ?? data.total_carbs_g ?? 0,
+                    target_calories: data.target_calories ?? null,
+                    days: data.days ?? null,
+                    active_days: data.active_days ?? null,
+                    series: Array.isArray(data.series) ? data.series : [],
                 };
             }
         } catch (error) {
             console.warn('[Nutrition] Period average unavailable:', error?.message);
         }
         return null;
+    },
+
+    /**
+     * Newest-first ordering key for a meal. Timestamps arrive as ISO strings,
+     * so they must be parsed before comparing (a raw "-" on strings yields NaN
+     * and leaves the list in its original order).
+     */
+    mealTimestamp(meal) {
+        const raw = meal?.eaten_at || meal?.updated_at || meal?.created_at;
+        if (!raw) return 0;
+        const ts = new Date(raw).getTime();
+        return Number.isFinite(ts) ? ts : 0;
     },
 
     formatDateLabel(dateISO) {
@@ -159,7 +187,7 @@ export const Nutrition = {
             { value: 'month', label: 'Месяц' },
         ];
         return `
-            <div class="flex items-center gap-1 bg-surface-100 dark:bg-white/5 rounded-xl px-2 py-1" role="group" aria-label="Период аналитики">
+            <div class="flex items-center gap-1 flex-1 min-w-0 bg-surface-100 dark:bg-white/5 rounded-xl px-2 py-1" role="group" aria-label="Период аналитики">
                 ${options.map((opt) => `
                     <button type="button" data-action="set-period" data-period="${opt.value}"
                             aria-pressed="${this.period === opt.value}"
@@ -187,6 +215,216 @@ export const Nutrition = {
         `).join('');
     },
 
+/**
+     * Slide 1: the ultra-compact Mercedes-style ring for the selected period
+     * (or the selected day) - AI quality, calories vs target and the three
+     * macro sectors with their over-target highlighting.
+     */
+    renderNutritionDaySlide(summary, targets, qualityScore, hint = '') {
+        return Components.mercedesComboRing(summary, targets, qualityScore);
+    },
+
+    /**
+     * Period figures for slide 2: daily averages, the mean AI quality across
+     * the days that actually carry meals, and the gap to the calorie goal.
+     */
+    periodAnalytics(periodData, targets) {
+        const empty = { hasData: false, avgCalories: 0, avgProtein: 0, avgQuality: null, deltaPercent: null, series: [] };
+        if (!periodData) return empty;
+
+        const series = Array.isArray(periodData.series) ? periodData.series : [];
+        const loggedDays = series.filter(day => Number(day.meals_count) > 0);
+
+        const scores = loggedDays
+            .map(day => Utils.computeQualityScore({
+                calories: day.calories,
+                protein: day.protein_g,
+                fat: day.fat_g,
+                carbs: day.carbs_g,
+            }))
+            .filter(score => score !== null && Number.isFinite(score));
+
+        const avgCalories = Number(periodData.calories) || 0;
+        const targetCalories = Number(targets?.target_calories) || 0;
+        const deltaPercent = targetCalories > 0 && avgCalories > 0
+            ? Math.round(((avgCalories - targetCalories) / targetCalories) * 100)
+            : null;
+
+        return {
+            hasData: series.length > 0,
+            avgCalories,
+            avgProtein: Number(periodData.protein) || 0,
+            avgQuality: scores.length
+                ? Math.round(scores.reduce((sum, value) => sum + value, 0) / scores.length)
+                : null,
+            deltaPercent,
+            series,
+        };
+    },
+
+    /**
+     * Slide 2: three summary metrics, the daily trend against the calorie goal
+     * and a comparison line stating the distance to that goal.
+     */
+    renderNutritionTrendSlide(analytics, targets, hint = '') {
+        const formatNum = (value) => Math.round(Number(value) || 0).toLocaleString('ru-RU');
+
+        const metric = (label, value, sub) => `
+            <div class="bg-surface-50 dark:bg-white/5 rounded-xl px-2 py-2.5 text-center min-w-0">
+                <div class="text-[10px] text-surface-500 dark:text-surface-400 truncate">${label}</div>
+                <div class="text-base font-bold text-surface-900 dark:text-zinc-100 truncate">${value}</div>
+                <div class="text-[10px] text-surface-400 dark:text-surface-500 truncate">${sub}</div>
+            </div>
+        `;
+
+        const { avgCalories, avgProtein, avgQuality, deltaPercent } = analytics;
+        const targetCalories = Math.round(Number(targets?.target_calories) || 0);
+
+        const comparison = deltaPercent === null
+            ? `Цель: ${formatNum(targetCalories)} ккал / день`
+            : `Цель: ${formatNum(targetCalories)} ккал / день ·
+               <span class="${deltaPercent <= 0 ? 'text-lime-600 dark:text-lime-400' : 'text-amber-600 dark:text-amber-400'} font-semibold">
+                   ${deltaPercent > 0 ? '+' : ''}${deltaPercent}%
+               </span>`;
+
+        return `
+            <div class="grid grid-cols-3 gap-2">
+                ${metric('Ср. ккал / день', formatNum(avgCalories), 'ккал')}
+                ${metric('Ср. белок', formatNum(avgProtein), 'г')}
+                ${metric('ИИ-качество', avgQuality === null ? '—' : (avgQuality / 10).toFixed(1), avgQuality === null ? 'нет данных' : 'из 10')}
+            </div>
+            <div class="mt-2.5">
+                ${Components.nutritionTrendChart(analytics.series, { targetCalories })}
+            </div>
+            <p class="mt-2 text-[10px] text-surface-500 dark:text-surface-400 text-center">${hint ? `${hint} · ` : ''}${comparison}</p>
+        `;
+    },
+
+    /**
+     * Swipe and pagination-dot navigation for the dashboard card. The active
+     * dot follows the scroll position so a manual swipe and a dot tap stay in
+     * sync in both directions.
+     */
+    bindDashboardSlides() {
+        const container = this.app.elements.pageContent;
+        const track = container.querySelector('[data-role="nutrition-slides"]');
+        if (!track) return;
+
+        const dots = Array.from(container.querySelectorAll('[data-action="nutrition-dot"]'));
+        const setActive = (index) => {
+            dots.forEach((dot, i) => {
+                const active = i === index;
+                dot.classList.toggle('bg-lime-500', active);
+                dot.classList.toggle('dark:bg-lime-400', active);
+                dot.classList.toggle('opacity-100', active);
+                dot.classList.toggle('bg-surface-300', !active);
+                dot.classList.toggle('dark:bg-zinc-700', !active);
+                dot.classList.toggle('opacity-60', !active);
+                dot.setAttribute('aria-pressed', String(active));
+            });
+        };
+
+        const activeIndex = () => {
+            const width = track.clientWidth;
+            if (!width) return 0;
+            return Math.round(track.scrollLeft / width);
+        };
+
+        // A dot tap scrolls the track programmatically, which fires scroll
+        // events of its own. The flag keeps the handler from overwriting the
+        // dot the user just picked while the smooth scroll is still running.
+        let programmatic = false;
+
+        const goTo = (index) => {
+            const max = dots.length - 1;
+            const target = Math.min(max, Math.max(0, index));
+            programmatic = true;
+            track.scrollTo({ left: target * track.clientWidth, behavior: 'smooth' });
+            setActive(target);
+            clearTimeout(track._dotScrollTimer);
+            track._dotScrollTimer = setTimeout(() => { programmatic = false; }, 400);
+        };
+
+        dots.forEach((dot) => {
+            dot.onclick = () => goTo(Number(dot.dataset.slide));
+        });
+
+        track.addEventListener('scroll', () => {
+            if (programmatic) return;
+            setActive(activeIndex());
+        }, { passive: true });
+
+        setActive(activeIndex());
+
+        container.querySelectorAll('[data-role="nutrition-trend"]').forEach((chart) => {
+            this.bindNutritionTrendChart(chart);
+        });
+    },
+
+    /**
+     * Hover / tap indicators for the daily calorie trend. Geometry comes from
+     * the chart markup; this only moves the marker, the guide and the readout,
+     * and falls back to the last day when the pointer leaves the plot.
+     */
+    bindNutritionTrendChart(chart) {
+        let points = [];
+        try {
+            points = JSON.parse(chart.dataset.points || '[]');
+        } catch (error) {
+            console.warn('[Nutrition] Malformed trend chart data:', error);
+            return;
+        }
+        if (!points.length) return;
+
+        const marker = chart.querySelector('[data-nutrition-marker]');
+        const guide = chart.querySelector('[data-nutrition-guide]');
+        const readout = chart.querySelector('[data-nutrition-readout]');
+        const surface = chart.querySelector('[data-nutrition-surface]');
+        const plot = marker?.parentElement || null;
+        const defaultIndex = points.length - 1;
+
+        const formatValue = (value) => `${Math.round(value).toLocaleString('ru-RU')} ккал`;
+
+        // The marker is centred on its x, so the first/last slot would push it
+        // past the plot on narrow viewports: inset by the radius as a share of
+        // the measured plot width.
+        const clampX = (x) => {
+            const width = plot?.getBoundingClientRect().width || 0;
+            if (!width) return Math.min(100, Math.max(0, x));
+            const inset = (NUTRITION_MARKER_RADIUS / width) * 100;
+            return Math.min(100 - inset, Math.max(inset, x));
+        };
+
+        const show = (index) => {
+            const point = points[index];
+            if (!point) return;
+            const x = clampX(point.x);
+            if (marker) {
+                marker.style.left = `${x}%`;
+                marker.style.top = `${point.y}%`;
+            }
+            if (guide) {
+                guide.style.left = `${x}%`;
+            }
+            if (readout) {
+                readout.textContent = point.label ? `${point.label}: ${formatValue(point.value)}` : formatValue(point.value);
+            }
+        };
+
+        chart.querySelectorAll('[data-nutrition-hit]').forEach(hit => {
+            const index = Number(hit.dataset.nutritionHit);
+            hit.addEventListener('pointerenter', () => show(index));
+            // Touch devices have no hover, so a tap pins the same indicator.
+            hit.addEventListener('pointerdown', () => show(index));
+        });
+
+        surface?.addEventListener('pointerleave', () => show(defaultIndex));
+
+        // Anchor on the latest day right after mount so the chart never opens
+        // with a missing or misplaced marker.
+        show(defaultIndex);
+    },
+
 async render(container, app, dateOverride = null) {
         this.app = app;
         if (dateOverride) {
@@ -202,42 +440,51 @@ async render(container, app, dateOverride = null) {
         container.innerHTML = Components.loadingSpinner();
 
         try {
-            const { serverMeals, summary, pendingMeals, failedItems, fromCache } = await this.loadData(this.selectedDate);
+            const { serverMeals, summary, targets: apiTargets, pendingMeals, failedItems, fromCache } = await this.loadData(this.selectedDate);
+
+            // Slide 2 always shows a period trend, so the day view borrows the
+            // week the selected date belongs to instead of rendering empty.
+            const trendPeriod = this.period === 'day' ? 'week' : this.period;
+            const periodDataPromise = this.loadPeriodData(trendPeriod, this.selectedDate);
+
+            const user = this.app.state.user || {};
+            const resolveTarget = (apiValue, userValue, fallback) => {
+                if (Number.isFinite(Number(apiValue)) && Number(apiValue) > 0) return Number(apiValue);
+                if (Number.isFinite(Number(userValue)) && Number(userValue) > 0) return Number(userValue);
+                return fallback;
+            };
 
             const targets = {
-                target_calories: this.app.state.user?.target_calories || 2000,
-                target_protein: this.app.state.user?.target_protein_g || 150,
-                target_fat: this.app.state.user?.target_fat_g || 65,
-                target_carbs: this.app.state.user?.target_carbs_g || 250,
+                target_calories: resolveTarget(apiTargets?.target_calories, user.target_calories, 2000),
+                target_protein: resolveTarget(apiTargets?.target_protein, user.target_protein_g, 150),
+                target_fat: resolveTarget(apiTargets?.target_fat, user.target_fat_g, 65),
+                target_carbs: resolveTarget(apiTargets?.target_carbs, user.target_carbs_g, 250),
             };
 
             const dateLabel = this.formatDateLabel(this.selectedDate);
             const periodTitle = this.periodTitle(this.selectedDate, this.period);
 
+            // LIFO: the most recent meal is the first tile after the action card.
             const sortedMeals = serverMeals
                 .slice()
-                .sort((a, b) => {
-                    const ta = (b.eaten_at || b.updated_at || b.created_at || 0);
-                    const tb = (a.eaten_at || a.updated_at || a.created_at || 0);
-                    return tb - ta;
-                });
+                .sort((a, b) => this.mealTimestamp(b) - this.mealTimestamp(a));
 
             const pendingSorted = pendingMeals
                 .slice()
-                .sort((a, b) => {
-                    const ta = (b.eaten_at || b.updated_at || 0);
-                    const tb = (a.eaten_at || a.updated_at || 0);
-                    return tb - ta;
-                });
+                .sort((a, b) => this.mealTimestamp(b) - this.mealTimestamp(a));
 
-            const carouselCards = sortedMeals.map((meal) => Components.mealCardPhoto(meal, app)).join('');
+            const periodData = await periodDataPromise;
 
             let displaySummary = summary;
             let periodHint = '';
             if (this.period !== 'day') {
-                const avg = await this.loadPeriodData(this.period, this.selectedDate);
-                if (avg) {
-                    displaySummary = avg;
+                if (periodData) {
+                    displaySummary = {
+                        calories: periodData.calories,
+                        protein: periodData.protein,
+                        fat: periodData.fat,
+                        carbs: periodData.carbs,
+                    };
                     periodHint = 'Среднее за период';
                 } else {
                     displaySummary = { calories: 0, protein: 0, fat: 0, carbs: 0 };
@@ -250,53 +497,52 @@ async render(container, app, dateOverride = null) {
             // Compute quality score for the metric bar
             const qualityScore = totalMeals > 0 ? Utils.computeQualityScore(displaySummary) : null;
 
+            // Slide 2 targets track the period payload first so the trend line
+            // always compares against the same goal the profile shows.
+            const trendTargets = periodData?.target_calories
+                ? { ...targets, target_calories: Number(periodData.target_calories) }
+                : targets;
+            const trendHint = periodData
+                ? (this.period === 'day' ? 'Тренд за текущую неделю' : this.periodRangeLabel(this.selectedDate, this.period))
+                : 'Нет данных за период';
+            const analytics = this.periodAnalytics(periodData, trendTargets);
+            const dashboard = Components.nutritionDashboardCard({
+                title: periodTitle,
+                periodSelector: this.renderPeriodSelector(),
+                slides: [
+                    this.renderNutritionDaySlide(displaySummary, targets, qualityScore, periodHint),
+                    this.renderNutritionTrendSlide(analytics, trendTargets, trendHint),
+                ],
+            });
+
             let html = `
-                <div class="single-viewport px-4 pt-4 pb-32">
+                <div class="single-viewport px-4 pt-4 pb-20">
                     <!-- HEADER -->
-                    <div class="viewport-header p-1 pt-0 pb-1">
-                        <div class="flex justify-between items-center gap-2 mb-1">
-                            ${this.renderDateNav(this.selectedDate, dateLabel, fromCache)}
-                            ${this.renderPeriodSelector()}
-                        </div>
+                    <div class="viewport-header p-1 pt-0 pb-2">
+                        ${this.renderDateNav(this.selectedDate, dateLabel, fromCache)}
 
-                        <!-- Period Title -->
-                        <h3 class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider truncate mb-1">${periodTitle}</h3>
-
-                        <!-- 5-Column Metric Bar -->
-                        ${Components.nutritionMetricsBar(displaySummary, targets, qualityScore)}
-                        ${periodHint ? `<p class="text-[11px] text-center text-surface-500 dark:text-surface-400 mt-1">${periodHint}</p>` : ''}
+                        <!-- Swipable dashboard: day view + period analytics -->
+                        ${dashboard}
                     </div>
 
-                    <!-- CENTER CAROUSEL: 1 card = 1 meal + its AI analysis -->
-                    <div class="meal-carousel flex-shrink-0 overflow-x-auto snap-x snap-mandatory scroll-smooth -mx-4 px-4 pb-2 touch-pan-x" id="meal-carousel">
-                        ${pendingSorted.length > 0
-                            ? `
-                            <div class="flex gap-3 snap-none min-w-0 h-full items-center">
-                                <div class="w-48 shrink-0 flex items-center justify-center">
-                                    <span class="text-xs text-amber-500 font-medium text-center">Ожидают синхронизации</span>
-                                </div>
-                                ${pendingSorted.map((meal) => Components.mealCardPhoto(meal, app)).join('')}
-                            </div>
-                            `
-                            : ''}
-                        ${totalMeals === 0
-                            ? `
-                            <div class="flex items-center justify-center h-full min-w-full px-8">
-                                <div class="text-center">
-                                    <div class="w-16 h-16 rounded-full glass flex items-center justify-center mx-auto mb-3">
-                                        <svg class="w-8 h-8 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6l4 2M4 12a8 8 0 1116 0 8 8 0 01-16 0z"/></svg>
-                                    </div>
-                                    <h3 class="text-lg font-semibold text-surface-900 dark:text-zinc-100 mb-1">Нет приёмов пищи</h3>
-                                    <p class="text-sm text-surface-500">Нажмите "Добавить приём пищи", чтобы начать</p>
-                                </div>
-                            </div>
-                            `
-                            : `
-                            <div class="flex gap-3 snap-none min-w-0 h-full items-center">
-                                ${carouselCards}
-                            </div>
-                            `
-                        }
+                    <!-- PENDING SYNC BANNER -->
+                    ${pendingSorted.length > 0
+                        ? `
+                        <div class="shrink-0 mb-1">
+                            <span class="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-2.5 py-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+                                <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                                Ожидают синхронизации: ${pendingSorted.length}
+                            </span>
+                        </div>
+                        `
+                        : ''}
+
+                    <!-- SNAP CAROUSEL: action tile first, then pending meals, then logged meals (LIFO) -->
+                    <div class="meal-carousel" id="meal-carousel">
+                        ${Components.addMealActionCard()}
+                        ${pendingSorted.map((meal) => Components.mealCardPhoto(meal, app)).join('')}
+                        ${sortedMeals.map((meal) => Components.mealCardPhoto(meal, app)).join('')}
+                        ${totalMeals === 0 ? Components.mealCarouselEmptyState() : ''}
                     </div>
 
                     <!-- FAILED SYNC ITEMS (inline if any) -->
@@ -319,14 +565,6 @@ async render(container, app, dateOverride = null) {
                         </div>
                         `
                         : ''}
-
-                    <!-- BOTTOM CTA -->
-                    <div class="viewport-footer p-3 pt-1">
-                        <button type="button" id="add-meal-btn" data-action="open-add-meal-modal" class="btn-press w-full flex items-center justify-center gap-2 py-3.5 glass rounded-xl text-center transition-all bg-primary-600 hover:bg-primary-700 text-white shadow-lg shadow-primary-600/30">
-                            <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                            <span class="text-sm font-semibold">Добавить приём пищи</span>
-                        </button>
-                    </div>
                 </div>
             `;
 
@@ -334,6 +572,7 @@ async render(container, app, dateOverride = null) {
 
             this.bindDateNav();
             this.bindPeriodSelector();
+            this.bindDashboardSlides();
             this.bindFlipCards();
             this.bindAddMealModal();
             this.bindMealActions();
@@ -366,11 +605,10 @@ async render(container, app, dateOverride = null) {
     bindAddMealModal() {
         const container = this.app.elements.pageContent;
 
-        // Open modal
-        const openBtn = container.querySelector('#add-meal-btn');
-        if (openBtn) {
-            openBtn.onclick = () => this.openNewMealModal();
-        }
+        // The action tile lives inside the carousel, so bind every match.
+        container.querySelectorAll('[data-action="open-add-meal-modal"]').forEach((btn) => {
+            btn.onclick = () => this.openNewMealModal();
+        });
     },
 
     openNewMealModal() {
@@ -433,8 +671,8 @@ async render(container, app, dateOverride = null) {
     bindNewMealModalEvents(modalEl) {
         const state = this._newMealModalState;
 
-        // Backdrop closes the sheet; the ✕ button sits inside the panel and is
-        // bound directly so panel clicks never bubble into the backdrop handler.
+        // Backdrop closes the sheet; the close button sits inside the panel and
+        // is bound directly so panel clicks never bubble into the backdrop handler.
         modalEl.querySelector('.drum-sheet-backdrop')?.addEventListener('click', () => {
             this.closeNewMealModal();
         });

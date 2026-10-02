@@ -4,6 +4,7 @@ import { DB } from './db.js';
 
 let sparklineSeq = 0;
 let tonnageChartSeq = 0;
+let nutritionChartSeq = 0;
 
 function escapeHtml(value) {
     return String(value ?? '')
@@ -82,54 +83,396 @@ export const Components = {
     },
 
     /**
-     * Ultra-compact 5-column metric bar replacing the circular ring.
-     * Columns: Calories, Protein, Fat, Carbs, Quality Score.
+     * AI quality badge: score out of 10 plus its grade. A null score renders
+     * the neutral placeholder instead of "0.0", which would read as a verdict.
      */
-    nutritionMetricsBar(summary = {}, targets = {}, scoreOverride = null) {
+    qualityBadge(score) {
+        if (score === null || score === undefined) {
+            return `<span class="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold bg-surface-200/70 dark:bg-white/10 text-surface-400 dark:text-surface-500">ИИ-качество —</span>`;
+        }
+        const grade = Utils.qualityGrade(score);
+        return `<span class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold bg-purple-500/15 text-purple-500 dark:text-purple-400">
+                   ИИ-качество ${(score / 10).toFixed(1)} / 10
+               </span>
+               <span class="text-[10px] font-semibold uppercase tracking-wider ${grade.color}">${escapeHtml(grade.label)}</span>`;
+    },
+
+    /**
+     * Three horizontal macro bars (protein/fat/carbs) with current vs target
+     * grams, used by the dashboard day slide.
+     */
+    macroBars(summary = {}, targets = {}) {
         const safeNum = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
+        const formatNum = (value) => Math.round(value).toLocaleString('ru-RU');
+        const pct = (current, target) => (target > 0 ? Math.min(100, Math.round((current / target) * 100)) : 0);
 
-        const calories = safeNum(summary.calories);
-        const protein = safeNum(summary.protein);
-        const fat = safeNum(summary.fat);
-        const carbs = safeNum(summary.carbs);
-
-        const targetCalories = safeNum(targets.target_calories);
-        const targetProtein = safeNum(targets.target_protein);
-        const targetFat = safeNum(targets.target_fat);
-        const targetCarbs = safeNum(targets.target_carbs);
-
-        const hasMacros = calories > 0 || protein > 0 || fat > 0 || carbs > 0;
-        const score = scoreOverride !== null ? scoreOverride : (hasMacros ? Utils.computeQualityScore({ calories, protein, fat, carbs }) : null);
-        const gradeObj = score !== null ? Utils.qualityGrade(score) : { label: 'Нет данных', color: 'text-surface-400' };
-
-        const pct = (current, target) => target > 0 ? Math.min(100, Math.round((current / target) * 100)) : 0;
-
-        const metricColumns = [
-            { label: 'Ккал', value: Math.round(calories), target: targetCalories, pct: pct(calories, targetCalories), color: 'amber-500' },
-            { label: 'Белки', value: Math.round(protein), target: targetProtein, pct: pct(protein, targetProtein), color: 'amber-500', unit: 'г' },
-            { label: 'Жиры', value: Math.round(fat), target: targetFat, pct: pct(fat, targetFat), color: 'lime-500', unit: 'г' },
-            { label: 'Углеводы', value: Math.round(carbs), target: targetCarbs, pct: pct(carbs, targetCarbs), color: 'sky-500', unit: 'г' },
-            { label: 'Качество', value: score !== null ? score : '—', target: 100, pct: score !== null ? score : 0, color: 'purple-500' },
+        const rows = [
+            { label: 'Белки', current: safeNum(summary.protein), target: safeNum(targets.target_protein), color: 'bg-sky-500' },
+            { label: 'Жиры', current: safeNum(summary.fat), target: safeNum(targets.target_fat), color: 'bg-rose-400' },
+            { label: 'Углеводы', current: safeNum(summary.carbs), target: safeNum(targets.target_carbs), color: 'bg-lime-500' },
         ];
 
-        const columnHtml = metricColumns.map((col) => `
-            <div class="flex flex-col items-center gap-0.5 min-w-0">
-                <span class="text-[10px] font-medium text-surface-400 dark:text-surface-500 uppercase tracking-wider">${escapeHtml(col.label)}</span>
-                <span class="text-sm font-bold text-surface-900 dark:text-zinc-100 leading-none whitespace-nowrap">
-                    ${col.value}${col.unit ? ' ' + escapeHtml(col.unit) : ''}
-                    ${col.target > 0 && col.value !== '—' ? `<span class="text-[9px] font-normal text-surface-400 dark:text-surface-500 ml-0.5">/ ${Math.round(col.target)}${col.unit ? ' ' + escapeHtml(col.unit) : ''}</span>` : ''}
-                </span>
-                <div class="w-full h-1.5 bg-surface-200 dark:bg-white/10 rounded-full overflow-hidden" role="progressbar" aria-valuenow="${col.pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${escapeHtml(col.label)} ${col.pct}%">
-                    <div class="h-full bg-${col.color} rounded-full transition-all duration-500 ease-out" style="width: ${col.pct}%"></div>
+        return rows.map(({ label, current, target, color }) => {
+            const valuePct = pct(current, target);
+            return `
+                <div class="flex items-center gap-2">
+                    <span class="w-[70px] shrink-0 truncate text-[10px] font-semibold uppercase tracking-wider text-surface-500 dark:text-surface-400">${escapeHtml(label)}</span>
+                    <div class="flex-1 h-1.5 rounded-full bg-surface-200 dark:bg-white/10 overflow-hidden" role="progressbar" aria-valuenow="${valuePct}" aria-valuemin="0" aria-valuemax="100" aria-label="${escapeHtml(label)} ${valuePct}%">
+                        <div class="h-full ${color} rounded-full transition-all duration-500 ease-out" style="width: ${valuePct}%"></div>
+                    </div>
+                    <span class="w-[72px] shrink-0 text-right text-[11px] font-semibold text-surface-800 dark:text-zinc-200 whitespace-nowrap">
+                        ${formatNum(current)}<span class="font-normal text-surface-400 dark:text-surface-500"> / ${formatNum(target)} г</span>
+                    </span>
+                </div>
+            `;
+        }).join('');
+    },
+
+    /**
+     * Calorie ring for the dashboard slide. The fill is clamped to a full
+     * circle, but the number in the middle stays true to the real intake so an
+     * over-target day still reads 2 400 / 2 000 instead of a capped value.
+     */
+    calorieDonut(summary = {}, targets = {}, size = 116, strokeWidth = 11) {
+        const safeNum = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
+        const formatNum = (value) => Math.round(value).toLocaleString('ru-RU');
+
+        const calories = safeNum(summary.calories);
+        const target = safeNum(targets.target_calories);
+
+        const radius = (size - strokeWidth) / 2;
+        const circumference = 2 * Math.PI * radius;
+        const ratio = target > 0 ? calories / target : 0;
+        const progress = Math.max(0, Math.min(1, ratio));
+        const offset = circumference - progress * circumference;
+
+        // Ring colour tracks the fill: amber while under, rose once over.
+        const ringColor = target <= 0
+            ? 'text-surface-300 dark:text-zinc-700'
+            : (ratio >= 1 ? 'text-rose-500 dark:text-rose-400' : 'text-amber-500 dark:text-amber-400');
+
+        const remaining = Math.round(target - calories);
+        const remainingChip = target <= 0
+            ? `<span class="text-[10px] font-semibold text-surface-400 dark:text-surface-500">Цель не задана</span>`
+            : `<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${remaining < 0
+                ? 'bg-rose-500/15 text-rose-500 dark:text-rose-400'
+                : 'bg-lime-500/15 text-lime-600 dark:text-lime-400'}">
+                   ${remaining < 0 ? `Перебор ${formatNum(-remaining)}` : `Осталось ${formatNum(remaining)}`}
+               </span>`;
+
+        return `
+            <div class="flex flex-col items-center shrink-0">
+                <div class="relative flex items-center justify-center" style="width: ${size}px; height: ${size}px;">
+                    <svg class="absolute inset-0 -rotate-90" width="${size}" height="${size}" aria-hidden="true">
+                        <circle cx="${size / 2}" cy="${size / 2}" r="${radius}" fill="transparent"
+                                stroke="currentColor" stroke-width="${strokeWidth}" class="text-surface-200 dark:text-white/10"/>
+                        <circle cx="${size / 2}" cy="${size / 2}" r="${radius}" fill="transparent"
+                                stroke="currentColor" stroke-width="${strokeWidth}" class="${ringColor} transition-all duration-700 ease-out"
+                                stroke-linecap="round"
+                                stroke-dasharray="${circumference.toFixed(2)} ${circumference.toFixed(2)}"
+                                stroke-dashoffset="${offset.toFixed(2)}"/>
+                    </svg>
+                    <div class="absolute inset-0 flex flex-col items-center justify-center text-center px-3">
+                        <p class="text-lg font-bold leading-none text-surface-900 dark:text-zinc-100">${formatNum(calories)}</p>
+                        <p class="text-[10px] text-surface-400 dark:text-surface-500 mt-0.5">из ${formatNum(target)} ккал</p>
+                    </div>
+                </div>
+                <div class="mt-1.5">${remainingChip}</div>
+            </div>
+        `;
+    },
+
+    /**
+     * Compact single-ring "Mercedes" summary for the dashboard day slide.
+     *
+     * The ring is one track cut into three 120 degree sectors - proteins
+     * (amber), fats (rose), carbs (sky). Each sector draws its own track and a
+     * progress arc on top of it, rotated into place, so the three macros stay
+     * comparable on the same scale. Over-target macros turn rose (#EF4444),
+     * as does an over-target calorie intake.
+     *
+     * The centre carries the AI quality score plus calories vs target, and a
+     * thin row underneath repeats the three macros as text with colour dots,
+     * which keeps the whole header inside ~180-220px of vertical space.
+     */
+    mercedesComboRing(summary = {}, targets = {}, qualityScore = null, size = 116, strokeWidth = 12, sectorGapDeg = 8) {
+        const safeNum = (val) => (Number.isFinite(Number(val)) ? Number(val) : 0);
+        const formatNum = (val) => Math.round(val).toLocaleString('ru-RU');
+        const clamp01 = (val) => Math.max(0, Math.min(1, val));
+
+        const calories = safeNum(summary.calories);
+        const targetCalories = safeNum(targets.target_calories);
+
+        const macros = [
+            { key: 'protein', label: 'Белки', current: safeNum(summary.protein), target: safeNum(targets.target_protein), color: 'amber-500', dot: 'bg-amber-500' },
+            { key: 'fat', label: 'Жиры', current: safeNum(summary.fat), target: safeNum(targets.target_fat), color: 'rose-400', dot: 'bg-rose-400' },
+            { key: 'carbs', label: 'Углеводы', current: safeNum(summary.carbs), target: safeNum(targets.target_carbs), color: 'sky-500', dot: 'bg-sky-500' },
+        ].map((macro) => ({
+            ...macro,
+            ratio: macro.target > 0 ? macro.current / macro.target : 0,
+            over: macro.target > 0 && macro.current > macro.target,
+        }));
+
+        const calOver = targetCalories > 0 && calories > targetCalories;
+        const remainingCalories = Math.round(targetCalories - calories);
+
+        const center = size / 2;
+        const radius = (size - strokeWidth) / 2;
+        const circumference = 2 * Math.PI * radius;
+        const sectorDeg = 360 / macros.length;
+        // Half the gap is added to the sector start angle so the gap sits
+        // evenly between the neighbouring arcs.
+        const arcDeg = sectorDeg - sectorGapDeg;
+        const arcLength = (arcDeg / 360) * circumference;
+
+        const sector = (macro, index) => {
+            const angle = index * sectorDeg + sectorGapDeg / 2;
+            const progressLength = clamp01(macro.ratio) * arcLength;
+            const fillColor = macro.over ? 'text-rose-500 dark:text-rose-400' : `text-${macro.color} dark:text-${macro.color}`;
+            return `
+                <g transform="rotate(${angle.toFixed(2)} ${center} ${center})">
+                    <circle cx="${center}" cy="${center}" r="${radius}" fill="none" stroke="currentColor"
+                            stroke-width="${strokeWidth}" class="text-surface-200 dark:text-white/10"/>
+                    ${progressLength > 0 ? `
+                        <circle cx="${center}" cy="${center}" r="${radius}" fill="none" stroke="currentColor"
+                                stroke-width="${strokeWidth}" stroke-linecap="round"
+                                class="${fillColor} transition-all duration-700 ease-out"
+                                stroke-dasharray="${progressLength.toFixed(2)} ${circumference.toFixed(2)}"/>
+                    ` : ''}
+                </g>
+            `;
+        };
+
+        const qualityText = qualityScore === null || qualityScore === undefined
+            ? '—'
+            : (Number(qualityScore) / 10).toFixed(1);
+
+        const calorieChip = targetCalories <= 0
+            ? `<span class="text-[9px] font-semibold text-surface-400 dark:text-surface-500">Цель не задана</span>`
+            : `<span class="inline-flex items-center rounded-full px-1.5 py-[1px] text-[9px] font-semibold ${calOver
+                ? 'bg-rose-500/15 text-rose-500 dark:text-rose-400'
+                : 'bg-lime-500/15 text-lime-600 dark:text-lime-400'}">
+                   ${calOver ? `Перебор +${formatNum(-remainingCalories)}` : `Осталось ${formatNum(remainingCalories)}`}
+               </span>`;
+
+        const sectorLabel = (macro) => (macro.target > 0
+            ? `${Math.round(macro.ratio * 100)}%`
+            : '—');
+
+        const macroRow = macros.map((macro) => {
+            const pctValue = macro.target > 0 ? Math.min(999, Math.round(macro.ratio * 100)) : 0;
+            const valueColor = macro.over ? 'text-rose-500 dark:text-rose-400' : 'text-surface-800 dark:text-zinc-200';
+            const dotColor = macro.over ? 'bg-rose-500' : macro.dot;
+            return `
+                <div class="flex flex-col items-center gap-0.5 min-w-0 flex-1" role="group" aria-label="${escapeHtml(macro.label)} ${pctValue}% от цели">
+                    <span class="flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider text-surface-400 dark:text-surface-500">
+                        <span class="w-1.5 h-1.5 rounded-full ${dotColor} shrink-0"></span>${escapeHtml(macro.label)}
+                    </span>
+                    <span class="text-[11px] font-bold ${valueColor} leading-none tabular-nums">${formatNum(macro.current)}<span class="font-normal text-surface-400 dark:text-surface-500">/${formatNum(macro.target)} г</span></span>
+                    <span class="text-[9px] leading-none ${macro.over ? 'text-rose-500 dark:text-rose-400 font-semibold' : 'text-surface-400 dark:text-surface-500'}">${sectorLabel(macro)}</span>
+                </div>
+            `;
+        }).join('');
+
+        return `
+            <div class="flex flex-col items-center">
+                <div class="relative flex items-center justify-center shrink-0" style="width: ${size}px; height: ${size}px;">
+                    <svg class="absolute inset-0 -rotate-90" width="${size}" height="${size}" role="img"
+                         aria-label="Белки ${sectorLabel(macros[0])}, жиры ${sectorLabel(macros[1])}, углеводы ${sectorLabel(macros[2])}">
+                        ${macros.map(sector).join('')}
+                    </svg>
+                    <div class="absolute inset-0 flex flex-col items-center justify-center text-center px-4 leading-none">
+                        <span class="text-xl font-extrabold ${calOver ? 'text-rose-500 dark:text-rose-400' : 'text-surface-900 dark:text-zinc-100'}">
+                            ${qualityText}<span class="text-[10px] font-normal text-surface-400 dark:text-surface-500">/10</span>
+                        </span>
+                        <span class="text-[10px] font-bold ${calOver ? 'text-rose-500 dark:text-rose-400' : 'text-surface-600 dark:text-zinc-300'} mt-1 tabular-nums">${formatNum(calories)} / ${formatNum(targetCalories)} ккал</span>
+                        <span class="mt-1">${calorieChip}</span>
+                    </div>
+                </div>
+
+                <div class="w-full flex justify-around items-start gap-2 pt-2 mt-1 border-t border-surface-200 dark:border-white/10 text-xs">
+                    ${macroRow}
                 </div>
             </div>
+        `;
+    },
+
+    /**
+     * Daily calorie trend for the analytics slide. `series` is the dense day
+     * list from /nutrition/week or /nutrition/month ({ key, label, calories }).
+     * The target line is drawn as a dashed reference so the curve reads against
+     * the goal instead of an arbitrary axis maximum.
+     */
+    nutritionTrendChart(series = [], { targetCalories = 0, height = 120, emptyText = 'Нет данных за период' } = {}) {
+        const points = (series || []).filter(p => p && p.calories !== undefined && p.calories !== null);
+        if (points.length === 0) {
+            return `<div class="nutrition-trend text-xs text-surface-400 dark:text-surface-500 h-[120px] flex items-center justify-center">${escapeHtml(emptyText)}</div>`;
+        }
+
+        const values = points.map(p => Number(p.calories) || 0);
+        const target = Number(targetCalories) || 0;
+        const max = Math.max(target, ...values);
+        // Anchor the baseline at zero so empty days stay visibly flat.
+        const min = Math.min(0, ...values);
+        const range = (max - min) || 1;
+
+        const slot = 100 / points.length;
+        const top = 12;
+        const bottom = 88;
+        const coords = values.map((value, i) => ({
+            x: slot * (i + 0.5),
+            y: bottom - ((value - min) / range) * (bottom - top),
+        }));
+
+        const gradientId = `nutrition-area-${++nutritionChartSeq}`;
+        const linePath = buildSmoothPath(coords);
+        const first = coords[0];
+        const last = coords[coords.length - 1];
+        const areaPath = `${linePath} L ${last.x.toFixed(2)} ${bottom} L ${first.x.toFixed(2)} ${bottom} Z`;
+        const targetY = target > 0 ? (bottom - ((target - min) / range) * (bottom - top)).toFixed(2) : null;
+
+        const lastIndex = points.length - 1;
+        const step = Math.max(1, Math.ceil(points.length / 6));
+
+        const chartPoints = points.map((point, i) => ({
+            x: coords[i].x,
+            y: coords[i].y,
+            label: String(point.label ?? point.key ?? ''),
+            value: values[i],
+        }));
+
+        const hits = chartPoints.map((_, i) => `
+            <div class="absolute inset-y-0 cursor-pointer" data-nutrition-hit="${i}"
+                 style="left: ${(i * slot).toFixed(2)}%; width: ${slot.toFixed(2)}%;"></div>
+        `).join('');
+
+        const labels = points.map((point, i) => {
+            const text = (i % step === 0 || i === lastIndex) ? String(point.label ?? '') : '';
+            return `<span class="flex-1 min-w-0 text-[9px] leading-none text-surface-400 dark:text-surface-500 text-center truncate">${escapeHtml(text)}</span>`;
+        }).join('');
+
+        const average = values.reduce((sum, v) => sum + v, 0) / values.length;
+        const defaultReadout = `${chartPoints[lastIndex].label}: ${Math.round(values[lastIndex]).toLocaleString('ru-RU')} ккал`;
+
+        return `
+            <div class="nutrition-trend w-full select-none text-amber-500 dark:text-amber-400"
+                 data-role="nutrition-trend"
+                 data-points='${escapeHtml(JSON.stringify(chartPoints))}'>
+                <div class="relative w-full touch-pan-y" style="height: ${height}px">
+                    <svg class="block w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                        <defs>
+                            <linearGradient id="${gradientId}" x1="0%" y1="100%" x2="0%" y2="0%">
+                                <stop offset="0%" stop-color="currentColor" stop-opacity="0.28"/>
+                                <stop offset="100%" stop-color="currentColor" stop-opacity="0"/>
+                            </linearGradient>
+                        </defs>
+                        <g stroke="currentColor" stroke-opacity="0.10" stroke-width="0.5" stroke-dasharray="3 3" vector-effect="non-scaling-stroke">
+                            <line x1="0" y1="36" x2="100" y2="36"/>
+                            <line x1="0" y1="63" x2="100" y2="63"/>
+                        </g>
+                        ${targetY !== null ? `
+                            <line x1="0" y1="${targetY}" x2="100" y2="${targetY}" stroke="currentColor"
+                                  stroke-opacity="0.65" stroke-width="1.25" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>
+                        ` : ''}
+                        ${points.length > 1 ? `
+                            <path d="${areaPath}" fill="url(#${gradientId})" stroke="none"/>
+                            <path d="${linePath}" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+                        ` : ''}
+                    </svg>
+
+                    <div data-nutrition-guide class="pointer-events-none absolute inset-y-0 w-px bg-current transition-opacity duration-150"
+                         style="left: ${last.x.toFixed(2)}%;"></div>
+                    <div data-nutrition-marker class="pointer-events-none absolute w-2.5 h-2.5 rounded-full -translate-x-1/2 -translate-y-1/2 border-2 border-surface-50 dark:border-zinc-900 bg-current shadow-[0_0_6px_rgba(245,158,11,0.5)] transition-opacity duration-150"
+                         style="left: ${last.x.toFixed(2)}%; top: ${last.y.toFixed(2)}%;"></div>
+
+                    <div data-nutrition-surface class="absolute inset-0">${hits}</div>
+                </div>
+
+                <div class="mt-1.5 flex gap-0.5">${labels}</div>
+
+                <div class="mt-2 flex items-center justify-between gap-2 text-[10px] text-surface-400 dark:text-surface-500">
+                    <span data-nutrition-readout class="font-mono truncate" aria-live="polite">${escapeHtml(defaultReadout)}</span>
+                    <span class="font-mono flex-shrink-0">Ср. ${Math.round(average).toLocaleString('ru-RU')} ккал</span>
+                </div>
+            </div>
+        `;
+    },
+
+    /**
+     * Swipable nutrition dashboard: slide 1 is the day view (calorie ring, AI
+     * quality, macro bars), slide 2 the period analytics (averages + trend).
+     * `periodSelector` is injected by the caller so the active period pill and
+     * the slider state stay owned by one component. Each slide renders its own
+     * footer, because a caption shared by both would be wrong on the slide the
+     * reader is not looking at.
+     */
+    nutritionDashboardCard({
+        title = 'Питание',
+        periodSelector = '',
+        slides = [],
+    } = {}) {
+        const count = slides.length;
+        const dots = Array.from({ length: count }, (_, i) => `
+            <button type="button" data-action="nutrition-dot" data-slide="${i}"
+                    aria-label="Слайд ${i + 1}" aria-pressed="${i === 0}"
+                    class="nutrition-dot w-1.5 h-1.5 rounded-full transition-all duration-300 ${i === 0
+                        ? 'bg-lime-500 dark:bg-lime-400 opacity-100'
+                        : 'bg-surface-300 dark:bg-zinc-700 opacity-60'}"></button>
+        `).join('');
+
+        const track = slides.map((slide, i) => `
+            <section class="nutrition-slide snap-center" data-slide="${i}" aria-label="Слайд ${i + 1}">
+                ${slide}
+            </section>
         `).join('');
 
         return `
-            <div class="glass-strong rounded-xl p-3 mb-3" role="region" aria-label="Показатели питания">
-                <div class="grid grid-cols-5 gap-2 text-center">
-                    ${columnHtml}
+            <div class="nutrition-dashboard glass rounded-3xl p-4 shadow-xl" role="region" aria-label="Панель питания">
+                <div class="flex items-center justify-between gap-3 mb-2">
+                    ${periodSelector}
+                    <div class="flex items-center gap-1.5 shrink-0" role="group" aria-label="Слайды панели питания">
+                        ${dots}
+                    </div>
                 </div>
+
+                <h3 class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider truncate mb-2">${escapeHtml(title)}</h3>
+
+                <div class="nutrition-track flex overflow-x-auto snap-x snap-mandatory" data-role="nutrition-slides">
+                    ${track}
+                </div>
+            </div>
+        `;
+    },
+
+    /**
+     * First tile of the meal carousel: opens the new-meal sheet.
+     */
+    addMealActionCard() {
+        return `
+            <button type="button" data-action="open-add-meal-modal" aria-label="Добавить приём пищи"
+                    class="meal-action-slot btn-press flex flex-col items-center justify-center p-6 text-center cursor-pointer
+                           border-2 border-dashed border-surface-300 dark:border-zinc-700 hover:border-lime-500
+                           bg-surface-50/60 dark:bg-zinc-900/50 transition-colors">
+                <span class="w-14 h-14 rounded-2xl bg-lime-500/15 dark:bg-lime-400/10 text-lime-600 dark:text-lime-400 flex items-center justify-center mb-3 shrink-0">
+                    <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 13a3 3 0 100-6 3 3 0 010 6z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 3v4M20 5h-4"/></svg>
+                </span>
+                <span class="text-base font-bold text-surface-900 dark:text-zinc-100">Добавить приём пищи</span>
+                <span class="text-xs text-surface-500 dark:text-surface-400 mt-1">Сделать фото или загрузить из галереи</span>
+            </button>
+        `;
+    },
+
+    /**
+     * Carousel tile shown when the day has no logged meals yet.
+     */
+    mealCarouselEmptyState() {
+        return `
+            <div class="meal-empty-slot flex flex-col items-center justify-center p-6 text-center">
+                <span class="w-14 h-14 rounded-full glass flex items-center justify-center mb-3 shrink-0">
+                    <svg class="w-7 h-7 text-surface-400 dark:text-surface-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6l4 2M4 12a8 8 0 1116 0 8 8 0 01-16 0z"/></svg>
+                </span>
+                <span class="text-base font-bold text-surface-900 dark:text-zinc-100">Нет приёмов пищи</span>
+                <span class="text-xs text-surface-500 dark:text-surface-400 mt-1">Нажмите на карточку слева, чтобы добавить первое блюдо</span>
             </div>
         `;
     },
@@ -591,7 +934,7 @@ export const Components = {
                                 <h3 id="new-meal-title" class="text-base font-bold text-zinc-900 dark:text-zinc-100 truncate">Новый приём пищи</h3>
                             </div>
                             <button type="button" data-action="close-new-meal-modal" aria-label="Закрыть" class="w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0 flex items-center justify-center hover:text-zinc-900 dark:hover:text-zinc-50 transition-colors">
-                                ✕
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6l12 12M18 6L6 18"/></svg>
                             </button>
                         </div>
 
@@ -705,7 +1048,7 @@ export const Components = {
                                 <h3 id="anthro-title" class="text-base font-bold text-zinc-900 dark:text-zinc-100 truncate">Целевая норма КБЖУ</h3>
                             </div>
                             <button type="button" data-action="close-anthropometrics-modal" aria-label="Закрыть" class="w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0 flex items-center justify-center hover:text-zinc-900 dark:hover:text-zinc-50 transition-colors">
-                                ✕
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6l12 12M18 6L6 18"/></svg>
                             </button>
                         </div>
 

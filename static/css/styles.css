@@ -105,13 +105,26 @@
 }
 
 /* Compact card sizing: the carousel height is fixed (see .meal-carousel), cards
-   scale with the viewport and never exceed the available content box height. */
-.meal-card-slot {
-    width: min(88vw, 340px);
-    height: clamp(340px, 55dvh, 440px);
+   scale with the viewport and never exceed the available content box height.
+   The action tile and the empty-state tile share the meal card footprint so
+   every carousel item is a full-size snap target. */
+.meal-card-slot,
+.meal-action-slot,
+.meal-empty-slot {
+    width: min(85vw, 340px);
+    height: clamp(260px, 44dvh, 400px);
+}
+@media (min-width: 640px) {
+    .meal-card-slot,
+    .meal-action-slot,
+    .meal-empty-slot {
+        width: 380px;
+    }
 }
 
-/* Meal carousel: fixed height so the per-card AI analysis and CTA stay on screen */
+/* Meal carousel: grows into whatever height the header leaves over and is
+   capped by max-height, so the nutrition dashboard above it can grow without
+   pushing the cards out of the viewport. */
 .meal-carousel {
     display: flex;
     align-items: center;
@@ -124,9 +137,9 @@
     padding-left: 1rem;
     padding-right: 1rem;
     padding-bottom: 0.5rem;
-    flex: 0 0 auto;
+    flex: 1 1 auto;
     min-height: 0;
-    height: clamp(360px, 60dvh, 480px);
+    max-height: clamp(320px, 52dvh, 440px);
 }
 .meal-carousel::-webkit-scrollbar {
     display: none;
@@ -138,6 +151,28 @@
 .meal-carousel > * {
     scroll-snap-align: center;
     flex-shrink: 0;
+}
+
+/* Nutrition dashboard: two slides in one horizontally scrollable track. The
+   track hides its scrollbar and snaps to whole slides, so a swipe or a dot tap
+   both land on the exact same position and the dots can follow scrollLeft. */
+.nutrition-track {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+    /* Horizontal panning belongs to the track; vertical gestures still scroll
+       the page so the card never traps the scroll. */
+    touch-action: pan-x;
+}
+.nutrition-track::-webkit-scrollbar {
+    display: none;
+}
+.nutrition-slide {
+    flex: 0 0 100%;
+    min-width: 100%;
+    scroll-snap-align: center;
+    scroll-snap-stop: always;
 }
 
 /* Meal card 3D flip */

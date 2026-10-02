@@ -13,6 +13,8 @@ from app.core.config import get_settings
 
 settings = get_settings()
 
+MONTH_LABELS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
+
 
 async def ensure_upload_dir() -> str:
     """Ensure upload directory exists and return its path"""
@@ -157,6 +159,10 @@ async def get_meals_for_date(
     total_fat = sum(m.fat_g or 0 for m in meals)
     total_carbs = sum(m.carbs_g or 0 for m in meals)
 
+    # Daily targets from the user profile
+    user_result = await db.execute(select(User).where(User.id == user_id))
+    user = user_result.scalar_one_or_none()
+
     meal_responses = []
     for meal in meals:
         tags = None
@@ -196,6 +202,10 @@ async def get_meals_for_date(
         total_protein_g=total_protein,
         total_fat_g=total_fat,
         total_carbs_g=total_carbs,
+        target_calories=user.target_calories if user else None,
+        target_protein_g=user.target_protein_g if user else None,
+        target_fat_g=user.target_fat_g if user else None,
+        target_carbs_g=user.target_carbs_g if user else None,
     )
 
 
@@ -321,13 +331,42 @@ def get_period_bounds(target_date: date, period: str) -> tuple[date, date]:
     return start, start + timedelta(days=6)
 
 
+def build_daily_buckets(start_date: date, end_date: date) -> List[dict]:
+    """Build a dense, zero-filled day list covering [start_date, end_date].
+
+    Days without logged meals stay in the list so the trend chart renders a
+    continuous line instead of a series that skips empty days.
+    """
+    buckets: List[dict] = []
+    cursor = start_date
+    while cursor <= end_date:
+        buckets.append(
+            {
+                "key": cursor.strftime("%Y-%m-%d"),
+                "label": f"{cursor.day} {MONTH_LABELS[cursor.month - 1]}",
+                "calories": 0.0,
+                "protein_g": 0.0,
+                "fat_g": 0.0,
+                "carbs_g": 0.0,
+                "meals_count": 0,
+            }
+        )
+        cursor += timedelta(days=1)
+    return buckets
+
+
 async def get_period_nutrition_summary(
     db: AsyncSession,
     user_id: int,
     target_date: date,
     period: str,
 ) -> dict:
-    """Get aggregated nutrition for a week or month, as totals and per-day averages."""
+    """Get aggregated nutrition for a week or month.
+
+    Returns totals, per-day averages and a dense daily `series` so the UI can
+    draw the intake trend without a second request. The calorie target travels
+    with the payload because the trend chart draws it as a reference line.
+    """
     start_date, end_date = get_period_bounds(target_date, period)
     start_dt = datetime.combine(start_date, datetime.min.time())
     end_dt = datetime.combine(end_date, datetime.max.time())
@@ -354,17 +393,66 @@ async def get_period_nutrition_summary(
     total_fat = float(row.fat_g)
     total_carbs = float(row.carbs_g)
 
+    meals_result = await db.execute(
+        select(
+            Meal.eaten_at,
+            func.coalesce(Meal.calories, 0.0).label("calories"),
+            func.coalesce(Meal.protein_g, 0.0).label("protein_g"),
+            func.coalesce(Meal.fat_g, 0.0).label("fat_g"),
+            func.coalesce(Meal.carbs_g, 0.0).label("carbs_g"),
+        )
+        .where(
+            Meal.user_id == user_id,
+            Meal.eaten_at >= start_dt,
+            Meal.eaten_at <= end_dt,
+            Meal.status == MealStatus.COMPLETED,
+        )
+    )
+
+    buckets = build_daily_buckets(start_date, end_date)
+    bucket_index = {bucket["key"]: bucket for bucket in buckets}
+    for entry in meals_result.all():
+        bucket = bucket_index.get(entry.eaten_at.strftime("%Y-%m-%d"))
+        if bucket is None:
+            continue
+        bucket["calories"] += float(entry.calories)
+        bucket["protein_g"] += float(entry.protein_g)
+        bucket["fat_g"] += float(entry.fat_g)
+        bucket["carbs_g"] += float(entry.carbs_g)
+        bucket["meals_count"] += 1
+
+    for bucket in buckets:
+        bucket["calories"] = round(bucket["calories"], 1)
+        bucket["protein_g"] = round(bucket["protein_g"], 1)
+        bucket["fat_g"] = round(bucket["fat_g"], 1)
+        bucket["carbs_g"] = round(bucket["carbs_g"], 1)
+
+    user_result = await db.execute(select(User).where(User.id == user_id))
+    user = user_result.scalar_one_or_none()
+
+    # Days that actually carry data define the average: dividing by the full
+    # calendar span would drag the figure down with days the user never logged.
+    active_days = sum(1 for bucket in buckets if bucket["meals_count"] > 0)
+    avg_days = active_days or days
+
     return {
         "period": period,
         "start_date": start_date,
         "end_date": end_date,
         "days": days,
+        "active_days": active_days,
         "total_calories": total_calories,
         "total_protein_g": total_protein,
         "total_fat_g": total_fat,
         "total_carbs_g": total_carbs,
-        "avg_calories": total_calories / days,
-        "avg_protein_g": total_protein / days,
-        "avg_fat_g": total_fat / days,
-        "avg_carbs_g": total_carbs / days,
+        "avg_calories": total_calories / avg_days,
+        "avg_protein_g": total_protein / avg_days,
+        "avg_fat_g": total_fat / avg_days,
+        "avg_carbs_g": total_carbs / avg_days,
+        "target_calories": user.target_calories if user else None,
+        "target_protein_g": user.target_protein_g if user else None,
+        "target_fat_g": user.target_fat_g if user else None,
+        "target_carbs_g": user.target_carbs_g if user else None,
+        "granularity": "day",
+        "series": buckets,
     }

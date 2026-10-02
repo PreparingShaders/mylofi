@@ -236,6 +236,12 @@ class MealListResponse(BaseModel):
     total_fat_g: float = 0
     total_carbs_g: float = 0
 
+    # Daily targets from the user profile
+    target_calories: Optional[float] = None
+    target_protein_g: Optional[float] = None
+    target_fat_g: Optional[float] = None
+    target_carbs_g: Optional[float] = None
+
 
 class PhotoUploadResponse(BaseModel):
     meal_id: int
