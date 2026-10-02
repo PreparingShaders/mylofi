@@ -5,13 +5,9 @@ import { Components } from './components.js';
 import { Utils } from './utils.js';
 import { Camera } from './camera.js';
 
-// Radius of the trend chart marker in px: the clamp keeps it inside the plot.
-const NUTRITION_MARKER_RADIUS = 5;
-
 export const Nutrition = {
     app: null,
     selectedDate: null,
-    period: 'day',
     selectedMealType: null,
     _newMealModalState: null,
     _newMealModalClosing: null,
@@ -68,12 +64,15 @@ export const Nutrition = {
         return { serverMeals, summary, targets, pendingMeals, failedItems, fromCache };
     },
 
-    async loadPeriodData(period, date) {
-        if (period === 'day') return null;
+    /**
+     * Averages for the week the date belongs to, used by dashboard slide 2.
+     * The endpoint already returns per-day averages, so the payload is only
+     * normalised into the summary shape the ring expects.
+     */
+    async loadPeriodData(date) {
         const token = this.app.state.tokens.access;
-        const endpoint = period === 'week' ? '/nutrition/week' : '/nutrition/month';
         try {
-            const data = await API.get(`${endpoint}?date=${date || this.selectedDate}`, token);
+            const data = await API.get(`/nutrition/week?date=${date || this.selectedDate}`, token);
             if (data && typeof data === 'object') {
                 return {
                     calories: data.avg_calories ?? data.total_calories ?? 0,
@@ -111,31 +110,13 @@ export const Nutrition = {
         return Utils.formatDate(d);
     },
 
-    periodRangeLabel(dateISO, period) {
-        const d = new Date(dateISO);
-        if (period === 'week') {
-            const start = new Date(d);
-            const weekday = (start.getDay() + 6) % 7;
-            start.setDate(start.getDate() - weekday);
-            const end = new Date(start);
-            end.setDate(start.getDate() + 6);
-            return `${start.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })} — ${end.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}`;
-        }
-        if (period === 'month') {
-            const month = d.toLocaleDateString('ru-RU', { month: 'long' });
-            return `${month.charAt(0).toUpperCase()}${month.slice(1)} ${d.getFullYear()}`;
-        }
-        return this.formatDateLabel(dateISO);
-    },
-
-    /**
-     * Label above the ring: the period name plus the range it covers.
-     * Day keeps the existing "Сегодня"/date wording.
-     */
-    periodTitle(dateISO, period) {
-        if (period === 'day') return `Питание за ${this.formatDateLabel(dateISO)}`;
-        const noun = period === 'week' ? 'Неделя' : 'Месяц';
-        return `Питание · ${noun}: ${this.periodRangeLabel(dateISO, period)}`;
+    weekRangeLabel(dateISO) {
+        const start = new Date(dateISO);
+        const weekday = (start.getDay() + 6) % 7;
+        start.setDate(start.getDate() - weekday);
+        const end = new Date(start);
+        end.setDate(start.getDate() + 6);
+        return `${start.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })} — ${end.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}`;
     },
 
     changeDate(delta) {
@@ -144,13 +125,7 @@ export const Nutrition = {
             return;
         }
         const current = new Date(this.selectedDate);
-        if (this.period === 'week') {
-            current.setDate(current.getDate() + delta * 7);
-        } else if (this.period === 'month') {
-            current.setMonth(current.getMonth() + delta);
-        } else {
-            current.setDate(current.getDate() + delta);
-        }
+        current.setDate(current.getDate() + delta);
         this.selectedDate = current.toISOString().split('T')[0];
         this.render(this.app.elements.pageContent, this.app, this.selectedDate);
     },
@@ -180,25 +155,6 @@ export const Nutrition = {
         `;
     },
 
-    renderPeriodSelector() {
-        const options = [
-            { value: 'day', label: 'День' },
-            { value: 'week', label: 'Неделя' },
-            { value: 'month', label: 'Месяц' },
-        ];
-        return `
-            <div class="flex items-center gap-1 flex-1 min-w-0 bg-surface-100 dark:bg-white/5 rounded-xl px-2 py-1" role="group" aria-label="Период аналитики">
-                ${options.map((opt) => `
-                    <button type="button" data-action="set-period" data-period="${opt.value}"
-                            aria-pressed="${this.period === opt.value}"
-                            class="period-pill flex-1 py-2 text-xs font-semibold rounded-lg transition-colors ${this.period === opt.value ? 'active' : 'text-surface-500 dark:text-surface-400'}">
-                        ${opt.label}
-                    </button>
-                `).join('')}
-            </div>
-        `;
-    },
-
     renderMealTypeChips() {
         const types = [
             { value: 'breakfast', label: 'Завтрак' },
@@ -216,26 +172,31 @@ export const Nutrition = {
     },
 
 /**
-     * Slide 1: the ultra-compact Mercedes-style ring for the selected period
-     * (or the selected day) - AI quality, calories vs target and the three
-     * macro sectors with their over-target highlighting.
+     * One dashboard slide: the Mercedes ring plus a single caption line naming
+     * the period it covers. The caption keeps a fixed height so both slides stay
+     * exactly the same height and the card never jumps while swiping.
      */
-    renderNutritionDaySlide(summary, targets, qualityScore, hint = '') {
-        return Components.mercedesComboRing(summary, targets, qualityScore);
+    renderNutritionSlide(summary, targets, qualityScore, caption) {
+        return `
+            ${Components.mercedesComboRing(summary, targets, qualityScore)}
+            <p class="mt-0.5 h-3.5 text-[10px] leading-3.5 text-center text-surface-400 dark:text-surface-500 truncate">${caption}</p>
+        `;
     },
 
     /**
-     * Period figures for slide 2: daily averages, the mean AI quality across
-     * the days that actually carry meals, and the gap to the calorie goal.
+     * Slide 2 figures: the 7-day averages the /nutrition/week payload already
+     * returns, plus the mean AI quality across the days that actually carry
+     * meals. Missing payload means the ring falls back to zeros instead of
+     * silently rendering another period's numbers.
      */
-    periodAnalytics(periodData, targets) {
-        const empty = { hasData: false, avgCalories: 0, avgProtein: 0, avgQuality: null, deltaPercent: null, series: [] };
-        if (!periodData) return empty;
+    weeklyAverage(periodData) {
+        if (!periodData) {
+            return { summary: { calories: 0, protein: 0, fat: 0, carbs: 0 }, qualityScore: null, hasData: false };
+        }
 
         const series = Array.isArray(periodData.series) ? periodData.series : [];
-        const loggedDays = series.filter(day => Number(day.meals_count) > 0);
-
-        const scores = loggedDays
+        const scores = series
+            .filter(day => Number(day.meals_count) > 0)
             .map(day => Utils.computeQualityScore({
                 calories: day.calories,
                 protein: day.protein_g,
@@ -244,60 +205,18 @@ export const Nutrition = {
             }))
             .filter(score => score !== null && Number.isFinite(score));
 
-        const avgCalories = Number(periodData.calories) || 0;
-        const targetCalories = Number(targets?.target_calories) || 0;
-        const deltaPercent = targetCalories > 0 && avgCalories > 0
-            ? Math.round(((avgCalories - targetCalories) / targetCalories) * 100)
-            : null;
-
         return {
-            hasData: series.length > 0,
-            avgCalories,
-            avgProtein: Number(periodData.protein) || 0,
-            avgQuality: scores.length
+            summary: {
+                calories: Number(periodData.calories) || 0,
+                protein: Number(periodData.protein) || 0,
+                fat: Number(periodData.fat) || 0,
+                carbs: Number(periodData.carbs) || 0,
+            },
+            qualityScore: scores.length
                 ? Math.round(scores.reduce((sum, value) => sum + value, 0) / scores.length)
                 : null,
-            deltaPercent,
-            series,
+            hasData: series.length > 0,
         };
-    },
-
-    /**
-     * Slide 2: three summary metrics, the daily trend against the calorie goal
-     * and a comparison line stating the distance to that goal.
-     */
-    renderNutritionTrendSlide(analytics, targets, hint = '') {
-        const formatNum = (value) => Math.round(Number(value) || 0).toLocaleString('ru-RU');
-
-        const metric = (label, value, sub) => `
-            <div class="bg-surface-50 dark:bg-white/5 rounded-xl px-2 py-2.5 text-center min-w-0">
-                <div class="text-[10px] text-surface-500 dark:text-surface-400 truncate">${label}</div>
-                <div class="text-base font-bold text-surface-900 dark:text-zinc-100 truncate">${value}</div>
-                <div class="text-[10px] text-surface-400 dark:text-surface-500 truncate">${sub}</div>
-            </div>
-        `;
-
-        const { avgCalories, avgProtein, avgQuality, deltaPercent } = analytics;
-        const targetCalories = Math.round(Number(targets?.target_calories) || 0);
-
-        const comparison = deltaPercent === null
-            ? `Цель: ${formatNum(targetCalories)} ккал / день`
-            : `Цель: ${formatNum(targetCalories)} ккал / день ·
-               <span class="${deltaPercent <= 0 ? 'text-lime-600 dark:text-lime-400' : 'text-amber-600 dark:text-amber-400'} font-semibold">
-                   ${deltaPercent > 0 ? '+' : ''}${deltaPercent}%
-               </span>`;
-
-        return `
-            <div class="grid grid-cols-3 gap-2">
-                ${metric('Ср. ккал / день', formatNum(avgCalories), 'ккал')}
-                ${metric('Ср. белок', formatNum(avgProtein), 'г')}
-                ${metric('ИИ-качество', avgQuality === null ? '—' : (avgQuality / 10).toFixed(1), avgQuality === null ? 'нет данных' : 'из 10')}
-            </div>
-            <div class="mt-2.5">
-                ${Components.nutritionTrendChart(analytics.series, { targetCalories })}
-            </div>
-            <p class="mt-2 text-[10px] text-surface-500 dark:text-surface-400 text-center">${hint ? `${hint} · ` : ''}${comparison}</p>
-        `;
     },
 
     /**
@@ -354,78 +273,10 @@ export const Nutrition = {
             setActive(activeIndex());
         }, { passive: true });
 
-        setActive(activeIndex());
-
-        container.querySelectorAll('[data-role="nutrition-trend"]').forEach((chart) => {
-            this.bindNutritionTrendChart(chart);
-        });
+setActive(activeIndex());
     },
 
-    /**
-     * Hover / tap indicators for the daily calorie trend. Geometry comes from
-     * the chart markup; this only moves the marker, the guide and the readout,
-     * and falls back to the last day when the pointer leaves the plot.
-     */
-    bindNutritionTrendChart(chart) {
-        let points = [];
-        try {
-            points = JSON.parse(chart.dataset.points || '[]');
-        } catch (error) {
-            console.warn('[Nutrition] Malformed trend chart data:', error);
-            return;
-        }
-        if (!points.length) return;
-
-        const marker = chart.querySelector('[data-nutrition-marker]');
-        const guide = chart.querySelector('[data-nutrition-guide]');
-        const readout = chart.querySelector('[data-nutrition-readout]');
-        const surface = chart.querySelector('[data-nutrition-surface]');
-        const plot = marker?.parentElement || null;
-        const defaultIndex = points.length - 1;
-
-        const formatValue = (value) => `${Math.round(value).toLocaleString('ru-RU')} ккал`;
-
-        // The marker is centred on its x, so the first/last slot would push it
-        // past the plot on narrow viewports: inset by the radius as a share of
-        // the measured plot width.
-        const clampX = (x) => {
-            const width = plot?.getBoundingClientRect().width || 0;
-            if (!width) return Math.min(100, Math.max(0, x));
-            const inset = (NUTRITION_MARKER_RADIUS / width) * 100;
-            return Math.min(100 - inset, Math.max(inset, x));
-        };
-
-        const show = (index) => {
-            const point = points[index];
-            if (!point) return;
-            const x = clampX(point.x);
-            if (marker) {
-                marker.style.left = `${x}%`;
-                marker.style.top = `${point.y}%`;
-            }
-            if (guide) {
-                guide.style.left = `${x}%`;
-            }
-            if (readout) {
-                readout.textContent = point.label ? `${point.label}: ${formatValue(point.value)}` : formatValue(point.value);
-            }
-        };
-
-        chart.querySelectorAll('[data-nutrition-hit]').forEach(hit => {
-            const index = Number(hit.dataset.nutritionHit);
-            hit.addEventListener('pointerenter', () => show(index));
-            // Touch devices have no hover, so a tap pins the same indicator.
-            hit.addEventListener('pointerdown', () => show(index));
-        });
-
-        surface?.addEventListener('pointerleave', () => show(defaultIndex));
-
-        // Anchor on the latest day right after mount so the chart never opens
-        // with a missing or misplaced marker.
-        show(defaultIndex);
-    },
-
-async render(container, app, dateOverride = null) {
+    async render(container, app, dateOverride = null) {
         this.app = app;
         if (dateOverride) {
             this.selectedDate = dateOverride;
@@ -442,10 +293,9 @@ async render(container, app, dateOverride = null) {
         try {
             const { serverMeals, summary, targets: apiTargets, pendingMeals, failedItems, fromCache } = await this.loadData(this.selectedDate);
 
-            // Slide 2 always shows a period trend, so the day view borrows the
-            // week the selected date belongs to instead of rendering empty.
-            const trendPeriod = this.period === 'day' ? 'week' : this.period;
-            const periodDataPromise = this.loadPeriodData(trendPeriod, this.selectedDate);
+            // Slide 2 is always the week the selected date belongs to, so the average
+            // never drifts onto a period the user cannot navigate to any more.
+            const weekDataPromise = this.loadPeriodData(this.selectedDate);
 
             const user = this.app.state.user || {};
             const resolveTarget = (apiValue, userValue, fallback) => {
@@ -462,7 +312,6 @@ async render(container, app, dateOverride = null) {
             };
 
             const dateLabel = this.formatDateLabel(this.selectedDate);
-            const periodTitle = this.periodTitle(this.selectedDate, this.period);
 
             // LIFO: the most recent meal is the first tile after the action card.
             const sortedMeals = serverMeals
@@ -473,45 +322,27 @@ async render(container, app, dateOverride = null) {
                 .slice()
                 .sort((a, b) => this.mealTimestamp(b) - this.mealTimestamp(a));
 
-            const periodData = await periodDataPromise;
-
-            let displaySummary = summary;
-            let periodHint = '';
-            if (this.period !== 'day') {
-                if (periodData) {
-                    displaySummary = {
-                        calories: periodData.calories,
-                        protein: periodData.protein,
-                        fat: periodData.fat,
-                        carbs: periodData.carbs,
-                    };
-                    periodHint = 'Среднее за период';
-                } else {
-                    displaySummary = { calories: 0, protein: 0, fat: 0, carbs: 0 };
-                    periodHint = 'Нет данных за период';
-                }
-            }
+            const weekData = await weekDataPromise;
+            const week = this.weeklyAverage(weekData);
 
             const totalMeals = sortedMeals.length + pendingSorted.length;
 
             // Compute quality score for the metric bar
-            const qualityScore = totalMeals > 0 ? Utils.computeQualityScore(displaySummary) : null;
+            const qualityScore = totalMeals > 0 ? Utils.computeQualityScore(summary) : null;
 
-            // Slide 2 targets track the period payload first so the trend line
-            // always compares against the same goal the profile shows.
-            const trendTargets = periodData?.target_calories
-                ? { ...targets, target_calories: Number(periodData.target_calories) }
+            // Week targets track the week payload first so the average ring always
+            // compares against the same goal the profile shows.
+            const weekTargets = weekData?.target_calories
+                ? { ...targets, target_calories: Number(weekData.target_calories) }
                 : targets;
-            const trendHint = periodData
-                ? (this.period === 'day' ? 'Тренд за текущую неделю' : this.periodRangeLabel(this.selectedDate, this.period))
-                : 'Нет данных за период';
-            const analytics = this.periodAnalytics(periodData, trendTargets);
+            const weekCaption = week.hasData
+                ? `Неделя: ${this.weekRangeLabel(this.selectedDate)}`
+                : 'Неделя: нет данных';
             const dashboard = Components.nutritionDashboardCard({
-                title: periodTitle,
-                periodSelector: this.renderPeriodSelector(),
+                title: 'Питание',
                 slides: [
-                    this.renderNutritionDaySlide(displaySummary, targets, qualityScore, periodHint),
-                    this.renderNutritionTrendSlide(analytics, trendTargets, trendHint),
+                    this.renderNutritionSlide(summary, targets, qualityScore, 'День'),
+                    this.renderNutritionSlide(week.summary, weekTargets, week.qualityScore, weekCaption),
                 ],
             });
 
@@ -521,7 +352,7 @@ async render(container, app, dateOverride = null) {
                     <div class="viewport-header p-1 pt-0 pb-2">
                         ${this.renderDateNav(this.selectedDate, dateLabel, fromCache)}
 
-                        <!-- Swipable dashboard: day view + period analytics -->
+                        <!-- Swipable dashboard: selected day + weekly average -->
                         ${dashboard}
                     </div>
 
@@ -571,7 +402,6 @@ async render(container, app, dateOverride = null) {
             container.innerHTML = html;
 
             this.bindDateNav();
-            this.bindPeriodSelector();
             this.bindDashboardSlides();
             this.bindFlipCards();
             this.bindAddMealModal();
@@ -905,16 +735,6 @@ async render(container, app, dateOverride = null) {
                 this.render(container, this.app, this.selectedDate);
             };
         }
-    },
-
-    bindPeriodSelector() {
-        const container = this.app.elements.pageContent;
-        container.querySelectorAll('[data-action="set-period"]').forEach((btn) => {
-            btn.onclick = () => {
-                this.period = btn.dataset.period;
-                this.render(this.app.elements.pageContent, this.app, this.selectedDate);
-            };
-        });
     },
 
     /**

@@ -290,17 +290,44 @@ input, select, textarea:focus {
 }
 
 /* ============ Compact Nutrition Dashboard ============ */
-.period-pill {
-    transition: all 0.2s ease;
+/* The ring is centred in a full-width box that reserves room under it, so the
+   carbs label can sit outside the circle without pushing the card taller.
+   Side labels are anchored to the box edges, which keeps them outside the ring
+   at every card width instead of overlapping the arcs. */
+.nutrition-ring-container {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    padding-bottom: 34px;
 }
-.period-pill.active {
-    background: #18181b;
-    color: #fafafa;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+.nutrition-ring-container .macro-label {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    line-height: 1;
+    max-width: 40%;
+    overflow: hidden;
 }
-.dark .period-pill.active {
-    background: #fafafa;
-    color: #09090b;
+.macro-label-protein {
+    top: 2px;
+    left: 0;
+    align-items: flex-start;
+    text-align: left;
+}
+.macro-label-fat {
+    top: 2px;
+    right: 0;
+    align-items: flex-end;
+    text-align: right;
+}
+.macro-label-carbs {
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: 60%;
+    align-items: center;
+    text-align: center;
 }
 
 /* Meal type selector chips */

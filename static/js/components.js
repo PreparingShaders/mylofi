@@ -4,7 +4,6 @@ import { DB } from './db.js';
 
 let sparklineSeq = 0;
 let tonnageChartSeq = 0;
-let nutritionChartSeq = 0;
 
 function escapeHtml(value) {
     return String(value ?? '')
@@ -183,7 +182,7 @@ export const Components = {
     },
 
     /**
-     * Compact single-ring "Mercedes" summary for the dashboard day slide.
+     * Compact single-ring "Mercedes" summary for the dashboard slides.
      *
      * The ring is one track cut into three 120 degree sectors - proteins
      * (amber), fats (rose), carbs (sky). Each sector draws its own track and a
@@ -191,11 +190,13 @@ export const Components = {
      * comparable on the same scale. Over-target macros turn rose (#EF4444),
      * as does an over-target calorie intake.
      *
-     * The centre carries the AI quality score plus calories vs target, and a
-     * thin row underneath repeats the three macros as text with colour dots,
-     * which keeps the whole header inside ~180-220px of vertical space.
+     * The whole svg is rotated to 165 degrees so the sector middles land at
+     * 10:30, 2:30 and 6:30 - that is what lets each macro label sit outside the
+     * ring in the direction its own sector points to (proteins top-left, fats
+     * top-right, carbs bottom) instead of the old macro table underneath, which
+     * is what keeps the header inside ~200-220px.
      */
-    mercedesComboRing(summary = {}, targets = {}, qualityScore = null, size = 116, strokeWidth = 12, sectorGapDeg = 8) {
+    mercedesComboRing(summary = {}, targets = {}, qualityScore = null, size = 112, strokeWidth = 12, sectorGapDeg = 8) {
         const safeNum = (val) => (Number.isFinite(Number(val)) ? Number(val) : 0);
         const formatNum = (val) => Math.round(val).toLocaleString('ru-RU');
         const clamp01 = (val) => Math.max(0, Math.min(1, val));
@@ -259,156 +260,51 @@ export const Components = {
             ? `${Math.round(macro.ratio * 100)}%`
             : '—');
 
-        const macroRow = macros.map((macro) => {
-            const pctValue = macro.target > 0 ? Math.min(999, Math.round(macro.ratio * 100)) : 0;
+        const labelPositions = ['macro-label-protein', 'macro-label-fat', 'macro-label-carbs'];
+        const macroLabels = macros.map((macro, index) => {
+            const excess = macro.target > 0 ? Math.round(macro.current - macro.target) : 0;
             const valueColor = macro.over ? 'text-rose-500 dark:text-rose-400' : 'text-surface-800 dark:text-zinc-200';
             const dotColor = macro.over ? 'bg-rose-500' : macro.dot;
             return `
-                <div class="flex flex-col items-center gap-0.5 min-w-0 flex-1" role="group" aria-label="${escapeHtml(macro.label)} ${pctValue}% от цели">
+                <div class="macro-label ${labelPositions[index]}" role="group"
+                     aria-label="${escapeHtml(macro.label)} ${sectorLabel(macro)} от цели">
                     <span class="flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider text-surface-400 dark:text-surface-500">
                         <span class="w-1.5 h-1.5 rounded-full ${dotColor} shrink-0"></span>${escapeHtml(macro.label)}
                     </span>
-                    <span class="text-[11px] font-bold ${valueColor} leading-none tabular-nums">${formatNum(macro.current)}<span class="font-normal text-surface-400 dark:text-surface-500">/${formatNum(macro.target)} г</span></span>
-                    <span class="text-[9px] leading-none ${macro.over ? 'text-rose-500 dark:text-rose-400 font-semibold' : 'text-surface-400 dark:text-surface-500'}">${sectorLabel(macro)}</span>
+                    <span class="text-[11px] font-bold leading-none tabular-nums ${valueColor}">${formatNum(macro.current)}<span class="font-normal text-surface-400 dark:text-surface-500">/${formatNum(macro.target)} г</span></span>
+                    <span class="text-[9px] leading-none font-semibold ${macro.over ? 'text-rose-500 dark:text-rose-400' : 'text-surface-400 dark:text-surface-500'}">${macro.over ? `+${formatNum(excess)} г` : sectorLabel(macro)}</span>
                 </div>
             `;
         }).join('');
 
         return `
-            <div class="flex flex-col items-center">
+            <div class="nutrition-ring-container">
                 <div class="relative flex items-center justify-center shrink-0" style="width: ${size}px; height: ${size}px;">
-                    <svg class="absolute inset-0 -rotate-90" width="${size}" height="${size}" role="img"
+                    <svg class="absolute inset-0 rotate-[165deg]" width="${size}" height="${size}" role="img"
                          aria-label="Белки ${sectorLabel(macros[0])}, жиры ${sectorLabel(macros[1])}, углеводы ${sectorLabel(macros[2])}">
                         ${macros.map(sector).join('')}
                     </svg>
-                    <div class="absolute inset-0 flex flex-col items-center justify-center text-center px-4 leading-none">
+                    <div class="absolute inset-0 flex flex-col items-center justify-center text-center px-2 leading-none">
                         <span class="text-xl font-extrabold ${calOver ? 'text-rose-500 dark:text-rose-400' : 'text-surface-900 dark:text-zinc-100'}">
                             ${qualityText}<span class="text-[10px] font-normal text-surface-400 dark:text-surface-500">/10</span>
                         </span>
-                        <span class="text-[10px] font-bold ${calOver ? 'text-rose-500 dark:text-rose-400' : 'text-surface-600 dark:text-zinc-300'} mt-1 tabular-nums">${formatNum(calories)} / ${formatNum(targetCalories)} ккал</span>
+                        <span class="text-[9px] font-bold ${calOver ? 'text-rose-500 dark:text-rose-400' : 'text-surface-600 dark:text-zinc-300'} mt-1 tabular-nums whitespace-nowrap">${formatNum(calories)} / ${formatNum(targetCalories)} ккал</span>
                         <span class="mt-1">${calorieChip}</span>
                     </div>
                 </div>
-
-                <div class="w-full flex justify-around items-start gap-2 pt-2 mt-1 border-t border-surface-200 dark:border-white/10 text-xs">
-                    ${macroRow}
-                </div>
+                ${macroLabels}
             </div>
         `;
     },
 
     /**
-     * Daily calorie trend for the analytics slide. `series` is the dense day
-     * list from /nutrition/week or /nutrition/month ({ key, label, calories }).
-     * The target line is drawn as a dashed reference so the curve reads against
-     * the goal instead of an arbitrary axis maximum.
-     */
-    nutritionTrendChart(series = [], { targetCalories = 0, height = 120, emptyText = 'Нет данных за период' } = {}) {
-        const points = (series || []).filter(p => p && p.calories !== undefined && p.calories !== null);
-        if (points.length === 0) {
-            return `<div class="nutrition-trend text-xs text-surface-400 dark:text-surface-500 h-[120px] flex items-center justify-center">${escapeHtml(emptyText)}</div>`;
-        }
-
-        const values = points.map(p => Number(p.calories) || 0);
-        const target = Number(targetCalories) || 0;
-        const max = Math.max(target, ...values);
-        // Anchor the baseline at zero so empty days stay visibly flat.
-        const min = Math.min(0, ...values);
-        const range = (max - min) || 1;
-
-        const slot = 100 / points.length;
-        const top = 12;
-        const bottom = 88;
-        const coords = values.map((value, i) => ({
-            x: slot * (i + 0.5),
-            y: bottom - ((value - min) / range) * (bottom - top),
-        }));
-
-        const gradientId = `nutrition-area-${++nutritionChartSeq}`;
-        const linePath = buildSmoothPath(coords);
-        const first = coords[0];
-        const last = coords[coords.length - 1];
-        const areaPath = `${linePath} L ${last.x.toFixed(2)} ${bottom} L ${first.x.toFixed(2)} ${bottom} Z`;
-        const targetY = target > 0 ? (bottom - ((target - min) / range) * (bottom - top)).toFixed(2) : null;
-
-        const lastIndex = points.length - 1;
-        const step = Math.max(1, Math.ceil(points.length / 6));
-
-        const chartPoints = points.map((point, i) => ({
-            x: coords[i].x,
-            y: coords[i].y,
-            label: String(point.label ?? point.key ?? ''),
-            value: values[i],
-        }));
-
-        const hits = chartPoints.map((_, i) => `
-            <div class="absolute inset-y-0 cursor-pointer" data-nutrition-hit="${i}"
-                 style="left: ${(i * slot).toFixed(2)}%; width: ${slot.toFixed(2)}%;"></div>
-        `).join('');
-
-        const labels = points.map((point, i) => {
-            const text = (i % step === 0 || i === lastIndex) ? String(point.label ?? '') : '';
-            return `<span class="flex-1 min-w-0 text-[9px] leading-none text-surface-400 dark:text-surface-500 text-center truncate">${escapeHtml(text)}</span>`;
-        }).join('');
-
-        const average = values.reduce((sum, v) => sum + v, 0) / values.length;
-        const defaultReadout = `${chartPoints[lastIndex].label}: ${Math.round(values[lastIndex]).toLocaleString('ru-RU')} ккал`;
-
-        return `
-            <div class="nutrition-trend w-full select-none text-amber-500 dark:text-amber-400"
-                 data-role="nutrition-trend"
-                 data-points='${escapeHtml(JSON.stringify(chartPoints))}'>
-                <div class="relative w-full touch-pan-y" style="height: ${height}px">
-                    <svg class="block w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                        <defs>
-                            <linearGradient id="${gradientId}" x1="0%" y1="100%" x2="0%" y2="0%">
-                                <stop offset="0%" stop-color="currentColor" stop-opacity="0.28"/>
-                                <stop offset="100%" stop-color="currentColor" stop-opacity="0"/>
-                            </linearGradient>
-                        </defs>
-                        <g stroke="currentColor" stroke-opacity="0.10" stroke-width="0.5" stroke-dasharray="3 3" vector-effect="non-scaling-stroke">
-                            <line x1="0" y1="36" x2="100" y2="36"/>
-                            <line x1="0" y1="63" x2="100" y2="63"/>
-                        </g>
-                        ${targetY !== null ? `
-                            <line x1="0" y1="${targetY}" x2="100" y2="${targetY}" stroke="currentColor"
-                                  stroke-opacity="0.65" stroke-width="1.25" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>
-                        ` : ''}
-                        ${points.length > 1 ? `
-                            <path d="${areaPath}" fill="url(#${gradientId})" stroke="none"/>
-                            <path d="${linePath}" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
-                        ` : ''}
-                    </svg>
-
-                    <div data-nutrition-guide class="pointer-events-none absolute inset-y-0 w-px bg-current transition-opacity duration-150"
-                         style="left: ${last.x.toFixed(2)}%;"></div>
-                    <div data-nutrition-marker class="pointer-events-none absolute w-2.5 h-2.5 rounded-full -translate-x-1/2 -translate-y-1/2 border-2 border-surface-50 dark:border-zinc-900 bg-current shadow-[0_0_6px_rgba(245,158,11,0.5)] transition-opacity duration-150"
-                         style="left: ${last.x.toFixed(2)}%; top: ${last.y.toFixed(2)}%;"></div>
-
-                    <div data-nutrition-surface class="absolute inset-0">${hits}</div>
-                </div>
-
-                <div class="mt-1.5 flex gap-0.5">${labels}</div>
-
-                <div class="mt-2 flex items-center justify-between gap-2 text-[10px] text-surface-400 dark:text-surface-500">
-                    <span data-nutrition-readout class="font-mono truncate" aria-live="polite">${escapeHtml(defaultReadout)}</span>
-                    <span class="font-mono flex-shrink-0">Ср. ${Math.round(average).toLocaleString('ru-RU')} ккал</span>
-                </div>
-            </div>
-        `;
-    },
-
-    /**
-     * Swipable nutrition dashboard: slide 1 is the day view (calorie ring, AI
-     * quality, macro bars), slide 2 the period analytics (averages + trend).
-     * `periodSelector` is injected by the caller so the active period pill and
-     * the slider state stay owned by one component. Each slide renders its own
-     * footer, because a caption shared by both would be wrong on the slide the
-     * reader is not looking at.
+     * Swipable nutrition dashboard: slide 1 is the selected day, slide 2 the
+     * weekly average. Both slides are built by the caller, which keeps the
+     * period toggle out of the header - the pagination dots alone drive the
+     * switch, so title and dots share one row and the card stays compact.
      */
     nutritionDashboardCard({
         title = 'Питание',
-        periodSelector = '',
         slides = [],
     } = {}) {
         const count = slides.length;
@@ -429,13 +325,11 @@ export const Components = {
         return `
             <div class="nutrition-dashboard glass rounded-3xl p-4 shadow-xl" role="region" aria-label="Панель питания">
                 <div class="flex items-center justify-between gap-3 mb-2">
-                    ${periodSelector}
+                    <h3 class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider truncate">${escapeHtml(title)}</h3>
                     <div class="flex items-center gap-1.5 shrink-0" role="group" aria-label="Слайды панели питания">
                         ${dots}
                     </div>
                 </div>
-
-                <h3 class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider truncate mb-2">${escapeHtml(title)}</h3>
 
                 <div class="nutrition-track flex overflow-x-auto snap-x snap-mandatory" data-role="nutrition-slides">
                     ${track}
