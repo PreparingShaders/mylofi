@@ -1,6 +1,6 @@
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form, WebSocket, Header
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form, WebSocket, Header, BackgroundTasks
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -68,6 +68,7 @@ from app.services.nutrition import (
     mark_meal_failed,
     get_daily_nutrition_summary,
     get_period_nutrition_summary,
+    process_meal_photo_task,
 )
 from app.services.workout import (
     create_workout_template,
@@ -391,6 +392,7 @@ async def upload_meal_photo(
     file: UploadFile = File(...),
     eaten_at: Optional[str] = Form(None),
     notes: Optional[str] = Form(None),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -438,8 +440,8 @@ async def upload_meal_photo(
     consume_meal_ai(current_user)
     await db.commit()
 
-    # TODO: Trigger async vision API processing here
-    # For now, meal stays in PENDING status
+    # Trigger async vision API processing
+    background_tasks.add_task(process_meal_photo_task, meal.id)
 
     return PhotoUploadResponse(
         meal_id=meal.id,

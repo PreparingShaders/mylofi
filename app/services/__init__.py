@@ -23,6 +23,7 @@ from app.services.nutrition import (
     get_meals_by_status,
     update_meal_analysis_result,
     mark_meal_failed,
+    fail_stale_meals,
     get_daily_nutrition_summary,
 )
 from app.services.limits import (
@@ -76,6 +77,7 @@ __all__ = [
     "get_meals_by_status",
     "update_meal_analysis_result",
     "mark_meal_failed",
+    "fail_stale_meals",
     "get_daily_nutrition_summary",
     "LimitDecision",
     "reset_daily_meal_counter",

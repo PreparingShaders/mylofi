@@ -1,24 +1,52 @@
 import json
 import os
+import io
 import uuid
 import shutil
-from datetime import datetime, date, timedelta
+import base64
+import asyncio
+import logging
+import traceback
+import time
+from datetime import datetime, date, timedelta, timezone
 from typing import Optional, List
-from sqlalchemy import select, func, and_
-from sqlalchemy.ext.asyncio import AsyncSession
+from PIL import Image, UnidentifiedImageError
+from sqlalchemy import select, func, and_, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.models import Meal, MealStatus, User
 from app.schemas import MealCreate, MealUpdate, MealResponse, MealListResponse
 from app.core.config import get_settings
+from app.db.session import async_session_maker
+from app.services.ai_vision import analyze_meal_photo
 
 settings = get_settings()
+
+logger = logging.getLogger(__name__)
 
 MONTH_LABELS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
 
 # Upper bound for an explicit range so one request can never ask for an
 # unbounded daily series.
 MAX_RANGE_DAYS = 366
+
+# Wall-clock budget for one photo analysis. ai_vision bounds every individual
+# model call; this bounds the cascade as a whole so a meal always reaches a
+# terminal status (COMPLETED or FAILED) and the frontend poll loop always ends.
+AI_TASK_TIMEOUT = 90.0
+
+# A meal can only still be PENDING / PROCESSING this long if the worker died
+# with it (restart, crash, lost DB connection), because the task above always
+# writes a terminal status well inside this budget. Anything older is stuck and
+# has to be failed explicitly, or both the card and the poll loop hang on it
+# forever.
+STUCK_MEAL_TIMEOUT = timedelta(minutes=5)
+
+# Shown on the failed card, so the user knows the analysis never came back
+# rather than that the food was rejected.
+STUCK_MEAL_REASON = "Таймаут или сбой сервера"
+STUCK_MEAL_ERROR = "Analysis did not report back: worker stopped mid-task (restart or crash)"
 
 
 async def ensure_upload_dir() -> str:
@@ -115,6 +143,7 @@ async def update_meal(
         setattr(meal, field, value)
 
     meal.updated_at = datetime.utcnow()
+
     await db.commit()
     await db.refresh(meal)
     return meal
@@ -176,6 +205,8 @@ def meal_to_response(meal: Meal) -> MealResponse:
         notes=meal.notes,
         status=meal.status,
         error_message=meal.error_message,
+        quality_score=meal.quality_score,
+        quality_reason=meal.quality_reason,
         eaten_at=meal.eaten_at,
         created_at=meal.created_at,
         updated_at=meal.updated_at,
@@ -217,6 +248,10 @@ async def load_meals_for_range(
     """
     if end_date < start_date:
         start_date, end_date = end_date, start_date
+
+    # Heal meals whose analysis died with the worker before answering, so this
+    # read never hands the dashboard a meal that can only stay pending forever.
+    await fail_stale_meals(db)
 
     start_dt = datetime.combine(start_date, datetime.min.time())
     end_dt = datetime.combine(end_date, datetime.max.time())
@@ -286,6 +321,8 @@ async def update_meal_analysis_result(
     fiber_g: Optional[float] = None,
     sugar_g: Optional[float] = None,
     sodium_mg: Optional[float] = None,
+    quality_score: Optional[float] = None,
+    quality_reason: Optional[str] = None,
 ) -> Optional[Meal]:
     """Update meal with analysis results from vision API"""
     result = await db.execute(select(Meal).where(Meal.id == meal_id))
@@ -303,6 +340,8 @@ async def update_meal_analysis_result(
     meal.dish_name = dish_name
     meal.tags = json.dumps(tags)
     meal.status = MealStatus.COMPLETED
+    meal.quality_score = quality_score
+    meal.quality_reason = quality_reason
     meal.updated_at = datetime.utcnow()
 
     await db.commit()
@@ -314,8 +353,13 @@ async def mark_meal_failed(
     db: AsyncSession,
     meal_id: int,
     error_message: str,
+    quality_reason: Optional[str] = None,
 ) -> Optional[Meal]:
-    """Mark meal processing as failed"""
+    """Mark meal processing as failed.
+
+    `quality_reason` carries the reason the AI card is shown to the user, so a
+    failed analysis still renders its explanation instead of an empty card.
+    """
     result = await db.execute(select(Meal).where(Meal.id == meal_id))
     meal = result.scalar_one_or_none()
     if not meal:
@@ -323,11 +367,59 @@ async def mark_meal_failed(
 
     meal.status = MealStatus.FAILED
     meal.error_message = error_message
+    if quality_reason is not None:
+        meal.quality_reason = quality_reason
     meal.updated_at = datetime.utcnow()
 
     await db.commit()
     await db.refresh(meal)
     return meal
+
+
+async def fail_stale_meals(
+    db: AsyncSession,
+    stale_after: timedelta = STUCK_MEAL_TIMEOUT,
+) -> int:
+    """Fail every meal a dead worker left behind, returning how many were healed.
+
+    Age comes from `created_at`, which the app never writes and which therefore
+    always holds a true instant, and the cutoff is timezone-aware for the same
+    reason: the naive `datetime.utcnow()` stamps written elsewhere in this
+    module are stored in the database's own timezone, so a naive cutoff would
+    not agree with them.
+
+    One bulk UPDATE covers every user, which is what makes it cheap enough to
+    run on the nutrition read path as well as at startup. Matching rows already
+    loaded in the session are refreshed ("fetch"), so the same request can
+    never answer with a status it just overwrote.
+    """
+    cutoff = datetime.now(timezone.utc) - stale_after
+
+    result = await db.execute(
+        update(Meal)
+        .where(
+            Meal.status.in_((MealStatus.PENDING, MealStatus.PROCESSING)),
+            Meal.created_at < cutoff,
+        )
+        .values(
+            status=MealStatus.FAILED,
+            error_message=STUCK_MEAL_ERROR,
+            quality_reason=STUCK_MEAL_REASON,
+            updated_at=datetime.now(timezone.utc),
+        )
+        .returning(Meal.id)
+        .execution_options(synchronize_session="fetch")
+    )
+    stale_ids = list(result.scalars().all())
+    if not stale_ids:
+        return 0
+
+    await db.commit()
+    logger.warning(
+        f"[Meal Cleanup] Marked {len(stale_ids)} stuck meal(s) as FAILED "
+        f"(pending/processing older than {stale_after}): {stale_ids}"
+    )
+    return len(stale_ids)
 
 
 async def get_daily_nutrition_summary(
@@ -528,3 +620,144 @@ async def get_period_nutrition_summary(
         "granularity": "day",
         "series": buckets,
     }
+
+
+def _user_facing_error(error: BaseException) -> str:
+    """Short, non-technical reason shown on the failed meal card.
+
+    The raw exception text stays in `error_message` and the server logs; this
+    copy only has to tell the user what went wrong.
+    """
+    if isinstance(error, TimeoutError):
+        return "Анализ ИИ занял слишком много времени. Попробуйте ещё раз."
+    if isinstance(error, UnidentifiedImageError):
+        return "Не удалось прочитать фото. Попробуйте загрузить другое изображение."
+    if isinstance(error, FileNotFoundError):
+        return "Фото не найдено на сервере."
+    if isinstance(error, (ValueError, KeyError, TypeError, RuntimeError)):
+        return "Не удалось распознать блюдо. Попробуйте ещё раз."
+    return "Ошибка анализа фото. Попробуйте ещё раз."
+
+
+async def process_meal_photo_task(meal_id: int) -> None:
+    """
+    Background task to process meal photo with AI vision cascade.
+    Runs in isolated DB session to avoid blocking main request thread.
+
+    Never raises: every failure path ends with the meal moved to FAILED so the
+    frontend polling loop stops instead of spinning forever.
+    """
+    started_at = time.perf_counter()
+    logger.info(f"[AI Task] Starting analysis for meal {meal_id}")
+
+    async with async_session_maker() as db:
+        try:
+            result = await db.execute(select(Meal).where(Meal.id == meal_id))
+            meal = result.scalar_one_or_none()
+            if not meal:
+                logger.error(f"[AI Task] Meal {meal_id} not found, nothing to analyze")
+                return
+
+            if not meal.photo_path or not os.path.exists(meal.photo_path):
+                logger.error(f"[AI Task] Photo file missing for meal {meal_id}: {meal.photo_path}")
+                await mark_meal_failed(
+                    db,
+                    meal_id,
+                    "Photo file not found",
+                    "Фото не найдено на сервере",
+                )
+                return
+
+            meal.status = MealStatus.PROCESSING
+            meal.error_message = None
+            meal.updated_at = datetime.utcnow()
+            await db.commit()
+            logger.info(f"[AI Task] Meal {meal_id} marked as PROCESSING")
+
+            # Compress and resize image before encoding
+            with Image.open(meal.photo_path) as img:
+                if img.mode in ("RGBA", "LA", "P"):
+                    img = img.convert("RGB")
+                max_dim = 1024
+                if max(img.size) > max_dim:
+                    ratio = max_dim / max(img.size)
+                    new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
+                    img = img.resize(new_size, Image.Resampling.LANCZOS)
+                buffer = io.BytesIO()
+                img.save(buffer, format="JPEG", quality=80, optimize=True)
+                buffer.seek(0)
+                base64_img = base64.b64encode(buffer.read()).decode("utf-8")
+
+            logger.info(
+                f"[AI Task] Image compressed successfully for meal {meal_id}: "
+                f"{len(base64_img) // 1024} KB base64"
+            )
+
+            # Analyze with AI vision cascade, bounded as a whole
+            logger.info(f"[AI Task] Calling ai_vision for meal {meal_id} (budget {AI_TASK_TIMEOUT}s)")
+            try:
+                analysis = await asyncio.wait_for(
+                    analyze_meal_photo(base64_img),
+                    timeout=AI_TASK_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                raise TimeoutError(
+                    f"AI analysis exceeded {AI_TASK_TIMEOUT:.0f}s and was cancelled"
+                ) from None
+            logger.info(f"[AI Task] ai_vision returned a result for meal {meal_id}")
+
+            # Update meal with results
+            meal.calories = float(analysis["calories"])
+            meal.protein_g = float(analysis["protein_g"])
+            meal.fat_g = float(analysis["fat_g"])
+            meal.carbs_g = float(analysis["carbs_g"])
+            meal.fiber_g = float(analysis.get("fiber_g", 0))
+            meal.sugar_g = float(analysis.get("sugar_g", 0))
+            meal.sodium_mg = float(analysis.get("sodium_mg", 0))
+            meal.dish_name = analysis["dish_name"]
+            meal.tags = json.dumps(analysis["tags"])
+            meal.quality_score = float(analysis["quality_score"])
+            meal.quality_reason = json.dumps(analysis.get("quality_metrics", []), ensure_ascii=False)
+            meal.status = MealStatus.COMPLETED
+            meal.error_message = None
+            meal.updated_at = datetime.utcnow()
+
+            await db.commit()
+            elapsed = time.perf_counter() - started_at
+            logger.info(
+                f"[AI Task] Meal {meal_id} analysis completed successfully "
+                f"in {elapsed:.1f}s: {meal.dish_name}"
+            )
+
+        except Exception as e:
+            elapsed = time.perf_counter() - started_at
+            # Full traceback to stderr for debugging, structured copy for the log.
+            traceback.print_exc()
+            logger.exception(
+                f"[AI Task] Meal {meal_id} analysis failed after {elapsed:.1f}s: "
+                f"{type(e).__name__}: {e}"
+            )
+
+            error_text = f"{type(e).__name__}: {e}".strip()
+            user_text = _user_facing_error(e)
+
+            # The failing statement may have left the session mid-transaction;
+            # without a rollback the status update below would fail too.
+            try:
+                await db.rollback()
+            except Exception as db_error:
+                logger.error(f"[AI Task] Rollback failed for meal {meal_id}: {db_error}")
+
+            try:
+                await mark_meal_failed(
+                    db,
+                    meal_id,
+                    error_text[:2000],
+                    user_text,
+                )
+                logger.info(f"[AI Task] Meal {meal_id} marked as FAILED")
+            except Exception as db_error:
+                logger.error(
+                    f"[AI Task] Failed to mark meal {meal_id} as FAILED: {db_error}"
+                )
+                traceback.print_exc()

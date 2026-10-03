@@ -1,4 +1,5 @@
 import os
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,10 +8,20 @@ from fastapi.responses import HTMLResponse
 
 from app.core.config import get_settings
 from app.db.session import init_db, close_db, async_session_maker
+from app.services.nutrition import fail_stale_meals
 from app.services.workout import seed_exercise_catalog
 from app.api.v1.routes import router as api_router
 
 settings = get_settings()
+
+# Uvicorn only configures its own loggers, so service modules (background
+# tasks, services) would otherwise never reach the console. Keep uvicorn's own
+# formatting but at one consistent level.
+logging.basicConfig(
+    level=settings.LOG_LEVEL.upper(),
+    format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+    force=True,
+)
 
 
 @asynccontextmanager
@@ -18,6 +29,12 @@ async def lifespan(app: FastAPI):
     # Startup
     await init_db()
     async with async_session_maker() as session:
+        # A restart is the usual reason a meal never left pending/processing:
+        # the analysis task died with the previous process and cannot report
+        # back, so those rows are failed before anyone can poll them.
+        healed = await fail_stale_meals(session)
+        if healed:
+            logging.getLogger(__name__).info(f"[Startup] Failed {healed} stuck meal(s)")
         await seed_exercise_catalog(session)
     yield
     # Shutdown

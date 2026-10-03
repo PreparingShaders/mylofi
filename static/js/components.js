@@ -101,6 +101,42 @@ export const Components = {
     },
 
     /**
+     * Parse quality_reason JSON and render compact metric bars.
+     * Falls back to plain text if JSON parsing fails.
+     */
+    qualityMetrics(qualityReason) {
+        if (!qualityReason) return '';
+        let metrics = [];
+        try {
+            metrics = JSON.parse(qualityReason);
+        } catch (e) {
+            return `<p class="text-[11px] text-white/70 leading-snug">${escapeHtml(qualityReason)}</p>`;
+        }
+        if (!Array.isArray(metrics) || metrics.length === 0) return '';
+        const maxScore = 10;
+        return `
+            <div class="space-y-1.5">
+                ${metrics.map(m => {
+                    const score = Math.max(0, Math.min(maxScore, Number(m.score) || 0));
+                    const pct = Math.round((score / maxScore) * 100);
+                    const color = pct >= 80 ? 'bg-lime-500' : pct >= 60 ? 'bg-amber-500' : 'bg-rose-500';
+                    return `
+                        <div>
+                            <div class="flex items-center justify-between mb-0.5">
+                                <span class="text-[11px] font-medium text-white/85">${escapeHtml(m.label || '')}</span>
+                                <span class="text-[10px] font-mono text-white/60 tabular-nums">${score.toFixed(1)}/${maxScore}</span>
+                            </div>
+                            <div class="h-1 rounded-full bg-white/10 overflow-hidden">
+                                <div class="h-full ${color} rounded-full transition-all duration-500" style="width: ${pct}%"></div>
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        `;
+    },
+
+    /**
      * Three horizontal macro bars (protein/fat/carbs) with current vs target
      * grams, used by the dashboard day slide.
      */
@@ -475,13 +511,18 @@ export const Components = {
      *
      * `showDate` adds the eaten date to the top bar, which is what makes the
      * same card readable across a week or month carousel.
+     *
+     * `analysisTimedOut` marks a pending meal whose analysis never reported back:
+     * it stops shimmering and states the failure instead, since nothing will
+     * come along to replace those placeholders.
      */
-    mealCardPhoto(meal, { showDate = false } = {}) {
+    mealCardPhoto(meal, { showDate = false, analysisTimedOut = false } = {}) {
         const isPending = meal.status === 'pending' || meal.status === 'processing' || meal.sync_status === DB.SYNC_STATUS.PENDING;
         const isFailed = meal.sync_status === DB.SYNC_STATUS.FAILED;
+        const isStuck = isPending && analysisTimedOut;
         const day = meal.eaten_at ? new Date(meal.eaten_at) : (meal.created_at ? new Date(meal.created_at) : null);
 
-        const dishName = meal.dish_name || (isPending ? '' : 'Блюдо');
+        const dishName = meal.dish_name || (isStuck ? 'Не распознано' : (isPending ? '' : 'Блюдо'));
         const mealType = this.mealTypeLabel(meal.meal_type);
         const timeLabel = day ? Utils.formatTime(day) : '';
         const dateLabel = showDate && day ? Utils.formatDayMonth(day) : '';
@@ -490,14 +531,18 @@ export const Components = {
         const protein = Math.round(meal.protein_g || meal.protein || 0);
         const fat = Math.round(meal.fat_g || meal.fat || 0);
         const carbs = Math.round(meal.carbs_g || meal.carbs || 0);
-        const qualityScore = meal.quality_score !== undefined && meal.quality_score !== null
-            ? Number(meal.quality_score)
-            : Utils.computeQualityScore({
-                  calories,
-                  protein: meal.protein_g ?? meal.protein,
-                  fat: meal.fat_g ?? meal.fat,
-                  carbs: meal.carbs_g ?? meal.carbs,
-              });
+        const qualityScore = isStuck
+            // Nothing was analysed, so there is nothing to score: the neutral
+            // placeholder reads truer than a 0.0 verdict on empty macros.
+            ? null
+            : meal.quality_score !== undefined && meal.quality_score !== null
+                ? Number(meal.quality_score)
+                : Utils.computeQualityScore({
+                      calories,
+                      protein: meal.protein_g ?? meal.protein,
+                      fat: meal.fat_g ?? meal.fat,
+                      carbs: meal.carbs_g ?? meal.carbs,
+                  });
 
         const photoSrc = this.mealPhotoUrl(meal);
         const safeSrc = photoSrc ? String(photoSrc).replace(/'/g, '%27').replace(/"/g, '%22') : null;
@@ -514,16 +559,24 @@ export const Components = {
         const chipLabel = [dateLabel, timeLabel, mealType].filter(Boolean).map(escapeHtml).join(' · ');
 
         // Pending meals have no numbers yet, so the readout swaps for shimmer
-        // lines rather than printing a zero-calorie dish.
-        const headBlock = isPending
-            ? this.mealSkeleton(1)
-            : `
-                <h3 class="text-shadow-subtle text-xl font-bold text-white leading-tight line-clamp-2">${escName}</h3>
-                <div class="mt-1 flex items-baseline gap-1.5">
-                    <span class="text-shadow-subtle text-2xl font-extrabold text-white tabular-nums leading-none">${escapeHtml(String(calories))}</span>
-                    <span class="text-[11px] font-semibold text-white/70">ккал</span>
+        // lines rather than printing a zero-calorie dish. A stuck meal keeps no
+        // shimmer either: the placeholders would stay there forever.
+        const headBlock = isStuck
+            ? `
+                <h3 class="text-shadow-subtle text-xl font-bold text-white leading-tight line-clamp-2">Не распознано</h3>
+                <div class="mt-1">
+                    <span class="text-[11px] font-semibold text-red-300">Анализ не завершился</span>
                 </div>
-            `;
+            `
+            : isPending
+                ? this.mealSkeleton(1)
+                : `
+                    <h3 class="text-shadow-subtle text-xl font-bold text-white leading-tight line-clamp-2">${escName}</h3>
+                    <div class="mt-1 flex items-baseline gap-1.5">
+                        <span class="text-shadow-subtle text-2xl font-extrabold text-white tabular-nums leading-none">${escapeHtml(String(calories))}</span>
+                        <span class="text-[11px] font-semibold text-white/70">ккал</span>
+                    </div>
+                `;
 
         const macroRow = isPending
             ? ''
@@ -589,13 +642,19 @@ export const Components = {
                     <p class="text-[11px] leading-snug text-white/85 line-clamp-2">${escapeHtml(insight)}</p>
                 </div>
             `
-            : isPending
-                ? `<div class="mt-2.5">${this.mealSkeleton(2)}</div>`
-                : '';
+            : isStuck
+                ? `
+                    <div class="meal-card-ai mt-2.5" data-no-flip>
+                        <p class="text-[11px] leading-snug text-red-300 line-clamp-2">Таймаут анализа или сбой сервера. Попробуйте загрузить фото ещё раз.</p>
+                    </div>
+                `
+                : isPending
+                    ? `<div class="mt-2.5">${this.mealSkeleton(2)}</div>`
+                    : '';
 
         return `
             <article class="snap-center shrink-0 meal-card-slot" data-meal-id="${mealId}">
-                <div class="meal-card-3d relative w-full h-full perspective-card ${isFailed ? 'ring-2 ring-red-500/40' : ''}" data-meal-id="${mealId}">
+                <div class="meal-card-3d relative w-full h-full perspective-card ${isFailed || isStuck ? 'ring-2 ring-red-500/40' : ''}" data-meal-id="${mealId}">
                     <div class="meal-card-inner relative w-full h-full transform-style-preserve-3d transition-transform duration-500 ease-out" data-action="flip-card">
                         <!-- FRONT FACE -->
                         <div class="meal-card-front absolute inset-0 backface-hidden rounded-2xl overflow-hidden bg-zinc-900">
@@ -647,6 +706,13 @@ export const Components = {
                                 </div>
 
                                 ${micronutrientsHtml}
+
+                                ${meal.quality_reason ? `
+                                    <div class="pt-4 border-t border-white/10">
+                                        <p class="text-[10px] font-medium text-white/50 uppercase tracking-wider mb-2">Качество приёма</p>
+                                        ${this.qualityMetrics(meal.quality_reason)}
+                                    </div>
+                                ` : ''}
 
                                 ${notesHtml}
                             </div>

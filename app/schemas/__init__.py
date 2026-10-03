@@ -201,6 +201,8 @@ class MealUpdate(BaseModel):
     tags: Optional[List[str]] = None
     notes: Optional[str] = None
     eaten_at: Optional[datetime] = None
+    quality_score: Optional[float] = None
+    quality_reason: Optional[str] = None
 
 
 class MealResponse(MealBase):
@@ -221,6 +223,8 @@ class MealResponse(MealBase):
     tags: Optional[List[str]] = None
     status: MealStatus
     error_message: Optional[str] = None
+    quality_score: Optional[float] = None
+    quality_reason: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

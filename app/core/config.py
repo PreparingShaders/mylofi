@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
     ENVIRONMENT: str = "development"
+    LOG_LEVEL: str = "INFO"
 
     # Server
     HOST: str = "0.0.0.0"
@@ -37,9 +38,14 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:8000", "http://127.0.0.1:8000"]
 
-    # Vision API
+    # Vision API (legacy)
     VISION_API_URL: str = "http://localhost:8001/analyze"
     VISION_API_KEY: str = ""
+
+    # AI Vision Cascade (Cloudflare Worker Proxy)
+    WORKER_URL: str = ""
+    GEMINI_API_KEY: str = ""
+    OPEN_ROUTER_API_KEY: str = ""
 
     # Web Push (VAPID)
     VAPID_PRIVATE_KEY: str = ""
