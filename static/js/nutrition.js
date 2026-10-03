@@ -2,7 +2,7 @@ import { API } from './api.js';
 import { DB } from './db.js';
 import { SyncEngine } from './sync.js';
 import { Components } from './components.js';
-import { Utils } from './utils.js';
+import { Utils, clientTimezone } from './utils.js';
 import { Camera } from './camera.js';
 
 const PERIODS = ['day', 'week', 'month', 'custom'];
@@ -42,14 +42,34 @@ export const Nutrition = {
     // Meal the carousel has to bring into view on the next render: the id is
     // only known after the upload answered, while the card arrives with it.
     _scrollTargetMealId: null,
+    // Meal ids whose composition the user opened. The cards are rebuilt on every
+    // render (the poll loop included), so the open state is remembered here
+    // instead of being lost each time the carousel is rebuilt.
+    _expandedCompositions: new Set(),
 
     /**
-     * Today's date as YYYY-MM-DD. Every date in this module is a plain calendar
-     * day, so all arithmetic runs in UTC: shifting with local time would move
-     * the selected day across a DST boundary.
+     * Today's date as YYYY-MM-DD, in the user's own calendar. Every date in this
+     * module is a plain calendar day, so all arithmetic on them runs in UTC:
+     * shifting with local time would move the selected day across a DST
+     * boundary. Only the *source* of today's date is local - the API is asked
+     * for the same day with `tz_offset`, so a meal eaten at 00:30 stays on the
+     * page the user is looking at instead of landing on the neighbouring one.
      */
     todayISO() {
-        return new Date().toISOString().slice(0, 10);
+        const now = new Date();
+        return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    },
+
+    /**
+     * Endpoint with the device offset attached, so the server resolves the day
+     * bounds in local time. A device that reports no offset asks for UTC days,
+     * which is what it did before.
+     */
+    withTimezone(endpoint) {
+        const { offsetMinutes } = clientTimezone();
+        if (offsetMinutes === null) return endpoint;
+        const separator = endpoint.includes('?') ? '&' : '?';
+        return `${endpoint}${separator}tz_offset=${encodeURIComponent(offsetMinutes)}`;
     },
 
     shiftDate(dateISO, days) {
@@ -163,7 +183,7 @@ export const Nutrition = {
         let fromCache = false;
 
         try {
-            data = await API.get(endpoint, token);
+            data = await API.get(this.withTimezone(endpoint), token);
         } catch (error) {
             console.warn('[Nutrition] API unavailable, falling back to local data:', error?.message);
             fromCache = true;
@@ -227,13 +247,13 @@ export const Nutrition = {
         }
 
         try {
-            const data = await API.get(endpoint, token);
+            const data = await API.get(this.withTimezone(endpoint), token);
             if (data && typeof data === 'object') {
                 return {
-                    calories: data.avg_calories ?? data.total_calories ?? 0,
-                    protein: data.avg_protein_g ?? data.total_protein_g ?? 0,
-                    fat: data.avg_fat_g ?? data.total_fat_g ?? 0,
-                    carbs: data.avg_carbs_g ?? data.total_carbs_g ?? 0,
+                    calories: Number(data.avg_calories) || Number(data.total_calories) || 0,
+                    protein: Number(data.avg_protein_g) || Number(data.total_protein_g) || 0,
+                    fat: Number(data.avg_fat_g) || Number(data.total_fat_g) || 0,
+                    carbs: Number(data.avg_carbs_g) || Number(data.total_carbs_g) || 0,
                     target_calories: data.target_calories ?? null,
                     target_protein_g: data.target_protein_g ?? null,
                     target_fat_g: data.target_fat_g ?? null,
@@ -747,7 +767,29 @@ export const Nutrition = {
 
         } catch (error) {
             console.error('[Nutrition] Render error:', error);
-            container.innerHTML = Components.errorState('Ошибка загрузки данных');
+            // Extract technical error details for debugging
+            let errorMessage = 'Ошибка загрузки данных';
+            if (error?.status) {
+                errorMessage += ` (HTTP ${error.status})`;
+            }
+            if (error?.message) {
+                errorMessage += `: ${error.message}`;
+            }
+            if (error?.data?.detail) {
+                const detail = typeof error.data.detail === 'string' ? error.data.detail : JSON.stringify(error.data.detail);
+                errorMessage += ` — ${detail}`;
+            }
+            // Log full error details for mobile Safari debugging
+            console.error('[Nutrition] Detailed error for debugging:', {
+                status: error?.status,
+                message: error?.message,
+                data: error?.data,
+                isNetworkError: error?.isNetworkError,
+                offlineQueued: error?.offlineQueued,
+                stack: error?.stack,
+                timestamp: new Date().toISOString()
+            });
+            container.innerHTML = Components.errorState(errorMessage);
         }
 
         // Start/stop polling for pending/processing meals
@@ -1108,6 +1150,12 @@ export const Nutrition = {
         formData.append('file', compressedBlob, 'photo.webp');
         formData.append('meal_type', state.selectedMealType);
         if (notes) formData.append('notes', notes);
+        // The instant of the shot plus the device's offset: the server buckets
+        // meals into the user's local days, and it can only do that if it is
+        // told where local midnight is.
+        for (const [key, value] of Object.entries(Camera.mealTimeFields())) {
+            formData.append(key, value);
+        }
 
         // The analysis takes tens of seconds, so the carousel gets its slot
         // before the request leaves; the id it scrolls to is only known once
@@ -1249,12 +1297,55 @@ export const Nutrition = {
     },
 
     /**
+     * Expand or collapse one composition list.
+     *
+     * The list attribute is the whole state: the CSS rules reveal the overflow
+     * items and pick the control's wording, so no card content is rebuilt and
+     * the carousel keeps its scroll position.
+     */
+    setCompositionExpanded(list, expanded) {
+        if (!list) return;
+        list.dataset.expanded = String(expanded);
+        list.querySelectorAll('[data-composition-toggle]').forEach((toggle) => {
+            toggle.setAttribute('aria-expanded', String(expanded));
+        });
+    },
+
+    /**
      * Edit/delete handlers for every card action button. The meal card is one
      * monolithic block, so both handlers keep the default action intact and
      * only stop the click from bubbling any further.
      */
     bindMealActions() {
         const container = this.app.elements.pageContent;
+
+        // Every render rebuilds the cards, the poll loop included, so an open
+        // composition would snap shut while the user is reading it. The open
+        // meal ids are restored right after the handlers are attached.
+        container.querySelectorAll('[data-composition]').forEach((list) => {
+            const mealId = list.closest('[data-meal-id]')?.dataset.mealId;
+            if (mealId && this._expandedCompositions.has(String(mealId))) {
+                this.setCompositionExpanded(list, true);
+            }
+        });
+
+        container.querySelectorAll('[data-composition-toggle]').forEach((btn) => {
+            btn.onclick = (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                const list = btn.closest('[data-composition]');
+                if (!list) return;
+                const expanded = list.dataset.expanded !== 'true';
+                this.setCompositionExpanded(list, expanded);
+
+                const mealId = list.closest('[data-meal-id]')?.dataset.mealId;
+                if (mealId) {
+                    const id = String(mealId);
+                    if (expanded) this._expandedCompositions.add(id);
+                    else this._expandedCompositions.delete(id);
+                }
+            };
+        });
 
         container.querySelectorAll('[data-action="edit-meal"]').forEach((btn) => {
             btn.onclick = (e) => {
@@ -1279,7 +1370,9 @@ export const Nutrition = {
                 });
                 if (confirmed) {
                     try {
-                        await DB.deleteMeal(mealId);
+                        const token = this.app.state.tokens.access;
+                        await API.deleteMeal(mealId, token);
+                        await this.loadData();
                         this.render(this.app.elements.pageContent, this.app);
                     } catch (error) {
                         console.error('[Nutrition] Delete error:', error);

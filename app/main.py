@@ -23,6 +23,12 @@ logging.basicConfig(
     force=True,
 )
 
+# httpx (and httpcore underneath it) logs every request line at INFO, and the
+# Gemini calls carry the API key in the query string: without this the console
+# echoes the credentials of every model attempt in the cascade.
+for _noisy_logger in ("httpx", "httpcore"):
+    logging.getLogger(_noisy_logger).setLevel(logging.WARNING)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

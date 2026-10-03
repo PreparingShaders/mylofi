@@ -28,6 +28,13 @@ const MEAL_TYPE_ICON_PATHS = {
     cookie: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v.01"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12v.01"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 12v.01"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 16v.01"/>',
 };
 
+/* Icons for the card action buttons. They are stroke-based like the meal-type
+   icons so the top-right pair reads as one set on the photo. */
+const MEAL_ACTION_ICON_PATHS = {
+    edit: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 20h4l10.5-10.5a2.12 2.12 0 0 0-3-3L5 17v3Z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.5 6.5l4 4"/>',
+    trash: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 4h4"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 7l1 13h10l1-13"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 11v6"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 11v6"/>',
+};
+
 const MACRO_ICON_PATHS = {
     protein: '<path d="M4 9.5v5"/><path d="M7.5 7v10"/><path d="M16.5 7v10"/><path d="M20 9.5v5"/><path d="M7.5 12h9"/>',
     fat: '<path d="M12 3.4c2.9 3.7 4.9 6.3 4.9 9a4.9 4.9 0 0 1-9.8 0c0-2.7 2-5.3 4.9-9Z"/>',
@@ -85,6 +92,17 @@ export const Components = {
     mealTypeIcon(type, className = 'w-4 h-4') {
         const icon = MEAL_TYPE_META[type]?.icon || 'utensils';
         return `<svg class="${className}" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">${MEAL_TYPE_ICON_PATHS[icon]}</svg>`;
+    },
+
+    /**
+     * Icon for a card action button. The buttons on the photo are icon-only, so
+     * the name lives in the button's own `aria-label`/`title` rather than in
+     * text next to the glyph.
+     */
+    mealActionIcon(icon, className = 'w-3.5 h-3.5') {
+        const paths = MEAL_ACTION_ICON_PATHS[icon];
+        if (!paths) return '';
+        return `<svg class="${className}" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
     },
 
     /**
@@ -498,27 +516,46 @@ export const Components = {
      * {name, amount} objects. Objects win, because only they carry the weights
      * the portion is summed from. Notes are the last resort, so a card never
      * shows a "Состав" heading over nothing.
+     *
+     * A list longer than the card can show is truncated behind a `+N` control
+     * that is tappable: everything past the limit is rendered but stays hidden
+     * until the control is pressed, so nothing is lost and the collapsed card
+     * keeps its height. `data-expanded` on the list is the whole state - the
+     * labels of the control are both in the markup and CSS picks one - so
+     * expanding is a single attribute write instead of a DOM rebuild.
      */
     mealBreakdown(meal, { limit = 3 } = {}) {
+        // Collapsed and expanded wording for the same control.
+        const toggleLabels = (collapsed, expanded) => `
+            <span class="composition-label composition-label--collapsed">${escapeHtml(collapsed)}</span>
+            <span class="composition-label composition-label--expanded">${escapeHtml(expanded)}</span>
+        `;
+
         const items = Array.isArray(meal.ingredients)
             ? meal.ingredients.filter((ing) => ing && (ing.name || ing.amount))
             : [];
 
         if (items.length > 0) {
             const total = items.reduce((sum, ing) => sum + (Number(ing.amount) || 0), 0);
-            const shown = items.slice(0, limit);
-            const overflow = items.length - shown.length;
+            const hiddenFrom = Math.min(limit, items.length);
+            const overflow = Math.max(0, items.length - hiddenFrom);
             return {
                 portion: total > 0 ? Math.round(total) : null,
                 body: `
-                    <div class="meal-card-rows">
-                        ${shown.map(ing => `
-                            <div class="meal-card-row">
+                    <div class="meal-card-rows" data-composition data-expanded="false">
+                        ${items.map((ing, index) => `
+                            <div class="meal-card-row ${index >= hiddenFrom ? 'meal-card-row--overflow' : ''}">
                                 <span class="meal-card-row__name">${escapeHtml(ing.name || 'Ингредиент')}</span>
                                 <span class="meal-card-row__value">${escapeHtml(String(Math.round(Number(ing.amount) || 0)))} г</span>
                             </div>
                         `).join('')}
-                        ${overflow > 0 ? `<div class="meal-card-row"><span class="meal-card-row__name meal-card-row__more">Ещё ${overflow}</span></div>` : ''}
+                        ${overflow > 0 ? `
+                            <button type="button" class="meal-card-row meal-card-row--toggle" data-composition-toggle
+                                    aria-expanded="false" aria-label="Показать весь состав">
+                                <span class="meal-card-row__name meal-card-row__more">${toggleLabels(`Ещё ${overflow}`, 'Свернуть')}</span>
+                                <span class="meal-card-row__value">${toggleLabels('показать', 'свернуть')}</span>
+                            </button>
+                        ` : ''}
                     </div>
                 `,
             };
@@ -526,14 +563,19 @@ export const Components = {
 
         const tags = Array.isArray(meal.tags) ? meal.tags.filter(Boolean).map(String) : [];
         if (tags.length > 0) {
-            const shown = tags.slice(0, limit + 1);
-            const overflow = tags.length - shown.length;
+            const hiddenFrom = Math.min(limit + 1, tags.length);
+            const overflow = Math.max(0, tags.length - hiddenFrom);
             return {
                 portion: null,
                 body: `
-                    <div class="meal-card-tags">
-                        ${shown.map(tag => `<span class="meal-card-tag">${escapeHtml(tag)}</span>`).join('')}
-                        ${overflow > 0 ? `<span class="meal-card-tag meal-card-tag--more">+${overflow}</span>` : ''}
+                    <div class="meal-card-tags" data-composition data-expanded="false">
+                        ${tags.map((tag, index) => `
+                            <span class="meal-card-tag ${index >= hiddenFrom ? 'meal-card-tag--overflow' : ''}">${escapeHtml(tag)}</span>
+                        `).join('')}
+                        ${overflow > 0 ? `
+                            <button type="button" class="meal-card-tag meal-card-tag--more meal-card-tag--toggle" data-composition-toggle
+                                    aria-expanded="false" aria-label="Показать весь состав">${toggleLabels(`+${overflow}`, 'Свернуть')}</button>
+                        ` : ''}
                     </div>
                 `,
             };
@@ -600,19 +642,23 @@ export const Components = {
       * Photo meal card used by the nutrition carousel.
       *
       * One monolithic card carries the whole meal top to bottom: a tall photo
-      * hero with the eaten-at chip on its top row and the dish name plus portion
-      * on its bottom overlay, then the macro pill row, the recognised
-      * composition, the AI verdict box and the edit/delete row. Nothing hides
-      * behind a flip or a second page, so a single screenshot of the card is a
-      * complete record of the meal. The quality score lives only in the verdict
-      * box: a second copy over the photo was the same number twice.
+      * hero with the eaten-at time on the left of its top row and the edit and
+      * delete icon buttons on the right, the dish name plus portion on its
+      * bottom overlay, then the macro pill row, the recognised composition and
+      * the AI verdict box. Nothing hides behind a flip or a second page, so a
+      * single screenshot of the card is a complete record of the meal. The
+      * quality score lives only in the verdict box: a second copy over the
+      * photo was the same number twice.
       *
       * A meal that is still being analysed swaps its figures for shimmer lines
       * instead of printing zeroes, and `analysisTimedOut` stops the shimmer to
       * state the failure: nothing will come along to replace those placeholders.
       *
-      * `showDate` adds the eaten date to the hero chip, which is what makes the
-      * same card readable across a week or month carousel.
+      * `showDate` adds the eaten date in front of the time, which is what makes
+      * the same card readable across a week or month carousel. The chip carries
+      * the time as plain text and nothing else: the meal-type glyph that used to
+      * sit in front of it read as a stray `#` at 10px, and the spelled-out label
+      * made the header read like a sentence and pushed the time out of view.
       */
     mealCardPhoto(meal, { showDate = false, analysisTimedOut = false } = {}) {
         const isPending = meal.status === 'pending' || meal.status === 'processing' || meal.sync_status === DB.SYNC_STATUS.PENDING;
@@ -623,7 +669,7 @@ export const Components = {
         const dishName = meal.dish_name || (isStuck ? 'Не распознано' : (isPending ? '' : 'Блюдо'));
         const timeLabel = day ? Utils.formatTime(day) : '';
         const dateLabel = showDate && day ? Utils.formatDayMonth(day) : '';
-        const chipLabel = [dateLabel, timeLabel, this.mealTypeLabel(meal.meal_type)]
+        const chipLabel = [dateLabel, timeLabel]
             .filter(Boolean)
             .map(escapeHtml)
             .join(' · ');
@@ -724,9 +770,9 @@ export const Components = {
 
         const actionsBlock = mealId
             ? `
-                <div class="meal-card-actions">
-                    <button type="button" data-action="edit-meal" data-meal-id="${mealId}" class="meal-card-action">Редактировать</button>
-                    <button type="button" data-action="delete-meal" data-meal-id="${mealId}" class="meal-card-action meal-card-action--danger">Удалить</button>
+                <div class="meal-card-hero__actions">
+                    <button type="button" data-action="edit-meal" data-meal-id="${mealId}" class="glass-badge meal-card-hero__action" aria-label="Редактировать блюдо" title="Редактировать">${this.mealActionIcon('edit')}</button>
+                    <button type="button" data-action="delete-meal" data-meal-id="${mealId}" class="glass-badge meal-card-hero__action meal-card-hero__action--danger" aria-label="Удалить блюдо" title="Удалить">${this.mealActionIcon('trash')}</button>
                 </div>
             `
             : '';
@@ -739,12 +785,10 @@ export const Components = {
                         <div class="meal-card-scrim meal-card-scrim--heavy"></div>
 
                         <div class="meal-card-hero__top">
-                            <div class="glass-badge inline-flex items-center gap-1.5 rounded-full pl-1.5 pr-2.5 py-1 min-w-0">
-                                <span class="inline-flex items-center justify-center w-4 h-4 shrink-0 rounded-full bg-white/15 text-white">
-                                    ${this.mealTypeIcon(meal.meal_type, 'w-2.5 h-2.5')}
-                                </span>
+                            <div class="glass-badge inline-flex items-center rounded-full px-2.5 py-1 min-w-0">
                                 <span class="text-[11px] font-semibold text-white truncate">${chipLabel}</span>
                             </div>
+                            ${actionsBlock}
                         </div>
 
                         <div class="meal-card-hero__bottom">${heroOverlay}</div>
@@ -753,7 +797,6 @@ export const Components = {
                     ${macroBar}
                     ${compositionBlock}
                     ${verdictBlock}
-                    ${actionsBlock}
                 </div>
             </article>
         `;

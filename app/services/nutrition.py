@@ -9,7 +9,7 @@ import logging
 import traceback
 import time
 from datetime import datetime, date, timedelta, timezone
-from typing import Optional, List
+from typing import Any, Optional, List
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy import select, func, and_, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -47,6 +47,98 @@ STUCK_MEAL_TIMEOUT = timedelta(minutes=5)
 # rather than that the food was rejected.
 STUCK_MEAL_REASON = "Таймаут или сбой сервера"
 STUCK_MEAL_ERROR = "Analysis did not report back: worker stopped mid-task (restart or crash)"
+
+# Real offsets live between UTC-12 and UTC+14. A request claiming more than that
+# is not a timezone, and letting it through would shift a day window by days.
+MAX_TZ_OFFSET_MINUTES = 14 * 60
+
+
+def utcnow() -> datetime:
+    """Current instant as an aware UTC datetime.
+
+    Aware, not naive, on purpose: asyncpg encodes a naive datetime by reading it
+    as *process-local* time, so a naive "21:30 UTC" written on a Europe/Moscow
+    host lands in the database as 18:30 UTC - the meal appears three hours early
+    and, near midnight, on the wrong day. An aware value is encoded as the
+    instant it is, whatever the host timezone is.
+    """
+    return datetime.now(timezone.utc)
+
+
+def normalize_tz_offset(raw: Optional[Any]) -> int:
+    """Minutes behind UTC as the browser reports them, or 0 when unusable.
+
+    `Date.getTimezoneOffset()` counts minutes *behind* UTC, so UTC+3 arrives as
+    -180 and every conversion below is a plain `+ offset` from local to UTC. The
+    value reaches the server as a query param or a form field, so it is text
+    most of the time.
+    """
+    if raw is None:
+        return 0
+    try:
+        # float() first so a fractional or string-y value still lands on a
+        # minute; a non-numeric one falls through to the UTC default.
+        offset = int(float(raw))
+    except (TypeError, ValueError):
+        return 0
+    return max(-MAX_TZ_OFFSET_MINUTES, min(MAX_TZ_OFFSET_MINUTES, offset))
+
+
+def as_utc(value: datetime, tz_offset_minutes: int = 0) -> datetime:
+    """Read a datetime as the instant it stands for, in aware UTC.
+
+    An aware value already says when it happened. A naive one is read in the
+    client's offset - that is the wall clock the device printed - so a local
+    `00:30` with a UTC+3 offset becomes the instant `21:30Z` of the day before.
+    """
+    if value.tzinfo is None:
+        return (value + timedelta(minutes=tz_offset_minutes)).replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def resolve_eaten_at(raw: Optional[Any], tz_offset_minutes: int = 0) -> datetime:
+    """Turn a client timestamp into the aware UTC instant the meals table stores.
+
+    The browser sends `new Date().toISOString()`, which is already an absolute
+    instant, so the usual case only has to be read as UTC. A value without an
+    offset is wall-clock time and is resolved with the offset the same request
+    carries; anything unusable falls back to now rather than losing the meal.
+    """
+    if raw is None or raw == "":
+        return utcnow()
+
+    if isinstance(raw, datetime):
+        return as_utc(raw, tz_offset_minutes)
+
+    text = str(raw).strip()
+    if text.endswith(("Z", "z")):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        logger.warning(f"[Nutrition] Unusable eaten_at value, falling back to now: {raw!r}")
+        return utcnow()
+    return as_utc(parsed, tz_offset_minutes)
+
+
+def day_bounds_utc(start_date: date, end_date: date, tz_offset_minutes: int = 0) -> tuple[datetime, datetime]:
+    """Inclusive [start, end] day window as aware UTC instants.
+
+    A calendar day is a local notion: local midnight on `start_date` is
+    `start_date 00:00 + offset` in UTC, so without the shift a meal eaten at
+    00:30 UTC+3 falls into the previous day's window. Both bounds are aware so
+    the comparison in SQL is between instants and not between local readings.
+    """
+    shift = timedelta(minutes=tz_offset_minutes)
+    return (
+        as_utc(datetime.combine(start_date, datetime.min.time())) + shift,
+        as_utc(datetime.combine(end_date, datetime.max.time())) + shift,
+    )
+
+
+def local_day_of(value: datetime, tz_offset_minutes: int = 0) -> date:
+    """The calendar day a stored instant belongs to, in the user's local time."""
+    return (as_utc(value) - timedelta(minutes=tz_offset_minutes)).date()
 
 
 async def ensure_upload_dir() -> str:
@@ -139,10 +231,15 @@ async def update_meal(
     if "tags" in update_data and update_data["tags"] is not None:
         update_data["tags"] = json.dumps(update_data["tags"])
 
+    # A hand-edited time arrives as whatever the client had; reading it as an
+    # instant keeps it on the same axis as every other timestamp in the column.
+    if isinstance(update_data.get("eaten_at"), datetime):
+        update_data["eaten_at"] = as_utc(update_data["eaten_at"])
+
     for field, value in update_data.items():
         setattr(meal, field, value)
 
-    meal.updated_at = datetime.utcnow()
+    meal.updated_at = utcnow()
 
     await db.commit()
     await db.refresh(meal)
@@ -241,11 +338,13 @@ async def load_meals_for_range(
     user_id: int,
     start_date: date,
     end_date: date,
+    tz_offset_minutes: int = 0,
 ) -> MealListResponse:
     """Meals for an inclusive [start, end] window with their totals and targets.
 
     A single day is the start == end case, so the day view and the period views
-    share one query and one payload shape.
+    share one query and one payload shape. `tz_offset_minutes` places the window
+    in the user's local days; 0 keeps the plain UTC day.
     """
     if end_date < start_date:
         start_date, end_date = end_date, start_date
@@ -254,8 +353,7 @@ async def load_meals_for_range(
     # read never hands the dashboard a meal that can only stay pending forever.
     await fail_stale_meals(db)
 
-    start_dt = datetime.combine(start_date, datetime.min.time())
-    end_dt = datetime.combine(end_date, datetime.max.time())
+    start_dt, end_dt = day_bounds_utc(start_date, end_date, tz_offset_minutes)
 
     result = await db.execute(
         select(Meal)
@@ -281,9 +379,10 @@ async def get_meals_for_date(
     db: AsyncSession,
     user_id: int,
     target_date: date,
+    tz_offset_minutes: int = 0,
 ) -> MealListResponse:
     """Get all meals for a specific date with aggregated nutrition"""
-    return await load_meals_for_range(db, user_id, target_date, target_date)
+    return await load_meals_for_range(db, user_id, target_date, target_date, tz_offset_minutes)
 
 
 async def get_meals_for_range(
@@ -291,9 +390,10 @@ async def get_meals_for_range(
     user_id: int,
     start_date: date,
     end_date: date,
+    tz_offset_minutes: int = 0,
 ) -> MealListResponse:
     """Get meals for an arbitrary inclusive date range (custom period)."""
-    return await load_meals_for_range(db, user_id, start_date, end_date)
+    return await load_meals_for_range(db, user_id, start_date, end_date, tz_offset_minutes)
 
 
 async def get_meals_by_status(
@@ -345,7 +445,7 @@ async def update_meal_analysis_result(
     meal.quality_score = quality_score
     meal.quality_reason = quality_reason
     meal.ai_insight = ai_insight
-    meal.updated_at = datetime.utcnow()
+    meal.updated_at = utcnow()
 
     await db.commit()
     await db.refresh(meal)
@@ -372,7 +472,7 @@ async def mark_meal_failed(
     meal.error_message = error_message
     if quality_reason is not None:
         meal.quality_reason = quality_reason
-    meal.updated_at = datetime.utcnow()
+    meal.updated_at = utcnow()
 
     await db.commit()
     await db.refresh(meal)
@@ -387,9 +487,7 @@ async def fail_stale_meals(
 
     Age comes from `created_at`, which the app never writes and which therefore
     always holds a true instant, and the cutoff is timezone-aware for the same
-    reason: the naive `datetime.utcnow()` stamps written elsewhere in this
-    module are stored in the database's own timezone, so a naive cutoff would
-    not agree with them.
+    reason: it is compared against the aware UTC stamps this module writes.
 
     One bulk UPDATE covers every user, which is what makes it cheap enough to
     run on the nutrition read path as well as at startup. Matching rows already
@@ -429,10 +527,10 @@ async def get_daily_nutrition_summary(
     db: AsyncSession,
     user_id: int,
     target_date: date,
+    tz_offset_minutes: int = 0,
 ) -> dict:
     """Get aggregated nutrition for a day"""
-    start_of_day = datetime.combine(target_date, datetime.min.time())
-    end_of_day = datetime.combine(target_date, datetime.max.time())
+    start_of_day, end_of_day = day_bounds_utc(target_date, target_date, tz_offset_minutes)
 
     result = await db.execute(
         select(
@@ -530,17 +628,21 @@ async def get_period_nutrition_summary(
     period: str,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
+    tz_offset_minutes: int = 0,
 ) -> dict:
     """Get aggregated nutrition for a week, a month or a custom range.
 
     Returns totals, per-day averages and a dense daily `series` so the UI can
     draw the intake trend without a second request. The calorie target travels
     with the payload because the trend chart draws it as a reference line.
+
+    `tz_offset_minutes` keeps both the window and the daily buckets in the user's
+    local days, so the trend line and the day view never disagree about which
+    day a meal landed on.
     """
     explicit_range = bool(start_date or end_date)
     start_date, end_date = resolve_period_bounds(target_date, period, start_date, end_date)
-    start_dt = datetime.combine(start_date, datetime.min.time())
-    end_dt = datetime.combine(end_date, datetime.max.time())
+    start_dt, end_dt = day_bounds_utc(start_date, end_date, tz_offset_minutes)
     days = (end_date - start_date).days + 1
 
     result = await db.execute(
@@ -583,7 +685,8 @@ async def get_period_nutrition_summary(
     buckets = build_daily_buckets(start_date, end_date)
     bucket_index = {bucket["key"]: bucket for bucket in buckets}
     for entry in meals_result.all():
-        bucket = bucket_index.get(entry.eaten_at.strftime("%Y-%m-%d"))
+        # The stored stamp is UTC; the bucket keys are the user's calendar days.
+        bucket = bucket_index.get(local_day_of(entry.eaten_at, tz_offset_minutes).strftime("%Y-%m-%d"))
         if bucket is None:
             continue
         bucket["calories"] += float(entry.calories)
@@ -604,6 +707,8 @@ async def get_period_nutrition_summary(
     # calendar span would drag the figure down with days the user never logged.
     active_days = sum(1 for bucket in buckets if bucket["meals_count"] > 0)
     avg_days = active_days or days
+    if avg_days <= 0:
+        avg_days = 1
 
     return {
         "period": "custom" if explicit_range else period,
@@ -642,10 +747,14 @@ def _user_facing_error(error: BaseException) -> str:
     return "Ошибка анализа фото. Попробуйте ещё раз."
 
 
-async def process_meal_photo_task(meal_id: int) -> None:
+async def process_meal_photo_task(meal_id: int, tz_offset_minutes: int = 0) -> None:
     """
     Background task to process meal photo with AI vision cascade.
     Runs in isolated DB session to avoid blocking main request thread.
+
+    `tz_offset_minutes` is the offset the upload came from: it places the
+    "already eaten today" balance in the user's own day, so the numbers the
+    nutritionist is given match the day view they are compared against.
 
     Never raises: every failure path ends with the meal moved to FAILED so the
     frontend polling loop stops instead of spinning forever.
@@ -673,15 +782,16 @@ async def process_meal_photo_task(meal_id: int) -> None:
 
             meal.status = MealStatus.PROCESSING
             meal.error_message = None
-            meal.updated_at = datetime.utcnow()
+            meal.updated_at = utcnow()
             await db.commit()
             logger.info(f"[AI Task] Meal {meal_id} marked as PROCESSING")
 
             user_targets = await get_user_macro_targets(db, meal.user_id)
 
-            today = meal.eaten_at.date() if meal.eaten_at else datetime.utcnow().date()
-            start_of_day = datetime.combine(today, datetime.min.time())
-            end_of_day = datetime.combine(today, datetime.max.time())
+            # The day this meal belongs to, in the user's local time: a UTC date
+            # would pair a late-night meal with yesterday's totals.
+            today = local_day_of(meal.eaten_at, tz_offset_minutes) if meal.eaten_at else utcnow().date()
+            start_of_day, end_of_day = day_bounds_utc(today, today, tz_offset_minutes)
             balance_result = await db.execute(
                 select(
                     func.coalesce(func.sum(Meal.calories), 0).label("calories"),
@@ -764,7 +874,7 @@ async def process_meal_photo_task(meal_id: int) -> None:
             meal.ai_insight = analysis.get("ai_verdict")
             meal.status = MealStatus.COMPLETED
             meal.error_message = None
-            meal.updated_at = datetime.utcnow()
+            meal.updated_at = utcnow()
 
             await db.commit()
             elapsed = time.perf_counter() - started_at

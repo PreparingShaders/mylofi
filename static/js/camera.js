@@ -2,10 +2,26 @@ console.log("[DEBUG] Loaded camera.js");
 import { API } from './api.js';
 import { DB } from './db.js';
 import { SyncEngine } from './sync.js';
-import { Utils } from './utils.js';
+import { Utils, clientTimezone } from './utils.js';
 
 export const Camera = {
     app: null,
+
+    /**
+     * Time fields that travel with a photo upload.
+     *
+     * `eaten_at` is the instant the photo was taken, in UTC, so the server stores
+     * the true moment no matter where it runs; the offset and the zone tell it
+     * which local day the meal belongs to, which is the part an instant alone
+     * cannot say.
+     */
+    mealTimeFields() {
+        const { offsetMinutes, timeZone } = clientTimezone();
+        const fields = { eaten_at: new Date().toISOString() };
+        if (offsetMinutes !== null) fields.tz_offset = String(offsetMinutes);
+        if (timeZone) fields.tz = timeZone;
+        return fields;
+    },
 
     async handleSyncedMeal(item, response, { failed = false } = {}) {
         if (failed || !item || item.store !== 'meals') return;
@@ -97,6 +113,9 @@ export const Camera = {
                     const formData = new FormData();
                     formData.append('file', compressedBlob, 'photo.webp');
                     if (notes) formData.append('notes', notes);
+                    for (const [key, value] of Object.entries(this.mealTimeFields())) {
+                        formData.append(key, value);
+                    }
 
                     await API.post('/nutrition/photos', formData, token, true);
 
@@ -142,6 +161,7 @@ export const Camera = {
     async queueOfflineMeal(blob, notes, mealType = null) {
         await DB.init();
         const tempId = DB.generateTempId();
+        const timeFields = this.mealTimeFields();
         const meal = {
             id: tempId,
             blob: blob,
@@ -151,7 +171,7 @@ export const Camera = {
             calories: null,
             status: 'pending',
             sync_status: DB.SYNC_STATUS.PENDING,
-            eaten_at: new Date().toISOString(),
+            eaten_at: timeFields.eaten_at,
             updated_at: Date.now(),
         };
 
@@ -163,6 +183,7 @@ export const Camera = {
                 blob: blob,
                 filename: 'photo.webp',
                 fields: {
+                    ...timeFields,
                     ...(notes ? { notes } : {}),
                     ...(mealType ? { meal_type: mealType } : {}),
                 },

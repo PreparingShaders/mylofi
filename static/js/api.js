@@ -78,6 +78,18 @@ class APIClient {
             const error = new Error(message);
             error.status = response.status;
             error.data = data;
+            
+            // Detailed error logging for debugging mobile Safari issues
+            console.error('[API] Request failed:', {
+                status: response.status,
+                statusText: response.statusText,
+                url: response.url,
+                method: response.method || 'unknown',
+                responseData: data,
+                errorMessage: message,
+                timestamp: new Date().toISOString()
+            });
+            
             throw error;
         }
         
@@ -297,8 +309,24 @@ class APIClient {
             throw normalized;
         }
         
+        // Try token refresh for 401 responses
         if (response.status === 401 && accessToken && window.App) {
             return this.handleUnauthorized(method, endpoint, data, accessToken, isFormData);
+        }
+
+        // Global 403 handling - clear auth and redirect to login (no refresh possible for 403)
+        if (response.status === 403 && accessToken && window.App) {
+            console.error('[API] Forbidden response, clearing auth state:', {
+                status: response.status,
+                url: response.url,
+                method: method
+            });
+            window.App.clearTokens();
+            window.App.showScreen('landing');
+            window.App.renderLanding();
+            const authError = new Error('Доступ запрещён. Пожалуйста, войдите снова.');
+            authError.status = response.status;
+            throw authError;
         }
 
         if (method !== 'GET') {
@@ -336,8 +364,13 @@ class APIClient {
             // Network errors during refresh must not wipe tokens — the user is still
             // authenticated; they simply can't reach the server right now.
             if (!error?.isNetworkError) {
+                console.error('[API] Token refresh failed, clearing auth state:', {
+                    error: error?.message,
+                    status: error?.status
+                });
                 window.App.clearTokens();
                 window.App.showScreen('landing');
+                window.App.renderLanding();
             }
             throw error;
         } finally {
@@ -349,6 +382,7 @@ class APIClient {
     post(endpoint, data, accessToken = null, isFormData = false) { return this.request('POST', endpoint, data, accessToken, isFormData); }
     patch(endpoint, data, accessToken = null) { return this.request('PATCH', endpoint, data, accessToken); }
     delete(endpoint, accessToken = null) { return this.request('DELETE', endpoint, null, accessToken); }
+    deleteMeal(mealId, accessToken = null) { return this.request('DELETE', `/nutrition/meals/${mealId}`, null, accessToken); }
     
     createWebSocket(token) {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';

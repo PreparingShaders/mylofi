@@ -1,6 +1,9 @@
-const SHELL_CACHE = 'mylofi-shell-v13';
-const RUNTIME_CACHE = 'mylofi-runtime-v13';
-const CATALOG_CACHE = 'mylofi-catalog-v13';
+// Bumped whenever a shell asset changes: /static is served cache-first with
+// ignoreSearch, so a `?v=` query on the URL does not bust it - only a new cache
+// name does.
+const SHELL_CACHE = 'mylofi-shell-v14';
+const RUNTIME_CACHE = 'mylofi-runtime-v14';
+const CATALOG_CACHE = 'mylofi-catalog-v14';
 const CURRENT_CACHES = [SHELL_CACHE, RUNTIME_CACHE, CATALOG_CACHE];
 
 const OFFLINE_FALLBACK_HTML = '<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>mylofi — офлайн</title><link rel="stylesheet" href="/static/css/styles.css"></head><body><div class="min-h-screen flex items-center justify-center p-4"><div class="text-center"><h1 class="text-2xl font-bold mb-2">Офлайн</h1><p class="text-surface-500">Проверьте подключение к интернету. Данные, сохранённые локально, будут синхронизированы при возвращении связи.</p></div></div></body></html>';

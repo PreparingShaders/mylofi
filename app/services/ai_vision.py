@@ -50,6 +50,22 @@ def _sanitize_user_notes(notes: Optional[str]) -> str:
     return cleaned
 
 
+def _fmt_amount(value: Any) -> str:
+    """Format a target/consumed figure for the prompt.
+
+    None (the profile has no such number yet) becomes "?", but a real zero is
+    printed as 0: `or '?'` used to swallow it and the model read "0 ккал" as
+    missing context.
+    """
+    if value is None:
+        return "?"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "?"
+    return f"{number:g}"
+
+
 def build_prompt(
     user_goal: Optional[str] = None,
     targets: Optional[Dict[str, Any]] = None,
@@ -77,12 +93,14 @@ def build_prompt(
 
     target_line = (
         f"Цель пользователя: {goal_text}. "
-        f"Дневные нормы: {t_cal or '?'} ккал, белки {t_pro or '?'} г, жиры {t_fat or '?'} г, углеводы {t_carb or '?'} г. "
+        f"Дневные нормы: {_fmt_amount(t_cal)} ккал, белки {_fmt_amount(t_pro)} г, "
+        f"жиры {_fmt_amount(t_fat)} г, углеводы {_fmt_amount(t_carb)} г. "
         if t_cal or t_pro or t_fat or t_carb
-        else ""
+        else "Дневные нормы пользователя не заданы (знак '?' означает, что нормы нет): оценивай блюдо без сравнения с нормами. "
     )
     balance_line = (
-        f"Уже потреблено сегодня до этого приёма пищи: {b_cal or '?'} ккал, белки {b_pro or '?'} г, жиры {b_fat or '?'} г, углеводы {b_carb or '?'} г. "
+        f"Уже потреблено сегодня до этого приёма пищи: {_fmt_amount(b_cal)} ккал, белки {_fmt_amount(b_pro)} г, "
+        f"жиры {_fmt_amount(b_fat)} г, углеводы {_fmt_amount(b_carb)} г. "
         if b_cal is not None or b_pro is not None or b_fat is not None or b_carb is not None
         else ""
     )
@@ -118,6 +136,12 @@ def build_prompt(
   "ai_verdict": "Краткая оценка нутрициолога (1-2 предложения) с учётом цели и текущего баланса пользователя."
 }}
 Все числовые значения — float. quality_score от 1.0 до 10.0. quality_metrics — массив из 3-5 объектов с полями label (строка) и score (float 0-10). ai_verdict — развёрнутая оценка (2-4 предложения) с учётом контекста пользователя и его комментария, без воды. Никаких пояснений, только JSON.
+
+Правила оценки баланса (обязательно):
+- Сначала посчитай итог дня: уже потреблённое (см. контекст) + твоя оценка этого блюда, и сравни с дневными нормами.
+- Если итог по любому показателю БОЛЬШЕ нормы - это превышение. Назови его прямо и конкретно: "превышение на 240 ккал" / "белок больше нормы на 18 г". Обязательно используй слова "превышено" или "выше нормы".
+- Запрещено писать про превышение как про почти норму: "близко к норме", "чуть выше панели", "в пределах нормы", "совсем немного превышает" - такие формулировки противоречат цифрам и обманывают пользователя.
+- Если всё в пределах нормы - скажи это прямо и назови остаток. Если норм нет ('?') - оценивай блюдо само по себе, без сравнения.
 
 Контекст:
 {target_line}{balance_line}{notes_line}"""

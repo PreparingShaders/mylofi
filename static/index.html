@@ -72,7 +72,7 @@
     
     <!-- PWA Manifest -->
     <link rel="manifest" href="/static/manifest.json">
-    <link rel="stylesheet" href="/static/css/styles.css">
+    <link rel="stylesheet" href="/static/css/styles.css?v=1.0.1">
     <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
     <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png">
     <link rel="icon" type="image/png" sizes="512x512" href="/static/icons/icon-512.png">
@@ -124,13 +124,9 @@
             color: #fafafa;
         }
         
-        /* Ambient graphite ambience behind the glass layers */
-        .dark body {
-            background-image:
-                radial-gradient(60rem 40rem at 12% -8%, rgba(63, 63, 70, 0.30), transparent 60%),
-                radial-gradient(48rem 34rem at 92% 4%, rgba(82, 82, 91, 0.20), transparent 62%),
-                radial-gradient(52rem 40rem at 50% 108%, rgba(39, 39, 42, 0.55), transparent 60%);
-        }
+        /* Ambient graphite ambience moved to styles.css: it now lives on
+           #page-content, the scroll container that covers the viewport, so the
+           themed background and the glow are painted by the same layer. */
         
         /* Theme transition (suppressed during boot) */
         html.theme-anim,
@@ -376,6 +372,6 @@
     </script>
 
     <!-- Main App JS -->
-    <script type="module" src="/static/js/app.js"></script>
+    <script type="module" src="/static/js/app.js?v=1.0.1"></script>
 </body>
 </html>

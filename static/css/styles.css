@@ -1,4 +1,48 @@
 /* Custom styles */
+
+/* ============ App shell background (theme) ============ */
+/* The anti-flash bootstrap in index.html paints <html> before the first frame,
+   but everything below it used to be transparent and simply showed whatever
+   <body> declared through Tailwind utilities. That left the scroll container
+   (#page-content) and its screen (#screen-main) unpainted: the strip behind the
+   fixed bottom nav and the overscroll area fell back to the raw canvas, which
+   is where a light background leaked into the dark theme. One block paints the
+   whole chain, so light and dark can no longer disagree between layers. */
+html,
+body,
+#app,
+#screens,
+.screen,
+#screen-main,
+#page-content {
+    background-color: #fafafa;
+}
+html.dark,
+.dark body,
+.dark #app,
+.dark #screens,
+.dark .screen,
+.dark #screen-main,
+.dark #page-content {
+    background-color: #09090b;
+}
+
+/* Ambient graphite ambience. It used to sit on <body>, behind every screen; it
+   belongs to the layers that actually cover the viewport now, so the glow is
+   painted by the same elements as the themed background above and can never
+   show through a transparent one. #page-content is listed separately from
+   .screen because it is nested inside #screen-main and would otherwise cover
+   the glow with its own opaque background, and #app is there for the safe-area
+   strip above the screens. */
+.dark #app,
+.dark .screen,
+.dark #page-content {
+    background-image:
+        radial-gradient(60rem 40rem at 12% -8%, rgba(63, 63, 70, 0.30), transparent 60%),
+        radial-gradient(48rem 34rem at 92% 4%, rgba(82, 82, 91, 0.20), transparent 62%),
+        radial-gradient(52rem 40rem at 50% 108%, rgba(39, 39, 42, 0.55), transparent 60%);
+}
+
 .safe-area-inset-bottom {
     padding-bottom: env(safe-area-inset-bottom);
 }
@@ -215,48 +259,58 @@
 }
 
 /* ============ Monolithic meal card ============ */
-/* One card carries the whole meal - photo, macros, composition, AI verdict and
-   actions - so it reads as a single unit and screenshots as one. The layout is
-   a column whose hero grows into whatever height is left over, so an absent
-   section closes the gap instead of leaving a hole, and the action row always
-   sits on the bottom edge. */
-.meal-card-slot {
-    /* Size container for the card below: the sections query the height the
-       carousel actually granted, which is the only way to know on a short
-       screen. It sits on the slot, not on the card, because an element cannot
-       query its own container. */
-    container-type: size;
-    container-name: mealcard;
-}
+/* One card carries the whole meal - photo, macros, composition and AI verdict -
+   so it reads as a single unit and screenshots as one. The layout is a strict
+   top-to-bottom column: every block sits in the flow at a 12px gap and nothing
+   but the photo overlay is taken out of it, so the composition and the verdict
+   can only ever stack, never overlap. The photo is the only elastic section and
+   it is sized by its own aspect ratio, so the card takes whatever height the
+   text underneath it needs and the page scrolls past it. Edit and delete sit on
+   the photo rather than in a row of their own, which keeps the bottom of the
+   card for the verdict. */
 .meal-card {
-    --meal-hero-h: 148px;
-    --meal-rows-h: 58px;
-    --meal-tags-h: 26px;
+    /* Photo floor, not photo size: the hero is sized by its aspect ratio, so
+       this only reserves room for it. The floor is kept low on purpose - a
+       high floor let the composition and the verdict be cut off at the bottom
+       edge of a card that was merely full, which is what read as the verdict
+       overlapping the composition. */
+    --meal-hero-h: 96px;
+    /* Four composition rows, which is exactly what the breakdown can print
+       (three ingredients plus the "Ещё N" overflow line) at its row height of
+       ~19.5px. A cap that landed mid-row sliced the last line in half, which
+       read as the composition colliding with the verdict below it. */
+    --meal-rows-h: 78px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    justify-content: flex-start;
+    gap: 12px;
     width: 100%;
-    height: 100%;
-    padding: 10px;
+    /* Natural height: the card grows with the AI verdict instead of being cut
+       at a fixed box, so a long review is printed whole. */
+    height: auto;
+    padding: 16px;
     border-radius: 1rem;
     background: #18181b;
     border: 1px solid rgba(255, 255, 255, 0.08);
-    overflow: hidden;
+    overflow: visible;
     color: #fafafa;
 }
 .meal-card--alert {
     border-color: rgba(239, 68, 68, 0.45);
 }
 
-/* Photo hero: the eaten-at chip and the AI score sit on its top row, the dish
-   name and portion on its bottom overlay, and the plate keeps the space between.
-   The hero is the only section that flexes, so a taller card shows a bigger
-   photo while a shorter one falls back to its minimum height. */
+/* Photo hero: the eaten-at time and the edit/delete buttons sit on its top row,
+   the dish name and portion on its bottom overlay, and the plate keeps the space
+   between. The photo no longer absorbs the card's leftover height - the card has
+   none to spare, because the verdict below it prints in full - so it is sized by
+   its own aspect ratio from the card's width. That keeps the photo a real
+   photo-shaped block on every screen, from a 320px phone to a desktop card,
+   without the fixed pixel height it used to need to stay in a fixed card box. */
 .meal-card-hero {
     position: relative;
-    flex: 1 0 auto;
+    flex: 0 0 auto;
+    aspect-ratio: 3 / 2;
     min-height: var(--meal-hero-h);
-    max-height: 210px;
     overflow: hidden;
     border-radius: 0.75rem;
     background: #27272a;
@@ -284,19 +338,53 @@
     justify-content: space-between;
     gap: 6px;
 }
+/* Edit / delete on the photo: two icon-only glass circles in the hero's top
+   right corner. They carry their name in aria-label/title, so the pair costs
+   about 60px of overlay instead of a full-width row under the verdict, and
+   they stay over the scrim rather than on the card background. */
+.meal-card-hero__actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+.meal-card-hero__action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 9999px;
+    color: rgba(255, 255, 255, 0.9);
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+.meal-card-hero__action:hover {
+    background: rgba(0, 0, 0, 0.65);
+    color: #fafafa;
+}
+.meal-card-hero__action--danger:hover {
+    background: rgba(239, 68, 68, 0.6);
+    color: #fafafa;
+}
 .meal-card-hero__bottom {
     position: absolute;
     inset: auto 8px 7px 8px;
 }
+/* Dish name: two lines of the overlay are the budget, so a long dish name wraps
+   instead of being cut with an ellipsis. overflow-wrap matters because Russian
+   dish names carry single long words. */
 .meal-card-hero__name {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
     font-size: 15px;
     font-weight: 700;
     line-height: 1.2;
     color: #fafafa;
     text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: break-word;
 }
 .meal-card-hero__note {
     margin-top: 1px;
@@ -385,6 +473,12 @@
     max-height: var(--meal-rows-h);
     overflow: hidden;
 }
+/* Expanded composition: the row cap exists so a full card keeps its height, but
+   it must not clip the very items the user asked to see, so the cap is dropped
+   and the card grows instead. */
+.meal-card-rows[data-expanded="true"] {
+    max-height: none;
+}
 .meal-card-row {
     display: flex;
     align-items: baseline;
@@ -417,9 +511,8 @@
 .meal-card-tags {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px;
-    max-height: var(--meal-tags-h);
-    overflow: hidden;
+    align-items: center;
+    gap: 6px;
 }
 .meal-card-tag {
     max-width: 100%;
@@ -438,6 +531,41 @@
 .meal-card-tag--more {
     color: #a1a1aa;
     background: transparent;
+}
+/* Composition overflow. The tail of a long list is rendered but hidden until the
+   `+N` control is pressed; the list attribute is the whole state, so the same
+   rules also pick which wording the control shows. */
+.meal-card-rows[data-expanded="false"] .meal-card-row--overflow,
+.meal-card-tags[data-expanded="false"] .meal-card-tag--overflow {
+    display: none;
+}
+.composition-label--expanded {
+    display: none;
+}
+[data-composition][data-expanded="true"] .composition-label--collapsed {
+    display: none;
+}
+[data-composition][data-expanded="true"] .composition-label--expanded {
+    display: inline;
+}
+/* The controls are buttons, so the UA button styling is undone: each one keeps
+   the geometry of the row or the pill it stands in for (font-size and border
+   already come from those classes, which outrank the UA type-based rules). */
+.meal-card-row--toggle,
+.meal-card-tag--toggle {
+    -webkit-appearance: none;
+    appearance: none;
+    background: none;
+    color: inherit;
+    font-family: inherit;
+    cursor: pointer;
+    /* No double-tap delay and no accidental zoom on a tap this small. */
+    touch-action: manipulation;
+}
+.meal-card-row--toggle {
+    width: 100%;
+    border: 0;
+    text-align: left;
 }
 /* User note: printed in full. The card is height-capped, so the note block is
    allowed to shrink and scroll rather than cutting the sentence in half. */
@@ -471,11 +599,14 @@
     margin-top: 1px;
     color: #a3e635;
 }
-/* AI verdict text: no clamp, the nutritionist's verdict is printed whole. */
+/* AI verdict text: printed whole. There is no line clamp and no height budget:
+   the card grows with the review and the page scrolls, so a two-line answer and
+   a ten-line one both read in full instead of the long one ending in an
+   ellipsis at the card edge. */
 .meal-card-ai__text {
     min-width: 0;
-    font-size: 11px;
-    line-height: 1.35;
+    font-size: 12px;
+    line-height: 1.45;
     color: rgba(255, 255, 255, 0.85);
     overflow-wrap: break-word;
 }
@@ -515,10 +646,12 @@
 .meal-card-metric--low { color: #fb7185; background: rgba(251, 113, 133, 0.12); }
 .meal-card-metric--more { color: #a1a1aa; background: rgba(255, 255, 255, 0.06); }
 
-/* Tall hero for spacious meal card */
+/* Tall hero for spacious meal card. It shares the card's responsive minimum
+   and buys its extra height from its own aspect ratio, so a taller photo never
+   has to come out of the verdict's space. */
 .meal-card-hero--tall {
-    min-height: 220px;
-    max-height: 240px;
+    min-height: var(--meal-hero-h);
+    aspect-ratio: 4 / 3;
 }
 .meal-card-scrim--heavy {
     background:
@@ -567,20 +700,18 @@
     opacity: 0.5;
 }
 
-/* Nutritionist verdict box. It is the one section allowed to give way: it takes
-   the space the hero and the macro row leave, and only when even that is not
-   enough does its body start scrolling, so a long verdict is never clipped. */
+/* Nutritionist verdict box. It takes its natural height and never shrinks, so
+   the whole review is printed: the card grows to fit it and the page scrolls,
+   and nothing in the card is trimmed to make room for the text. */
 .meal-card-verdict {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    flex: 0 1 auto;
-    min-height: 0;
-    padding: 8px;
+    gap: 8px;
+    flex: 0 0 auto;
+    padding: 10px;
     border-radius: 0.75rem;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    overflow: hidden;
 }
 .meal-card-verdict__header {
     display: flex;
@@ -596,54 +727,21 @@
     text-transform: uppercase;
     color: #71717a;
 }
+/* Verdict body: the text takes whatever height it needs and the score pills
+   wrap inside the same box. Nothing here scrolls or clamps - the body grows to
+   the length of the review, which is what keeps the block whole instead of cut
+   at the bottom edge of the card. */
 .meal-card-verdict__body {
     display: flex;
     flex-direction: column;
     gap: 6px;
     min-width: 0;
-    min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior: contain;
 }
 .meal-card-verdict__body .meal-card-ai__text {
-    font-size: 12px;
-    line-height: 1.4;
     color: rgba(255, 255, 255, 0.88);
 }
 .meal-card-verdict__body .meal-card-metrics {
     flex-wrap: wrap;
-}
-
-/* Edit / delete row, pinned to the bottom of the card. */
-.meal-card-actions {
-    display: flex;
-    gap: 6px;
-    margin-top: auto;
-    padding-top: 2px;
-    flex-shrink: 0;
-}
-.meal-card-action {
-    flex: 1;
-    padding: 6px 0;
-    border-radius: 0.625rem;
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 1.2;
-    text-align: center;
-    color: rgba(255, 255, 255, 0.9);
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    transition: background-color 0.15s ease;
-}
-.meal-card-action:hover {
-    background: rgba(255, 255, 255, 0.14);
-}
-.meal-card-action--danger {
-    color: #f87171;
-    background: rgba(239, 68, 68, 0.12);
-}
-.meal-card-action--danger:hover {
-    background: rgba(239, 68, 68, 0.2);
 }
 
 /* Shimmer placeholder for a meal that is still being analysed */
@@ -674,77 +772,27 @@
     }
 }
 
-/* The card sections are sized from the height the carousel actually granted.
-   Four steps, in the order the card can afford to give things up: the photo
-   shrinks first, then the composition drops to a single line, then the padding
-   tightens and the AI verdict gives way. The action row is never touched, so it
-   survives every step. */
-@container mealcard (max-height: 400px) {
-    .meal-card {
-        --meal-hero-h: 124px;
-        --meal-rows-h: 39px;
-    }
-}
-@container mealcard (max-height: 340px) {
-    .meal-card {
-        --meal-hero-h: 104px;
-        --meal-rows-h: 19px;
-        gap: 6px;
-        padding: 8px;
-    }
-    .meal-card-ai,
-    .meal-card-verdict {
-        display: none;
-    }
-}
-@container mealcard (max-height: 280px) {
-    .meal-card {
-        --meal-hero-h: 84px;
-    }
-    .meal-card-section__label {
-        display: none;
-    }
-}
-@container mealcard (max-height: 230px) {
-    .meal-card {
-        --meal-hero-h: 72px;
-        --meal-rows-h: 16px;
-        --meal-tags-h: 16px;
-        gap: 5px;
-        padding: 7px;
-    }
-    .meal-card-pill {
-        padding: 3px 2px;
-    }
-}
-/* A card this short only appears on a phone too small for the nutrition
-   dashboard; the composition goes rather than clipping the action row. */
-@container mealcard (max-height: 200px) {
-    .meal-card {
-        --meal-hero-h: 64px;
-        gap: 4px;
-        padding: 6px;
-    }
-    .meal-card-section {
-        display: none;
-    }
-    .meal-card-pill,
-    .meal-card-action {
-        padding: 2px;
-    }
-}
+/* No height-based card steps: the card is not a fixed box any more, so there is
+   no granted height to squeeze sections into. What used to live here - a ladder
+   of container queries that cut the verdict's line budget, trimmed composition
+   rows, tightened the padding and finally hid the verdict box outright on a
+   short screen - had the opposite effect to the one it was written for: it
+   dropped AI text rather than let the page scroll. Sizing is now decided by the
+   viewport instead, so the review prints whole at any height. */
 
-/* Card sizing: the carousel takes whatever height the header leaves over, so
-   the cards claim that space (taller than the header-only budget allowed) while
-   max-height keeps them from being cut off on short screens. The action tile and
-   the empty-state tile share the meal card footprint so every carousel item is a
-   full-size snap target. */
+/* Card sizing: a slot is as tall as the card in it. Nothing clamps it any more -
+   the card grows with its AI verdict and the page scrolls, which is what lets the
+   whole review print. The action tile and the empty-state tile have no verdict
+   to grow for, so they keep a floor that makes them read as full snap targets
+   next to a meal card instead of short stubs. */
 .meal-card-slot,
 .meal-action-slot,
 .meal-empty-slot {
     width: min(85vw, 340px);
-    height: clamp(280px, 52dvh, 470px);
-    max-height: 100%;
+}
+.meal-action-slot,
+.meal-empty-slot {
+    min-height: 360px;
 }
 @media (min-width: 640px) {
     .meal-card-slot,
@@ -754,12 +802,15 @@
     }
 }
 
-/* Meal carousel: grows into whatever height the header leaves over and is
-   capped by max-height, so the nutrition dashboard above it can grow without
-   pushing the cards out of the viewport. */
+/* Meal carousel: a horizontal strip that is as tall as its tallest card. The cap
+   that used to sit here (max-height: clamp(468px, 75dvh, 663px)) silently became
+   the shorter of the two heights and cut the verdict off the bottom of every
+   card, so it is gone: the strip takes the height the cards ask for, tiles are
+   aligned to the top edge so cards of different heights line up, and the page
+   scrolls past the whole strip. */
 .meal-carousel {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 1rem;
     overflow-x: auto;
     scroll-snap-type: x mandatory;
@@ -769,9 +820,7 @@
     padding-left: 1rem;
     padding-right: 1rem;
     padding-bottom: 0.5rem;
-    flex: 1 1 auto;
-    min-height: 0;
-    max-height: clamp(360px, 58dvh, 510px);
+    flex: 0 0 auto;
 }
 .meal-carousel::-webkit-scrollbar {
     display: none;
@@ -1004,22 +1053,22 @@ input, select, textarea:focus {
     transition: width 0.5s ease-out;
 }
 
-/* ============ Single Viewport Layout (iPhone 13 mini) ============ */
+/* ============ Nutrition page layout (iPhone 13 mini and up) ============ */
+/* The nutrition page is a scrolling document, not a fixed one-screen shell: the
+   dashboard plus the meal cards are taller than any phone, and a card that has to
+   fit in one screen is a card whose AI verdict gets cut. #page-content is the
+   scroll container, so this block only has to let its own height grow - it no
+   longer pins itself to the viewport height nor hides what does not fit. */
 #page-content {
     height: 100%;
     min-height: 100%;
     max-height: 100%;
 }
 .single-viewport {
-    height: 100vh;
-    height: 100dvh;
-    min-height: 100vh;
-    min-height: 100dvh;
-    max-height: 100vh;
-    max-height: 100dvh;
+    min-height: 100%;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow: visible;
 }
 .single-viewport .viewport-content {
     flex: 1;

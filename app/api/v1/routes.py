@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form, WebSocket, Header, BackgroundTasks
@@ -69,6 +70,9 @@ from app.services.nutrition import (
     get_daily_nutrition_summary,
     get_period_nutrition_summary,
     process_meal_photo_task,
+    normalize_tz_offset,
+    resolve_eaten_at,
+    utcnow,
 )
 from app.services.workout import (
     create_workout_template,
@@ -162,6 +166,9 @@ async def get_current_user(
 
 # Need to import select for the dependency
 from sqlalchemy import select
+
+
+logger = logging.getLogger(__name__)
 
 
 # ===== Auth Routes =====
@@ -392,11 +399,19 @@ async def upload_meal_photo(
     file: UploadFile = File(...),
     eaten_at: Optional[str] = Form(None),
     notes: Optional[str] = Form(None),
+    tz_offset: Optional[int] = Form(None),
+    tz: Optional[str] = Form(None),
     background_tasks: BackgroundTasks = BackgroundTasks(),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Upload a meal photo for analysis"""
+    """Upload a meal photo for analysis.
+
+    `eaten_at` is the instant the photo was taken and `tz_offset` the minutes
+    behind UTC of the device that took it. The instant alone says when the meal
+    happened; the offset says which local day it belongs to, which is what the
+    day view and the "already eaten today" balance are built from.
+    """
     # Validate file type
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(
@@ -421,14 +436,15 @@ async def upload_meal_photo(
             detail=f"File too large. Max size: {settings.MAX_FILE_SIZE_MB}MB",
         )
 
-    # Parse eaten_at or use now
-    if eaten_at:
-        try:
-            parsed_eaten_at = datetime.fromisoformat(eaten_at.replace("Z", "+00:00"))
-        except ValueError:
-            parsed_eaten_at = datetime.utcnow()
-    else:
-        parsed_eaten_at = datetime.utcnow()
+    # The client's offset decides how a naive timestamp is read and which local
+    # day the meal is filed under; a client that sends neither keeps UTC.
+    tz_offset_minutes = normalize_tz_offset(tz_offset)
+    parsed_eaten_at = resolve_eaten_at(eaten_at, tz_offset_minutes)
+    if tz:
+        logger.info(
+            f"[Photos] Meal photo from {tz} (offset {tz_offset_minutes}m), "
+            f"stored at {parsed_eaten_at.isoformat()}Z"
+        )
 
     # Save photo
     photo_path, thumbnail_path = await save_uploaded_photo(file_content, file.filename or "photo.jpg")
@@ -441,7 +457,7 @@ async def upload_meal_photo(
     await db.commit()
 
     # Trigger async vision API processing
-    background_tasks.add_task(process_meal_photo_task, meal.id)
+    background_tasks.add_task(process_meal_photo_task, meal.id, tz_offset_minutes)
 
     return PhotoUploadResponse(
         meal_id=meal.id,
@@ -450,81 +466,116 @@ async def upload_meal_photo(
     )
 
 
+TZ_OFFSET_DESCRIPTION = (
+    "Minutes the client is behind UTC (Date.getTimezoneOffset(), so UTC+3 is -180). "
+    "Day bounds and day buckets are resolved in the client's local time; omitted means UTC."
+)
+
+
 @router.get("/nutrition/logs", response_model=MealListResponse)
 async def get_nutrition_logs(
     date: Optional[str] = Query(None, description="Date in YYYY-MM-DD format"),
+    tz_offset: Optional[int] = Query(None, description=TZ_OFFSET_DESCRIPTION),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Get meals for a specific date"""
-    return await get_meals_for_date(db, current_user.id, _parse_target_date(date))
+    offset = normalize_tz_offset(tz_offset)
+    return await get_meals_for_date(db, current_user.id, _parse_target_date(date, offset), offset)
 
 
 @router.get("/nutrition/meals", response_model=MealListResponse)
 async def get_nutrition_meals_range(
     start_date: Optional[str] = Query(None, description="Range start, YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="Range end, YYYY-MM-DD"),
+    tz_offset: Optional[int] = Query(None, description=TZ_OFFSET_DESCRIPTION),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Get meals with their totals for an arbitrary inclusive date range"""
-    start = _parse_target_date(start_date)
-    end = _parse_target_date(end_date)
+    offset = normalize_tz_offset(tz_offset)
+    start = _parse_target_date(start_date, offset)
+    end = _parse_target_date(end_date, offset)
     if end < start:
         start, end = end, start
-    return await get_meals_for_range(db, current_user.id, start, end)
+    return await get_meals_for_range(db, current_user.id, start, end, offset)
 
 
 @router.get("/nutrition/summary")
 async def get_nutrition_summary(
     date: Optional[str] = Query(None, description="Date in YYYY-MM-DD format"),
+    tz_offset: Optional[int] = Query(None, description=TZ_OFFSET_DESCRIPTION),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Get aggregated nutrition summary for a date"""
-    return await get_daily_nutrition_summary(db, current_user.id, _parse_target_date(date))
+    offset = normalize_tz_offset(tz_offset)
+    return await get_daily_nutrition_summary(db, current_user.id, _parse_target_date(date, offset), offset)
 
 
-def _parse_target_date(date: Optional[str]) -> date:
-    """Parse an optional YYYY-MM-DD query param, falling back to today."""
+def _parse_target_date(date: Optional[str], tz_offset_minutes: int = 0) -> date:
+    """Parse an optional YYYY-MM-DD query param, falling back to today.
+
+    The fallback is today *on the client's clock*: the device is the only thing
+    that knows where its own midnight is, so a request without a date returns
+    the user's day rather than the server's.
+    """
     if date:
         try:
             return datetime.fromisoformat(date).date()
         except ValueError:
             pass
-    return datetime.utcnow().date()
+    return (utcnow() - timedelta(minutes=tz_offset_minutes)).date()
 
 
 @router.get("/nutrition/week")
 async def get_nutrition_week(
     date: Optional[str] = Query(None, description="Any date within the week, YYYY-MM-DD"),
+    tz_offset: Optional[int] = Query(None, description=TZ_OFFSET_DESCRIPTION),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Get weekly nutrition totals and per-day averages (week starts on Monday)"""
-    return await get_period_nutrition_summary(db, current_user.id, _parse_target_date(date), "week")
+    offset = normalize_tz_offset(tz_offset)
+    return await get_period_nutrition_summary(
+        db,
+        current_user.id,
+        _parse_target_date(date, offset),
+        "week",
+        tz_offset_minutes=offset,
+    )
 
 
 @router.get("/nutrition/month")
 async def get_nutrition_month(
     date: Optional[str] = Query(None, description="Any date within the month, YYYY-MM-DD"),
+    tz_offset: Optional[int] = Query(None, description=TZ_OFFSET_DESCRIPTION),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Get monthly nutrition totals and per-day averages"""
-    return await get_period_nutrition_summary(db, current_user.id, _parse_target_date(date), "month")
+    offset = normalize_tz_offset(tz_offset)
+    return await get_period_nutrition_summary(
+        db,
+        current_user.id,
+        _parse_target_date(date, offset),
+        "month",
+        tz_offset_minutes=offset,
+    )
 
 
 @router.get("/nutrition/range")
 async def get_nutrition_range(
     start_date: Optional[str] = Query(None, description="Range start, YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="Range end, YYYY-MM-DD"),
+    tz_offset: Optional[int] = Query(None, description=TZ_OFFSET_DESCRIPTION),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Get totals and per-day averages for an arbitrary inclusive date range"""
-    start = _parse_target_date(start_date)
-    end = _parse_target_date(end_date)
+    offset = normalize_tz_offset(tz_offset)
+    start = _parse_target_date(start_date, offset)
+    end = _parse_target_date(end_date, offset)
     if end < start:
         start, end = end, start
     return await get_period_nutrition_summary(
@@ -534,6 +585,7 @@ async def get_nutrition_range(
         "custom",
         start_date=start,
         end_date=end,
+        tz_offset_minutes=offset,
     )
 
 

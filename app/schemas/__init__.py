@@ -1,7 +1,29 @@
-from datetime import date, datetime
-from typing import Optional, List
-from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from datetime import date, datetime, timezone
+from typing import Annotated, Optional, List
+from pydantic import BaseModel, EmailStr, Field, ConfigDict, PlainSerializer
 from enum import Enum
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Read a naive datetime as the UTC instant it stands for.
+
+    Rows read back from the database arrive aware, but a datetime that never
+    left the process (a meal created by this very request) is naive and means
+    UTC, like every other naive stamp the app writes. Serialised without an
+    offset, `new Date()` in the browser reads it as *local* time and every card
+    shifts by the device's offset.
+    """
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+# JSON only: the Python object keeps whatever the row carried, and only the wire
+# format gains the offset the browser needs.
+UtcDateTime = Annotated[
+    datetime,
+    PlainSerializer(_as_utc, return_type=datetime, when_used="json"),
+]
 
 
 # Base schemas
@@ -209,6 +231,9 @@ class MealUpdate(BaseModel):
 class MealResponse(MealBase):
     model_config = ConfigDict(from_attributes=True)
 
+    # Overrides the inherited field so the wire format always carries an offset.
+    eaten_at: UtcDateTime
+
     id: int
     user_id: int
     photo_path: Optional[str] = None
@@ -227,14 +252,14 @@ class MealResponse(MealBase):
     quality_score: Optional[float] = None
     quality_reason: Optional[str] = None
     ai_insight: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDateTime
+    updated_at: UtcDateTime
 
 
 class MealListResponse(BaseModel):
     meals: List[MealResponse]
     total: int
-    date: datetime
+    date: UtcDateTime
 
     # Aggregated nutrition for the day
     total_calories: float = 0
