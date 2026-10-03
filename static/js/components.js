@@ -918,21 +918,18 @@ export const Components = {
                                 <div class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-500 font-semibold truncate">ПИТАНИЕ</div>
                                 <h3 id="period-sheet-title" class="text-base font-bold text-zinc-900 dark:text-zinc-100 truncate">${isRange ? 'Выбор периода' : 'Выбор даты'}</h3>
                             </div>
-                            <button type="button" data-action="close-period-sheet" aria-label="Закрыть" class="w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0 flex items-center justify-center hover:text-zinc-900 dark:hover:text-zinc-50 transition-colors">
+                            <button type="button" data-action="close-period-sheet" aria-label="Закрыть" class="sheet-close-btn w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0 flex items-center justify-center hover:text-zinc-900 dark:hover:text-zinc-50 transition-colors">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6l12 12M18 6L6 18"/></svg>
                             </button>
                         </div>
 
                         ${isRange
                             ? `
-                            <div class="grid grid-cols-2 gap-2.5">
-                                <div class="min-w-0">
-                                    <label for="period-start" class="${labelClass}">Дата начала (С)</label>
-                                    <input type="date" id="period-start" data-period-field="start" value="${escapeHtml(start)}" max="${escapeHtml(today)}" class="${fieldClass}">
-                                </div>
-                                <div class="min-w-0">
-                                    <label for="period-end" class="${labelClass}">Дата окончания (ПО)</label>
-                                    <input type="date" id="period-end" data-period-field="end" value="${escapeHtml(end)}" min="${escapeHtml(start)}" max="${escapeHtml(today)}" class="${fieldClass}">
+                            <div>
+                                <div class="${labelClass} mb-0">Период (даты)</div>
+                                <div class="period-sheet__date-grid grid grid-cols-2 gap-3 mt-1.5">
+                                    <input type="date" id="period-start" data-period-field="start" aria-label="Дата начала" value="${escapeHtml(start)}" max="${escapeHtml(today)}" class="${fieldClass} period-sheet__date-input text-center">
+                                    <input type="date" id="period-end" data-period-field="end" aria-label="Дата окончания" value="${escapeHtml(end)}" min="${escapeHtml(start)}" max="${escapeHtml(today)}" class="${fieldClass} period-sheet__date-input text-center">
                                 </div>
                             </div>
 
@@ -951,7 +948,7 @@ export const Components = {
                             : `
                             <div>
                                 <label for="period-single" class="${labelClass}">Дата</label>
-                                <input type="date" id="period-single" data-period-field="start" value="${escapeHtml(start)}" max="${escapeHtml(today)}" class="${fieldClass}">
+                                <input type="date" id="period-single" data-period-field="start" value="${escapeHtml(start)}" max="${escapeHtml(today)}" class="${fieldClass} period-sheet__date-input">
                             </div>
                             <p class="text-[11px] text-zinc-500">Отчёт за один день. Для диапазона переключитесь на «7 дней», «Месяц» или ⇆.</p>
                             `}
@@ -990,7 +987,7 @@ export const Components = {
                                 <div class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-500 font-semibold truncate">ДОБАВЛЕНИЕ ПИТАНИЯ</div>
                                 <h3 id="new-meal-title" class="text-base font-bold text-zinc-900 dark:text-zinc-100 truncate">Новый приём пищи</h3>
                             </div>
-                            <button type="button" data-action="close-new-meal-modal" aria-label="Закрыть" class="w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0 flex items-center justify-center hover:text-zinc-900 dark:hover:text-zinc-50 transition-colors">
+                            <button type="button" data-action="close-new-meal-modal" aria-label="Закрыть" class="sheet-close-btn w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0 flex items-center justify-center hover:text-zinc-900 dark:hover:text-zinc-50 transition-colors">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6l12 12M18 6L6 18"/></svg>
                             </button>
                         </div>

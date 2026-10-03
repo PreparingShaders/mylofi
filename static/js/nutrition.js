@@ -269,20 +269,22 @@ export const Nutrition = {
 
     /** One caption line under the ring: the covered range and how full it is. */
     periodCaption(periodData) {
-        if (this.selectedPeriod === 'day') return 'День';
+        if (this.selectedPeriod === 'day') return { range: 'День', coverage: '' };
 
         const days = Number(periodData?.days) || 0;
         const activeDays = Number(periodData?.active_days) || 0;
         const coverage = days ? `${activeDays}/${days} дн.` : (activeDays ? `${activeDays} дн.` : '');
 
         if (!periodData) {
-            return this.selectedPeriod === 'custom' ? 'Диапазон: нет данных' : 'Нет данных';
+            return this.selectedPeriod === 'custom'
+                ? { range: 'Диапазон: нет данных', coverage: '' }
+                : { range: 'Нет данных', coverage: '' };
         }
 
         const start = this.formatDayMonthISO(periodData.start_date);
         const end = this.formatDayMonthISO(periodData.end_date);
         const range = start === end ? start : `${start} — ${end}`;
-        return [range, coverage].filter(Boolean).join(' · ');
+        return { range, coverage };
     },
 
     renderDateNav(fromCache = false) {
@@ -330,13 +332,20 @@ export const Nutrition = {
 
     /**
      * One dashboard slide for the selected period: the Mercedes ring plus a
-     * single caption line naming the window it covers. The caption keeps a
-     * fixed height so the card never jumps while the period is switched.
+     * caption under it naming the window the ring covers and how many of its days
+     * carry meals. The caption box sizes itself from the two lines (see
+     * .nutrition-ring__caption), so each line keeps its own line-height instead of
+     * sharing one fixed line box that let them overlap.
      */
     renderNutritionSlide(summary, targets, qualityScore, caption) {
+        const range = caption?.range || '';
+        const coverage = caption?.coverage || '';
         return `
             ${Components.mercedesComboRing(summary, targets, qualityScore)}
-            <p class="mt-0.5 h-3.5 text-[10px] leading-3.5 text-center text-surface-400 dark:text-surface-500 truncate">${caption}</p>
+            <div class="nutrition-ring__caption text-center text-surface-400 dark:text-surface-500">
+                ${range ? `<div class="nutrition-ring__caption-range">${range}</div>` : ''}
+                ${coverage ? `<div class="nutrition-ring__caption-coverage">${coverage}</div>` : ''}
+            </div>
         `;
     },
 
@@ -459,8 +468,17 @@ export const Nutrition = {
     bindPeriodSheetEvents(state) {
         const { modalEl, today, isRange } = state;
 
-        modalEl.querySelector('.drum-sheet-backdrop')?.addEventListener('click', () => this.closePeriodSheet());
-        modalEl.querySelector('[data-action="close-period-sheet"]')?.addEventListener('click', () => this.closePeriodSheet());
+        // Event delegation on the sheet container: the close button sits above
+        // overlapping inputs/flex elements, so a single delegated listener
+        // catches taps that a direct handler would miss.
+        modalEl.addEventListener('click', (e) => {
+            const target = e.target;
+            if (target.closest('[data-action="close-period-sheet"]') || target.closest('.drum-sheet-backdrop')) {
+                e.preventDefault();
+                e.stopPropagation();
+                this.closePeriodSheet();
+            }
+        });
 
         const onKeydown = (e) => {
             if (e.key === 'Escape') this.closePeriodSheet();

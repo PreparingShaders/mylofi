@@ -90,6 +90,95 @@
 .meal-card {
     box-shadow: 0 8px 24px rgba(9, 9, 11, 0.28);
 }
+
+/* Date navigation: prevent crowding against arrows on narrow viewports (320px-375px) */
+#date-nav {
+    overflow: hidden;
+}
+#date-nav #date-picker-trigger {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    /* The label is centred in the space between the arrows, so a margin here is
+       what keeps the period string off both buttons on the narrowest screens. */
+    margin: 0 0.25rem;
+}
+#date-nav #date-picker-trigger > span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+/* Period sheet date inputs: two of them share the row, so each cell may shrink
+   (min-width: 0) and the value is centred in the field it gets, with the padding
+   trimmed so a full dd.mm.yyyy still fits on a 320px screen. Anything wider is
+   clipped by the field itself instead of pushing the neighbour out of the grid. */
+.period-sheet__date-grid > * {
+    min-width: 0;
+}
+.period-sheet__date-input {
+    min-width: 0;
+    font-size: 13px !important;
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Sheet close button: ensure it stays above overlapping inputs/flex elements */
+.sheet-close-btn {
+    position: relative;
+    z-index: 20;
+}
+
+/* Meals carousel: allow vertical page scrolling while keeping horizontal carousel swipe */
+.meals-carousel,
+.meal-card-slot,
+.meal-action-slot,
+.meal-empty-slot {
+    touch-action: pan-x pan-y !important;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Donut ring sub-label: the covered window and the day coverage are two separate
+   lines, so the box is pinned to a column flex of its own height and both lines
+   are taken out of any positioning context, which is what used to let them share
+   one line box and collide. The min-height reserves room for both lines, so the
+   card does not jump when a period without coverage (the single day) is
+   switched. */
+.nutrition-ring__caption {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    position: relative !important;
+    height: auto !important;
+    gap: 2px;
+    margin-top: 6px;
+    min-height: 28px;
+}
+.nutrition-ring__caption-range,
+.nutrition-ring__caption-coverage {
+    position: static !important;
+    line-height: 1.25 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+.nutrition-ring__caption-range {
+    font-size: 11px;
+    color: #9CA3AF;
+    white-space: nowrap;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.nutrition-ring__caption-coverage {
+    font-size: 10px;
+    color: #6B7280;
+    white-space: nowrap;
+}
 .meal-card-photo {
     background-size: cover;
     background-position: center;
