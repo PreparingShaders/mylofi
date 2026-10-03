@@ -42,6 +42,49 @@
     transition: stroke-dasharray 0.6s ease-out, stroke-dashoffset 0.6s ease-out;
     stroke-linecap: round;
 }
+/* Filled macro pill: only the colour can change between renders, the geometry
+   is baked into the path, so the transition is kept on stroke alone. */
+.nutrition-ring__pill {
+    stroke-linecap: round;
+    transition: stroke 0.6s ease-out;
+}
+/* Centre readout stacked inside the ring: AI score pill above the counter. */
+.nutrition-ring__center {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    padding: 0 6px;
+    line-height: 1;
+    text-align: center;
+}
+.nutrition-ring__score {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 7px;
+    border-radius: 9999px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+}
+.nutrition-ring__calories {
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+}
+.nutrition-ring__calories-target {
+    display: block;
+    margin-top: 3px;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0;
+    opacity: 0.62;
+    white-space: nowrap;
+}
 
 /* Native date input overlaid on the calendar button */
 .date-picker {
@@ -291,14 +334,15 @@ input, select, textarea:focus {
 
 /* ============ Compact Nutrition Dashboard ============ */
 /* The ring is centred in a full-width box that reserves room under it, so the
-   carbs label can sit outside the circle without pushing the card taller.
-   Side labels are anchored to the box edges, which keeps them outside the ring
-   at every card width instead of overlapping the arcs. */
+   carbs label can hang below the circle without pushing the card taller.
+   Side labels are anchored to the box edges and their vertical offsets track the
+   pill middles the JS rotation lands them on (10:30, ~2:45, ~6:45), so each
+   label stays outside the ring and beside its own pill at every card width. */
 .nutrition-ring-container {
     position: relative;
     display: flex;
     justify-content: center;
-    padding-bottom: 34px;
+    padding-bottom: 30px;
 }
 .nutrition-ring-container .macro-label {
     position: absolute;
@@ -306,18 +350,49 @@ input, select, textarea:focus {
     flex-direction: column;
     gap: 2px;
     line-height: 1;
-    max-width: 40%;
+    max-width: 46%;
     overflow: hidden;
 }
+.macro-label__value {
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    white-space: nowrap;
+}
+.macro-label__target {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0;
+    opacity: 0.6;
+}
+.macro-label__name {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 8px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+}
+.macro-label__dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 9999px;
+    flex-shrink: 0;
+}
+/* Side labels get their vertical anchor from the JS pill geometry and are pulled
+   back by half their own height, so they stay centred on their pill whatever the
+   label ends up measuring. The carbs label anchors to the bottom of the box. */
 .macro-label-protein {
-    top: 2px;
     left: 0;
+    transform: translateY(-50%);
     align-items: flex-start;
     text-align: left;
 }
 .macro-label-fat {
-    top: 2px;
     right: 0;
+    transform: translateY(-50%);
     align-items: flex-end;
     text-align: right;
 }
@@ -325,7 +400,7 @@ input, select, textarea:focus {
     bottom: 0;
     left: 50%;
     transform: translateX(-50%);
-    max-width: 60%;
+    max-width: 70%;
     align-items: center;
     text-align: center;
 }

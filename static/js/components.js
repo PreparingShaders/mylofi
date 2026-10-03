@@ -28,6 +28,12 @@ const MEAL_TYPE_ICON_PATHS = {
     cookie: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v.01"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12v.01"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 12v.01"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 16v.01"/>',
 };
 
+const MACRO_ICON_PATHS = {
+    protein: '<path d="M4 9.5v5"/><path d="M7.5 7v10"/><path d="M16.5 7v10"/><path d="M20 9.5v5"/><path d="M7.5 12h9"/>',
+    fat: '<path d="M12 3.4c2.9 3.7 4.9 6.3 4.9 9a4.9 4.9 0 0 1-9.8 0c0-2.7 2-5.3 4.9-9Z"/>',
+    carbs: '<path d="M12 3.6c.7 4.3 1.9 5.5 6.1 6.2-4.2.7-5.4 1.9-6.1 6.2-.7-4.3-1.9-5.5-6.1-6.2 4.2-.7 5.4-1.9 6.1-6.2Z"/>',
+};
+
 function buildSmoothPath(pts, tension = 0.2) {
     if (!pts.length) return '';
     if (pts.length === 1) return `M ${pts[0].x} ${pts[0].y}`;
@@ -184,19 +190,27 @@ export const Components = {
     /**
      * Compact single-ring "Mercedes" summary for the dashboard slides.
      *
-     * The ring is one track cut into three 120 degree sectors - proteins
-     * (amber), fats (rose), carbs (sky). Each sector draws its own track and a
-     * progress arc on top of it, rotated into place, so the three macros stay
-     * comparable on the same scale. Over-target macros turn rose (#EF4444),
-     * as does an over-target calorie intake.
+     * The ring is one circle cut into three 120 degree sectors - proteins
+     * (emerald), fats (orange), carbs (cyan). Every sector draws its own faint
+     * rounded track and its own filled arc on top, so the three macros float as
+     * separate thick pills instead of sharing one continuous circle. Over-target
+     * macros turn crimson (#EF4444), as does an over-target calorie intake.
      *
-     * The whole svg is rotated to 165 degrees so the sector middles land at
-     * 10:30, 2:30 and 6:30 - that is what lets each macro label sit outside the
-     * ring in the direction its own sector points to (proteins top-left, fats
-     * top-right, carbs bottom) instead of the old macro table underneath, which
-     * is what keeps the header inside ~200-220px.
+     * Round line caps bleed half a stroke past each end of an arc, so the drawn
+     * path is shortened by that much on both sides; sectorGapDeg therefore stays
+     * the real visible gap between neighbouring pills rather than the gap
+     * between their raw path endpoints.
+     *
+     * The whole layout is rotated 165 degrees so the pill middles land at 10:30,
+     * 2:45 and 6:45 - that is what lets each macro label sit outside the ring in
+     * the direction its own pill points to (proteins top-left, fats right, carbs
+     * bottom) instead of the old macro table underneath, which is what keeps the
+     * header inside ~200-220px.
+     *
+     * Each filled pill carries a small white line-art glyph (dumbbell, oil drop,
+     * spark) parked at its leading edge, so the icon travels as the value grows.
      */
-    mercedesComboRing(summary = {}, targets = {}, qualityScore = null, size = 112, strokeWidth = 12, sectorGapDeg = 8) {
+    mercedesComboRing(summary = {}, targets = {}, qualityScore = null, size = 120, strokeWidth = 19, sectorGapDeg = 14) {
         const safeNum = (val) => (Number.isFinite(Number(val)) ? Number(val) : 0);
         const formatNum = (val) => Math.round(val).toLocaleString('ru-RU');
         const clamp01 = (val) => Math.max(0, Math.min(1, val));
@@ -205,9 +219,9 @@ export const Components = {
         const targetCalories = safeNum(targets.target_calories);
 
         const macros = [
-            { key: 'protein', label: 'Белки', current: safeNum(summary.protein), target: safeNum(targets.target_protein), color: 'amber-500', dot: 'bg-amber-500' },
-            { key: 'fat', label: 'Жиры', current: safeNum(summary.fat), target: safeNum(targets.target_fat), color: 'rose-400', dot: 'bg-rose-400' },
-            { key: 'carbs', label: 'Углеводы', current: safeNum(summary.carbs), target: safeNum(targets.target_carbs), color: 'sky-500', dot: 'bg-sky-500' },
+            { key: 'protein', label: 'Белки', icon: 'protein', tone: 'emerald-500', position: 'macro-label-protein', current: safeNum(summary.protein), target: safeNum(targets.target_protein) },
+            { key: 'fat', label: 'Жиры', icon: 'fat', tone: 'orange-500', position: 'macro-label-fat', current: safeNum(summary.fat), target: safeNum(targets.target_fat) },
+            { key: 'carbs', label: 'Углеводы', icon: 'carbs', tone: 'cyan-500', position: 'macro-label-carbs', current: safeNum(summary.carbs), target: safeNum(targets.target_carbs) },
         ].map((macro) => ({
             ...macro,
             ratio: macro.target > 0 ? macro.current / macro.target : 0,
@@ -215,64 +229,90 @@ export const Components = {
         }));
 
         const calOver = targetCalories > 0 && calories > targetCalories;
-        const remainingCalories = Math.round(targetCalories - calories);
 
         const center = size / 2;
         const radius = (size - strokeWidth) / 2;
         const circumference = 2 * Math.PI * radius;
         const sectorDeg = 360 / macros.length;
-        // Half the gap is added to the sector start angle so the gap sits
-        // evenly between the neighbouring arcs.
-        const arcDeg = sectorDeg - sectorGapDeg;
-        const arcLength = (arcDeg / 360) * circumference;
+        const arcSpanDeg = sectorDeg - sectorGapDeg;
+        // Half a stroke of cap overhang, expressed in degrees, is what the drawn
+        // arc has to give up on each end for the visible gap to stay honest.
+        const capDeg = ((strokeWidth / 2) / radius) * (180 / Math.PI);
+        const pathDeg = Math.max(0, arcSpanDeg - capDeg * 2);
+        const glyphSize = strokeWidth * 0.6;
+        const rotation = 165;
+
+        const point = (deg) => {
+            const rad = (deg * Math.PI) / 180;
+            return [center + radius * Math.cos(rad), center + radius * Math.sin(rad)];
+        };
+
+        const arc = (startDeg, sweepDeg) => {
+            if (sweepDeg <= 0.05) return '';
+            const [x1, y1] = point(startDeg);
+            const [x2, y2] = point(startDeg + sweepDeg);
+            return `M ${x1.toFixed(2)} ${y1.toFixed(2)} A ${radius.toFixed(2)} ${radius.toFixed(2)} 0 ${sweepDeg > 180 ? 1 : 0} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`;
+        };
+
+        const glyph = (macro, deg) => {
+            const [x, y] = point(deg);
+            const offset = glyphSize / 2;
+            return `<svg x="${(x - offset).toFixed(2)}" y="${(y - offset).toFixed(2)}"
+                             width="${glyphSize.toFixed(2)}" height="${glyphSize.toFixed(2)}" viewBox="0 0 24 24"
+                             fill="none" stroke="#FFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+                             aria-hidden="true">${MACRO_ICON_PATHS[macro.icon]}</svg>`;
+        };
 
         const sector = (macro, index) => {
-            const angle = index * sectorDeg + sectorGapDeg / 2;
-            const progressLength = clamp01(macro.ratio) * arcLength;
-            const fillColor = macro.over ? 'text-rose-500 dark:text-rose-400' : `text-${macro.color} dark:text-${macro.color}`;
+            // Half the gap opens the sector so the visible gap sits evenly between
+            // neighbouring pills; the drawn arc then starts one cap further in.
+            const sectorStart = rotation + index * sectorDeg + sectorGapDeg / 2;
+            const drawStart = sectorStart + capDeg;
+            const progressDeg = clamp01(macro.ratio) * pathDeg;
+            const tone = macro.over ? 'red-500' : macro.tone;
+            const track = arc(drawStart, pathDeg);
+            // The glyph needs a pill at least one stroke wide around it,
+            // otherwise it would spill over the leading cap.
+            const showGlyph = (progressDeg / 360) * circumference >= strokeWidth;
             return `
-                <g transform="rotate(${angle.toFixed(2)} ${center} ${center})">
-                    <circle cx="${center}" cy="${center}" r="${radius}" fill="none" stroke="currentColor"
-                            stroke-width="${strokeWidth}" class="text-surface-200 dark:text-white/10"/>
-                    ${progressLength > 0 ? `
-                        <circle cx="${center}" cy="${center}" r="${radius}" fill="none" stroke="currentColor"
-                                stroke-width="${strokeWidth}" stroke-linecap="round"
-                                class="${fillColor} transition-all duration-700 ease-out"
-                                stroke-dasharray="${progressLength.toFixed(2)} ${circumference.toFixed(2)}"/>
+                <g>
+                    ${track ? `<path d="${track}" class="nutrition-ring__track" fill="none" stroke-width="${strokeWidth}" stroke-linecap="round"/>` : ''}
+                    ${progressDeg > 0.05 ? `
+                        <path d="${arc(drawStart, progressDeg)}" class="nutrition-ring__pill text-${tone}"
+                              fill="none" stroke="currentColor" stroke-width="${strokeWidth}" stroke-linecap="round"/>
                     ` : ''}
+                    ${showGlyph ? glyph(macro, drawStart + progressDeg) : ''}
                 </g>
             `;
         };
 
-        const qualityText = qualityScore === null || qualityScore === undefined
+        // Label anchors are derived from the same geometry so each label sits on
+        // its own pill: the side labels are centred vertically on their pill
+        // (translateY(-50%) does the centring, so a font-size change cannot break
+        // it) and the carbs label is nudged onto the bottom pill, which the 165
+        // degree rotation leaves left of the ring's centre.
+        const pillMiddle = (index) => point(rotation + index * sectorDeg + sectorGapDeg / 2 + arcSpanDeg / 2);
+        const labelAnchors = {
+            protein: `top: ${pillMiddle(0)[1].toFixed(2)}px;`,
+            fat: `top: ${pillMiddle(1)[1].toFixed(2)}px;`,
+            carbs: `margin-left: ${(pillMiddle(2)[0] - center).toFixed(2)}px;`,
+        };
+
+        const scoreText = qualityScore === null || qualityScore === undefined
             ? '—'
             : (Number(qualityScore) / 10).toFixed(1);
 
-        const calorieChip = targetCalories <= 0
-            ? `<span class="text-[9px] font-semibold text-surface-400 dark:text-surface-500">Цель не задана</span>`
-            : `<span class="inline-flex items-center rounded-full px-1.5 py-[1px] text-[9px] font-semibold ${calOver
-                ? 'bg-rose-500/15 text-rose-500 dark:text-rose-400'
-                : 'bg-lime-500/15 text-lime-600 dark:text-lime-400'}">
-                   ${calOver ? `Перебор +${formatNum(-remainingCalories)}` : `Осталось ${formatNum(remainingCalories)}`}
-               </span>`;
+        const share = (macro) => (macro.target > 0 ? `${Math.round(clamp01(macro.ratio) * 100)}%` : '—');
 
-        const sectorLabel = (macro) => (macro.target > 0
-            ? `${Math.round(macro.ratio * 100)}%`
-            : '—');
-
-        const labelPositions = ['macro-label-protein', 'macro-label-fat', 'macro-label-carbs'];
-        const macroLabels = macros.map((macro, index) => {
-            const excess = macro.target > 0 ? Math.round(macro.current - macro.target) : 0;
-            const valueColor = macro.over ? 'text-rose-500 dark:text-rose-400' : 'text-surface-800 dark:text-zinc-200';
-            const dotColor = macro.over ? 'bg-rose-500' : macro.dot;
+        const macroLabels = macros.map((macro) => {
+            const tone = macro.over ? 'red-500' : macro.tone;
             return `
-                <div class="macro-label ${labelPositions[index]}" role="group"
-                     aria-label="${escapeHtml(macro.label)} ${sectorLabel(macro)} от цели">
-                    <span class="flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider text-surface-400 dark:text-surface-500">
-                        <span class="w-1.5 h-1.5 rounded-full ${dotColor} shrink-0"></span>${escapeHtml(macro.label)}
+                <div class="macro-label ${macro.position}" style="${labelAnchors[macro.key]}" role="group"
+                     aria-label="${escapeHtml(macro.label)} ${share(macro)} от цели">
+                    <span class="macro-label__value text-${tone}">${formatNum(macro.current)}<span class="macro-label__target">${macro.target > 0 ? `/ ${formatNum(macro.target)} г` : ' г'}</span></span>
+                    <span class="macro-label__name">
+                        <span class="macro-label__dot bg-${tone}"></span>${escapeHtml(macro.label)}
                     </span>
-                    <span class="text-[11px] font-bold leading-none tabular-nums ${valueColor}">${formatNum(macro.current)}<span class="font-normal text-surface-400 dark:text-surface-500">/${formatNum(macro.target)} г</span></span>
-                    <span class="text-[9px] leading-none font-semibold ${macro.over ? 'text-rose-500 dark:text-rose-400' : 'text-surface-400 dark:text-surface-500'}">${macro.over ? `+${formatNum(excess)} г` : sectorLabel(macro)}</span>
                 </div>
             `;
         }).join('');
@@ -280,16 +320,13 @@ export const Components = {
         return `
             <div class="nutrition-ring-container">
                 <div class="relative flex items-center justify-center shrink-0" style="width: ${size}px; height: ${size}px;">
-                    <svg class="absolute inset-0 rotate-[165deg]" width="${size}" height="${size}" role="img"
-                         aria-label="Белки ${sectorLabel(macros[0])}, жиры ${sectorLabel(macros[1])}, углеводы ${sectorLabel(macros[2])}">
+                    <svg class="absolute inset-0" width="${size}" height="${size}" role="img"
+                         aria-label="Белки ${share(macros[0])}, жиры ${share(macros[1])}, углеводы ${share(macros[2])}">
                         ${macros.map(sector).join('')}
                     </svg>
-                    <div class="absolute inset-0 flex flex-col items-center justify-center text-center px-2 leading-none">
-                        <span class="text-xl font-extrabold ${calOver ? 'text-rose-500 dark:text-rose-400' : 'text-surface-900 dark:text-zinc-100'}">
-                            ${qualityText}<span class="text-[10px] font-normal text-surface-400 dark:text-surface-500">/10</span>
-                        </span>
-                        <span class="text-[9px] font-bold ${calOver ? 'text-rose-500 dark:text-rose-400' : 'text-surface-600 dark:text-zinc-300'} mt-1 tabular-nums whitespace-nowrap">${formatNum(calories)} / ${formatNum(targetCalories)} ккал</span>
-                        <span class="mt-1">${calorieChip}</span>
+                    <div class="nutrition-ring__center">
+                        <span class="nutrition-ring__score bg-purple-500/15 text-purple-500 dark:text-purple-400">ИИ ${scoreText}<span class="opacity-60">/10</span></span>
+                        <span class="nutrition-ring__calories tabular-nums ${calOver ? 'text-red-500 dark:text-red-400' : 'text-surface-900 dark:text-zinc-100'}">${formatNum(calories)}<span class="nutrition-ring__calories-target">/ ${formatNum(targetCalories)} ккал</span></span>
                     </div>
                 </div>
                 ${macroLabels}
