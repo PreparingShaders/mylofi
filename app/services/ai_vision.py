@@ -28,10 +28,40 @@ MAX_USER_NOTES_CHARS = 400
 # crowd out the rules below.
 MAX_PERSONA_TEXT_CHARS = 1000
 
+# ai_verdict is a short verdict on the dish, not a spreadsheet: the prompt asks
+# for exactly 5-7 connected sentences and _sanitize_verdict enforces the upper
+# bound, because a chatty model drifting to 12 sentences is a wall of text on a
+# meal card while a terse one is still a usable answer. The lower bound is a
+# prompt rule only - padding a verdict the model already wrote well is worse
+# than a slightly short one.
+VERDICT_MIN_SENTENCES = 5
+VERDICT_MAX_SENTENCES = 7
+
+# Emoji, pictographs, dingbats, flags, skin-tone modifiers, variation selectors
+# and the zero-width joiner that glues emoji sequences together. Every one of
+# them is stripped from ai_verdict before it is stored, so the model is told the
+# rule and the answer is checked regardless of whether it listened.
+EMOJI_PATTERN = re.compile(
+    "["
+    "\u2600-\u26ff"  # misc symbols
+    "\u2700-\u27bf"  # dingbats
+    "\u2b00-\u2bff"  # misc symbols and arrows
+    "\U0001f000-\U0001faff"  # mahjong, cards, emoticons, transport, pictographs
+    "\u200d"  # zero width joiner
+    "\u20e3"  # combining enclosing keycap
+    "\ufe0e\ufe0f"  # variation selectors
+    "]+"
+)
+
+# A sentence ends at . ! ? or the ellipsis, followed by whitespace. Abbreviations
+# and decimals ("т. е.", "12.5") split a bit early, which only ever makes the
+# count slightly generous - harmless for a clamp that only ever cuts.
+SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?…])\s+")
+
 # The voice the verdict is written in. Only the wording of ai_verdict and the
-# comments around the numbers change - the JSON contract, the figures and the
-# "name the overrun" rules below stay fixed, so a persona can never talk the
-# model out of returning a parsable answer.
+# comments around the numbers change - the JSON contract, the length and
+# formatting rules below stay fixed, so a persona can never talk the model out
+# of returning a parsable answer or into emojis, digits or a bullet list.
 PERSONA_PROMPTS = {
     "kind": (
         "Ты — добрый нутрициолог. Говори тепло и поддерживающе, без нравоучений: "
@@ -42,8 +72,12 @@ PERSONA_PROMPTS = {
         "ошибки прямо, требуй конкретных действий и не смягчай оценку легендами о пользе."
     ),
     "sarcastic": (
-        "Ты — саркастичный нутрициолог с чувством юмора. Шути коротко и уместно, "
-        "не превращая оценку в насмешку над человеком: цифры и предупреждения всё равно точны и прямолинейны."
+        "Ты — нутрициолог в духе Джарвиса: спокойный, умный, с сухим английским юмором "
+        "и иронией, которая звучит фоном, а не фокусом. Ирония направлена на блюдо, "
+        "состав и привычки, а не на человека: никаких насмешек над пользователем, "
+        "никакого сарказма в его адрес и никакой снисходительности. Текст всё равно "
+        "остаётся точной профессиональной оценкой: ирония слышна фоном, а выводы "
+        "по блюду - серьёзно."
     ),
     "custom": (
         "Ты — нутрициолог. Стиль общения пользователь задаёт сам, и он указан сразу после этого предложения. "
@@ -176,8 +210,8 @@ def build_prompt(
     )
 
     # The persona is a tone of voice, not a task: it is stated once, up front, and
-    # the rules below keep every one of them (the JSON contract, the figures, the
-    # wording of an overrun) binding regardless of which voice is used.
+    # the rules below keep every one of them (the JSON contract, the verdict
+    # length, the no-emoji and no-digits rules) binding regardless of voice.
     persona_key = normalize_persona(persona)
     persona_text = _sanitize_persona_text(persona_custom_text)
     persona_line = (
@@ -187,8 +221,8 @@ def build_prompt(
             if persona_key == "custom" and persona_text
             else ""
         )
-        + " Персона влияет только на тон формулировок ai_verdict: цифры, оценки и JSON-формат "
-        "остаются точными, и правила оценки баланса ниже действуют в полном объёме."
+        + " Персона влияет только на тон формулировок ai_verdict: длина, отсутствие эмодзи, "
+        "запрет на повторение цифр макросов и все правила оценки выше действуют в полном объёме."
     )
 
     return f"""Ты — нутрициолог. Проанализируй фото еды с учётом цели и текущего баланса пользователя и верни СТРОГО валидный JSON с полями:
@@ -208,15 +242,18 @@ def build_prompt(
     {{"label": "Клетчатка", "score": 7.5}},
     {{"label": "Обработка", "score": 6.5}}
   ],
-  "ai_verdict": "Краткая оценка нутрициолога (1-2 предложения) с учётом цели и текущего баланса пользователя."
+  "ai_verdict": "Оценка нутрициолога РОВНО из 5-7 связанных предложений: без эмодзи и без повторения цифр макросов."
 }}
-Все числовые значения — float. quality_score от 1.0 до 10.0. quality_metrics — массив из 3-5 объектов с полями label (строка) и score (float 0-10). ai_verdict — развёрнутая оценка (2-4 предложения) с учётом контекста пользователя и его комментария, без воды. Никаких пояснений, только JSON.
+Все числовые значения — float. quality_score от 1.0 до 10.0. quality_metrics — массив из 3-5 объектов с полями label (строка) и score (float 0-10). ai_verdict — связный текст РОВНО из 5-7 предложений, без воды и без эмодзи. Никаких пояснений, только JSON.
 
-Правила оценки баланса (обязательно):
-- Сначала посчитай итог дня: уже потреблённое (см. контекст) + твоя оценка этого блюда, и сравни с дневными нормами.
-- Если итог по любому показателю БОЛЬШЕ нормы - это превышение. Назови его прямо и конкретно: "превышение на 240 ккал" / "белок больше нормы на 18 г". Обязательно используй слова "превышено" или "выше нормы".
-- Запрещено писать про превышение как про почти норму: "близко к норме", "чуть выше панели", "в пределах нормы", "совсем немного превышает" - такие формулировки противоречат цифрам и обманывают пользователя.
-- Если всё в пределах нормы - скажи это прямо и назови остаток. Если норм нет ('?') - оценивай блюдо само по себе, без сравнения.
+Правила оценки блюда и вердикта (обязательно):
+1. ДЛИНА: в ai_verdict РОВНО {VERDICT_MIN_SENTENCES}-{VERDICT_MAX_SENTENCES} предложений, связанных в один связный текст. Меньше {VERDICT_MIN_SENTENCES} или больше {VERDICT_MAX_SENTENCES} - нарушение. Каждое предложение несуще: не добивай объём дежурными фразами и не повторяй мысль дважды.
+2. НОЛЬ ЭМОДЗИ: ни одного эмодзи, смайлика, иконки или символического значка из наборов эмодзи - ни в ai_verdict, ни в dish_name, ни в tags, ни в label у quality_metrics. Только обычные буквы, пробелы и знаки препинания.
+3. НОЛЬ ЦИФР МАКРОСОВ В ТЕКСТЕ: в ai_verdict не пиши калории, граммы белков, жиров, углеводов, проценты и остаток по нормам ("превышение на 240 ккал", "белок больше нормы на 18 г" - запрещено). Цифры живут только в числовых полях JSON, а пользователь уже видит их в бейджах на карточке. Дневные нормы из контекста нужны тебе как внутренний расчёт, чтобы понимать, где блюдо стоит относительно цели, а не чтобы пересказывать их вслух.
+4. О ЧЁМ ГОВОРИТЬ: качество и состав ингредиентов, сытость блюда, баланс БЖУ внутри блюда, соответствие цели пользователя, в чём риск (сахар, соль, переработка, недостаток овощей) и одно конкретное действие, что изменить.
+5. ПРЕВЫШЕНИЕ НОРМ: сначала посчитай итог дня (уже потреблённое + твоя оценка блюда) против дневных норм - это внутренний расчёт. Если что-то вышло выше нормы, назови это прямо и конкретно, указав именно показатель ("превышено по калориям", "жиры выше нормы"), но без цифр. Запрещено приуменьшать: "чуть выше нормы", "близко к норме", "в пределах нормы", "совсем немного превышает" - такие формулировки противоречат расчёту и обманывают пользователя. Если всё в пределах нормы - скажи это прямо, не называя остаток цифрами. Если норм нет ('?') - оценивай блюдо само по себе, без сравнения.
+6. БЕЛОК - ВСЕГДА ПЛЮС: превышение белка никогда не подаётся как ошибка, избыток, перебор или замечание. Белок выше нормы - это польза для мышц и для сытости, и модель обязана это отметить и похвалить.
+7. ПЕРСОНА - ТОЛЬКО ТОН: любая персона задаёт только тон формулировок. Длина, отсутствие эмодзи, запрет на цифры макросов, честность по превышениям и похвала белка действуют при любой персона.
 
 {persona_line}
 
@@ -237,14 +274,89 @@ def _strip_markdown_json(text: str) -> str:
     return text.strip()
 
 
+def _extract_json_object(text: str) -> Optional[str]:
+    """Pull the outermost {...} block out of a chatty model answer.
+
+    Free models like to wrap the JSON in a sentence of prose, or to fence it
+    somewhere the fence stripper above cannot reach ("Here is the JSON: {...}").
+    Returns None when there is no balanced-looking object to try.
+    """
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end <= start:
+        return None
+    return text[start:end + 1]
+
+
 def _parse_llm_json(text: str) -> Dict[str, Any]:
     """Parse JSON from LLM response, handling markdown wrappers."""
     cleaned = _strip_markdown_json(text)
     try:
         return json.loads(cleaned)
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse JSON from LLM: {e}, raw: {text[:500]}")
+    except json.JSONDecodeError:
+        candidate = _extract_json_object(cleaned)
+        if candidate is not None:
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                pass
+        logger.error(f"Failed to parse JSON from LLM, raw: {text[:500]}")
         raise
+
+
+def count_sentences(text: str) -> int:
+    """How many sentences a verdict actually reads as."""
+    stripped = re.sub(r"\s+", " ", text or "").strip()
+    if not stripped:
+        return 0
+    return len(SENTENCE_SPLIT_PATTERN.split(stripped))
+
+
+def _strip_emojis(text: str) -> str:
+    """Drop every emoji and its glue, then repair the spacing it leaves."""
+    cleaned = EMOJI_PATTERN.sub("", text)
+    # An emoji between words leaves a doubled or trailing space, and between two
+    # words it can leave nothing at all; both read as a typo on the card.
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([,.!?;:])", r"\1", cleaned)
+    return cleaned.strip()
+
+
+def _clamp_sentences(text: str, max_sentences: int = VERDICT_MAX_SENTENCES) -> str:
+    """Keep the first `max_sentences` sentences, cutting only on a sentence end.
+
+    Every kept segment ends in sentence punctuation by construction: a split only
+    happens after . ! ? or the ellipsis, so the last segment can be unterminated
+    but is never one of the ones kept.
+    """
+    sentences = SENTENCE_SPLIT_PATTERN.split(text.strip())
+    if len(sentences) <= max_sentences:
+        return text.strip()
+    kept = [s for s in sentences[:max_sentences] if s.strip()]
+    logger.info(
+        f"[AI Vision] ai_verdict clipped to {len(kept)} sentences "
+        f"(model wrote {len(sentences)})"
+    )
+    return " ".join(kept).strip()
+
+
+def _sanitize_verdict(verdict: str) -> str:
+    """Apply the verdict rules the model is asked for but cannot be trusted with.
+
+    The prompt asks for 5-7 emoji-free sentences; this enforces the two rules a
+    user would actually notice being broken - an emoji on a meal card and a
+    verdict that runs on for a dozen sentences. It never adds content: a verdict
+    that came back too short is left short rather than padded with filler.
+    """
+    cleaned = _strip_emojis(re.sub(r"\s+", " ", verdict).strip())
+    if count_sentences(cleaned) > VERDICT_MAX_SENTENCES:
+        cleaned = _clamp_sentences(cleaned)
+    if count_sentences(cleaned) < VERDICT_MIN_SENTENCES:
+        logger.info(
+            f"[AI Vision] ai_verdict is shorter than {VERDICT_MIN_SENTENCES} sentences: "
+            f"{count_sentences(cleaned)}"
+        )
+    return cleaned
 
 
 def _is_gemini_model(model_name: str) -> bool:
@@ -343,6 +455,14 @@ def _validate_analysis(result: Dict[str, Any]) -> Dict[str, Any]:
 
     if not isinstance(result.get("ai_verdict"), str) or not result["ai_verdict"].strip():
         raise ValueError("ai_verdict must be a non-empty string")
+
+    # Sanitising here rather than in the caller keeps the rule on the one path
+    # every answer travels: the cascade can hand back the payload from any
+    # model in the list, and all of them are prompted, none of them are obeyed.
+    sanitized = _sanitize_verdict(result["ai_verdict"])
+    if not sanitized.strip():
+        raise ValueError("ai_verdict is empty after removing emoji")
+    result["ai_verdict"] = sanitized
 
     return result
 
