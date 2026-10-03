@@ -106,14 +106,6 @@ export const Utils = {
         return Math.round((pScore + fScore + cScore) / 3);
     },
 
-    qualityGrade(score) {
-        if (score === null || score < 0) return { label: '—', color: 'text-surface-400' };
-        if (score >= 85) return { label: 'Отлично', color: 'text-lime-400' };
-        if (score >= 70) return { label: 'Хорошо', color: 'text-sky-400' };
-        if (score >= 55) return { label: 'Средне', color: 'text-amber-400' };
-        return { label: 'Нужно поправить', color: 'text-rose-400' };
-    },
-
     // Mifflin-St Jeor. Mirrors app/services/nutrition_targets.py so the live
     // preview in the Profile sheet matches the targets the API persists.
     ACTIVITY_FACTORS: {

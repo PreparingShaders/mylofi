@@ -12,14 +12,26 @@ const READ_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const READ_CACHE_MAX_ENTRY_BYTES = 300 * 1024;
 const READ_CACHE_TOTAL_BYTES = 2 * 1024 * 1024;
 
+// Every nutrition read the dashboard can be showing: the day log, the period
+// summaries and the custom-range endpoints.
+const NUTRITION_READS = [
+    'nutrition/logs',
+    'nutrition/summary',
+    'nutrition/week',
+    'nutrition/month',
+    'nutrition/range',
+];
+
 // Cache entries invalidated together when a mutation touches a resource
 const READ_CACHE_RELATIONSHIPS = {
     'workouts/sets': ['workouts/sessions', 'workouts/statistics', 'workouts/history'],
     'workouts/sessions': ['workouts/sessions', 'workouts/statistics', 'workouts/history'],
     'workouts/templates': ['workouts/templates'],
-    'nutrition/meals': ['nutrition/logs', 'nutrition/summary'],
-    'nutrition/photos': ['nutrition/logs', 'nutrition/summary'],
-    'users/me': ['users/me', 'users/me/usage'],
+    'nutrition/meals': NUTRITION_READS,
+    'nutrition/photos': NUTRITION_READS,
+    // Targets live on the user profile, so a profile change moves every
+    // nutrition readout the dashboard renders.
+    'users/me': ['users/me', 'users/me/usage', ...NUTRITION_READS],
 };
 
 class APIClient {

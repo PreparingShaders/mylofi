@@ -1,3 +1,4 @@
+import json
 import os
 import uuid
 import shutil
@@ -14,6 +15,10 @@ from app.core.config import get_settings
 settings = get_settings()
 
 MONTH_LABELS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
+
+# Upper bound for an explicit range so one request can never ask for an
+# unbounded daily series.
+MAX_RANGE_DAYS = 366
 
 
 async def ensure_upload_dir() -> str:
@@ -104,7 +109,6 @@ async def update_meal(
 
     update_data = meal_data.model_dump(exclude_unset=True)
     if "tags" in update_data and update_data["tags"] is not None:
-        import json
         update_data["tags"] = json.dumps(update_data["tags"])
 
     for field, value in update_data.items():
@@ -133,80 +137,127 @@ async def delete_meal(db: AsyncSession, meal_id: int, user_id: int) -> bool:
     return True
 
 
+def parse_iso_date(value: Optional[str]) -> Optional[date]:
+    """Parse a YYYY-MM-DD query param, returning None for missing or unusable input."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).strip()).date()
+    except ValueError:
+        return None
+
+
+def parse_tags(raw_tags: Optional[str]) -> Optional[List[str]]:
+    """Decode the JSON tag array, falling back to no tags on malformed data."""
+    if not raw_tags:
+        return None
+    try:
+        return json.loads(raw_tags)
+    except (TypeError, ValueError):
+        return []
+
+
+def meal_to_response(meal: Meal) -> MealResponse:
+    """Map a Meal row onto its API representation."""
+    return MealResponse(
+        id=meal.id,
+        user_id=meal.user_id,
+        photo_path=meal.photo_path,
+        photo_thumbnail_path=meal.photo_thumbnail_path,
+        calories=meal.calories,
+        protein_g=meal.protein_g,
+        fat_g=meal.fat_g,
+        carbs_g=meal.carbs_g,
+        fiber_g=meal.fiber_g,
+        sugar_g=meal.sugar_g,
+        sodium_mg=meal.sodium_mg,
+        dish_name=meal.dish_name,
+        tags=parse_tags(meal.tags),
+        notes=meal.notes,
+        status=meal.status,
+        error_message=meal.error_message,
+        eaten_at=meal.eaten_at,
+        created_at=meal.created_at,
+        updated_at=meal.updated_at,
+    )
+
+
+def sum_meal_macros(meals: List[Meal]) -> dict:
+    """Total calories and macros across the given meals."""
+    return {
+        "total_calories": sum(m.calories or 0 for m in meals),
+        "total_protein_g": sum(m.protein_g or 0 for m in meals),
+        "total_fat_g": sum(m.fat_g or 0 for m in meals),
+        "total_carbs_g": sum(m.carbs_g or 0 for m in meals),
+    }
+
+
+async def get_user_macro_targets(db: AsyncSession, user_id: int) -> dict:
+    """Daily KBZhU targets from the user profile."""
+    user_result = await db.execute(select(User).where(User.id == user_id))
+    user = user_result.scalar_one_or_none()
+    return {
+        "target_calories": user.target_calories if user else None,
+        "target_protein_g": user.target_protein_g if user else None,
+        "target_fat_g": user.target_fat_g if user else None,
+        "target_carbs_g": user.target_carbs_g if user else None,
+    }
+
+
+async def load_meals_for_range(
+    db: AsyncSession,
+    user_id: int,
+    start_date: date,
+    end_date: date,
+) -> MealListResponse:
+    """Meals for an inclusive [start, end] window with their totals and targets.
+
+    A single day is the start == end case, so the day view and the period views
+    share one query and one payload shape.
+    """
+    if end_date < start_date:
+        start_date, end_date = end_date, start_date
+
+    start_dt = datetime.combine(start_date, datetime.min.time())
+    end_dt = datetime.combine(end_date, datetime.max.time())
+
+    result = await db.execute(
+        select(Meal)
+        .where(
+            Meal.user_id == user_id,
+            Meal.eaten_at >= start_dt,
+            Meal.eaten_at <= end_dt,
+        )
+        .order_by(Meal.eaten_at.desc())
+    )
+    meals = list(result.scalars().all())
+
+    return MealListResponse(
+        meals=[meal_to_response(meal) for meal in meals],
+        total=len(meals),
+        date=start_dt,
+        **sum_meal_macros(meals),
+        **await get_user_macro_targets(db, user_id),
+    )
+
+
 async def get_meals_for_date(
     db: AsyncSession,
     user_id: int,
     target_date: date,
 ) -> MealListResponse:
     """Get all meals for a specific date with aggregated nutrition"""
-    start_of_day = datetime.combine(target_date, datetime.min.time())
-    end_of_day = datetime.combine(target_date, datetime.max.time())
+    return await load_meals_for_range(db, user_id, target_date, target_date)
 
-    result = await db.execute(
-        select(Meal)
-        .where(
-            Meal.user_id == user_id,
-            Meal.eaten_at >= start_of_day,
-            Meal.eaten_at <= end_of_day,
-        )
-        .order_by(Meal.eaten_at.desc())
-    )
-    meals = result.scalars().all()
 
-    # Calculate totals
-    total_calories = sum(m.calories or 0 for m in meals)
-    total_protein = sum(m.protein_g or 0 for m in meals)
-    total_fat = sum(m.fat_g or 0 for m in meals)
-    total_carbs = sum(m.carbs_g or 0 for m in meals)
-
-    # Daily targets from the user profile
-    user_result = await db.execute(select(User).where(User.id == user_id))
-    user = user_result.scalar_one_or_none()
-
-    meal_responses = []
-    for meal in meals:
-        tags = None
-        if meal.tags:
-            import json
-            try:
-                tags = json.loads(meal.tags)
-            except Exception:
-                tags = []
-        meal_responses.append(MealResponse(
-            id=meal.id,
-            user_id=meal.user_id,
-            photo_path=meal.photo_path,
-            photo_thumbnail_path=meal.photo_thumbnail_path,
-            calories=meal.calories,
-            protein_g=meal.protein_g,
-            fat_g=meal.fat_g,
-            carbs_g=meal.carbs_g,
-            fiber_g=meal.fiber_g,
-            sugar_g=meal.sugar_g,
-            sodium_mg=meal.sodium_mg,
-            dish_name=meal.dish_name,
-            tags=tags,
-            notes=meal.notes,
-            status=meal.status,
-            error_message=meal.error_message,
-            eaten_at=meal.eaten_at,
-            created_at=meal.created_at,
-            updated_at=meal.updated_at,
-        ))
-
-    return MealListResponse(
-        meals=meal_responses,
-        total=len(meal_responses),
-        date=datetime.combine(target_date, datetime.min.time()),
-        total_calories=total_calories,
-        total_protein_g=total_protein,
-        total_fat_g=total_fat,
-        total_carbs_g=total_carbs,
-        target_calories=user.target_calories if user else None,
-        target_protein_g=user.target_protein_g if user else None,
-        target_fat_g=user.target_fat_g if user else None,
-        target_carbs_g=user.target_carbs_g if user else None,
-    )
+async def get_meals_for_range(
+    db: AsyncSession,
+    user_id: int,
+    start_date: date,
+    end_date: date,
+) -> MealListResponse:
+    """Get meals for an arbitrary inclusive date range (custom period)."""
+    return await load_meals_for_range(db, user_id, start_date, end_date)
 
 
 async def get_meals_by_status(
@@ -237,8 +288,6 @@ async def update_meal_analysis_result(
     sodium_mg: Optional[float] = None,
 ) -> Optional[Meal]:
     """Update meal with analysis results from vision API"""
-    import json
-
     result = await db.execute(select(Meal).where(Meal.id == meal_id))
     meal = result.scalar_one_or_none()
     if not meal:
@@ -331,6 +380,30 @@ def get_period_bounds(target_date: date, period: str) -> tuple[date, date]:
     return start, start + timedelta(days=6)
 
 
+def resolve_period_bounds(
+    target_date: date,
+    period: str,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+) -> tuple[date, date]:
+    """Inclusive [start, end] for a period preset or an explicit custom range.
+
+    An explicit range always wins over the preset (the frontend range sheet is
+    what drives it), is normalised when the bounds arrive swapped, and is
+    clamped to MAX_RANGE_DAYS so a stray wide range cannot produce a huge series.
+    """
+    if start_date or end_date:
+        start = start_date or end_date
+        end = end_date or start_date
+        if start > end:
+            start, end = end, start
+        if (end - start).days + 1 > MAX_RANGE_DAYS:
+            end = start + timedelta(days=MAX_RANGE_DAYS - 1)
+        return start, end
+
+    return get_period_bounds(target_date, period)
+
+
 def build_daily_buckets(start_date: date, end_date: date) -> List[dict]:
     """Build a dense, zero-filled day list covering [start_date, end_date].
 
@@ -360,14 +433,17 @@ async def get_period_nutrition_summary(
     user_id: int,
     target_date: date,
     period: str,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
 ) -> dict:
-    """Get aggregated nutrition for a week or month.
+    """Get aggregated nutrition for a week, a month or a custom range.
 
     Returns totals, per-day averages and a dense daily `series` so the UI can
     draw the intake trend without a second request. The calorie target travels
     with the payload because the trend chart draws it as a reference line.
     """
-    start_date, end_date = get_period_bounds(target_date, period)
+    explicit_range = bool(start_date or end_date)
+    start_date, end_date = resolve_period_bounds(target_date, period, start_date, end_date)
     start_dt = datetime.combine(start_date, datetime.min.time())
     end_dt = datetime.combine(end_date, datetime.max.time())
     days = (end_date - start_date).days + 1
@@ -427,8 +503,7 @@ async def get_period_nutrition_summary(
         bucket["fat_g"] = round(bucket["fat_g"], 1)
         bucket["carbs_g"] = round(bucket["carbs_g"], 1)
 
-    user_result = await db.execute(select(User).where(User.id == user_id))
-    user = user_result.scalar_one_or_none()
+    user_targets = await get_user_macro_targets(db, user_id)
 
     # Days that actually carry data define the average: dividing by the full
     # calendar span would drag the figure down with days the user never logged.
@@ -436,7 +511,7 @@ async def get_period_nutrition_summary(
     avg_days = active_days or days
 
     return {
-        "period": period,
+        "period": "custom" if explicit_range else period,
         "start_date": start_date,
         "end_date": end_date,
         "days": days,
@@ -449,10 +524,7 @@ async def get_period_nutrition_summary(
         "avg_protein_g": total_protein / avg_days,
         "avg_fat_g": total_fat / avg_days,
         "avg_carbs_g": total_carbs / avg_days,
-        "target_calories": user.target_calories if user else None,
-        "target_protein_g": user.target_protein_g if user else None,
-        "target_fat_g": user.target_fat_g if user else None,
-        "target_carbs_g": user.target_carbs_g if user else None,
+        **user_targets,
         "granularity": "day",
         "series": buckets,
     }

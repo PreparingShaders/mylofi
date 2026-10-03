@@ -88,18 +88,16 @@ export const Components = {
     },
 
     /**
-     * AI quality badge: score out of 10 plus its grade. A null score renders
-     * the neutral placeholder instead of "0.0", which would read as a verdict.
+     * AI quality badge for a single meal, in tenths: "8.5 / 10". The score is
+     * stored 0-100, so it is divided here; a meal with nothing to score keeps
+     * the neutral placeholder instead of a hard "0.0" verdict.
      */
     qualityBadge(score) {
-        if (score === null || score === undefined) {
-            return `<span class="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold bg-surface-200/70 dark:bg-white/10 text-surface-400 dark:text-surface-500">ИИ-качество —</span>`;
+        if (score === null || score === undefined || !Number.isFinite(Number(score))) {
+            return `<span class="glass-badge inline-flex items-center rounded-full px-2 py-1 text-[11px] font-bold text-white/85 whitespace-nowrap" aria-label="ИИ-качество не рассчитано">—<span class="opacity-60">/10</span></span>`;
         }
-        const grade = Utils.qualityGrade(score);
-        return `<span class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold bg-purple-500/15 text-purple-500 dark:text-purple-400">
-                   ИИ-качество ${(score / 10).toFixed(1)} / 10
-               </span>
-               <span class="text-[10px] font-semibold uppercase tracking-wider ${grade.color}">${escapeHtml(grade.label)}</span>`;
+        const value = (Number(score) / 10).toFixed(1);
+        return `<span class="glass-badge inline-flex items-center rounded-full px-2 py-1 text-[11px] font-bold text-white tabular-nums whitespace-nowrap" aria-label="ИИ-качество ${value} из 10">${escapeHtml(value)}<span class="opacity-60">/10</span></span>`;
     },
 
     /**
@@ -335,44 +333,48 @@ export const Components = {
     },
 
     /**
-     * Swipable nutrition dashboard: slide 1 is the selected day, slide 2 the
-     * weekly average. Both slides are built by the caller, which keeps the
-     * period toggle out of the header - the pagination dots alone drive the
-     * switch, so title and dots share one row and the card stays compact.
+     * Nutrition dashboard: title row with the period switcher, then a single
+     * ring slide for the selected period. The period tabs live in the title
+     * row, so switching granularity costs no extra vertical space - the card
+     * stays as compact as it was while the swipe carousel was there.
      */
     nutritionDashboardCard({
         title = 'Питание',
-        slides = [],
+        tabs = '',
+        body = '',
     } = {}) {
-        const count = slides.length;
-        const dots = Array.from({ length: count }, (_, i) => `
-            <button type="button" data-action="nutrition-dot" data-slide="${i}"
-                    aria-label="Слайд ${i + 1}" aria-pressed="${i === 0}"
-                    class="nutrition-dot w-1.5 h-1.5 rounded-full transition-all duration-300 ${i === 0
-                        ? 'bg-lime-500 dark:bg-lime-400 opacity-100'
-                        : 'bg-surface-300 dark:bg-zinc-700 opacity-60'}"></button>
-        `).join('');
-
-        const track = slides.map((slide, i) => `
-            <section class="nutrition-slide snap-center" data-slide="${i}" aria-label="Слайд ${i + 1}">
-                ${slide}
-            </section>
-        `).join('');
-
         return `
-            <div class="nutrition-dashboard glass rounded-3xl p-4 shadow-xl" role="region" aria-label="Панель питания">
-                <div class="flex items-center justify-between gap-3 mb-2">
-                    <h3 class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider truncate">${escapeHtml(title)}</h3>
-                    <div class="flex items-center gap-1.5 shrink-0" role="group" aria-label="Слайды панели питания">
-                        ${dots}
-                    </div>
+            <div class="nutrition-dashboard glass rounded-3xl p-3.5 shadow-xl" role="region" aria-label="Панель питания">
+                <div class="flex items-center justify-between gap-2 mb-1.5">
+                    <h3 class="text-[11px] font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider truncate">${escapeHtml(title)}</h3>
+                    ${tabs}
                 </div>
-
-                <div class="nutrition-track flex overflow-x-auto snap-x snap-mandatory" data-role="nutrition-slides">
-                    ${track}
-                </div>
+                ${body}
             </div>
         `;
+    },
+
+    /**
+     * Period switcher for the nutrition dashboard. Text tabs carry the common
+     * presets; the trailing icon tab opens the custom range sheet. The row stays
+     * shrinkable (see .period-tabs), so a narrow screen pans it instead of
+     * pushing it past the card border.
+     */
+    periodTabs(items = []) {
+        const buttons = items.map((tab) => {
+            const active = tab.active;
+            const classes = `period-tab ${tab.icon ? 'period-tab--icon' : ''}`;
+            const icon = tab.icon
+                ? `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h13l-3-3M20 16H7l3 3"/></svg>`
+                : '';
+            return `
+                <button type="button" data-action="set-period" data-period="${escapeHtml(tab.value)}"
+                        aria-pressed="${active}" aria-label="${escapeHtml(tab.ariaLabel || tab.label || '')}"
+                        class="${classes}">${icon}${tab.label ? `<span>${escapeHtml(tab.label)}</span>` : ''}</button>
+            `;
+        }).join('');
+
+        return `<div class="period-tabs" role="group" aria-label="Период">${buttons}</div>`;
     },
 
     /**
@@ -433,51 +435,75 @@ export const Components = {
         return `/uploads/${relative}`;
     },
 
-    mealCard(meal, app) {
-        const isPending = meal.status === 'pending' || meal.status === 'processing' || meal.sync_status === DB.SYNC_STATUS.PENDING;
-        const isFailed = meal.sync_status === DB.SYNC_STATUS.FAILED;
+/**
+     * Compact macro badge of a meal card ("Белки 12 г"). The three accents are
+     * fixed brand colours rather than theme tokens: the badges always sit on a
+     * photo, so they have to read the same in light and dark mode.
+     */
+    macroBadge(label, grams, tone) {
         return `
-            <div class="glass rounded-2xl p-4 mb-4 ${isFailed ? 'border border-red-500/30' : ''}">
-                <h3 class="font-semibold">${meal.dish_name || (isPending ? 'Анализ...' : 'Блюдо')}</h3>
-                <p class="text-surface-600 dark:text-surface-300">${Math.round(meal.calories || 0)} Ккал</p>
-                ${isPending && meal.notes
-                    ? `<p class="text-xs text-surface-500 mt-1">${meal.notes}</p>`
-                    : ''}
-                ${isPending
-                    ? '<span class="inline-block mt-1 text-xs text-amber-500">Ожидает синхронизации</span>'
-                    : ''}
+            <span class="macro-badge macro-badge--${tone}">
+                <span class="macro-badge__label">${escapeHtml(label)}</span>
+                <span class="macro-badge__value">${escapeHtml(String(grams))} г</span>
+            </span>
+        `;
+    },
+
+    /**
+     * Shimmer lines shown while a meal is still being analysed. The pulse is
+     * dropped under prefers-reduced-motion, which leaves a static placeholder.
+     */
+    mealSkeleton(lines = 2) {
+        const widths = ['w-[85%]', 'w-[60%]'];
+        return `
+            <div class="meal-skeleton" aria-hidden="true">
+                ${Array.from({ length: lines }, (_, i) => `
+                    <span class="meal-skeleton__line ${widths[i] || 'w-[70%]'}"></span>
+                `).join('')}
             </div>
         `;
     },
 
-    mealCardPhoto(meal, app) {
+    /**
+     * Photo meal card used by the nutrition carousel.
+     *
+     * Front face: a top bar (time · meal type on the left, per-meal AI quality
+     * on the right), the photo itself kept as free of overlays as legibility
+     * allows, and a bottom readout with the dish name, its calorie impact, the
+     * three macro badges and a two-line AI snippet. A meal that is still being
+     * analysed swaps the figures for shimmer lines instead of printing zeroes.
+     *
+     * `showDate` adds the eaten date to the top bar, which is what makes the
+     * same card readable across a week or month carousel.
+     */
+    mealCardPhoto(meal, { showDate = false } = {}) {
         const isPending = meal.status === 'pending' || meal.status === 'processing' || meal.sync_status === DB.SYNC_STATUS.PENDING;
         const isFailed = meal.sync_status === DB.SYNC_STATUS.FAILED;
         const day = meal.eaten_at ? new Date(meal.eaten_at) : (meal.created_at ? new Date(meal.created_at) : null);
 
-        const dishName = meal.dish_name || (isPending ? 'Анализ...' : 'Блюдо');
+        const dishName = meal.dish_name || (isPending ? '' : 'Блюдо');
         const mealType = this.mealTypeLabel(meal.meal_type);
         const timeLabel = day ? Utils.formatTime(day) : '';
-        const dateLabel = day ? Utils.formatDayMonth(day) : '';
+        const dateLabel = showDate && day ? Utils.formatDayMonth(day) : '';
 
         const calories = Math.round(meal.calories || 0);
         const protein = Math.round(meal.protein_g || meal.protein || 0);
         const fat = Math.round(meal.fat_g || meal.fat || 0);
         const carbs = Math.round(meal.carbs_g || meal.carbs || 0);
-        const qualityScore = meal.quality_score !== undefined ? meal.quality_score : (meal.ingredients ? Utils.computeQualityScore({ calories, protein: meal.protein_g || meal.protein, fat: meal.fat_g || meal.fat, carbs: meal.carbs_g || meal.carbs }) : null);
+        const qualityScore = meal.quality_score !== undefined && meal.quality_score !== null
+            ? Number(meal.quality_score)
+            : Utils.computeQualityScore({
+                  calories,
+                  protein: meal.protein_g ?? meal.protein,
+                  fat: meal.fat_g ?? meal.fat,
+                  carbs: meal.carbs_g ?? meal.carbs,
+              });
 
         const photoSrc = this.mealPhotoUrl(meal);
         const safeSrc = photoSrc ? String(photoSrc).replace(/'/g, '%27').replace(/"/g, '%22') : null;
 
-        const escName = escapeHtml(dishName);
-        const escType = escapeHtml(mealType);
-        const escTime = escapeHtml(timeLabel);
-        const escDate = escapeHtml(dateLabel);
-        const escCal = escapeHtml(String(calories));
-        const escP = escapeHtml(String(protein));
-        const escF = escapeHtml(String(fat));
-        const escC = escapeHtml(String(carbs));
         const mealId = meal.id ?? '';
+        const escName = escapeHtml(dishName);
 
         // Front face background
         const frontBackground = safeSrc
@@ -485,7 +511,29 @@ export const Components = {
             : `class="bg-gradient-to-br from-surface-800 to-surface-900 dark:from-zinc-800 dark:to-zinc-900"`;
 
         // Unified top chip label: date · time · meal type
-        const chipLabel = [escDate, escTime, escType].filter(Boolean).join(' · ');
+        const chipLabel = [dateLabel, timeLabel, mealType].filter(Boolean).map(escapeHtml).join(' · ');
+
+        // Pending meals have no numbers yet, so the readout swaps for shimmer
+        // lines rather than printing a zero-calorie dish.
+        const headBlock = isPending
+            ? this.mealSkeleton(1)
+            : `
+                <h3 class="text-shadow-subtle text-xl font-bold text-white leading-tight line-clamp-2">${escName}</h3>
+                <div class="mt-1 flex items-baseline gap-1.5">
+                    <span class="text-shadow-subtle text-2xl font-extrabold text-white tabular-nums leading-none">${escapeHtml(String(calories))}</span>
+                    <span class="text-[11px] font-semibold text-white/70">ккал</span>
+                </div>
+            `;
+
+        const macroRow = isPending
+            ? ''
+            : `
+                <div class="mt-2 flex flex-wrap items-center gap-1.5">
+                    ${this.macroBadge('Белки', protein, 'protein')}
+                    ${this.macroBadge('Жиры', fat, 'fat')}
+                    ${this.macroBadge('Углеводы', carbs, 'carbs')}
+                </div>
+            `;
 
         // Back face: ingredients & details
         let ingredientsHtml = '';
@@ -530,15 +578,20 @@ export const Components = {
             `
             : '';
 
-        // Macro pills are now rendered inside the unified КБЖУ pill at the bottom,
-        // so the old per-macro row is dropped to avoid duplication.
-        const macroPills = '';
-
-        // AI analysis is bound 1:1 to its meal and rendered inside the card front face.
-        const insight = meal.ai_insight;
-        const aiInsightHtml = (typeof insight === 'string' && insight.trim())
-            ? escapeHtml(insight.trim())
-            : '<span class="text-white/50">Нет данных анализа для отображения</span>';
+        // AI snippet: the meal's own analysis when it exists, a skeleton while
+        // the meal is still processing, and nothing at all once it is clear
+        // there is no verdict to show.
+        const insight = typeof meal.ai_insight === 'string' ? meal.ai_insight.trim() : '';
+        const aiBlock = insight
+            ? `
+                <div class="meal-card-ai mt-2.5" data-no-flip>
+                    <svg class="w-3.5 h-3.5 text-primary-400 shrink-0 mt-px" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    <p class="text-[11px] leading-snug text-white/85 line-clamp-2">${escapeHtml(insight)}</p>
+                </div>
+            `
+            : isPending
+                ? `<div class="mt-2.5">${this.mealSkeleton(2)}</div>`
+                : '';
 
         return `
             <article class="snap-center shrink-0 meal-card-slot" data-meal-id="${mealId}">
@@ -547,44 +600,40 @@ export const Components = {
                         <!-- FRONT FACE -->
                         <div class="meal-card-front absolute inset-0 backface-hidden rounded-2xl overflow-hidden bg-zinc-900">
                             <div ${frontBackground} class="absolute inset-0 bg-cover bg-center"></div>
-                            <!-- Adaptive contrast scrims: top for badges, bottom for text -->
-                            <div class="meal-card-scrim absolute inset-x-0 top-0 h-20 pointer-events-none"></div>
-                            <div class="meal-card-gradient absolute inset-x-0 bottom-0 h-1/2 pointer-events-none"></div>
+                            <!-- Light scrims only: the photo stays readable, the top one just keeps the top bar legible -->
+                            <div class="meal-card-scrim absolute inset-x-0 top-0 h-14 pointer-events-none"></div>
+                            <div class="meal-card-gradient absolute inset-x-0 bottom-0 h-[58%] pointer-events-none"></div>
 
                             <div class="relative z-10 h-full flex flex-col p-4">
-                                <!-- Top row: meal type chip with date, time, and meal type -->
-                                <div class="flex items-start">
-                                    <div class="glass-badge inline-flex items-center gap-1.5 rounded-full pl-2 pr-3.5 py-1.5 min-w-0">
-                                        <span class="inline-flex items-center justify-center w-6 h-6 shrink-0 rounded-full bg-white/15 text-white">
-                                            ${this.mealTypeIcon(meal.meal_type, 'w-3.5 h-3.5')}
+                                <!-- Top bar: time · meal type, AI quality of this meal on the right -->
+                                <div class="flex items-center justify-between gap-2 shrink-0">
+                                    <div class="glass-badge inline-flex items-center gap-1.5 rounded-full pl-1.5 pr-3 py-1 min-w-0">
+                                        <span class="inline-flex items-center justify-center w-5 h-5 shrink-0 rounded-full bg-white/15 text-white">
+                                            ${this.mealTypeIcon(meal.meal_type, 'w-3 h-3')}
                                         </span>
-                                        <span class="text-xs font-semibold text-white truncate">${chipLabel}</span>
+                                        <span class="text-[11px] font-semibold text-white truncate">${chipLabel}</span>
                                     </div>
+                                    ${this.qualityBadge(qualityScore)}
                                 </div>
 
-                                <!-- Dish name -->
-                                <div class="mt-2 shrink-0">
-                                    <h3 class="text-shadow-subtle text-xl font-bold text-white leading-tight truncate">${escName}</h3>
-                                </div>
-
-                                <!-- Spacer to push AI analysis to bottom -->
+                                <!-- Spacer keeps the plate visible and pins the readout to the bottom -->
                                 <div class="flex-1 min-h-0"></div>
 
-                                <!-- Bottom-anchored AI analysis -->
-                                <div class="shrink-0 mt-3 rounded-2xl border border-white/10 bg-black/45 backdrop-blur-[2px] px-3 py-2.5">
-                                    <div class="flex items-center gap-1.5 mb-1.5 shrink-0">
-                                        <svg class="w-4 h-4 text-primary-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                                        <h4 class="text-[11px] font-semibold text-white/70 uppercase tracking-wider">ИИ-анализ</h4>
-                                    </div>
-                                    <p class="text-shadow-subtle text-sm text-white/85 leading-relaxed" data-no-flip>${aiInsightHtml}</p>
+                                <div class="shrink-0">
+                                    ${headBlock}
+                                    ${macroRow}
+                                    ${aiBlock}
                                 </div>
                             </div>
                         </div>
 
                         <!-- BACK FACE -->
                         <div class="meal-card-back absolute inset-0 backface-hidden rotate-y-180 rounded-2xl overflow-hidden bg-zinc-900 p-3.5 flex flex-col">
-                            <div class="flex items-center justify-between mb-3 shrink-0">
-                                <h4 class="text-base font-semibold text-white truncate">Детали блюда</h4>
+                            <div class="flex items-start justify-between gap-2 mb-3 shrink-0">
+                                <div class="min-w-0">
+                                    <h4 class="text-base font-semibold text-white truncate">${escName}</h4>
+                                    ${isPending ? '' : `<p class="text-[11px] text-white/55 tabular-nums">${escapeHtml(String(calories))} ккал · Б ${escapeHtml(String(protein))} · Ж ${escapeHtml(String(fat))} · У ${escapeHtml(String(carbs))} г</p>`}
+                                </div>
                                 <button type="button" data-action="flip-card" class="glass-badge w-7 h-7 rounded-full flex items-center justify-center text-white/85 hover:text-white transition-colors shrink-0" aria-label="Назад">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                                 </button>
@@ -612,7 +661,6 @@ export const Components = {
             </article>
         `;
     },
-
 
     sparkline(data, height = 72, label = 'Динамика тоннажа (кг)') {
         if (!data || data.length === 0) return '<div class="text-xs text-surface-400 h-20 flex items-center justify-center">Нет истории тренировок</div>';
@@ -838,6 +886,84 @@ export const Components = {
             });
             cancelBtn.focus();
         });
+    },
+
+    /**
+     * Period picker sheet.
+     *
+     * Every period except the single day edits a range (two inputs plus quick
+     * presets); the day keeps one input, since it only moves the anchor. The
+     * caller owns the state and reads the values back from the
+     * [data-period-field] inputs on apply.
+     */
+    periodSheet({ today, start, end, isRange }) {
+        const presets = [
+            { value: 'today', label: 'Сегодня' },
+            { value: 'week', label: 'Текущая неделя' },
+            { value: '30', label: 'Последние 30 дней' },
+        ];
+
+        const fieldClass = 'w-full px-3 py-2.5 rounded-xl bg-zinc-100 dark:bg-zinc-800/80 border border-zinc-200 dark:border-white/10 text-zinc-900 dark:text-zinc-100 text-sm focus:border-lime-500 focus:outline-none';
+        const labelClass = 'block text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold mb-1.5';
+
+        return `
+            <div class="drum-sheet fixed inset-0 z-50 pointer-events-auto">
+                <div class="drum-sheet-backdrop absolute inset-0 bg-black/40 dark:bg-black/60" data-action="close-period-sheet"></div>
+                <div class="drum-sheet-panel absolute bottom-0 left-0 right-0 bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 rounded-t-2xl border-t border-zinc-200 dark:border-white/10 flex flex-col drum-sheet-safe" role="dialog" aria-modal="true" aria-labelledby="period-sheet-title">
+                    <div class="flex flex-col gap-3.5 px-4 pt-0 pb-1">
+                        <div class="w-10 h-1 rounded-full bg-zinc-300 dark:bg-white/20 mx-auto drum-sheet-handle flex-shrink-0"></div>
+
+                        <div class="flex items-start justify-between gap-3">
+                            <div class="min-w-0">
+                                <div class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-500 font-semibold truncate">ПИТАНИЕ</div>
+                                <h3 id="period-sheet-title" class="text-base font-bold text-zinc-900 dark:text-zinc-100 truncate">${isRange ? 'Выбор периода' : 'Выбор даты'}</h3>
+                            </div>
+                            <button type="button" data-action="close-period-sheet" aria-label="Закрыть" class="w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0 flex items-center justify-center hover:text-zinc-900 dark:hover:text-zinc-50 transition-colors">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6l12 12M18 6L6 18"/></svg>
+                            </button>
+                        </div>
+
+                        ${isRange
+                            ? `
+                            <div class="grid grid-cols-2 gap-2.5">
+                                <div class="min-w-0">
+                                    <label for="period-start" class="${labelClass}">Дата начала (С)</label>
+                                    <input type="date" id="period-start" data-period-field="start" value="${escapeHtml(start)}" max="${escapeHtml(today)}" class="${fieldClass}">
+                                </div>
+                                <div class="min-w-0">
+                                    <label for="period-end" class="${labelClass}">Дата окончания (ПО)</label>
+                                    <input type="date" id="period-end" data-period-field="end" value="${escapeHtml(end)}" min="${escapeHtml(start)}" max="${escapeHtml(today)}" class="${fieldClass}">
+                                </div>
+                            </div>
+
+                            <div>
+                                <div class="${labelClass}">Быстрый выбор</div>
+                                <div class="flex flex-wrap gap-1.5" role="group" aria-label="Готовые диапазоны">
+                                    ${presets.map((preset) => `
+                                        <button type="button" data-action="period-preset" data-range="${preset.value}"
+                                                class="flex-auto px-2 py-2.5 rounded-xl bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/10 text-[11px] font-semibold text-zinc-600 dark:text-zinc-400 transition-all hover:border-lime-500/50 whitespace-nowrap">
+                                            ${escapeHtml(preset.label)}
+                                        </button>
+                                    `).join('')}
+                                </div>
+                            </div>
+                            `
+                            : `
+                            <div>
+                                <label for="period-single" class="${labelClass}">Дата</label>
+                                <input type="date" id="period-single" data-period-field="start" value="${escapeHtml(start)}" max="${escapeHtml(today)}" class="${fieldClass}">
+                            </div>
+                            <p class="text-[11px] text-zinc-500">Отчёт за один день. Для диапазона переключитесь на «7 дней», «Месяц» или ⇆.</p>
+                            `}
+
+                        <div class="flex gap-2 pt-1">
+                            <button type="button" data-action="reset-period-sheet" class="flex-1 py-3 rounded-2xl glass text-sm font-semibold">Сбросить</button>
+                            <button type="button" data-action="apply-period-sheet" class="flex-1 py-3 rounded-2xl bg-lime-500 text-zinc-950 font-bold text-sm shadow-md btn-press">Применить</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
     },
 
     /**

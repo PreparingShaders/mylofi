@@ -5,30 +5,154 @@ import { Components } from './components.js';
 import { Utils } from './utils.js';
 import { Camera } from './camera.js';
 
+const PERIODS = ['day', 'week', 'month', 'custom'];
+
+// Day / 7 days / month are one-tap presets; the custom period is opened as a
+// range sheet by the icon tab.
+const PERIOD_TABS = [
+    { value: 'day', label: 'День' },
+    { value: 'week', label: '7 дней' },
+    { value: 'month', label: 'Месяц' },
+    { value: 'custom', label: null, icon: true, ariaLabel: 'Свой диапазон' },
+];
+
 export const Nutrition = {
     app: null,
     selectedDate: null,
-    selectedMealType: null,
+    selectedPeriod: 'day',
+    customRange: { start: null, end: null },
     _newMealModalState: null,
     _newMealModalClosing: null,
+    _periodSheetState: null,
+    _periodSheetClosing: null,
 
-    async loadData(date) {
+    /**
+     * Today's date as YYYY-MM-DD. Every date in this module is a plain calendar
+     * day, so all arithmetic runs in UTC: shifting with local time would move
+     * the selected day across a DST boundary.
+     */
+    todayISO() {
+        return new Date().toISOString().slice(0, 10);
+    },
+
+    shiftDate(dateISO, days) {
+        const date = new Date(`${dateISO}T00:00:00Z`);
+        date.setUTCDate(date.getUTCDate() + days);
+        return date.toISOString().slice(0, 10);
+    },
+
+    /** Monday of the week the date belongs to (matches the backend week bounds). */
+    startOfWeek(dateISO) {
+        const date = new Date(`${dateISO}T00:00:00Z`);
+        return this.shiftDate(dateISO, -((date.getUTCDay() + 6) % 7));
+    },
+
+    monthBounds(dateISO) {
+        const date = new Date(`${dateISO}T00:00:00Z`);
+        const start = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+        const end = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0));
+        return {
+            start: start.toISOString().slice(0, 10),
+            end: end.toISOString().slice(0, 10),
+        };
+    },
+
+    /** Same day of the neighbouring month, clamped to that month's length. */
+    shiftMonth(dateISO, delta) {
+        const date = new Date(`${dateISO}T00:00:00Z`);
+        const target = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + delta, 1));
+        const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+        target.setUTCDate(Math.min(date.getUTCDate(), lastDay));
+        return target.toISOString().slice(0, 10);
+    },
+
+    formatDayMonthISO(dateISO) {
+        if (!dateISO) return '';
+        return new Date(`${String(dateISO).slice(0, 10)}T00:00:00`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+    },
+
+    formatMonthYear(dateISO) {
+        const date = new Date(`${dateISO}T00:00:00`);
+        const month = date.toLocaleDateString('ru-RU', { month: 'long' });
+        return `${month.charAt(0).toUpperCase()}${month.slice(1)} ${date.getFullYear()}`;
+    },
+
+    /**
+     * Effective window of the selected period, always ending no later than
+     * today. The week and month follow the preset bounds, the custom period
+     * follows the sheet, and the day is the anchor itself.
+     */
+    periodRange() {
+        const today = this.todayISO();
+        const anchor = this.selectedDate && this.selectedDate <= today ? this.selectedDate : today;
+
+        if (this.selectedPeriod === 'week') {
+            const start = this.startOfWeek(anchor);
+            const weekEnd = this.shiftDate(start, 6);
+            return { start, end: weekEnd > today ? today : weekEnd };
+        }
+
+        if (this.selectedPeriod === 'month') {
+            const { start, end } = this.monthBounds(anchor);
+            return { start, end: end > today ? today : end };
+        }
+
+        if (this.selectedPeriod === 'custom') {
+            let start = this.customRange?.start;
+            let end = this.customRange?.end;
+            if (!start || !end) {
+                end = anchor;
+                start = this.shiftDate(end, -6);
+            }
+            if (start > end) [start, end] = [end, start];
+            return { start, end: end > today ? today : end };
+        }
+
+        return { start: anchor, end: anchor };
+    },
+
+    /** Anchor the arrows would move to, or null when the step is not possible. */
+    stepAnchor(delta) {
+        const today = this.todayISO();
+        let next = null;
+        if (this.selectedPeriod === 'day') {
+            next = this.shiftDate(this.selectedDate, delta);
+        } else if (this.selectedPeriod === 'week') {
+            next = this.shiftDate(this.selectedDate, delta * 7);
+        } else if (this.selectedPeriod === 'month') {
+            next = this.shiftMonth(this.selectedDate, delta);
+        }
+        if (!next || next > today) return null;
+        return next;
+    },
+
+    canStepForward() {
+        return this.stepAnchor(1) !== null;
+    },
+
+    /**
+     * Meals plus their totals for the selected period. The day keeps the
+     * /nutrition/logs endpoint; every wider period uses the range endpoint.
+     * Pending local meals and failed sync items come from IndexedDB either way.
+     */
+    async loadData() {
         const token = this.app.state.tokens.access;
+        const { start, end } = this.periodRange();
+        const endpoint = this.selectedPeriod === 'day'
+            ? `/nutrition/logs?date=${start}`
+            : `/nutrition/meals?start_date=${start}&end_date=${end}`;
+
         let data = null;
         let fromCache = false;
 
         try {
-            data = await API.get(`/nutrition/logs?date=${date}`, token);
+            data = await API.get(endpoint, token);
         } catch (error) {
             console.warn('[Nutrition] API unavailable, falling back to local data:', error?.message);
             fromCache = true;
         }
 
-        if (!data && !fromCache) {
-            data = { meals: [], total_calories: 0, total_protein_g: 0, total_fat_g: 0, total_carbs_g: 0 };
-        }
-
-        const serverMeals = (data && data.meals) || [];
+        const serverMeals = (data && Array.isArray(data.meals)) ? data.meals : [];
         const summary = data
             ? {
                   calories: data.total_calories || 0,
@@ -65,14 +189,28 @@ export const Nutrition = {
     },
 
     /**
-     * Averages for the week the date belongs to, used by dashboard slide 2.
-     * The endpoint already returns per-day averages, so the payload is only
-     * normalised into the summary shape the ring expects.
+     * Averaged figures for the selected period, or null in the day period where
+     * the day payload already carries the totals. The endpoints return per-day
+     * averages plus a dense daily series, so the payload is only normalised
+     * into the summary shape the ring expects.
      */
-    async loadPeriodData(date) {
+    async loadPeriodData() {
+        if (this.selectedPeriod === 'day') return null;
+
         const token = this.app.state.tokens.access;
+        const { start, end } = this.periodRange();
+
+        let endpoint = null;
+        if (this.selectedPeriod === 'week') {
+            endpoint = `/nutrition/week?date=${this.selectedDate}`;
+        } else if (this.selectedPeriod === 'month') {
+            endpoint = `/nutrition/month?date=${this.selectedDate}`;
+        } else {
+            endpoint = `/nutrition/range?start_date=${start}&end_date=${end}`;
+        }
+
         try {
-            const data = await API.get(`/nutrition/week?date=${date || this.selectedDate}`, token);
+            const data = await API.get(endpoint, token);
             if (data && typeof data === 'object') {
                 return {
                     calories: data.avg_calories ?? data.total_calories ?? 0,
@@ -80,6 +218,11 @@ export const Nutrition = {
                     fat: data.avg_fat_g ?? data.total_fat_g ?? 0,
                     carbs: data.avg_carbs_g ?? data.total_carbs_g ?? 0,
                     target_calories: data.target_calories ?? null,
+                    target_protein_g: data.target_protein_g ?? null,
+                    target_fat_g: data.target_fat_g ?? null,
+                    target_carbs_g: data.target_carbs_g ?? null,
+                    start_date: data.start_date ?? start,
+                    end_date: data.end_date ?? end,
                     days: data.days ?? null,
                     active_days: data.active_days ?? null,
                     series: Array.isArray(data.series) ? data.series : [],
@@ -104,77 +247,91 @@ export const Nutrition = {
     },
 
     formatDateLabel(dateISO) {
-        const d = new Date(dateISO);
-        const today = new Date().toISOString().split('T')[0];
-        if (dateISO === today) return 'Сегодня';
-        return Utils.formatDate(d);
+        if (dateISO === this.todayISO()) return 'Сегодня';
+        return Utils.formatDate(dateISO);
     },
 
-    weekRangeLabel(dateISO) {
-        const start = new Date(dateISO);
-        const weekday = (start.getDay() + 6) % 7;
-        start.setDate(start.getDate() - weekday);
-        const end = new Date(start);
-        end.setDate(start.getDate() + 6);
-        return `${start.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })} — ${end.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}`;
-    },
-
-    changeDate(delta) {
-        const today = new Date().toISOString().split('T')[0];
-        if (delta > 0 && this.selectedDate >= today) {
-            return;
+    /** Human label for the date header: it names the whole selected period. */
+    periodLabel() {
+        if (this.selectedPeriod === 'day') {
+            return this.formatDateLabel(this.selectedDate);
         }
-        const current = new Date(this.selectedDate);
-        current.setDate(current.getDate() + delta);
-        this.selectedDate = current.toISOString().split('T')[0];
-        this.render(this.app.elements.pageContent, this.app, this.selectedDate);
+        if (this.selectedPeriod === 'month') {
+            return this.formatMonthYear(this.selectedDate);
+        }
+        // Week and custom both name the exact window they load, so the header
+        // and the caption under the ring can never disagree.
+        const { start, end } = this.periodRange();
+        return start === end
+            ? this.formatDayMonthISO(start)
+            : `${this.formatDayMonthISO(start)} — ${this.formatDayMonthISO(end)}`;
     },
 
-    renderDateNav(dateISO, dateLabel, fromCache = false) {
-        const today = new Date().toISOString().split('T')[0];
-        const isCurrent = dateISO >= today;
+    /** One caption line under the ring: the covered range and how full it is. */
+    periodCaption(periodData) {
+        if (this.selectedPeriod === 'day') return 'День';
+
+        const days = Number(periodData?.days) || 0;
+        const activeDays = Number(periodData?.active_days) || 0;
+        const coverage = days ? `${activeDays}/${days} дн.` : (activeDays ? `${activeDays} дн.` : '');
+
+        if (!periodData) {
+            return this.selectedPeriod === 'custom' ? 'Диапазон: нет данных' : 'Нет данных';
+        }
+
+        const start = this.formatDayMonthISO(periodData.start_date);
+        const end = this.formatDayMonthISO(periodData.end_date);
+        const range = start === end ? start : `${start} — ${end}`;
+        return [range, coverage].filter(Boolean).join(' · ');
+    },
+
+    renderDateNav(fromCache = false) {
+        // The custom period is defined by its own range, so there is no
+        // neighbouring window to step into.
+        const showArrows = this.selectedPeriod !== 'custom';
+        const canGoNext = this.canStepForward();
+
+        const arrow = (direction) => {
+            const isNext = direction === 'next';
+            const disabled = isNext && !canGoNext;
+            const icon = isNext
+                ? '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>'
+                : '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>';
+            const label = isNext ? 'Следующий период' : 'Предыдущий период';
+            return `
+                <button id="date-${direction}" data-action="date-${direction}" aria-label="${label}" ${disabled ? 'disabled' : ''}
+                        class="btn-press w-9 h-9 rounded-xl glass flex items-center justify-center text-surface-700 dark:text-surface-300 shrink-0 ${disabled ? 'opacity-40 cursor-not-allowed' : ''}">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">${icon}</svg>
+                </button>
+            `;
+        };
+
+        const spacer = '<span class="w-9 shrink-0"></span>';
+
         return `
-            <div class="flex items-center justify-between" id="date-nav">
-                <button id="date-prev" data-action="date-prev" aria-label="Предыдущий период" class="btn-press w-10 h-10 rounded-xl glass flex items-center justify-center text-surface-700 dark:text-surface-300 shrink-0">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+            <div class="flex items-center justify-between gap-2" id="date-nav">
+                ${showArrows ? arrow('prev') : spacer}
+                <button type="button" id="date-picker-trigger" data-action="open-period-sheet"
+                        class="btn-press flex flex-col items-center min-w-0 px-1" aria-label="Выбрать дату или диапазон">
+                    <span class="text-lg font-bold text-surface-900 dark:text-zinc-100 truncate max-w-[62vw]">${this.periodLabel()}</span>
+                    <span class="text-[11px] text-amber-500" id="date-offline-hint" ${fromCache ? '' : 'hidden'}>Оффлайн</span>
                 </button>
-                <div class="flex flex-col items-center min-w-0">
-                    <div class="flex items-center gap-1.5">
-                        <h2 class="text-xl font-bold text-surface-900 dark:text-zinc-100 truncate">${dateLabel}</h2>
-                        <label class="relative inline-flex items-center justify-center w-8 h-8 rounded-lg text-surface-500 dark:text-surface-400 hover:text-surface-900 dark:hover:text-zinc-100 transition-colors" for="date-picker" aria-label="Выбрать дату">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3M3.5 9.5h17M5 5h14a1.5 1.5 0 011.5 1.5v12A1.5 1.5 0 0119 20H5a1.5 1.5 0 01-1.5-1.5v-12A1.5 1.5 0 015 5z"/></svg>
-                            <input type="date" id="date-picker" value="${dateISO}" max="${today}" class="date-picker absolute inset-0 opacity-0 cursor-pointer">
-                        </label>
-                    </div>
-                    <span class="text-xs text-amber-500" id="date-offline-hint" ${fromCache ? '' : 'hidden'}>Оффлайн</span>
-                </div>
-                <button id="date-next" data-action="date-next" aria-label="Следующий период" class="btn-press w-10 h-10 rounded-xl glass flex items-center justify-center text-surface-700 dark:text-surface-300 shrink-0 ${isCurrent ? 'opacity-50 cursor-not-allowed' : ''}">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-                </button>
+                ${showArrows ? arrow('next') : spacer}
             </div>
         `;
     },
 
-    renderMealTypeChips() {
-        const types = [
-            { value: 'breakfast', label: 'Завтрак' },
-            { value: 'lunch', label: 'Обед' },
-            { value: 'dinner', label: 'Ужин' },
-            { value: 'snack', label: 'Перекус' },
-        ];
-        return types.map((t) => `
-            <button type="button" data-action="set-meal-type" data-type="${t.value}" aria-pressed="${this.selectedMealType === t.value}"
-                    class="meal-type-chip flex flex-col items-center justify-center gap-1 py-2.5 rounded-xl border border-surface-200 dark:border-white/10 text-[10px] font-medium text-surface-600 dark:text-surface-400 transition-colors">
-                ${Components.mealTypeIcon(t.value, 'w-5 h-5')}
-                <span>${t.label}</span>
-            </button>
-        `).join('');
+    renderPeriodTabs() {
+        return Components.periodTabs(PERIOD_TABS.map((tab) => ({
+            ...tab,
+            active: this.selectedPeriod === tab.value,
+        })));
     },
 
-/**
-     * One dashboard slide: the Mercedes ring plus a single caption line naming
-     * the period it covers. The caption keeps a fixed height so both slides stay
-     * exactly the same height and the card never jumps while swiping.
+    /**
+     * One dashboard slide for the selected period: the Mercedes ring plus a
+     * single caption line naming the window it covers. The caption keeps a
+     * fixed height so the card never jumps while the period is switched.
      */
     renderNutritionSlide(summary, targets, qualityScore, caption) {
         return `
@@ -184,12 +341,12 @@ export const Nutrition = {
     },
 
     /**
-     * Slide 2 figures: the 7-day averages the /nutrition/week payload already
-     * returns, plus the mean AI quality across the days that actually carry
-     * meals. Missing payload means the ring falls back to zeros instead of
-     * silently rendering another period's numbers.
+     * Period figures: the per-day averages the payload already returns, plus
+     * the mean AI quality across the days that actually carry meals. Missing
+     * payload means the ring falls back to zeros instead of silently rendering
+     * another period's numbers.
      */
-    weeklyAverage(periodData) {
+    periodAverage(periodData) {
         if (!periodData) {
             return { summary: { calories: 0, protein: 0, fat: 0, carbs: 0 }, qualityScore: null, hasData: false };
         }
@@ -220,60 +377,169 @@ export const Nutrition = {
     },
 
     /**
-     * Swipe and pagination-dot navigation for the dashboard card. The active
-     * dot follows the scroll position so a manual swipe and a dot tap stay in
-     * sync in both directions.
+     * Period switcher. The custom tab opens the range sheet instead of
+     * switching straight away, since it still needs a range to be useful -
+     * tapping it again reopens the sheet so the range stays editable.
      */
-    bindDashboardSlides() {
-        const container = this.app.elements.pageContent;
-        const track = container.querySelector('[data-role="nutrition-slides"]');
-        if (!track) return;
+    async setPeriod(period) {
+        if (!PERIODS.includes(period)) return;
+        if (period === 'custom') {
+            this.openPeriodSheet();
+            return;
+        }
+        if (period === this.selectedPeriod) return;
+        this.selectedPeriod = period;
+        await this.render(this.app.elements.pageContent, this.app);
+    },
 
-        const dots = Array.from(container.querySelectorAll('[data-action="nutrition-dot"]'));
-        const setActive = (index) => {
-            dots.forEach((dot, i) => {
-                const active = i === index;
-                dot.classList.toggle('bg-lime-500', active);
-                dot.classList.toggle('dark:bg-lime-400', active);
-                dot.classList.toggle('opacity-100', active);
-                dot.classList.toggle('bg-surface-300', !active);
-                dot.classList.toggle('dark:bg-zinc-700', !active);
-                dot.classList.toggle('opacity-60', !active);
-                dot.setAttribute('aria-pressed', String(active));
+    /** Arrow navigation: one day, one week or one month depending on period. */
+    async stepPeriod(delta) {
+        const next = this.stepAnchor(delta);
+        if (!next) return;
+        this.selectedDate = next;
+        await this.render(this.app.elements.pageContent, this.app);
+    },
+
+    /**
+     * Period picker sheet. Only the single day needs one date input; every wider
+     * period edits a range, so the sheet always exposes the start and the end.
+     */
+    openPeriodSheet() {
+        // Guard on the closing element too, so a tap during the slide-out
+        // animation cannot stack a second sheet on top of the first.
+        if (this._periodSheetState || this._periodSheetClosing) return;
+
+        const today = this.todayISO();
+        const { start, end } = this.periodRange();
+        const isRange = this.selectedPeriod !== 'day';
+
+        const host = document.createElement('div');
+        host.innerHTML = Components.periodSheet({ today, start, end, isRange });
+        const modalEl = host.firstElementChild;
+        document.body.appendChild(modalEl);
+
+        this._periodSheetState = {
+            modalEl,
+            isRange,
+            today,
+            initialStart: start,
+            initialEnd: end,
+            bodyWasLocked: document.body.classList.contains('overflow-hidden'),
+            onKeydown: null,
+        };
+        document.body.classList.add('overflow-hidden');
+
+        this.bindPeriodSheetEvents(this._periodSheetState);
+    },
+
+    closePeriodSheet() {
+        if (!this._periodSheetState) return;
+
+        const { modalEl, onKeydown, bodyWasLocked } = this._periodSheetState;
+        this._periodSheetState = null;
+        if (onKeydown) {
+            document.removeEventListener('keydown', onKeydown);
+        }
+        if (!bodyWasLocked) {
+            document.body.classList.remove('overflow-hidden');
+        }
+
+        modalEl.querySelector('.drum-sheet-panel')?.classList.add('is-closing');
+        modalEl.querySelector('.drum-sheet-backdrop')?.classList.add('is-closing');
+
+        this._periodSheetClosing = modalEl;
+        setTimeout(() => {
+            modalEl.remove();
+            if (this._periodSheetClosing === modalEl) {
+                this._periodSheetClosing = null;
+            }
+        }, 220);
+    },
+
+    bindPeriodSheetEvents(state) {
+        const { modalEl, today, isRange } = state;
+
+        modalEl.querySelector('.drum-sheet-backdrop')?.addEventListener('click', () => this.closePeriodSheet());
+        modalEl.querySelector('[data-action="close-period-sheet"]')?.addEventListener('click', () => this.closePeriodSheet());
+
+        const onKeydown = (e) => {
+            if (e.key === 'Escape') this.closePeriodSheet();
+        };
+        state.onKeydown = onKeydown;
+        document.addEventListener('keydown', onKeydown);
+
+        const startInput = modalEl.querySelector('[data-period-field="start"]');
+        const endInput = modalEl.querySelector('[data-period-field="end"]');
+
+        // Keep the bounds ordered while typing: a start past the end pulls the
+        // end along, and an end before the start pulls the start back, so the
+        // range can never read backwards before it is applied.
+        if (isRange && startInput && endInput) {
+            startInput.addEventListener('change', () => {
+                if (!startInput.value) return;
+                if (endInput.value && endInput.value < startInput.value) {
+                    endInput.value = startInput.value;
+                }
+                endInput.min = startInput.value;
             });
-        };
+            endInput.addEventListener('change', () => {
+                if (!endInput.value) return;
+                if (startInput.value && startInput.value > endInput.value) {
+                    startInput.value = endInput.value;
+                }
+                endInput.min = startInput.value;
+            });
+        }
 
-        const activeIndex = () => {
-            const width = track.clientWidth;
-            if (!width) return 0;
-            return Math.round(track.scrollLeft / width);
-        };
-
-        // A dot tap scrolls the track programmatically, which fires scroll
-        // events of its own. The flag keeps the handler from overwriting the
-        // dot the user just picked while the smooth scroll is still running.
-        let programmatic = false;
-
-        const goTo = (index) => {
-            const max = dots.length - 1;
-            const target = Math.min(max, Math.max(0, index));
-            programmatic = true;
-            track.scrollTo({ left: target * track.clientWidth, behavior: 'smooth' });
-            setActive(target);
-            clearTimeout(track._dotScrollTimer);
-            track._dotScrollTimer = setTimeout(() => { programmatic = false; }, 400);
-        };
-
-        dots.forEach((dot) => {
-            dot.onclick = () => goTo(Number(dot.dataset.slide));
+        modalEl.querySelectorAll('[data-action="period-preset"]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const range = this.presetRange(btn.dataset.range, today);
+                if (!range) return;
+                if (startInput) startInput.value = range.start;
+                if (endInput) endInput.value = range.end;
+                if (endInput) endInput.min = range.start;
+            });
         });
 
-        track.addEventListener('scroll', () => {
-            if (programmatic) return;
-            setActive(activeIndex());
-        }, { passive: true });
+        modalEl.querySelector('[data-action="reset-period-sheet"]')?.addEventListener('click', () => {
+            if (startInput) startInput.value = state.initialStart;
+            if (endInput) {
+                endInput.value = state.initialEnd;
+                endInput.min = state.initialStart;
+            }
+        });
 
-setActive(activeIndex());
+        modalEl.querySelector('[data-action="apply-period-sheet"]')?.addEventListener('click', async () => {
+            let start = startInput?.value || '';
+            let end = isRange ? (endInput?.value || '') : start;
+            if (!start) return;
+            if (!end) end = start;
+            // Swapped or future bounds are accepted but normalised, so the
+            // range always reads the way the API will resolve it.
+            if (start > end) [start, end] = [end, start];
+            if (end > today) end = today;
+            if (start > today) start = today;
+
+            this.closePeriodSheet();
+
+            if (isRange) {
+                this.selectedPeriod = 'custom';
+                this.customRange = { start, end };
+                this.selectedDate = end;
+            } else {
+                this.selectedDate = start;
+            }
+
+            await this.render(this.app.elements.pageContent, this.app);
+        });
+    },
+
+    /** Quick ranges offered by the custom period sheet. */
+    presetRange(preset, today) {
+        if (preset === 'today') return { start: today, end: today };
+        if (preset === 'week') return { start: this.startOfWeek(today), end: today };
+        if (preset === '30') return { start: this.shiftDate(today, -29), end: today };
+        return null;
     },
 
     async render(container, app, dateOverride = null) {
@@ -282,20 +548,24 @@ setActive(activeIndex());
             this.selectedDate = dateOverride;
         }
         if (!this.selectedDate) {
-            this.selectedDate = new Date().toISOString().split('T')[0];
+            this.selectedDate = this.todayISO();
+        }
+        if (!PERIODS.includes(this.selectedPeriod)) {
+            this.selectedPeriod = 'day';
         }
 
         // Close any open modal before re-rendering
         this.closeNewMealModal();
+        this.closePeriodSheet();
 
         container.innerHTML = Components.loadingSpinner();
 
         try {
-            const { serverMeals, summary, targets: apiTargets, pendingMeals, failedItems, fromCache } = await this.loadData(this.selectedDate);
-
-            // Slide 2 is always the week the selected date belongs to, so the average
-            // never drifts onto a period the user cannot navigate to any more.
-            const weekDataPromise = this.loadPeriodData(this.selectedDate);
+            // The period summary is only needed outside the day view, and it is
+            // started here so both requests fly in parallel.
+            const periodDataPromise = this.loadPeriodData();
+            const { serverMeals, summary, targets: apiTargets, pendingMeals, failedItems, fromCache } = await this.loadData();
+            const periodData = await periodDataPromise;
 
             const user = this.app.state.user || {};
             const resolveTarget = (apiValue, userValue, fallback) => {
@@ -311,8 +581,6 @@ setActive(activeIndex());
                 target_carbs: resolveTarget(apiTargets?.target_carbs, user.target_carbs_g, 250),
             };
 
-            const dateLabel = this.formatDateLabel(this.selectedDate);
-
             // LIFO: the most recent meal is the first tile after the action card.
             const sortedMeals = serverMeals
                 .slice()
@@ -322,38 +590,44 @@ setActive(activeIndex());
                 .slice()
                 .sort((a, b) => this.mealTimestamp(b) - this.mealTimestamp(a));
 
-            const weekData = await weekDataPromise;
-            const week = this.weeklyAverage(weekData);
-
             const totalMeals = sortedMeals.length + pendingSorted.length;
+            // Wider periods need the eaten date on every card, otherwise tiles
+            // from different days are indistinguishable in the carousel.
+            const showDate = this.selectedPeriod !== 'day';
 
-            // Compute quality score for the metric bar
-            const qualityScore = totalMeals > 0 ? Utils.computeQualityScore(summary) : null;
-
-            // Week targets track the week payload first so the average ring always
-            // compares against the same goal the profile shows.
-            const weekTargets = weekData?.target_calories
-                ? { ...targets, target_calories: Number(weekData.target_calories) }
+            const period = this.periodAverage(periodData);
+            // The day ring reads the day totals; wider periods read the per-day
+            // average, which keeps them comparable with the same daily targets.
+            // A missing period payload therefore falls back to zeros rather than
+            // re-labelling the day's totals as a week or a month.
+            const isDayPeriod = this.selectedPeriod === 'day';
+            const ringSummary = isDayPeriod ? summary : period.summary;
+            const qualityScore = isDayPeriod
+                ? (totalMeals > 0 ? Utils.computeQualityScore(summary) : null)
+                : period.qualityScore;
+            const ringTargets = periodData
+                ? {
+                      target_calories: resolveTarget(periodData.target_calories, user.target_calories, targets.target_calories),
+                      target_protein: resolveTarget(periodData.target_protein_g, user.target_protein_g, targets.target_protein),
+                      target_fat: resolveTarget(periodData.target_fat_g, user.target_fat_g, targets.target_fat),
+                      target_carbs: resolveTarget(periodData.target_carbs_g, user.target_carbs_g, targets.target_carbs),
+                  }
                 : targets;
-            const weekCaption = week.hasData
-                ? `Неделя: ${this.weekRangeLabel(this.selectedDate)}`
-                : 'Неделя: нет данных';
+
             const dashboard = Components.nutritionDashboardCard({
                 title: 'Питание',
-                slides: [
-                    this.renderNutritionSlide(summary, targets, qualityScore, 'День'),
-                    this.renderNutritionSlide(week.summary, weekTargets, week.qualityScore, weekCaption),
-                ],
+                tabs: this.renderPeriodTabs(),
+                body: this.renderNutritionSlide(ringSummary, ringTargets, qualityScore, this.periodCaption(periodData)),
             });
 
             let html = `
                 <div class="single-viewport px-4 pt-4 pb-20">
                     <!-- HEADER -->
                     <div class="viewport-header p-1 pt-0 pb-2">
-                        ${this.renderDateNav(this.selectedDate, dateLabel, fromCache)}
+                        ${this.renderDateNav(fromCache)}
 
-                        <!-- Swipable dashboard: selected day + weekly average -->
-                        ${dashboard}
+                        <!-- Period dashboard: day, 7 days, month or custom range -->
+                        <div class="mt-2">${dashboard}</div>
                     </div>
 
                     <!-- PENDING SYNC BANNER -->
@@ -371,8 +645,8 @@ setActive(activeIndex());
                     <!-- SNAP CAROUSEL: action tile first, then pending meals, then logged meals (LIFO) -->
                     <div class="meal-carousel" id="meal-carousel">
                         ${Components.addMealActionCard()}
-                        ${pendingSorted.map((meal) => Components.mealCardPhoto(meal, app)).join('')}
-                        ${sortedMeals.map((meal) => Components.mealCardPhoto(meal, app)).join('')}
+                        ${pendingSorted.map((meal) => Components.mealCardPhoto(meal, { showDate })).join('')}
+                        ${sortedMeals.map((meal) => Components.mealCardPhoto(meal, { showDate })).join('')}
                         ${totalMeals === 0 ? Components.mealCarouselEmptyState() : ''}
                     </div>
 
@@ -402,7 +676,7 @@ setActive(activeIndex());
             container.innerHTML = html;
 
             this.bindDateNav();
-            this.bindDashboardSlides();
+            this.bindPeriodTabs();
             this.bindFlipCards();
             this.bindAddMealModal();
             this.bindMealActions();
@@ -412,6 +686,30 @@ setActive(activeIndex());
             console.error('[Nutrition] Render error:', error);
             container.innerHTML = Components.errorState('Ошибка загрузки данных');
         }
+    },
+
+    bindDateNav() {
+        const container = this.app.elements.pageContent;
+        const prev = container.querySelector('#date-prev');
+        const next = container.querySelector('#date-next');
+        const trigger = container.querySelector('#date-picker-trigger');
+
+        if (prev) {
+            prev.onclick = () => this.stepPeriod(-1);
+        }
+        if (next) {
+            next.onclick = () => this.stepPeriod(1);
+        }
+        if (trigger) {
+            trigger.onclick = () => this.openPeriodSheet();
+        }
+    },
+
+    bindPeriodTabs() {
+        const container = this.app.elements.pageContent;
+        container.querySelectorAll('[data-action="set-period"]').forEach((btn) => {
+            btn.onclick = () => this.setPeriod(btn.dataset.period);
+        });
     },
 
     bindFlipCards() {
@@ -705,34 +1003,6 @@ setActive(activeIndex());
             clearBtn.onclick = async () => {
                 await SyncEngine.clearQueue();
                 this.app.renderPage('nutrition');
-            };
-        }
-    },
-
-    bindDateNav() {
-        const container = this.app.elements.pageContent;
-        const prev = container.querySelector('#date-prev');
-        const next = container.querySelector('#date-next');
-        const picker = container.querySelector('#date-picker');
-        const today = new Date().toISOString().split('T')[0];
-        const isCurrent = this.selectedDate >= today;
-
-        if (prev) {
-            prev.onclick = () => this.changeDate(-1);
-        }
-        if (next) {
-            next.onclick = () => {
-                if (this.selectedDate >= today) return;
-                this.changeDate(1);
-            };
-        }
-        if (picker) {
-            picker.value = this.selectedDate;
-            picker.onchange = (e) => {
-                const value = e.target.value;
-                if (!value) return;
-                this.selectedDate = value > today ? today : value;
-                this.render(container, this.app, this.selectedDate);
             };
         }
     },

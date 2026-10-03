@@ -86,24 +86,6 @@
     white-space: nowrap;
 }
 
-/* Native date input overlaid on the calendar button */
-.date-picker {
-    -webkit-appearance: none;
-    appearance: none;
-    border: 0;
-    padding: 0;
-    color: transparent;
-    background: transparent;
-}
-.date-picker::-webkit-calendar-picker-indicator {
-    width: 100%;
-    height: 100%;
-    position: absolute;
-    inset: 0;
-    cursor: pointer;
-    opacity: 0;
-}
-
 /* Meal photo card */
 .meal-card {
     box-shadow: 0 8px 24px rgba(9, 9, 11, 0.28);
@@ -124,22 +106,22 @@
     border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
-/* Adaptive contrast: bottom scrim keeps titles and macros legible on light
+/* Adaptive contrast: a light bottom scrim keeps the readout legible on bright
    photos (rice, bananas) without dimming the whole card. */
 .meal-card-gradient {
     background: linear-gradient(
         to top,
-        rgba(0, 0, 0, 0.85) 0%,
-        rgba(0, 0, 0, 0.55) 22%,
-        rgba(0, 0, 0, 0.22) 50%,
-        rgba(0, 0, 0, 0) 74%
+        rgba(0, 0, 0, 0.82) 0%,
+        rgba(0, 0, 0, 0.45) 26%,
+        rgba(0, 0, 0, 0.14) 55%,
+        rgba(0, 0, 0, 0) 78%
     );
 }
 .meal-card-scrim {
     background: linear-gradient(
         to bottom,
-        rgba(0, 0, 0, 0.55) 0%,
-        rgba(0, 0, 0, 0.18) 45%,
+        rgba(0, 0, 0, 0.45) 0%,
+        rgba(0, 0, 0, 0.14) 45%,
         rgba(0, 0, 0, 0) 100%
     );
 }
@@ -147,15 +129,106 @@
     text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
 }
 
-/* Compact card sizing: the carousel height is fixed (see .meal-carousel), cards
-   scale with the viewport and never exceed the available content box height.
-   The action tile and the empty-state tile share the meal card footprint so
-   every carousel item is a full-size snap target. */
+/* Meal card readout blocks: the AI snippet and the macro badges. Both sit on
+   the photo, so they use fixed colours that read the same in either theme. */
+.meal-card-ai {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.375rem;
+    padding: 0.375rem 0.5rem;
+    border-radius: 0.75rem;
+    background: rgba(0, 0, 0, 0.42);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.macro-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.1875rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+.macro-badge__label {
+    font-weight: 600;
+    opacity: 0.75;
+}
+.macro-badge--protein {
+    color: #10b981;
+    background: rgba(16, 185, 129, 0.16);
+}
+.macro-badge--fat {
+    color: #f59e0b;
+    background: rgba(245, 158, 11, 0.16);
+}
+.macro-badge--carbs {
+    color: #06b6d4;
+    background: rgba(6, 182, 212, 0.16);
+}
+
+/* Shimmer placeholder for a meal that is still being analysed */
+.meal-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    padding: 0.125rem 0;
+}
+.meal-skeleton__line {
+    display: block;
+    height: 0.75rem;
+    border-radius: 9999px;
+    background: rgba(255, 255, 255, 0.16);
+    animation: meal-skeleton-pulse 1.4s ease-in-out infinite;
+}
+.meal-skeleton__line:first-child {
+    height: 1.125rem;
+}
+@keyframes meal-skeleton-pulse {
+    0%, 100% { opacity: 0.35; }
+    50% { opacity: 0.7; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .meal-skeleton__line {
+        animation: none;
+        opacity: 0.5;
+    }
+}
+
+/* The card face is a size container, so the readout can react to the height the
+   carousel actually got: on a short screen the AI snippet is the first thing to
+   go, then the macro badges tighten, and the photo keeps the space. */
+.meal-card-front {
+    container-type: size;
+    container-name: mealcard;
+}
+@container mealcard (max-height: 280px) {
+    .meal-card-ai {
+        display: none;
+    }
+}
+@container mealcard (max-height: 230px) {
+    .macro-badge {
+        font-size: 9px;
+        padding: 0.125rem 0.375rem;
+    }
+    .meal-card-front .p-4 {
+        padding: 0.625rem;
+    }
+}
+
+/* Card sizing: the carousel takes whatever height the header leaves over, so
+   the cards claim that space (taller than the header-only budget allowed) while
+   max-height keeps them from being cut off on short screens. The action tile and
+   the empty-state tile share the meal card footprint so every carousel item is a
+   full-size snap target. */
 .meal-card-slot,
 .meal-action-slot,
 .meal-empty-slot {
     width: min(85vw, 340px);
-    height: clamp(260px, 44dvh, 400px);
+    height: clamp(280px, 50dvh, 460px);
+    max-height: 100%;
 }
 @media (min-width: 640px) {
     .meal-card-slot,
@@ -182,7 +255,7 @@
     padding-bottom: 0.5rem;
     flex: 1 1 auto;
     min-height: 0;
-    max-height: clamp(320px, 52dvh, 440px);
+    max-height: clamp(340px, 56dvh, 500px);
 }
 .meal-carousel::-webkit-scrollbar {
     display: none;
@@ -196,26 +269,60 @@
     flex-shrink: 0;
 }
 
-/* Nutrition dashboard: two slides in one horizontally scrollable track. The
-   track hides its scrollbar and snaps to whole slides, so a swipe or a dot tap
-   both land on the exact same position and the dots can follow scrollLeft. */
-.nutrition-track {
+/* Period switcher in the nutrition dashboard title row: presets plus the icon
+   tab that opens the custom range sheet. Sizing stays compact (11px text, 4x8px
+   padding, 2px gaps) so it fits next to the title on a 375px screen, and the
+   row itself may shrink and pan horizontally, so a narrower screen scrolls the
+   tabs instead of spilling them past the card border. */
+.period-tabs {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    border-radius: 9999px;
+    background: rgba(113, 113, 122, 0.12);
+    min-width: 0;
+    flex: 0 1 auto;
+    overflow-x: auto;
     scrollbar-width: none;
     -ms-overflow-style: none;
-    scroll-behavior: smooth;
     -webkit-overflow-scrolling: touch;
-    /* Horizontal panning belongs to the track; vertical gestures still scroll
-       the page so the card never traps the scroll. */
-    touch-action: pan-x;
 }
-.nutrition-track::-webkit-scrollbar {
+.period-tabs::-webkit-scrollbar {
     display: none;
 }
-.nutrition-slide {
-    flex: 0 0 100%;
-    min-width: 100%;
-    scroll-snap-align: center;
-    scroll-snap-stop: always;
+.period-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+    color: #71717a;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+.period-tab:hover {
+    color: #18181b;
+}
+.period-tab--icon {
+    padding: 0.3125rem;
+}
+.period-tab[aria-pressed="true"] {
+    background: #18181b;
+    color: #fafafa;
+}
+.dark .period-tab {
+    color: #a1a1aa;
+}
+.dark .period-tab:hover {
+    color: #fafafa;
+}
+.dark .period-tab[aria-pressed="true"] {
+    background: #fafafa;
+    color: #09090b;
 }
 
 /* Meal card 3D flip */
@@ -342,7 +449,7 @@ input, select, textarea:focus {
     position: relative;
     display: flex;
     justify-content: center;
-    padding-bottom: 30px;
+    padding-bottom: 26px;
 }
 .nutrition-ring-container .macro-label {
     position: absolute;
@@ -403,21 +510,6 @@ input, select, textarea:focus {
     max-width: 70%;
     align-items: center;
     text-align: center;
-}
-
-/* Meal type selector chips */
-.meal-type-chip {
-    transition: all 0.15s ease;
-}
-.meal-type-chip.active {
-    background: #18181b;
-    color: #fafafa;
-    border-color: #18181b;
-}
-.dark .meal-type-chip.active {
-    background: #fafafa;
-    color: #09090b;
-    border-color: #fafafa;
 }
 
 /* Progress bar in metric columns */

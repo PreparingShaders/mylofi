@@ -62,6 +62,7 @@ from app.services.nutrition import (
     update_meal,
     delete_meal,
     get_meals_for_date,
+    get_meals_for_range,
     save_uploaded_photo,
     update_meal_analysis_result,
     mark_meal_failed,
@@ -457,6 +458,21 @@ async def get_nutrition_logs(
     return await get_meals_for_date(db, current_user.id, _parse_target_date(date))
 
 
+@router.get("/nutrition/meals", response_model=MealListResponse)
+async def get_nutrition_meals_range(
+    start_date: Optional[str] = Query(None, description="Range start, YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="Range end, YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get meals with their totals for an arbitrary inclusive date range"""
+    start = _parse_target_date(start_date)
+    end = _parse_target_date(end_date)
+    if end < start:
+        start, end = end, start
+    return await get_meals_for_range(db, current_user.id, start, end)
+
+
 @router.get("/nutrition/summary")
 async def get_nutrition_summary(
     date: Optional[str] = Query(None, description="Date in YYYY-MM-DD format"),
@@ -495,6 +511,28 @@ async def get_nutrition_month(
 ):
     """Get monthly nutrition totals and per-day averages"""
     return await get_period_nutrition_summary(db, current_user.id, _parse_target_date(date), "month")
+
+
+@router.get("/nutrition/range")
+async def get_nutrition_range(
+    start_date: Optional[str] = Query(None, description="Range start, YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="Range end, YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get totals and per-day averages for an arbitrary inclusive date range"""
+    start = _parse_target_date(start_date)
+    end = _parse_target_date(end_date)
+    if end < start:
+        start, end = end, start
+    return await get_period_nutrition_summary(
+        db,
+        current_user.id,
+        start,
+        "custom",
+        start_date=start,
+        end_date=end,
+    )
 
 
 @router.patch("/nutrition/meals/{meal_id}", response_model=MealResponse)
