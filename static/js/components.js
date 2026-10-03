@@ -88,50 +88,50 @@ export const Components = {
     },
 
     /**
-     * AI quality badge for a single meal, in tenths: "8.5 / 10". The score is
-     * stored 0-100, so it is divided here; a meal with nothing to score keeps
-     * the neutral placeholder instead of a hard "0.0" verdict.
+     * AI quality badge for a single meal, as a whole number out of ten: "8/10".
+     * Any raw score is normalised first, so a float 0-1 answer, the 0-100 macro
+     * fallback and the 1-10 API value all land on the same integer; a meal with
+     * nothing to score keeps the neutral placeholder instead of a hard "1/10".
      */
     qualityBadge(score) {
-        if (score === null || score === undefined || !Number.isFinite(Number(score))) {
+        const value = Utils.qualityScoreFromAI(score);
+        if (value === null) {
             return `<span class="glass-badge inline-flex items-center rounded-full px-2 py-1 text-[11px] font-bold text-white/85 whitespace-nowrap" aria-label="ИИ-качество не рассчитано">—<span class="opacity-60">/10</span></span>`;
         }
-        const value = (Number(score) / 10).toFixed(1);
-        return `<span class="glass-badge inline-flex items-center rounded-full px-2 py-1 text-[11px] font-bold text-white tabular-nums whitespace-nowrap" aria-label="ИИ-качество ${value} из 10">${escapeHtml(value)}<span class="opacity-60">/10</span></span>`;
+        return `<span class="glass-badge inline-flex items-center rounded-full px-2 py-1 text-[11px] font-bold text-white tabular-nums whitespace-nowrap" aria-label="ИИ-качество ${value} из 10">${value}<span class="opacity-60">/10</span></span>`;
     },
 
     /**
-     * Parse quality_reason JSON and render compact metric bars.
+     * Parse quality_reason JSON and render the metrics as a single dense row of
+     * score pills, so a whole AI verdict fits in one line of the meal card.
      * Falls back to plain text if JSON parsing fails.
      */
-    qualityMetrics(qualityReason) {
+    qualityMetrics(qualityReason, { limit = 3 } = {}) {
         if (!qualityReason) return '';
         let metrics = [];
         try {
             metrics = JSON.parse(qualityReason);
         } catch (e) {
-            return `<p class="text-[11px] text-white/70 leading-snug">${escapeHtml(qualityReason)}</p>`;
+            return `<p class="meal-card-ai__text text-white/70">${escapeHtml(qualityReason)}</p>`;
         }
         if (!Array.isArray(metrics) || metrics.length === 0) return '';
         const maxScore = 10;
+        const shown = metrics.slice(0, limit);
+        const overflow = metrics.length > shown.length ? metrics.length - shown.length : 0;
+
         return `
-            <div class="space-y-1.5">
-                ${metrics.map(m => {
+            <div class="meal-card-metrics">
+                ${shown.map(m => {
                     const score = Math.max(0, Math.min(maxScore, Number(m.score) || 0));
-                    const pct = Math.round((score / maxScore) * 100);
-                    const color = pct >= 80 ? 'bg-lime-500' : pct >= 60 ? 'bg-amber-500' : 'bg-rose-500';
+                    const tone = score / maxScore >= 0.8 ? 'good' : (score / maxScore >= 0.6 ? 'mid' : 'low');
                     return `
-                        <div>
-                            <div class="flex items-center justify-between mb-0.5">
-                                <span class="text-[11px] font-medium text-white/85">${escapeHtml(m.label || '')}</span>
-                                <span class="text-[10px] font-mono text-white/60 tabular-nums">${score.toFixed(1)}/${maxScore}</span>
-                            </div>
-                            <div class="h-1 rounded-full bg-white/10 overflow-hidden">
-                                <div class="h-full ${color} rounded-full transition-all duration-500" style="width: ${pct}%"></div>
-                            </div>
-                        </div>
+                        <span class="meal-card-metric meal-card-metric--${tone}" title="${escapeHtml(m.label || '')}">
+                            <span class="meal-card-metric__name">${escapeHtml(m.label || 'Метрика')}</span>
+                            <span class="meal-card-metric__score">${score.toFixed(1)}</span>
+                        </span>
                     `;
                 }).join('')}
+                ${overflow > 0 ? `<span class="meal-card-metric meal-card-metric--more">+${overflow}</span>` : ''}
             </div>
         `;
     },
@@ -471,18 +471,80 @@ export const Components = {
         return `/uploads/${relative}`;
     },
 
-/**
-     * Compact macro badge of a meal card ("Белки 12 г"). The three accents are
-     * fixed brand colours rather than theme tokens: the badges always sit on a
-     * photo, so they have to read the same in light and dark mode.
+    /**
+     * One tile of the meal macro bar: the amount over its caption, the amount
+     * carrying the accent colour. The four accents are fixed brand colours
+     * rather than theme tokens, so the bar reads the same in either theme.
+     *
+     * `pending` swaps the amount for a shimmer line: a meal still being analysed
+     * has no numbers yet and must not print zeroes.
      */
-    macroBadge(label, grams, tone) {
+    macroTile(label, value, tone, { unit = 'г', pending = false } = {}) {
         return `
-            <span class="macro-badge macro-badge--${tone}">
-                <span class="macro-badge__label">${escapeHtml(label)}</span>
-                <span class="macro-badge__value">${escapeHtml(String(grams))} г</span>
-            </span>
+            <div class="meal-card-macro meal-card-macro--${tone}">
+                ${pending
+                    ? `<span class="meal-skeleton__line w-[70%]"></span>`
+                    : `<span class="meal-card-macro__value">${escapeHtml(String(value))}<span class="meal-card-macro__unit">${escapeHtml(unit)}</span></span>`}
+                <span class="meal-card-macro__label">${escapeHtml(label)}</span>
+            </div>
         `;
+    },
+
+    /**
+     * Composition of a meal, read as the items the analysis recognised plus, when
+     * those items carry weights, the total portion.
+     *
+     * The vision model returns plain tags, while a richer analysis may hand over
+     * {name, amount} objects. Objects win, because only they carry the weights
+     * the portion is summed from. Notes are the last resort, so a card never
+     * shows a "Состав" heading over nothing.
+     */
+    mealBreakdown(meal, { limit = 3 } = {}) {
+        const items = Array.isArray(meal.ingredients)
+            ? meal.ingredients.filter((ing) => ing && (ing.name || ing.amount))
+            : [];
+
+        if (items.length > 0) {
+            const total = items.reduce((sum, ing) => sum + (Number(ing.amount) || 0), 0);
+            const shown = items.slice(0, limit);
+            const overflow = items.length - shown.length;
+            return {
+                portion: total > 0 ? Math.round(total) : null,
+                body: `
+                    <div class="meal-card-rows">
+                        ${shown.map(ing => `
+                            <div class="meal-card-row">
+                                <span class="meal-card-row__name">${escapeHtml(ing.name || 'Ингредиент')}</span>
+                                <span class="meal-card-row__value">${escapeHtml(String(Math.round(Number(ing.amount) || 0)))} г</span>
+                            </div>
+                        `).join('')}
+                        ${overflow > 0 ? `<div class="meal-card-row"><span class="meal-card-row__name meal-card-row__more">Ещё ${overflow}</span></div>` : ''}
+                    </div>
+                `,
+            };
+        }
+
+        const tags = Array.isArray(meal.tags) ? meal.tags.filter(Boolean).map(String) : [];
+        if (tags.length > 0) {
+            const shown = tags.slice(0, limit + 1);
+            const overflow = tags.length - shown.length;
+            return {
+                portion: null,
+                body: `
+                    <div class="meal-card-tags">
+                        ${shown.map(tag => `<span class="meal-card-tag">${escapeHtml(tag)}</span>`).join('')}
+                        ${overflow > 0 ? `<span class="meal-card-tag meal-card-tag--more">+${overflow}</span>` : ''}
+                    </div>
+                `,
+            };
+        }
+
+        const notes = typeof meal.notes === 'string' ? meal.notes.trim() : '';
+        if (notes) {
+            return { portion: null, body: `<p class="meal-card-note">${escapeHtml(notes)}</p>` };
+        }
+
+        return { portion: null, body: '<p class="meal-card-note meal-card-note--empty">Детали недоступны</p>' };
     },
 
     /**
@@ -501,21 +563,57 @@ export const Components = {
     },
 
     /**
-     * Photo meal card used by the nutrition carousel.
-     *
-     * Front face: a top bar (time · meal type on the left, per-meal AI quality
-     * on the right), the photo itself kept as free of overlays as legibility
-     * allows, and a bottom readout with the dish name, its calorie impact, the
-     * three macro badges and a two-line AI snippet. A meal that is still being
-     * analysed swaps the figures for shimmer lines instead of printing zeroes.
-     *
-     * `showDate` adds the eaten date to the top bar, which is what makes the
-     * same card readable across a week or month carousel.
-     *
-     * `analysisTimedOut` marks a pending meal whose analysis never reported back:
-     * it stops shimmering and states the failure instead, since nothing will
-     * come along to replace those placeholders.
+     * Optimistic carousel tile shown between tapping "send" and the server
+     * echoing the meal back. An analysis takes tens of seconds, so the slot is
+     * claimed straight away: the user watches a card instead of a screen that
+     * does not react. It keeps the meal card footprint, so the carousel does not
+     * resize when the real card replaces it.
      */
+    mealCardAnalyzingSkeleton() {
+        const pill = (label) => `
+            <div class="meal-card-pill meal-card-pill--pending">
+                <span class="meal-skeleton__line w-[60%]"></span>
+                <span class="meal-card-pill__label">${escapeHtml(label)}</span>
+            </div>
+        `;
+
+        return `
+            <article class="meal-card-slot snap-center shrink-0" data-meal-skeleton="true" role="status">
+                <div class="meal-card meal-card--analyzing">
+                    <div class="meal-card-hero meal-card-hero--tall meal-card-hero__fallback">
+                        <div class="meal-card-hero__bottom flex flex-col items-center gap-2 text-center">
+                            <div class="w-7 h-7 rounded-full border-2 border-white/25 border-t-transparent animate-spin"></div>
+                            <h3 class="meal-card-hero__name">Анализируем блюдо</h3>
+                            <p class="meal-card-hero__note">Нейросеть анализирует состав и КБЖУ...</p>
+                        </div>
+                    </div>
+                    <div class="meal-card-pills">
+                        ${pill('Ккал')}${pill('Белки')}${pill('Жиры')}${pill('Углеводы')}
+                    </div>
+                    ${this.mealSkeleton(2)}
+                </div>
+            </article>
+        `;
+    },
+
+    /**
+      * Photo meal card used by the nutrition carousel.
+      *
+      * One monolithic card carries the whole meal top to bottom: a tall photo
+      * hero with the eaten-at chip on its top row and the dish name plus portion
+      * on its bottom overlay, then the macro pill row, the recognised
+      * composition, the AI verdict box and the edit/delete row. Nothing hides
+      * behind a flip or a second page, so a single screenshot of the card is a
+      * complete record of the meal. The quality score lives only in the verdict
+      * box: a second copy over the photo was the same number twice.
+      *
+      * A meal that is still being analysed swaps its figures for shimmer lines
+      * instead of printing zeroes, and `analysisTimedOut` stops the shimmer to
+      * state the failure: nothing will come along to replace those placeholders.
+      *
+      * `showDate` adds the eaten date to the hero chip, which is what makes the
+      * same card readable across a week or month carousel.
+      */
     mealCardPhoto(meal, { showDate = false, analysisTimedOut = false } = {}) {
         const isPending = meal.status === 'pending' || meal.status === 'processing' || meal.sync_status === DB.SYNC_STATUS.PENDING;
         const isFailed = meal.sync_status === DB.SYNC_STATUS.FAILED;
@@ -523,206 +621,139 @@ export const Components = {
         const day = meal.eaten_at ? new Date(meal.eaten_at) : (meal.created_at ? new Date(meal.created_at) : null);
 
         const dishName = meal.dish_name || (isStuck ? 'Не распознано' : (isPending ? '' : 'Блюдо'));
-        const mealType = this.mealTypeLabel(meal.meal_type);
         const timeLabel = day ? Utils.formatTime(day) : '';
         const dateLabel = showDate && day ? Utils.formatDayMonth(day) : '';
+        const chipLabel = [dateLabel, timeLabel, this.mealTypeLabel(meal.meal_type)]
+            .filter(Boolean)
+            .map(escapeHtml)
+            .join(' · ');
 
         const calories = Math.round(meal.calories || 0);
         const protein = Math.round(meal.protein_g || meal.protein || 0);
         const fat = Math.round(meal.fat_g || meal.fat || 0);
         const carbs = Math.round(meal.carbs_g || meal.carbs || 0);
+        const formatNum = (value) => Math.round(value).toLocaleString('ru-RU');
+
+        // The AI score and the macro-only fallback arrive on different scales,
+        // so both go through the same normalisation before the badge prints it.
+        const macroScore = Utils.computeQualityScore({
+            calories,
+            protein: meal.protein_g ?? meal.protein,
+            fat: meal.fat_g ?? meal.fat,
+            carbs: meal.carbs_g ?? meal.carbs,
+        });
+        const hasAIScore = meal.quality_score !== undefined && meal.quality_score !== null;
         const qualityScore = isStuck
-            // Nothing was analysed, so there is nothing to score: the neutral
-            // placeholder reads truer than a 0.0 verdict on empty macros.
             ? null
-            : meal.quality_score !== undefined && meal.quality_score !== null
-                ? Number(meal.quality_score)
-                : Utils.computeQualityScore({
-                      calories,
-                      protein: meal.protein_g ?? meal.protein,
-                      fat: meal.fat_g ?? meal.fat,
-                      carbs: meal.carbs_g ?? meal.carbs,
-                  });
+            : Utils.qualityScoreFromAI(hasAIScore ? meal.quality_score : (macroScore === null ? null : macroScore / 10));
 
         const photoSrc = this.mealPhotoUrl(meal);
         const safeSrc = photoSrc ? String(photoSrc).replace(/'/g, '%27').replace(/"/g, '%22') : null;
-
         const mealId = meal.id ?? '';
         const escName = escapeHtml(dishName);
 
-        // Front face background
-        const frontBackground = safeSrc
+        const breakdown = isPending ? null : this.mealBreakdown(meal);
+
+        const heroBackground = safeSrc
             ? `style="background-image: url('${safeSrc}');"`
-            : `class="bg-gradient-to-br from-surface-800 to-surface-900 dark:from-zinc-800 dark:to-zinc-900"`;
+            : 'class="meal-card-hero__fallback"';
 
-        // Unified top chip label: date · time · meal type
-        const chipLabel = [dateLabel, timeLabel, mealType].filter(Boolean).map(escapeHtml).join(' · ');
-
-        // Pending meals have no numbers yet, so the readout swaps for shimmer
-        // lines rather than printing a zero-calorie dish. A stuck meal keeps no
-        // shimmer either: the placeholders would stay there forever.
-        const headBlock = isStuck
+        const heroOverlay = isStuck
             ? `
-                <h3 class="text-shadow-subtle text-xl font-bold text-white leading-tight line-clamp-2">Не распознано</h3>
-                <div class="mt-1">
-                    <span class="text-[11px] font-semibold text-red-300">Анализ не завершился</span>
-                </div>
+                <h3 class="meal-card-hero__name">Не распознано</h3>
+                <p class="meal-card-hero__note meal-card-hero__note--error">Анализ не завершился</p>
             `
             : isPending
-                ? this.mealSkeleton(1)
+                ? `<div class="meal-card-hero__shimmer">${this.mealSkeleton(2)}</div>`
                 : `
-                    <h3 class="text-shadow-subtle text-xl font-bold text-white leading-tight line-clamp-2">${escName}</h3>
-                    <div class="mt-1 flex items-baseline gap-1.5">
-                        <span class="text-shadow-subtle text-2xl font-extrabold text-white tabular-nums leading-none">${escapeHtml(String(calories))}</span>
-                        <span class="text-[11px] font-semibold text-white/70">ккал</span>
-                    </div>
+                    <h3 class="meal-card-hero__name">${escName}</h3>
+                    ${breakdown?.portion
+                        ? `<p class="meal-card-hero__note">${escapeHtml(String(breakdown.portion))} г</p>`
+                        : ''}
                 `;
 
-        const macroRow = isPending
-            ? ''
-            : `
-                <div class="mt-2 flex flex-wrap items-center gap-1.5">
-                    ${this.macroBadge('Белки', protein, 'protein')}
-                    ${this.macroBadge('Жиры', fat, 'fat')}
-                    ${this.macroBadge('Углеводы', carbs, 'carbs')}
-                </div>
-            `;
+        const macroPill = (label, value, pending) => `
+            <div class="meal-card-pill ${pending ? 'meal-card-pill--pending' : ''}">
+                ${pending
+                    ? `<span class="meal-skeleton__line w-[60%]"></span>`
+                    : `<span class="meal-card-pill__value">${escapeHtml(String(value))}</span>`}
+                <span class="meal-card-pill__label">${escapeHtml(label)}</span>
+            </div>
+        `;
 
-        // Back face: ingredients & details
-        let ingredientsHtml = '';
-        if (meal.ingredients && Array.isArray(meal.ingredients) && meal.ingredients.length > 0) {
-            ingredientsHtml = meal.ingredients.map(ing => `
-                <div class="flex items-center justify-between py-1.5 border-b border-white/10 last:border-0">
-                    <span class="text-sm text-white/80">${escapeHtml(ing.name || 'Ингредиент')}</span>
-                    <span class="text-xs text-white/60 font-mono">${Math.round(ing.amount || 0)}г</span>
-                </div>
-            `).join('');
-        } else if (meal.notes) {
-            ingredientsHtml = `<p class="text-sm text-white/70 whitespace-pre-wrap">${escapeHtml(meal.notes)}</p>`;
-        } else {
-            ingredientsHtml = '<p class="text-sm text-white/50 text-center py-4">Детали недоступны</p>';
-        }
+        const macroBar = `
+            <div class="meal-card-pills">
+                ${macroPill('Ккал', formatNum(calories), isPending)}
+                ${macroPill('Белки', formatNum(protein), isPending)}
+                ${macroPill('Жиры', formatNum(fat), isPending)}
+                ${macroPill('Углеводы', formatNum(carbs), isPending)}
+            </div>
+        `;
 
-// Micronutrients if available
-        const fiber = meal.fiber_g !== undefined ? Math.round(meal.fiber_g) : null;
-        const sugar = meal.sugar_g !== undefined ? Math.round(meal.sugar_g) : null;
-        const sodium = meal.sodium_mg !== undefined ? Math.round(meal.sodium_mg) : null;
-
-        const micronutrientsHtml = (fiber !== null || sugar !== null || sodium !== null)
+        const compositionBlock = breakdown
             ? `
-                <div class="mt-4 pt-4 border-t border-white/10">
-                    <p class="text-xs font-medium text-white/50 uppercase tracking-wider mb-3">Микронутриенты</p>
-                    <div class="grid grid-cols-3 gap-2">
-                        ${fiber !== null ? `<div class="text-center p-2 rounded-lg bg-white/5"><p class="text-xs font-bold text-white">${fiber}г</p><p class="text-[9px] text-white/50">Клетчатка</p></div>` : ''}
-                        ${sugar !== null ? `<div class="text-center p-2 rounded-lg bg-white/5"><p class="text-xs font-bold text-white">${sugar}г</p><p class="text-[9px] text-white/50">Сахар</p></div>` : ''}
-                        ${sodium !== null ? `<div class="text-center p-2 rounded-lg bg-white/5"><p class="text-xs font-bold text-white">${sodium}мг</p><p class="text-[9px] text-white/50">Натрий</p></div>` : ''}
-                    </div>
+                <div class="meal-card-section">
+                    <p class="meal-card-section__label">Состав</p>
+                    ${breakdown.body}
                 </div>
             `
             : '';
 
-        // Notes section
-        const notesHtml = meal.notes
-            ? `
-                <div class="mt-4 pt-4 border-t border-white/10">
-                    <p class="text-xs font-medium text-white/50 uppercase tracking-wider mb-2">Заметки</p>
-                    <p class="text-sm text-white/80 whitespace-pre-wrap leading-relaxed">${escapeHtml(meal.notes)}</p>
-                </div>
-            `
-            : '';
-
-        // AI snippet: the meal's own analysis when it exists, a skeleton while
-        // the meal is still processing, and nothing at all once it is clear
-        // there is no verdict to show.
         const insight = typeof meal.ai_insight === 'string' ? meal.ai_insight.trim() : '';
-        const aiBlock = insight
+        const verdictContent = isStuck
+            ? `<p class="meal-card-ai__text meal-card-ai__text--error">Таймаут анализа или сбой сервера. Попробуйте загрузить фото ещё раз.</p>`
+            : isPending
+                ? this.mealSkeleton(2)
+                : insight
+                    ? `<p class="meal-card-ai__text">${escapeHtml(insight)}</p>`
+                    : this.qualityMetrics(meal.quality_reason);
+
+        const verdictBlock = verdictContent
             ? `
-                <div class="meal-card-ai mt-2.5" data-no-flip>
-                    <svg class="w-3.5 h-3.5 text-primary-400 shrink-0 mt-px" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                    <p class="text-[11px] leading-snug text-white/85 line-clamp-2">${escapeHtml(insight)}</p>
+                <div class="meal-card-verdict">
+                    <div class="meal-card-verdict__header">
+                        <span class="meal-card-verdict__title">Вердикт нутрициолога</span>
+                        ${this.qualityBadge(qualityScore)}
+                    </div>
+                    <div class="meal-card-verdict__body">
+                        ${verdictContent}
+                    </div>
                 </div>
             `
-            : isStuck
-                ? `
-                    <div class="meal-card-ai mt-2.5" data-no-flip>
-                        <p class="text-[11px] leading-snug text-red-300 line-clamp-2">Таймаут анализа или сбой сервера. Попробуйте загрузить фото ещё раз.</p>
-                    </div>
-                `
-                : isPending
-                    ? `<div class="mt-2.5">${this.mealSkeleton(2)}</div>`
-                    : '';
+            : '';
+
+        const actionsBlock = mealId
+            ? `
+                <div class="meal-card-actions">
+                    <button type="button" data-action="edit-meal" data-meal-id="${mealId}" class="meal-card-action">Редактировать</button>
+                    <button type="button" data-action="delete-meal" data-meal-id="${mealId}" class="meal-card-action meal-card-action--danger">Удалить</button>
+                </div>
+            `
+            : '';
 
         return `
-            <article class="snap-center shrink-0 meal-card-slot" data-meal-id="${mealId}">
-                <div class="meal-card-3d relative w-full h-full perspective-card ${isFailed || isStuck ? 'ring-2 ring-red-500/40' : ''}" data-meal-id="${mealId}">
-                    <div class="meal-card-inner relative w-full h-full transform-style-preserve-3d transition-transform duration-500 ease-out" data-action="flip-card">
-                        <!-- FRONT FACE -->
-                        <div class="meal-card-front absolute inset-0 backface-hidden rounded-2xl overflow-hidden bg-zinc-900">
-                            <div ${frontBackground} class="absolute inset-0 bg-cover bg-center"></div>
-                            <!-- Light scrims only: the photo stays readable, the top one just keeps the top bar legible -->
-                            <div class="meal-card-scrim absolute inset-x-0 top-0 h-14 pointer-events-none"></div>
-                            <div class="meal-card-gradient absolute inset-x-0 bottom-0 h-[58%] pointer-events-none"></div>
+            <article class="meal-card-slot snap-center shrink-0" data-meal-id="${mealId}">
+                <div class="meal-card ${isFailed || isStuck ? 'meal-card--alert' : ''}" data-meal-id="${mealId}">
+                    <div class="meal-card-hero meal-card-hero--tall">
+                        <div ${heroBackground} class="meal-card-hero__image"></div>
+                        <div class="meal-card-scrim meal-card-scrim--heavy"></div>
 
-                            <div class="relative z-10 h-full flex flex-col p-4">
-                                <!-- Top bar: time · meal type, AI quality of this meal on the right -->
-                                <div class="flex items-center justify-between gap-2 shrink-0">
-                                    <div class="glass-badge inline-flex items-center gap-1.5 rounded-full pl-1.5 pr-3 py-1 min-w-0">
-                                        <span class="inline-flex items-center justify-center w-5 h-5 shrink-0 rounded-full bg-white/15 text-white">
-                                            ${this.mealTypeIcon(meal.meal_type, 'w-3 h-3')}
-                                        </span>
-                                        <span class="text-[11px] font-semibold text-white truncate">${chipLabel}</span>
-                                    </div>
-                                    ${this.qualityBadge(qualityScore)}
-                                </div>
-
-                                <!-- Spacer keeps the plate visible and pins the readout to the bottom -->
-                                <div class="flex-1 min-h-0"></div>
-
-                                <div class="shrink-0">
-                                    ${headBlock}
-                                    ${macroRow}
-                                    ${aiBlock}
-                                </div>
+                        <div class="meal-card-hero__top">
+                            <div class="glass-badge inline-flex items-center gap-1.5 rounded-full pl-1.5 pr-2.5 py-1 min-w-0">
+                                <span class="inline-flex items-center justify-center w-4 h-4 shrink-0 rounded-full bg-white/15 text-white">
+                                    ${this.mealTypeIcon(meal.meal_type, 'w-2.5 h-2.5')}
+                                </span>
+                                <span class="text-[11px] font-semibold text-white truncate">${chipLabel}</span>
                             </div>
                         </div>
 
-                        <!-- BACK FACE -->
-                        <div class="meal-card-back absolute inset-0 backface-hidden rotate-y-180 rounded-2xl overflow-hidden bg-zinc-900 p-3.5 flex flex-col">
-                            <div class="flex items-start justify-between gap-2 mb-3 shrink-0">
-                                <div class="min-w-0">
-                                    <h4 class="text-base font-semibold text-white truncate">${escName}</h4>
-                                    ${isPending ? '' : `<p class="text-[11px] text-white/55 tabular-nums">${escapeHtml(String(calories))} ккал · Б ${escapeHtml(String(protein))} · Ж ${escapeHtml(String(fat))} · У ${escapeHtml(String(carbs))} г</p>`}
-                                </div>
-                                <button type="button" data-action="flip-card" class="glass-badge w-7 h-7 rounded-full flex items-center justify-center text-white/85 hover:text-white transition-colors shrink-0" aria-label="Назад">
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-                                </button>
-                            </div>
-
-                            <div class="flex-1 overflow-y-auto min-h-0 space-y-3">
-                                <!-- Ingredients Section -->
-                                <div>
-                                    <p class="text-[10px] font-medium text-white/50 uppercase tracking-wider mb-1">Состав / Ингредиенты</p>
-                                    ${ingredientsHtml}
-                                </div>
-
-                                ${micronutrientsHtml}
-
-                                ${meal.quality_reason ? `
-                                    <div class="pt-4 border-t border-white/10">
-                                        <p class="text-[10px] font-medium text-white/50 uppercase tracking-wider mb-2">Качество приёма</p>
-                                        ${this.qualityMetrics(meal.quality_reason)}
-                                    </div>
-                                ` : ''}
-
-                                ${notesHtml}
-                            </div>
-
-                            <div class="flex gap-2 mt-3 pt-3 border-t border-white/10 shrink-0">
-                                <button type="button" data-action="edit-meal" data-meal-id="${mealId}" class="flex-1 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-sm font-medium transition-colors">Редактировать</button>
-                                <button type="button" data-action="delete-meal" data-meal-id="${mealId}" class="flex-1 py-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-400 text-sm font-medium transition-colors">Удалить</button>
-                            </div>
-                        </div>
+                        <div class="meal-card-hero__bottom">${heroOverlay}</div>
                     </div>
+
+                    ${macroBar}
+                    ${compositionBlock}
+                    ${verdictBlock}
+                    ${actionsBlock}
                 </div>
             </article>
         `;
@@ -1093,8 +1124,9 @@ export const Components = {
                         </div>
 
                         <div>
-                            <label for="new-meal-notes" class="block text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold mb-1.5">Заметки <span class="opacity-60 normal-case tracking-normal">(необязательно)</span></label>
+                            <label for="new-meal-notes" class="block text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold mb-1.5">Комментарий к блюду <span class="opacity-60 normal-case tracking-normal">(необязательно)</span></label>
                             <textarea id="new-meal-notes" placeholder="Например: Творог 1%, без сахара" rows="2" class="w-full px-3 py-2.5 rounded-xl bg-zinc-100 dark:bg-zinc-800/80 border border-zinc-200 dark:border-white/10 text-zinc-900 dark:text-zinc-100 text-sm resize-none focus:border-lime-500 focus:outline-none"></textarea>
+                            <p class="mt-1.5 text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">Нейросеть учтёт комментарий при оценке порции и КБЖУ.</p>
                         </div>
 
                         <button type="button" id="new-meal-submit" data-action="submit-new-meal" class="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-lime-500 hover:bg-lime-400 text-zinc-950 font-semibold text-base shadow-lg shadow-lime-500/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-lime-500 disabled:shadow-none" disabled>

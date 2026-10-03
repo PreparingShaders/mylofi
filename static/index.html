@@ -194,34 +194,6 @@
             border-radius: 50%;
         }
 
-        /* Meal flip card (3D card flip) */
-        .flip-card {
-            perspective: 1000px;
-            cursor: pointer;
-        }
-        .flip-card-inner {
-            position: relative;
-            width: 100%;
-            height: 100%;
-            transition: transform 0.5s ease;
-            transform-style: preserve-3d;
-        }
-        .flip-card-inner.flipped {
-            transform: rotateY(180deg);
-        }
-        .flip-card-face {
-            position: absolute;
-            inset: 0;
-            width: 100%;
-            height: 100%;
-            backface-visibility: hidden;
-            border-radius: 1.25rem;
-            overflow: hidden;
-        }
-        .flip-card-back {
-            transform: rotateY(180deg);
-        }
-        
         /* Smooth transitions */
         .screen {
             transition: opacity 0.2s ease, transform 0.2s ease;

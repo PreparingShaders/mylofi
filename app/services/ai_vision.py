@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 MODEL_REQUEST_TIMEOUT = 20.0
 MODEL_CONNECT_TIMEOUT = 10.0
 
+# The user comment is context, not an instruction: it is flattened to a single
+# line and capped so a long note cannot crowd out the rest of the prompt.
+MAX_USER_NOTES_CHARS = 400
+
 # WORKER_URL often carries a trailing slash from the env file.
 WORKER_BASE_URL = (settings.WORKER_URL or "").rstrip("/")
 
@@ -33,8 +37,69 @@ UNIFIED_MODEL_CASCADE = [
     "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
 ]
 
-PROMPT = """Ты — нутрициолог. Проанализируй фото еды и верни СТРОГО валидный JSON с полями:
-{
+
+def _sanitize_user_notes(notes: Optional[str]) -> str:
+    """Flatten the user comment into a single bounded prompt line."""
+    if not notes:
+        return ""
+    cleaned = re.sub(r"\s+", " ", str(notes)).strip()
+    if not cleaned:
+        return ""
+    if len(cleaned) > MAX_USER_NOTES_CHARS:
+        cleaned = cleaned[:MAX_USER_NOTES_CHARS].rstrip() + "..."
+    return cleaned
+
+
+def build_prompt(
+    user_goal: Optional[str] = None,
+    targets: Optional[Dict[str, Any]] = None,
+    current_balance: Optional[Dict[str, Any]] = None,
+    user_notes: Optional[str] = None,
+) -> str:
+    goal_map = {
+        "lose": "дефицит калорий (похудение)",
+        "maintain": "поддержание веса",
+        "gain": "профицит калорий (набор массы)",
+        "deficit": "дефицит калорий (похудение)",
+        "surplus": "профицит калорий (набор массы)",
+    }
+    goal_text = goal_map.get(user_goal, "не определена")
+
+    t_cal = targets.get("target_calories") if targets else None
+    t_pro = targets.get("target_protein_g") if targets else None
+    t_fat = targets.get("target_fat_g") if targets else None
+    t_carb = targets.get("target_carbs_g") if targets else None
+
+    b_cal = current_balance.get("calories") if current_balance else None
+    b_pro = current_balance.get("protein_g") if current_balance else None
+    b_fat = current_balance.get("fat_g") if current_balance else None
+    b_carb = current_balance.get("carbs_g") if current_balance else None
+
+    target_line = (
+        f"Цель пользователя: {goal_text}. "
+        f"Дневные нормы: {t_cal or '?'} ккал, белки {t_pro or '?'} г, жиры {t_fat or '?'} г, углеводы {t_carb or '?'} г. "
+        if t_cal or t_pro or t_fat or t_carb
+        else ""
+    )
+    balance_line = (
+        f"Уже потреблено сегодня до этого приёма пищи: {b_cal or '?'} ккал, белки {b_pro or '?'} г, жиры {b_fat or '?'} г, углеводы {b_carb or '?'} г. "
+        if b_cal is not None or b_pro is not None or b_fat is not None or b_carb is not None
+        else ""
+    )
+
+    # The comment is what the model cannot see: the portion the user knows, the
+    # hidden oil or sugar, the dish eaten at a restaurant. It outranks a vague
+    # guess from the photo but never overrides what is visible.
+    user_notes_text = _sanitize_user_notes(user_notes)
+    notes_line = (
+        f'Комментарий пользователя к блюду: "{user_notes_text}". '
+        "Используй его при оценке порции и состава, приоритетно перед догадками по фото. "
+        if user_notes_text
+        else ""
+    )
+
+    return f"""Ты — нутрициолог. Проанализируй фото еды с учётом цели и текущего баланса пользователя и верни СТРОГО валидный JSON с полями:
+{{
   "dish_name": "название блюда на русском",
   "calories": 350.0,
   "protein_g": 12.0,
@@ -46,12 +111,16 @@ PROMPT = """Ты — нутрициолог. Проанализируй фото
   "tags": ["каша", "завтрак", "ягоды"],
   "quality_score": 8.5,
   "quality_metrics": [
-    {"label": "Белок", "score": 8.0},
-    {"label": "Клетчатка", "score": 7.5},
-    {"label": "Обработка", "score": 6.5}
-  ]
-}
-Все числовые значения — float. quality_score от 1.0 до 10.0. quality_metrics — массив из 3-5 объектов с полями label (строка) и score (float 0-10). Никаких пояснений, только JSON."""
+    {{"label": "Белок", "score": 8.0}},
+    {{"label": "Клетчатка", "score": 7.5}},
+    {{"label": "Обработка", "score": 6.5}}
+  ],
+  "ai_verdict": "Краткая оценка нутрициолога (1-2 предложения) с учётом цели и текущего баланса пользователя."
+}}
+Все числовые значения — float. quality_score от 1.0 до 10.0. quality_metrics — массив из 3-5 объектов с полями label (строка) и score (float 0-10). ai_verdict — развёрнутая оценка (2-4 предложения) с учётом контекста пользователя и его комментария, без воды. Никаких пояснений, только JSON.
+
+Контекст:
+{target_line}{balance_line}{notes_line}"""
 
 
 def _strip_markdown_json(text: str) -> str:
@@ -81,12 +150,12 @@ def _is_gemini_model(model_name: str) -> bool:
     return model_name.startswith("gemini-")
 
 
-async def _call_gemini(model_name: str, base64_img: str, client: httpx.AsyncClient) -> Dict[str, Any]:
+async def _call_gemini(model_name: str, base64_img: str, client: httpx.AsyncClient, prompt: str) -> Dict[str, Any]:
     url = f"{WORKER_BASE_URL}/v1beta/models/{model_name}:generateContent?key={settings.GEMINI_API_KEY}"
     payload = {
         "contents": [{
             "parts": [
-                {"text": PROMPT},
+                {"text": prompt},
                 {"inline_data": {"mime_type": "image/jpeg", "data": base64_img}}
             ]
         }]
@@ -101,7 +170,7 @@ async def _call_gemini(model_name: str, base64_img: str, client: httpx.AsyncClie
     return _parse_llm_json(text)
 
 
-async def _call_openrouter(model_name: str, base64_img: str, client: httpx.AsyncClient) -> Dict[str, Any]:
+async def _call_openrouter(model_name: str, base64_img: str, client: httpx.AsyncClient, prompt: str) -> Dict[str, Any]:
     url = f"{WORKER_BASE_URL}/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {settings.OPEN_ROUTER_API_KEY}",
@@ -112,7 +181,7 @@ async def _call_openrouter(model_name: str, base64_img: str, client: httpx.Async
         "messages": [{
             "role": "user",
             "content": [
-                {"type": "text", "text": PROMPT},
+                {"type": "text", "text": prompt},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}
             ]
         }]
@@ -129,8 +198,23 @@ async def _call_openrouter(model_name: str, base64_img: str, client: httpx.Async
 
 REQUIRED_FIELDS = [
     "dish_name", "calories", "protein_g", "fat_g", "carbs_g",
-    "fiber_g", "sugar_g", "sodium_mg", "tags", "quality_score", "quality_metrics",
+    "fiber_g", "sugar_g", "sodium_mg", "tags", "quality_score",
+    "quality_metrics", "ai_verdict",
 ]
+
+
+def _normalise_score(raw: Any, low: float = 1.0, high: float = 10.0) -> float:
+    """Put a model score on the 1-10 scale the UI prints.
+
+    Models answer either 1.0-10.0 or the same judgement written as 0.0-1.0; a
+    value below 1.0 can only be the second form (1.0 itself is a valid, if
+    terrible, score on the first), so it is scaled up. Everything is then clamped
+    so the badge can never read "0.8/10" or "85/10".
+    """
+    score = float(raw)
+    if 0.0 < score < 1.0:
+        score *= 10.0
+    return max(low, min(high, score))
 
 
 def _validate_analysis(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -146,10 +230,7 @@ def _validate_analysis(result: Dict[str, Any]) -> Dict[str, Any]:
         if field not in result:
             raise ValueError(f"Missing required field: {field}")
 
-    quality_score = float(result["quality_score"])
-    if not (1.0 <= quality_score <= 10.0):
-        quality_score = max(1.0, min(10.0, quality_score))
-        result["quality_score"] = quality_score
+    result["quality_score"] = _normalise_score(result["quality_score"])
 
     qm = result.get("quality_metrics", [])
     if not isinstance(qm, list):
@@ -157,22 +238,35 @@ def _validate_analysis(result: Dict[str, Any]) -> Dict[str, Any]:
     for item in qm:
         if not isinstance(item, dict) or "label" not in item or "score" not in item:
             raise ValueError("Each quality_metric must have label and score")
-        score = float(item["score"])
-        item["score"] = max(0.0, min(10.0, score))
+        item["score"] = _normalise_score(item["score"], low=0.0)
+
+    if not isinstance(result.get("ai_verdict"), str) or not result["ai_verdict"].strip():
+        raise ValueError("ai_verdict must be a non-empty string")
 
     return result
 
 
-async def analyze_meal_photo(base64_img: str) -> Dict[str, Any]:
+async def analyze_meal_photo(
+    base64_img: str,
+    user_goal: Optional[str] = None,
+    targets: Optional[Dict[str, Any]] = None,
+    current_balance: Optional[Dict[str, Any]] = None,
+    user_notes: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Analyze meal photo using cascading model fallback.
-    Returns parsed nutrition data with quality_score and quality_metrics.
+    Returns parsed nutrition data with quality_score, quality_metrics and ai_verdict.
+
+    `user_notes` is the comment the user typed when adding the meal: context the
+    photo cannot carry (portion, hidden oil, what the dish actually was).
 
     Raises RuntimeError only once every model in the cascade has failed, so the
     caller always gets either a valid payload or an actionable error.
     """
     if not settings.WORKER_URL:
         raise ValueError("WORKER_URL not configured")
+
+    prompt = build_prompt(user_goal, targets, current_balance, user_notes)
 
     last_error: Optional[BaseException] = None
     skipped: List[str] = []
@@ -204,9 +298,9 @@ async def analyze_meal_photo(base64_img: str) -> Dict[str, Any]:
                     f"(attempt {attempted}/{len(UNIFIED_MODEL_CASCADE)})"
                 )
                 if is_gemini:
-                    raw = await _call_gemini(model_name, base64_img, client)
+                    raw = await _call_gemini(model_name, base64_img, client, prompt)
                 else:
-                    raw = await _call_openrouter(model_name, base64_img, client)
+                    raw = await _call_openrouter(model_name, base64_img, client, prompt)
 
                 result = _validate_analysis(raw)
                 elapsed = time.perf_counter() - started
@@ -222,7 +316,6 @@ async def analyze_meal_photo(base64_img: str) -> Dict[str, Any]:
                     f"with HTTP {status}: {e.response.text[:200]}"
                 )
                 if status in (401, 403):
-                    # Bad credentials will not fix themselves mid-cascade.
                     logger.error(
                         f"[AI Vision] {model_name} rejected credentials "
                         f"({'GEMINI_API_KEY' if is_gemini else 'OPEN_ROUTER_API_KEY'} is invalid)"
@@ -244,7 +337,6 @@ async def analyze_meal_photo(base64_img: str) -> Dict[str, Any]:
                 )
                 continue
             except Exception as e:
-                # An unexpected shape must not abort the remaining cascade.
                 last_error = e
                 elapsed = time.perf_counter() - started
                 logger.exception(

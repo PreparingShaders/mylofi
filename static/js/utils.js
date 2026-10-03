@@ -106,6 +106,21 @@ export const Utils = {
         return Math.round((pScore + fScore + cScore) / 3);
     },
 
+    /**
+     * AI quality score as the integer 1-10 the badge prints, or null when there
+     * is nothing to print.
+     *
+     * The API stores the model's judgement as a float 1.0-10.0. A value below 1
+     * can only be the same answer written on a 0.0-1.0 scale, so it is scaled up;
+     * the rest is clamped, so an old row can never render as "0.8/10" or "85/10".
+     */
+    qualityScoreFromAI(raw) {
+        const value = Number(raw);
+        if (raw === null || raw === undefined || !Number.isFinite(value) || value <= 0) return null;
+        const scaled = value < 1 ? value * 10 : value;
+        return Math.max(1, Math.min(10, Math.round(scaled)));
+    },
+
     // Mifflin-St Jeor. Mirrors app/services/nutrition_targets.py so the live
     // preview in the Profile sheet matches the targets the API persists.
     ACTIVITY_FACTORS: {

@@ -135,6 +135,10 @@ export const Camera = {
         });
     },
 
+    /**
+     * Park a photo in the local queue until the network comes back. Returns the
+     * temporary id so the caller can scroll the queued meal into view.
+     */
     async queueOfflineMeal(blob, notes, mealType = null) {
         await DB.init();
         const tempId = DB.generateTempId();
@@ -173,5 +177,7 @@ export const Camera = {
         if (window.App && typeof window.App.updateNetworkBanner === 'function') {
             window.App.updateNetworkBanner();
         }
+
+        return tempId;
     },
 };

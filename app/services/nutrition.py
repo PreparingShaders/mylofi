@@ -207,6 +207,7 @@ def meal_to_response(meal: Meal) -> MealResponse:
         error_message=meal.error_message,
         quality_score=meal.quality_score,
         quality_reason=meal.quality_reason,
+        ai_insight=meal.ai_insight,
         eaten_at=meal.eaten_at,
         created_at=meal.created_at,
         updated_at=meal.updated_at,
@@ -323,6 +324,7 @@ async def update_meal_analysis_result(
     sodium_mg: Optional[float] = None,
     quality_score: Optional[float] = None,
     quality_reason: Optional[str] = None,
+    ai_insight: Optional[str] = None,
 ) -> Optional[Meal]:
     """Update meal with analysis results from vision API"""
     result = await db.execute(select(Meal).where(Meal.id == meal_id))
@@ -342,6 +344,7 @@ async def update_meal_analysis_result(
     meal.status = MealStatus.COMPLETED
     meal.quality_score = quality_score
     meal.quality_reason = quality_reason
+    meal.ai_insight = ai_insight
     meal.updated_at = datetime.utcnow()
 
     await db.commit()
@@ -674,6 +677,40 @@ async def process_meal_photo_task(meal_id: int) -> None:
             await db.commit()
             logger.info(f"[AI Task] Meal {meal_id} marked as PROCESSING")
 
+            user_targets = await get_user_macro_targets(db, meal.user_id)
+
+            today = meal.eaten_at.date() if meal.eaten_at else datetime.utcnow().date()
+            start_of_day = datetime.combine(today, datetime.min.time())
+            end_of_day = datetime.combine(today, datetime.max.time())
+            balance_result = await db.execute(
+                select(
+                    func.coalesce(func.sum(Meal.calories), 0).label("calories"),
+                    func.coalesce(func.sum(Meal.protein_g), 0).label("protein_g"),
+                    func.coalesce(func.sum(Meal.fat_g), 0).label("fat_g"),
+                    func.coalesce(func.sum(Meal.carbs_g), 0).label("carbs_g"),
+                )
+                .where(
+                    Meal.user_id == meal.user_id,
+                    Meal.eaten_at >= start_of_day,
+                    Meal.eaten_at <= end_of_day,
+                    Meal.status == MealStatus.COMPLETED,
+                    Meal.id != meal.id,
+                )
+            )
+            balance_row = balance_result.one()
+            current_balance = {
+                "calories": float(balance_row.calories),
+                "protein_g": float(balance_row.protein_g),
+                "fat_g": float(balance_row.fat_g),
+                "carbs_g": float(balance_row.carbs_g),
+            }
+
+            user_goal = None
+            user_result = await db.execute(select(User).where(User.id == meal.user_id))
+            user = user_result.scalar_one_or_none()
+            if user:
+                user_goal = user.goal
+
             # Compress and resize image before encoding
             with Image.open(meal.photo_path) as img:
                 if img.mode in ("RGBA", "LA", "P"):
@@ -697,7 +734,13 @@ async def process_meal_photo_task(meal_id: int) -> None:
             logger.info(f"[AI Task] Calling ai_vision for meal {meal_id} (budget {AI_TASK_TIMEOUT}s)")
             try:
                 analysis = await asyncio.wait_for(
-                    analyze_meal_photo(base64_img),
+                    analyze_meal_photo(
+                        base64_img,
+                        user_goal=user_goal,
+                        targets=user_targets,
+                        current_balance=current_balance,
+                        user_notes=meal.notes,
+                    ),
                     timeout=AI_TASK_TIMEOUT,
                 )
             except asyncio.TimeoutError:
@@ -718,6 +761,7 @@ async def process_meal_photo_task(meal_id: int) -> None:
             meal.tags = json.dumps(analysis["tags"])
             meal.quality_score = float(analysis["quality_score"])
             meal.quality_reason = json.dumps(analysis.get("quality_metrics", []), ensure_ascii=False)
+            meal.ai_insight = analysis.get("ai_verdict")
             meal.status = MealStatus.COMPLETED
             meal.error_message = None
             meal.updated_at = datetime.utcnow()

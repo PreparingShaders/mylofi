@@ -39,6 +39,9 @@ export const Nutrition = {
     _pollingAttempts: 0,
     _pollingTimedOut: false,
     _pollingRender: false,
+    // Meal the carousel has to bring into view on the next render: the id is
+    // only known after the upload answered, while the card arrives with it.
+    _scrollTargetMealId: null,
 
     /**
      * Today's date as YYYY-MM-DD. Every date in this module is a plain calendar
@@ -597,6 +600,10 @@ export const Nutrition = {
         this.closeNewMealModal();
         this.closePeriodSheet();
 
+        // The carousel is rebuilt from scratch below, so the place the user
+        // scrolled to has to be read before the first innerHTML swap wipes it.
+        const previousCarouselLeft = container.querySelector('#meal-carousel')?.scrollLeft ?? null;
+
         container.innerHTML = Components.loadingSpinner();
 
         let serverMeals = [];
@@ -730,10 +737,13 @@ export const Nutrition = {
 
             this.bindDateNav();
             this.bindPeriodTabs();
-            this.bindFlipCards();
             this.bindAddMealModal();
             this.bindMealActions();
             this.bindFailedItems();
+
+            // Every poll tick rebuilds the carousel too, so the position is put
+            // back here instead of snapping to the add tile every 3 seconds.
+            this.settleCarouselScroll(previousCarouselLeft);
 
         } catch (error) {
             console.error('[Nutrition] Render error:', error);
@@ -869,24 +879,6 @@ export const Nutrition = {
         const container = this.app.elements.pageContent;
         container.querySelectorAll('[data-action="set-period"]').forEach((btn) => {
             btn.onclick = () => this.setPeriod(btn.dataset.period);
-        });
-    },
-
-    bindFlipCards() {
-        const container = this.app.elements.pageContent;
-        container.querySelectorAll('[data-action="flip-card"]').forEach((btn) => {
-            btn.onclick = (e) => {
-                // Scrolling the in-card AI analysis must not trigger the 3D flip.
-                if (e.target.closest('[data-no-flip]')) return;
-                e.stopPropagation();
-                const card = btn.closest('.meal-card-3d');
-                if (card) {
-                    const inner = card.querySelector('.meal-card-inner');
-                    if (inner) {
-                        inner.classList.toggle('is-flipped');
-                    }
-                }
-            };
         });
     },
 
@@ -1117,13 +1109,20 @@ export const Nutrition = {
         formData.append('meal_type', state.selectedMealType);
         if (notes) formData.append('notes', notes);
 
+        // The analysis takes tens of seconds, so the carousel gets its slot
+        // before the request leaves; the id it scrolls to is only known once
+        // the server (or the local queue) has answered.
+        let newMealId = null;
+        this.showAnalyzingSkeleton();
+
         try {
-            await API.post('/nutrition/photos', formData, token, true);
+            const response = await API.post('/nutrition/photos', formData, token, true);
+            newMealId = response?.meal_id ?? null;
             this.app.showToast('Фото загружено, идёт анализ', 'success');
             this.closeNewMealModal();
         } catch (error) {
             if (error?.isNetworkError || error?.offlineQueued) {
-                await Camera.queueOfflineMeal(compressedBlob, notes, state.selectedMealType);
+                newMealId = await Camera.queueOfflineMeal(compressedBlob, notes, state.selectedMealType);
                 this.app.showToast('Нет связи. Фото сохранено локально и будет загружено при появлении связи', 'info');
                 this.closeNewMealModal();
             } else {
@@ -1131,6 +1130,7 @@ export const Nutrition = {
                 this.app.showToast(error.data?.detail || 'Ошибка загрузки', 'error');
             }
         } finally {
+            this.removeAnalyzingSkeleton();
             submitBtn.disabled = false;
             submitBtn.innerHTML = `
                 <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
@@ -1138,7 +1138,88 @@ export const Nutrition = {
             `;
         }
 
-        this.render(this.app.elements.pageContent, this.app, this.selectedDate);
+        // The reload brings the real card (pending, then analysed); the carousel only
+        // knows its id once the render that produced it is done, so the target
+        // is handed over instead of scrolled to here.
+        this._scrollTargetMealId = newMealId;
+        await this.render(this.app.elements.pageContent, this.app, this.selectedDate);
+    },
+
+    /**
+     * Claim a carousel slot for the meal being uploaded. The tile is inserted
+     * after the add tile and scrolled to, so the wait happens on a card instead
+     * of on a screen that does not react.
+     */
+    showAnalyzingSkeleton() {
+        const carousel = this.app.elements.pageContent.querySelector('#meal-carousel');
+        if (!carousel || carousel.querySelector('[data-meal-skeleton]')) return;
+
+        const holder = document.createElement('div');
+        holder.innerHTML = Components.mealCardAnalyzingSkeleton();
+        const slot = holder.firstElementChild;
+        if (!slot) return;
+
+        // The add tile stays first; the new meal lands right after it.
+        carousel.insertBefore(slot, carousel.children[1] || null);
+        this.scrollCarouselToSlot(slot);
+    },
+
+    /**
+     * Drop the optimistic tile. It only lives until the next render, which
+     * replaces the whole carousel, but an upload that failed without a reload
+     * would otherwise leave a spinner behind forever.
+     */
+    removeAnalyzingSkeleton() {
+        this.app.elements.pageContent.querySelector('#meal-carousel [data-meal-skeleton]')?.remove();
+    },
+
+    /** Centre a carousel slot without disturbing the rest of the layout. */
+    scrollCarouselToSlot(slot) {
+        const carousel = slot?.closest('.meal-carousel');
+        if (!slot || !carousel) return;
+
+        // Rect deltas rather than offsetLeft: the carousel is not a positioned
+        // ancestor, so offsetLeft would be measured against a further ancestor.
+        const carouselBox = carousel.getBoundingClientRect();
+        const slotBox = slot.getBoundingClientRect();
+        const centered = carousel.scrollLeft
+            + (slotBox.left - carouselBox.left)
+            - (carousel.clientWidth - slotBox.width) / 2;
+        const max = Math.max(0, carousel.scrollWidth - carousel.clientWidth);
+        const target = Math.max(0, Math.min(centered, max));
+
+        if (typeof carousel.scrollTo === 'function') {
+            carousel.scrollTo({ left: target, behavior: 'smooth' });
+        } else {
+            carousel.scrollLeft = target;
+        }
+    },
+
+    /**
+     * Put the carousel where it belongs after a re-render.
+     *
+     * The carousel element is recreated by every render - including each poll
+     * tick - so without this the user's place is lost every few seconds while a
+     * meal is being analysed. A pending target (the meal just added, whose id
+     * only the server knows) wins over the remembered offset and is consumed on
+     * use, so it scrolls exactly once.
+     */
+    settleCarouselScroll(previousLeft) {
+        const carousel = this.app.elements.pageContent.querySelector('#meal-carousel');
+        if (!carousel) return;
+
+        const targetId = this._scrollTargetMealId;
+        this._scrollTargetMealId = null;
+        if (targetId !== null && targetId !== undefined) {
+            const slot = carousel.querySelector(`.meal-card-slot[data-meal-id="${targetId}"]`);
+            if (slot) {
+                this.scrollCarouselToSlot(slot);
+                return;
+            }
+        }
+
+        const max = Math.max(0, carousel.scrollWidth - carousel.clientWidth);
+        carousel.scrollLeft = Math.max(0, Math.min(previousLeft || 0, max));
     },
 
     bindFailedItems() {
@@ -1168,10 +1249,9 @@ export const Nutrition = {
     },
 
     /**
-     * Edit/delete handlers for every card action button (front menu and back
-     * face). Both stop propagation and prevent default: the flip listener is
-     * bound on the .meal-card-inner ancestor, so without this the click would
-     * bubble up and rotate the card instead of running the action.
+     * Edit/delete handlers for every card action button. The meal card is one
+     * monolithic block, so both handlers keep the default action intact and
+     * only stop the click from bubbling any further.
      */
     bindMealActions() {
         const container = this.app.elements.pageContent;

@@ -133,8 +133,14 @@
     z-index: 20;
 }
 
-/* Meals carousel: allow vertical page scrolling while keeping horizontal carousel swipe */
-.meals-carousel,
+/* Meals carousel: a browser only takes over a gesture when every element
+   between the finger and the scroller allows that direction, so the carousel and
+   the tiles inside it have to agree on both axes. The carousel asks for pan-x
+   pan-y: a horizontal drag walks the cards, a vertical drag is handed back to
+   whatever scrolls above it. Narrowing either side of the pair (pan-x on the
+   carousel, pan-y on the cards) intersects down to nothing and freezes both
+   directions, which is what used to trap the finger on the carousel. */
+.meal-carousel,
 .meal-card-slot,
 .meal-action-slot,
 .meal-empty-slot {
@@ -179,13 +185,6 @@
     color: #6B7280;
     white-space: nowrap;
 }
-.meal-card-photo {
-    background-size: cover;
-    background-position: center;
-    background-repeat: no-repeat;
-    background-color: #27272a;
-}
-
 /* Floating badge on top of a photo: blurred glass pill that stays readable
    on both very dark and very light food photography. */
 .glass-badge {
@@ -206,55 +205,445 @@
         rgba(0, 0, 0, 0) 78%
     );
 }
+/* Adaptive contrast on the hero photo: a light scrim at the top keeps the chip
+   row legible and a stronger one at the bottom keeps the dish name legible,
+   without dimming the plate in between. */
 .meal-card-scrim {
-    background: linear-gradient(
-        to bottom,
-        rgba(0, 0, 0, 0.45) 0%,
-        rgba(0, 0, 0, 0.14) 45%,
-        rgba(0, 0, 0, 0) 100%
-    );
-}
-.text-shadow-subtle {
-    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+    background:
+        linear-gradient(to bottom, rgba(0, 0, 0, 0.45) 0%, rgba(0, 0, 0, 0.14) 45%, rgba(0, 0, 0, 0) 100%),
+        linear-gradient(to top, rgba(0, 0, 0, 0.82) 0%, rgba(0, 0, 0, 0.45) 26%, rgba(0, 0, 0, 0.14) 55%, rgba(0, 0, 0, 0) 78%);
 }
 
-/* Meal card readout blocks: the AI snippet and the macro badges. Both sit on
-   the photo, so they use fixed colours that read the same in either theme. */
+/* ============ Monolithic meal card ============ */
+/* One card carries the whole meal - photo, macros, composition, AI verdict and
+   actions - so it reads as a single unit and screenshots as one. The layout is
+   a column whose hero grows into whatever height is left over, so an absent
+   section closes the gap instead of leaving a hole, and the action row always
+   sits on the bottom edge. */
+.meal-card-slot {
+    /* Size container for the card below: the sections query the height the
+       carousel actually granted, which is the only way to know on a short
+       screen. It sits on the slot, not on the card, because an element cannot
+       query its own container. */
+    container-type: size;
+    container-name: mealcard;
+}
+.meal-card {
+    --meal-hero-h: 148px;
+    --meal-rows-h: 58px;
+    --meal-tags-h: 26px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    height: 100%;
+    padding: 10px;
+    border-radius: 1rem;
+    background: #18181b;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+    color: #fafafa;
+}
+.meal-card--alert {
+    border-color: rgba(239, 68, 68, 0.45);
+}
+
+/* Photo hero: the eaten-at chip and the AI score sit on its top row, the dish
+   name and portion on its bottom overlay, and the plate keeps the space between.
+   The hero is the only section that flexes, so a taller card shows a bigger
+   photo while a shorter one falls back to its minimum height. */
+.meal-card-hero {
+    position: relative;
+    flex: 1 0 auto;
+    min-height: var(--meal-hero-h);
+    max-height: 210px;
+    overflow: hidden;
+    border-radius: 0.75rem;
+    background: #27272a;
+}
+.meal-card-hero__image {
+    position: absolute;
+    inset: 0;
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+}
+.meal-card-hero__fallback {
+    background: linear-gradient(135deg, #27272a 0%, #18181b 100%);
+}
+.meal-card-hero .meal-card-scrim {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+.meal-card-hero__top {
+    position: absolute;
+    inset: 6px 6px auto 6px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+.meal-card-hero__bottom {
+    position: absolute;
+    inset: auto 8px 7px 8px;
+}
+.meal-card-hero__name {
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: #fafafa;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.meal-card-hero__note {
+    margin-top: 1px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.2;
+    color: rgba(255, 255, 255, 0.7);
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+.meal-card-hero__note--error {
+    color: #fca5a5;
+}
+.meal-card-hero__shimmer {
+    padding-top: 2px;
+}
+
+/* Macro bar: four equal tiles, calories leading. The accents are fixed brand
+   colours so the bar reads the same in either theme. */
+.meal-card-macros {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    flex-shrink: 0;
+}
+.meal-card-macro {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+    min-width: 0;
+    padding: 5px 3px;
+    border-radius: 0.625rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+}
+.meal-card-macro__value {
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+}
+.meal-card-macro__unit {
+    font-size: 9px;
+    font-weight: 700;
+    opacity: 0.7;
+}
+.meal-card-macro__label {
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 1.1;
+    color: #a1a1aa;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.meal-card-macro--calories .meal-card-macro__value { color: #fafafa; }
+.meal-card-macro--protein .meal-card-macro__value { color: #10b981; }
+.meal-card-macro--fat .meal-card-macro__value { color: #f59e0b; }
+.meal-card-macro--carbs .meal-card-macro__value { color: #06b6d4; }
+
+/* Composition: a short label over either a two-column list or a row of tags.
+   The body is capped in rows rather than allowed to collapse, so a squeezed
+   card trims entries instead of leaving a bare heading. The three caps are
+   variables because the short-card steps below retune them together. The
+   section is the one that gives way last: the label holds, the body shrinks. */
+.meal-card-section {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    flex: 0 1 auto;
+    min-height: 0;
+}
+.meal-card-section__label {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #71717a;
+    flex-shrink: 0;
+}
+.meal-card-rows {
+    display: flex;
+    flex-direction: column;
+    max-height: var(--meal-rows-h);
+    overflow: hidden;
+}
+.meal-card-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 2px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    font-size: 11px;
+    line-height: 1.3;
+}
+.meal-card-row:last-child {
+    border-bottom: 0;
+}
+.meal-card-row__name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: rgba(255, 255, 255, 0.85);
+}
+.meal-card-row__more {
+    color: #71717a;
+}
+.meal-card-row__value {
+    flex-shrink: 0;
+    font-family: 'Inter', ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+    color: rgba(255, 255, 255, 0.6);
+}
+.meal-card-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    max-height: var(--meal-tags-h);
+    overflow: hidden;
+}
+.meal-card-tag {
+    max-width: 100%;
+    padding: 2px 7px;
+    border-radius: 9999px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.4;
+    color: rgba(255, 255, 255, 0.8);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.meal-card-tag--more {
+    color: #a1a1aa;
+    background: transparent;
+}
+/* User note: printed in full. The card is height-capped, so the note block is
+   allowed to shrink and scroll rather than cutting the sentence in half. */
+.meal-card-note {
+    font-size: 11px;
+    line-height: 1.35;
+    color: rgba(255, 255, 255, 0.75);
+    overflow-y: auto;
+    min-height: 0;
+}
+.meal-card-note--empty {
+    color: #52525b;
+}
+
+/* AI verdict: a quiet slate block holding either the insight text or the
+   per-metric score pills. */
 .meal-card-ai {
     display: flex;
     align-items: flex-start;
-    gap: 0.375rem;
-    padding: 0.375rem 0.5rem;
-    border-radius: 0.75rem;
-    background: rgba(0, 0, 0, 0.42);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    gap: 6px;
+    flex-shrink: 0;
+    padding: 6px 8px;
+    border-radius: 0.625rem;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.07);
 }
-.macro-badge {
+.meal-card-ai__icon {
+    flex-shrink: 0;
+    width: 13px;
+    height: 13px;
+    margin-top: 1px;
+    color: #a3e635;
+}
+/* AI verdict text: no clamp, the nutritionist's verdict is printed whole. */
+.meal-card-ai__text {
+    min-width: 0;
+    font-size: 11px;
+    line-height: 1.35;
+    color: rgba(255, 255, 255, 0.85);
+    overflow-wrap: break-word;
+}
+.meal-card-ai__text--error {
+    color: #fca5a5;
+}
+.meal-card-metrics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    min-width: 0;
+}
+.meal-card-metric {
     display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-    padding: 0.1875rem 0.5rem;
+    align-items: baseline;
+    gap: 4px;
+    max-width: 100%;
+    padding: 1px 6px;
     border-radius: 9999px;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 700;
-    line-height: 1.2;
+    line-height: 1.5;
     white-space: nowrap;
 }
-.macro-badge__label {
+.meal-card-metric__name {
     font-weight: 600;
     opacity: 0.75;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
-.macro-badge--protein {
-    color: #10b981;
-    background: rgba(16, 185, 129, 0.16);
+.meal-card-metric__score {
+    font-family: 'Inter', ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
 }
-.macro-badge--fat {
-    color: #f59e0b;
-    background: rgba(245, 158, 11, 0.16);
+.meal-card-metric--good { color: #a3e635; background: rgba(163, 230, 53, 0.12); }
+.meal-card-metric--mid { color: #fbbf24; background: rgba(251, 191, 36, 0.12); }
+.meal-card-metric--low { color: #fb7185; background: rgba(251, 113, 133, 0.12); }
+.meal-card-metric--more { color: #a1a1aa; background: rgba(255, 255, 255, 0.06); }
+
+/* Tall hero for spacious meal card */
+.meal-card-hero--tall {
+    min-height: 220px;
+    max-height: 240px;
 }
-.macro-badge--carbs {
-    color: #06b6d4;
-    background: rgba(6, 182, 212, 0.16);
+.meal-card-scrim--heavy {
+    background:
+        linear-gradient(to bottom, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0.18) 50%, rgba(0, 0, 0, 0.75) 100%),
+        linear-gradient(to top, rgba(0, 0, 0, 0.82) 0%, rgba(0, 0, 0, 0.45) 26%, rgba(0, 0, 0, 0.14) 55%, rgba(0, 0, 0, 0) 78%);
+}
+
+/* Macro pill row: dark styled badges */
+.meal-card-pills {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+.meal-card-pill {
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+    min-width: 0;
+    padding: 6px 4px;
+    border-radius: 0.625rem;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.meal-card-pill__value {
+    font-size: 14px;
+    font-weight: 800;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+    color: #fafafa;
+}
+.meal-card-pill__label {
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1.1;
+    color: #a1a1aa;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.meal-card-pill--pending .meal-card-pill__value {
+    opacity: 0;
+}
+.meal-card-pill--pending .meal-card-pill__label {
+    opacity: 0.5;
+}
+
+/* Nutritionist verdict box. It is the one section allowed to give way: it takes
+   the space the hero and the macro row leave, and only when even that is not
+   enough does its body start scrolling, so a long verdict is never clipped. */
+.meal-card-verdict {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 0 1 auto;
+    min-height: 0;
+    padding: 8px;
+    border-radius: 0.75rem;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+}
+.meal-card-verdict__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-shrink: 0;
+}
+.meal-card-verdict__title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #71717a;
+}
+.meal-card-verdict__body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+.meal-card-verdict__body .meal-card-ai__text {
+    font-size: 12px;
+    line-height: 1.4;
+    color: rgba(255, 255, 255, 0.88);
+}
+.meal-card-verdict__body .meal-card-metrics {
+    flex-wrap: wrap;
+}
+
+/* Edit / delete row, pinned to the bottom of the card. */
+.meal-card-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: auto;
+    padding-top: 2px;
+    flex-shrink: 0;
+}
+.meal-card-action {
+    flex: 1;
+    padding: 6px 0;
+    border-radius: 0.625rem;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.2;
+    text-align: center;
+    color: rgba(255, 255, 255, 0.9);
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    transition: background-color 0.15s ease;
+}
+.meal-card-action:hover {
+    background: rgba(255, 255, 255, 0.14);
+}
+.meal-card-action--danger {
+    color: #f87171;
+    background: rgba(239, 68, 68, 0.12);
+}
+.meal-card-action--danger:hover {
+    background: rgba(239, 68, 68, 0.2);
 }
 
 /* Shimmer placeholder for a meal that is still being analysed */
@@ -285,25 +674,63 @@
     }
 }
 
-/* The card face is a size container, so the readout can react to the height the
-   carousel actually got: on a short screen the AI snippet is the first thing to
-   go, then the macro badges tighten, and the photo keeps the space. */
-.meal-card-front {
-    container-type: size;
-    container-name: mealcard;
+/* The card sections are sized from the height the carousel actually granted.
+   Four steps, in the order the card can afford to give things up: the photo
+   shrinks first, then the composition drops to a single line, then the padding
+   tightens and the AI verdict gives way. The action row is never touched, so it
+   survives every step. */
+@container mealcard (max-height: 400px) {
+    .meal-card {
+        --meal-hero-h: 124px;
+        --meal-rows-h: 39px;
+    }
+}
+@container mealcard (max-height: 340px) {
+    .meal-card {
+        --meal-hero-h: 104px;
+        --meal-rows-h: 19px;
+        gap: 6px;
+        padding: 8px;
+    }
+    .meal-card-ai,
+    .meal-card-verdict {
+        display: none;
+    }
 }
 @container mealcard (max-height: 280px) {
-    .meal-card-ai {
+    .meal-card {
+        --meal-hero-h: 84px;
+    }
+    .meal-card-section__label {
         display: none;
     }
 }
 @container mealcard (max-height: 230px) {
-    .macro-badge {
-        font-size: 9px;
-        padding: 0.125rem 0.375rem;
+    .meal-card {
+        --meal-hero-h: 72px;
+        --meal-rows-h: 16px;
+        --meal-tags-h: 16px;
+        gap: 5px;
+        padding: 7px;
     }
-    .meal-card-front .p-4 {
-        padding: 0.625rem;
+    .meal-card-pill {
+        padding: 3px 2px;
+    }
+}
+/* A card this short only appears on a phone too small for the nutrition
+   dashboard; the composition goes rather than clipping the action row. */
+@container mealcard (max-height: 200px) {
+    .meal-card {
+        --meal-hero-h: 64px;
+        gap: 4px;
+        padding: 6px;
+    }
+    .meal-card-section {
+        display: none;
+    }
+    .meal-card-pill,
+    .meal-card-action {
+        padding: 2px;
     }
 }
 
@@ -316,7 +743,7 @@
 .meal-action-slot,
 .meal-empty-slot {
     width: min(85vw, 340px);
-    height: clamp(280px, 50dvh, 460px);
+    height: clamp(280px, 52dvh, 470px);
     max-height: 100%;
 }
 @media (min-width: 640px) {
@@ -338,13 +765,13 @@
     scroll-snap-type: x mandatory;
     scroll-behavior: smooth;
     -webkit-overflow-scrolling: touch;
-    touch-action: pan-x;
+    touch-action: pan-x pan-y;
     padding-left: 1rem;
     padding-right: 1rem;
     padding-bottom: 0.5rem;
     flex: 1 1 auto;
     min-height: 0;
-    max-height: clamp(340px, 56dvh, 500px);
+    max-height: clamp(360px, 58dvh, 510px);
 }
 .meal-carousel::-webkit-scrollbar {
     display: none;
@@ -412,35 +839,6 @@
 .dark .period-tab[aria-pressed="true"] {
     background: #fafafa;
     color: #09090b;
-}
-
-/* Meal card 3D flip */
-.perspective-card {
-    perspective: 1000px;
-}
-.transform-style-preserve-3d {
-    transform-style: preserve-3d;
-}
-.backface-hidden {
-    backface-visibility: hidden;
-}
-.rotate-y-180 {
-    transform: rotateY(180deg);
-}
-.meal-card-inner.is-flipped {
-    transform: rotateY(180deg);
-}
-.meal-card-front,
-.meal-card-back {
-    backface-visibility: hidden;
-}
-/* Backface safety: keep both faces clipped to the card bounds so the
-   3D flip never reveals content bleeding past the card edges. */
-.meal-card-front,
-.meal-card-back {
-    will-change: transform;
-    -webkit-backface-visibility: hidden;
-    backface-visibility: hidden;
 }
 
 /* Smooth transitions */

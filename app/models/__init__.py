@@ -135,6 +135,7 @@ class Meal(Base):
     # AI Quality Assessment
     quality_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     quality_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ai_insight: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Timing
     eaten_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)

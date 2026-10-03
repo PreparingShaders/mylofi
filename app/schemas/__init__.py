@@ -203,6 +203,7 @@ class MealUpdate(BaseModel):
     eaten_at: Optional[datetime] = None
     quality_score: Optional[float] = None
     quality_reason: Optional[str] = None
+    ai_insight: Optional[str] = None
 
 
 class MealResponse(MealBase):
@@ -225,6 +226,7 @@ class MealResponse(MealBase):
     error_message: Optional[str] = None
     quality_score: Optional[float] = None
     quality_reason: Optional[str] = None
+    ai_insight: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
