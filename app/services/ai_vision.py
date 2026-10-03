@@ -21,6 +21,40 @@ MODEL_CONNECT_TIMEOUT = 10.0
 # line and capped so a long note cannot crowd out the rest of the prompt.
 MAX_USER_NOTES_CHARS = 400
 
+# The custom persona instruction is the user writing their own prompt. The cap
+# matches the API's max_length, so what the profile accepts is what reaches the
+# model: the text is flattened to one line (a multi-line block invites the model
+# to answer with a list instead of the JSON the contract requires) and can never
+# crowd out the rules below.
+MAX_PERSONA_TEXT_CHARS = 1000
+
+# The voice the verdict is written in. Only the wording of ai_verdict and the
+# comments around the numbers change - the JSON contract, the figures and the
+# "name the overrun" rules below stay fixed, so a persona can never talk the
+# model out of returning a parsable answer.
+PERSONA_PROMPTS = {
+    "kind": (
+        "Ты — добрый нутрициолог. Говори тепло и поддерживающе, без нравоучений: "
+        "сначала что получилось хорошо, потом что можно улучшить, и всегда с конкретным действием."
+    ),
+    "strict": (
+        "Ты — строгий нутрициолог-тренер. Говори коротко, по делу и без уступок: называй "
+        "ошибки прямо, требуй конкретных действий и не смягчай оценку легендами о пользе."
+    ),
+    "sarcastic": (
+        "Ты — саркастичный нутрициолог с чувством юмора. Шути коротко и уместно, "
+        "не превращая оценку в насмешку над человеком: цифры и предупреждения всё равно точны и прямолинейны."
+    ),
+    "custom": (
+        "Ты — нутрициолог. Стиль общения пользователь задаёт сам, и он указан сразу после этого предложения. "
+        "Следуй ему в формулировках ai_verdict, не меняя при этом факты, цифры и JSON-формат ответа."
+    ),
+}
+
+# Used when the profile carries no persona (an old row, or a value the app no
+# longer knows). The warm default is what an unset column should read as.
+DEFAULT_PERSONA = "kind"
+
 # WORKER_URL often carries a trailing slash from the env file.
 WORKER_BASE_URL = (settings.WORKER_URL or "").rstrip("/")
 
@@ -66,11 +100,36 @@ def _fmt_amount(value: Any) -> str:
     return f"{number:g}"
 
 
+def normalize_persona(persona: Optional[str]) -> str:
+    """The persona key to use, falling back to the default for unusable input.
+
+    Anything the app does not know about - a persona retired from the enum, a
+    typo, an empty column - resolves to the default rather than raising: a
+    missing tone must never cost the user their nutrition analysis.
+    """
+    key = str(persona or "").strip().lower()
+    return key if key in PERSONA_PROMPTS else DEFAULT_PERSONA
+
+
+def _sanitize_persona_text(text: Optional[str]) -> str:
+    """Flatten the user's own persona wording into a bounded prompt block."""
+    if not text:
+        return ""
+    cleaned = re.sub(r"\s+", " ", str(text)).strip()
+    if not cleaned:
+        return ""
+    if len(cleaned) > MAX_PERSONA_TEXT_CHARS:
+        cleaned = cleaned[:MAX_PERSONA_TEXT_CHARS].rstrip() + "..."
+    return cleaned
+
+
 def build_prompt(
     user_goal: Optional[str] = None,
     targets: Optional[Dict[str, Any]] = None,
     current_balance: Optional[Dict[str, Any]] = None,
     user_notes: Optional[str] = None,
+    persona: Optional[str] = None,
+    persona_custom_text: Optional[str] = None,
 ) -> str:
     goal_map = {
         "lose": "дефицит калорий (похудение)",
@@ -116,6 +175,22 @@ def build_prompt(
         else ""
     )
 
+    # The persona is a tone of voice, not a task: it is stated once, up front, and
+    # the rules below keep every one of them (the JSON contract, the figures, the
+    # wording of an overrun) binding regardless of which voice is used.
+    persona_key = normalize_persona(persona)
+    persona_text = _sanitize_persona_text(persona_custom_text)
+    persona_line = (
+        f"Персонализация: {PERSONA_PROMPTS[persona_key]}"
+        + (
+            f' Пользовательский стиль: "{persona_text}". '
+            if persona_key == "custom" and persona_text
+            else ""
+        )
+        + " Персона влияет только на тон формулировок ai_verdict: цифры, оценки и JSON-формат "
+        "остаются точными, и правила оценки баланса ниже действуют в полном объёме."
+    )
+
     return f"""Ты — нутрициолог. Проанализируй фото еды с учётом цели и текущего баланса пользователя и верни СТРОГО валидный JSON с полями:
 {{
   "dish_name": "название блюда на русском",
@@ -142,6 +217,8 @@ def build_prompt(
 - Если итог по любому показателю БОЛЬШЕ нормы - это превышение. Назови его прямо и конкретно: "превышение на 240 ккал" / "белок больше нормы на 18 г". Обязательно используй слова "превышено" или "выше нормы".
 - Запрещено писать про превышение как про почти норму: "близко к норме", "чуть выше панели", "в пределах нормы", "совсем немного превышает" - такие формулировки противоречат цифрам и обманывают пользователя.
 - Если всё в пределах нормы - скажи это прямо и назови остаток. Если норм нет ('?') - оценивай блюдо само по себе, без сравнения.
+
+{persona_line}
 
 Контекст:
 {target_line}{balance_line}{notes_line}"""
@@ -276,6 +353,8 @@ async def analyze_meal_photo(
     targets: Optional[Dict[str, Any]] = None,
     current_balance: Optional[Dict[str, Any]] = None,
     user_notes: Optional[str] = None,
+    persona: Optional[str] = None,
+    persona_custom_text: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Analyze meal photo using cascading model fallback.
@@ -283,6 +362,8 @@ async def analyze_meal_photo(
 
     `user_notes` is the comment the user typed when adding the meal: context the
     photo cannot carry (portion, hidden oil, what the dish actually was).
+    `persona` / `persona_custom_text` set the voice of ai_verdict; an unknown
+    persona falls back to the default one instead of failing the analysis.
 
     Raises RuntimeError only once every model in the cascade has failed, so the
     caller always gets either a valid payload or an actionable error.
@@ -290,7 +371,14 @@ async def analyze_meal_photo(
     if not settings.WORKER_URL:
         raise ValueError("WORKER_URL not configured")
 
-    prompt = build_prompt(user_goal, targets, current_balance, user_notes)
+    prompt = build_prompt(
+        user_goal,
+        targets,
+        current_balance,
+        user_notes,
+        persona,
+        persona_custom_text,
+    )
 
     last_error: Optional[BaseException] = None
     skipped: List[str] = []

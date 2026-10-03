@@ -131,7 +131,12 @@ html.dark,
 }
 
 /* Meal photo card */
+/* The shadow is part of the theme: on white it has to be a soft lift, on the
+   dark graphite it is the only thing separating the card from the page. */
 .meal-card {
+    box-shadow: 0 8px 24px rgba(9, 9, 11, 0.10);
+}
+.dark .meal-card {
     box-shadow: 0 8px 24px rgba(9, 9, 11, 0.28);
 }
 
@@ -280,6 +285,23 @@ html.dark,
        ~19.5px. A cap that landed mid-row sliced the last line in half, which
        read as the composition colliding with the verdict below it. */
     --meal-rows-h: 78px;
+    /* Theme tokens for the card and everything inside it. Every themed surface
+       below reads one of these instead of a literal, so the light theme is the
+       set of defaults here and the dark theme is one override further down -
+       no rule in between has to be written twice, and the two themes cannot
+       drift apart. Anything that sits on the photo (hero name, glass chips)
+       deliberately does not use them: a scrim, not the card background, is what
+       makes those readable. */
+    --meal-surface: #ffffff;
+    --meal-surface-soft: rgba(24, 24, 27, 0.03);
+    --meal-surface-tint: rgba(24, 24, 27, 0.05);
+    --meal-border: rgba(24, 24, 27, 0.08);
+    --meal-border-strong: rgba(24, 24, 27, 0.14);
+    --meal-text: #18181b;
+    --meal-text-soft: rgba(24, 24, 27, 0.85);
+    --meal-text-muted: #71717a;
+    --meal-text-faint: #a1a1aa;
+    --meal-skeleton: rgba(24, 24, 27, 0.12);
     display: flex;
     flex-direction: column;
     justify-content: flex-start;
@@ -290,10 +312,23 @@ html.dark,
     height: auto;
     padding: 16px;
     border-radius: 1rem;
-    background: #18181b;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--meal-surface);
+    border: 1px solid var(--meal-border);
     overflow: visible;
-    color: #fafafa;
+    color: var(--meal-text);
+}
+/* Dark theme: same card, same tokens, the graphite values. */
+.dark .meal-card {
+    --meal-surface: #18181b;
+    --meal-surface-soft: rgba(255, 255, 255, 0.04);
+    --meal-surface-tint: rgba(255, 255, 255, 0.05);
+    --meal-border: rgba(255, 255, 255, 0.08);
+    --meal-border-strong: rgba(255, 255, 255, 0.16);
+    --meal-text: #fafafa;
+    --meal-text-soft: rgba(255, 255, 255, 0.85);
+    --meal-text-muted: #71717a;
+    --meal-text-faint: #a1a1aa;
+    --meal-skeleton: rgba(255, 255, 255, 0.16);
 }
 .meal-card--alert {
     border-color: rgba(239, 68, 68, 0.45);
@@ -418,8 +453,8 @@ html.dark,
     min-width: 0;
     padding: 5px 3px;
     border-radius: 0.625rem;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.07);
+    background: var(--meal-surface-tint);
+    border: 1px solid var(--meal-border);
 }
 .meal-card-macro__value {
     font-size: 13px;
@@ -436,13 +471,13 @@ html.dark,
     font-size: 9px;
     font-weight: 600;
     line-height: 1.1;
-    color: #a1a1aa;
+    color: var(--meal-text-faint);
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.meal-card-macro--calories .meal-card-macro__value { color: #fafafa; }
+.meal-card-macro--calories .meal-card-macro__value { color: var(--meal-text); }
 .meal-card-macro--protein .meal-card-macro__value { color: #10b981; }
 .meal-card-macro--fat .meal-card-macro__value { color: #f59e0b; }
 .meal-card-macro--carbs .meal-card-macro__value { color: #06b6d4; }
@@ -464,7 +499,7 @@ html.dark,
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: #71717a;
+    color: var(--meal-text-muted);
     flex-shrink: 0;
 }
 .meal-card-rows {
@@ -485,7 +520,7 @@ html.dark,
     justify-content: space-between;
     gap: 8px;
     padding: 2px 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    border-bottom: 1px solid var(--meal-border);
     font-size: 11px;
     line-height: 1.3;
 }
@@ -497,16 +532,16 @@ html.dark,
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: rgba(255, 255, 255, 0.85);
+    color: var(--meal-text-soft);
 }
 .meal-card-row__more {
-    color: #71717a;
+    color: var(--meal-text-muted);
 }
 .meal-card-row__value {
     flex-shrink: 0;
     font-family: 'Inter', ui-monospace, monospace;
     font-variant-numeric: tabular-nums;
-    color: rgba(255, 255, 255, 0.6);
+    color: var(--meal-text-muted);
 }
 .meal-card-tags {
     display: flex;
@@ -521,15 +556,15 @@ html.dark,
     font-size: 10px;
     font-weight: 600;
     line-height: 1.4;
-    color: rgba(255, 255, 255, 0.8);
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: var(--meal-text-soft);
+    background: var(--meal-surface-soft);
+    border: 1px solid var(--meal-border);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 .meal-card-tag--more {
-    color: #a1a1aa;
+    color: var(--meal-text-faint);
     background: transparent;
 }
 /* Composition overflow. The tail of a long list is rendered but hidden until the
@@ -572,12 +607,12 @@ html.dark,
 .meal-card-note {
     font-size: 11px;
     line-height: 1.35;
-    color: rgba(255, 255, 255, 0.75);
+    color: var(--meal-text-soft);
     overflow-y: auto;
     min-height: 0;
 }
 .meal-card-note--empty {
-    color: #52525b;
+    color: var(--meal-text-faint);
 }
 
 /* AI verdict: a quiet slate block holding either the insight text or the
@@ -589,8 +624,8 @@ html.dark,
     flex-shrink: 0;
     padding: 6px 8px;
     border-radius: 0.625rem;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.07);
+    background: var(--meal-surface-soft);
+    border: 1px solid var(--meal-border);
 }
 .meal-card-ai__icon {
     flex-shrink: 0;
@@ -607,7 +642,7 @@ html.dark,
     min-width: 0;
     font-size: 12px;
     line-height: 1.45;
-    color: rgba(255, 255, 255, 0.85);
+    color: var(--meal-text-soft);
     overflow-wrap: break-word;
 }
 .meal-card-ai__text--error {
@@ -641,10 +676,18 @@ html.dark,
     font-family: 'Inter', ui-monospace, monospace;
     font-variant-numeric: tabular-nums;
 }
-.meal-card-metric--good { color: #a3e635; background: rgba(163, 230, 53, 0.12); }
-.meal-card-metric--mid { color: #fbbf24; background: rgba(251, 191, 36, 0.12); }
-.meal-card-metric--low { color: #fb7185; background: rgba(251, 113, 133, 0.12); }
-.meal-card-metric--more { color: #a1a1aa; background: rgba(255, 255, 255, 0.06); }
+/* Metric pills. The accents are the same three bands in both themes, but the
+   shade has to move with the theme: the dark-theme tints (a pale lime on a 12%
+   wash) sit on a white card at roughly 1.9:1, so the light theme steps the text
+   down to the 600/700 shade and deepens the wash with it. The band itself never
+   changes, only the pair of shades that draws it. */
+.meal-card-metric--good { color: #4d7c0f; background: rgba(163, 230, 53, 0.22); }
+.meal-card-metric--mid { color: #b45309; background: rgba(251, 191, 36, 0.22); }
+.meal-card-metric--low { color: #be123c; background: rgba(251, 113, 133, 0.20); }
+.dark .meal-card-metric--good { color: #a3e635; background: rgba(163, 230, 53, 0.12); }
+.dark .meal-card-metric--mid { color: #fbbf24; background: rgba(251, 191, 36, 0.12); }
+.dark .meal-card-metric--low { color: #fb7185; background: rgba(251, 113, 133, 0.12); }
+.meal-card-metric--more { color: var(--meal-text-faint); background: var(--meal-surface-soft); }
 
 /* Tall hero for spacious meal card. It shares the card's responsive minimum
    and buys its extra height from its own aspect ratio, so a taller photo never
@@ -659,7 +702,7 @@ html.dark,
         linear-gradient(to top, rgba(0, 0, 0, 0.82) 0%, rgba(0, 0, 0, 0.45) 26%, rgba(0, 0, 0, 0.14) 55%, rgba(0, 0, 0, 0) 78%);
 }
 
-/* Macro pill row: dark styled badges */
+/* Macro pill row: four soft tiles that carry the figures of the meal. */
 .meal-card-pills {
     display: flex;
     gap: 6px;
@@ -675,21 +718,21 @@ html.dark,
     min-width: 0;
     padding: 6px 4px;
     border-radius: 0.625rem;
-    background: rgba(0, 0, 0, 0.35);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: var(--meal-surface-tint);
+    border: 1px solid var(--meal-border);
 }
 .meal-card-pill__value {
     font-size: 14px;
     font-weight: 800;
     line-height: 1.1;
     font-variant-numeric: tabular-nums;
-    color: #fafafa;
+    color: var(--meal-text);
 }
 .meal-card-pill__label {
     font-size: 9px;
     font-weight: 700;
     line-height: 1.1;
-    color: #a1a1aa;
+    color: var(--meal-text-faint);
     text-transform: uppercase;
     letter-spacing: 0.04em;
 }
@@ -703,6 +746,41 @@ html.dark,
 /* Nutritionist verdict box. It takes its natural height and never shrinks, so
    the whole review is printed: the card grows to fit it and the page scrolls,
    and nothing in the card is trimmed to make room for the text. */
+/* The persona chip and the box are one unit: the wrapper carries the tight 4px
+   gap so the card's 12px section rhythm does not push the persona label away
+   from the verdict it names. With no chip the wrapper is a plain single-child
+   column and the box sits exactly where it did before. */
+.meal-card-verdict-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 0 0 auto;
+    min-width: 0;
+}
+/* Persona chip: which voice wrote the verdict below it. Themed from the card
+   tokens, so it is a quiet chip in either theme rather than a badge that only
+   worked on the dark one. */
+.meal-card-persona {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    align-self: flex-start;
+    max-width: 100%;
+    min-width: 0;
+    padding: 2px 8px 2px 6px;
+    border-radius: 9999px;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.5;
+    color: var(--meal-text-muted);
+    background: var(--meal-surface-soft);
+    border: 1px solid var(--meal-border);
+}
+.meal-card-persona__emoji {
+    flex-shrink: 0;
+    font-size: 11px;
+    line-height: 1;
+}
 .meal-card-verdict {
     display: flex;
     flex-direction: column;
@@ -710,8 +788,10 @@ html.dark,
     flex: 0 0 auto;
     padding: 10px;
     border-radius: 0.75rem;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--meal-surface-soft);
+    /* The verdict is the one inset panel on the card, so it takes the stronger
+       border: on a white card the wash alone is not enough to read as a box. */
+    border: 1px solid var(--meal-border-strong);
 }
 .meal-card-verdict__header {
     display: flex;
@@ -725,7 +805,22 @@ html.dark,
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: #71717a;
+    color: var(--meal-text-muted);
+}
+/* AI score chip in the verdict header: a soft tinted pill from the card tokens,
+   because it sits on the card background and not on a photo. */
+.meal-card-quality {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    color: var(--meal-text);
+    background: var(--meal-surface-tint);
+    border: 1px solid var(--meal-border);
 }
 /* Verdict body: the text takes whatever height it needs and the score pills
    wrap inside the same box. Nothing here scrolls or clamps - the body grows to
@@ -738,7 +833,7 @@ html.dark,
     min-width: 0;
 }
 .meal-card-verdict__body .meal-card-ai__text {
-    color: rgba(255, 255, 255, 0.88);
+    color: var(--meal-text);
 }
 .meal-card-verdict__body .meal-card-metrics {
     flex-wrap: wrap;
@@ -755,7 +850,7 @@ html.dark,
     display: block;
     height: 0.75rem;
     border-radius: 9999px;
-    background: rgba(255, 255, 255, 0.16);
+    background: var(--meal-skeleton, rgba(24, 24, 27, 0.12));
     animation: meal-skeleton-pulse 1.4s ease-in-out infinite;
 }
 .meal-skeleton__line:first-child {
@@ -817,6 +912,13 @@ html.dark,
     scroll-behavior: smooth;
     -webkit-overflow-scrolling: touch;
     touch-action: pan-x pan-y;
+    /* The strip is laid out inside the page's px-4 gutter (the same one the
+       summary card above is aligned to), so it cancels that gutter and puts the
+       padding back inside: the first card then starts exactly on the summary
+       card's left edge instead of a further 16px in, and the strip still runs to
+       the screen edge so there is room to scroll the last card to centre. */
+    margin-left: -1rem;
+    margin-right: -1rem;
     padding-left: 1rem;
     padding-right: 1rem;
     padding-bottom: 0.5rem;

@@ -12,6 +12,7 @@ from app.schemas import (
     UserResponse,
     UserMe,
     UserUpdate,
+    AiPersona,
     AnthropometricsUpdate,
     AnthropometricsResponse,
     UsageResponse,
@@ -283,6 +284,17 @@ async def update_current_user(
 
     if "push_subscription" in update_data:
         current_user.push_subscription = update_data.pop("push_subscription")
+
+    # The persona is validated as an enum, so it arrives as a member: store the
+    # plain key the column and the prompt builder both work with.
+    persona = update_data.get("ai_persona")
+    if isinstance(persona, AiPersona):
+        update_data["ai_persona"] = persona.value
+
+    # A persona switch to anything but "custom" retires the custom wording, so
+    # switching back does not silently revive an instruction the user left behind.
+    if "ai_persona" in update_data and update_data["ai_persona"] != AiPersona.CUSTOM.value:
+        update_data["ai_persona_custom_text"] = None
 
     for field, value in update_data.items():
         setattr(current_user, field, value)

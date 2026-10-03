@@ -1,6 +1,6 @@
 console.log("[DEBUG] Loaded profile.js");
 import { API } from './api.js';
-import { Components } from './components.js';
+import { Components, escapeHtml } from './components.js';
 import { Theme } from './theme.js';
 import { Utils } from './utils.js';
 
@@ -80,6 +80,72 @@ const GOAL_LABELS = {
     maintain: 'Поддерживать',
     gain: 'Набрать вес',
 };
+
+/* AI nutritionist personas. The one-line hint is what the user reads before
+   picking, so it describes the voice and not the feature: the prompt itself is
+   built on the server from the same key. */
+const AI_PERSONAS = [
+    { value: 'kind', emoji: '😊', label: 'Добрый', hint: 'Поддерживает, мягко подсказывает' },
+    { value: 'strict', emoji: '🧊', label: 'Строгий', hint: 'Коротко, по делу, без уступок' },
+    { value: 'sarcastic', emoji: '😏', label: 'Саркастичный', hint: 'С юмором, но по делу' },
+    { value: 'custom', emoji: '🎭', label: 'Свой', hint: 'Опишите стиль общения сами' },
+];
+
+const PERSONA_OPTION_BASE = 'flex flex-col items-start gap-0.5 px-2.5 py-2 rounded-xl border text-left transition-all min-w-0';
+const PERSONA_OPTION_ACTIVE = 'bg-lime-500/10 border-lime-500/50 text-surface-900 dark:text-zinc-100 shadow-[0_0_0_1px_rgba(132,204,22,0.35)]';
+const PERSONA_OPTION_IDLE = 'bg-surface-100/70 dark:bg-white/5 border-surface-200 dark:border-white/10 text-surface-600 dark:text-zinc-300 hover:border-lime-500/40';
+
+/* Textarea cap, mirrored by max_length on the API and by the prompt builder's
+   bound: the field's own maxlength is what stops the counter and the server from
+   ever disagreeing about how much wording is allowed. */
+const PERSONA_TEXT_MAX = 1000;
+
+function renderPersonaCard(user) {
+    const current = AI_PERSONAS.some((p) => p.value === user.ai_persona) ? user.ai_persona : 'kind';
+    const isCustom = current === 'custom';
+    const text = user.ai_persona_custom_text || '';
+
+    const options = AI_PERSONAS.map(({ value, emoji, label, hint }) => {
+        const active = value === current;
+        const cls = PERSONA_OPTION_BASE + ' ' + (active ? PERSONA_OPTION_ACTIVE : PERSONA_OPTION_IDLE);
+        return `
+            <button type="button" data-action="set-ai-persona" data-value="${value}" aria-pressed="${active}"
+                    aria-label="${label}: ${hint}" class="${cls}">
+                <span class="text-[13px] font-semibold leading-tight">${emoji} ${label}</span>
+                <span class="text-[10px] leading-tight opacity-70">${hint}</span>
+            </button>
+        `;
+    }).join('');
+
+    return `
+        <div class="glass rounded-2xl p-4 mb-4">
+            <div class="flex items-baseline justify-between gap-3 mb-1">
+                <h3 class="font-semibold">ИИ-нутрициолог</h3>
+                <button type="button" data-action="save-ai-persona" class="text-xs font-semibold text-lime-600 dark:text-lime-400 flex-shrink-0">
+                    Сохранить
+                </button>
+            </div>
+            <p class="text-xs text-surface-500 dark:text-surface-400 mb-3">
+                В каком тоне нутрициолог оценивает блюдо. На цифры не влияет.
+            </p>
+            <div class="grid grid-cols-2 gap-1.5" role="group" aria-label="Стиль ИИ-нутрициолога">
+                ${options}
+            </div>
+            <div id="persona-custom-field" class="mt-3 ${isCustom ? '' : 'hidden'}">
+                <label for="persona-custom-text" class="block text-[11px] uppercase tracking-wider text-surface-500 dark:text-zinc-400 font-semibold mb-1.5">
+                    Как к вам обращаться
+                </label>
+                <textarea id="persona-custom-text" data-field="persona-custom-text" rows="3" maxlength="${PERSONA_TEXT_MAX}"
+                          placeholder="Например: говори как спокойный диетолог, без сленга и восклицательных знаков"
+                          class="w-full px-3 py-2.5 rounded-xl bg-surface-100 dark:bg-white/5 border border-surface-200 dark:border-white/10 text-sm text-surface-900 dark:text-zinc-100 placeholder:text-surface-400 dark:placeholder:text-zinc-500 focus:border-lime-500 focus:outline-none resize-y">${escapeHtml(text)}</textarea>
+                <div class="flex items-baseline justify-between gap-2 mt-1">
+                    <p id="persona-custom-hint" class="text-[11px] text-surface-500 dark:text-surface-400">Опишите тон, обращение и длину ответа</p>
+                    <span id="persona-custom-count" class="text-[11px] tabular-nums text-surface-400 dark:text-zinc-500">${text.length}/${PERSONA_TEXT_MAX}</span>
+                </div>
+            </div>
+        </div>
+    `;
+}
 
 function formatQuota(entry) {
     if (entry.limit === null || entry.limit === undefined) {
@@ -350,11 +416,75 @@ export const Profile = {
 
                 ${renderAnthropometrics(user)}
 
+                ${renderPersonaCard(user)}
+
                 <div class="text-xs text-surface-400 text-center">
                     Зарегистрирован: ${user.created_at ? new Date(user.created_at).toLocaleDateString('ru-RU') : '—'}
                 </div>
             </div>
         `;
+
+        this.bindPersonaEvents(container);
+    },
+
+    /**
+     * Persona selection is kept local until "Сохранить". The API retires the
+     * custom wording whenever the persona is not "custom", so the persona and its
+     * text have to travel in one request - saving on every tap would send the
+     * text away the moment the user looked at another persona.
+     */
+    setPersona(container, persona) {
+        const value = AI_PERSONAS.some((option) => option.value === persona) ? persona : null;
+        if (!value) return;
+
+        container.querySelectorAll('[data-action="set-ai-persona"]').forEach((btn) => {
+            const active = btn.dataset.value === value;
+            btn.setAttribute('aria-pressed', String(active));
+            btn.className = PERSONA_OPTION_BASE + ' ' + (active ? PERSONA_OPTION_ACTIVE : PERSONA_OPTION_IDLE);
+        });
+
+        const field = container.querySelector('#persona-custom-field');
+        if (field) field.classList.toggle('hidden', value !== 'custom');
+    },
+
+    /** Current persona straight from the pressed chip, so the DOM is the state. */
+    readPersona(container) {
+        return container.querySelector('[data-action="set-ai-persona"][aria-pressed="true"]')?.dataset.value || 'kind';
+    },
+
+    bindPersonaEvents(container) {
+        const textarea = container.querySelector('#persona-custom-text');
+        if (!textarea) return;
+
+        const counter = container.querySelector('#persona-custom-count');
+        textarea.addEventListener('input', () => {
+            if (counter) counter.textContent = `${textarea.value.length}/${PERSONA_TEXT_MAX}`;
+        });
+    },
+
+    async savePersona(container) {
+        const persona = this.readPersona(container);
+        const raw = container.querySelector('#persona-custom-text')?.value ?? '';
+        const customText = raw.trim().slice(0, PERSONA_TEXT_MAX);
+
+        try {
+            await API.patch('/users/me', {
+                ai_persona: persona,
+                ai_persona_custom_text: persona === 'custom' ? customText : null,
+            }, this.app.state.tokens.access);
+
+            this.app.showToast('Стиль ИИ-нутрициолога обновлён', 'success');
+            // Re-reads /users/me, so the card shows what the server stored rather
+            // than what this tab believes it sent.
+            await this.render(container, this.app);
+        } catch (error) {
+            if (error?.offlineQueued) {
+                this.app.showToast('Нет связи. Настройка применится при появлении сети', 'info');
+                return;
+            }
+            console.error('[Profile] Save persona error:', error);
+            this.app.showToast(error?.data?.detail || error?.message || 'Не удалось сохранить стиль нутрициолога', 'error');
+        }
     },
 
     async activatePro(container) {

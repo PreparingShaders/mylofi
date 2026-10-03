@@ -618,6 +618,15 @@ const App = {
             case 'edit-anthropometrics':
                 Profile.openAnthropometricsModal();
                 break;
+            case 'set-ai-persona':
+                Profile.setPersona(
+                    this.elements.pageContent,
+                    event.target.closest('[data-action="set-ai-persona"]')?.dataset.value
+                );
+                break;
+            case 'save-ai-persona':
+                await Profile.savePersona(this.elements.pageContent);
+                break;
         }
     },
 

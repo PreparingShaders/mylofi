@@ -56,6 +56,15 @@ class UserGoal(str, Enum):
     GAIN = "gain"
 
 
+class AiPersona(str, Enum):
+    """Tone of voice the AI nutritionist answers in."""
+
+    KIND = "kind"
+    STRICT = "strict"
+    SARCASTIC = "sarcastic"
+    CUSTOM = "custom"
+
+
 # Auth schemas
 class TokenBase(BaseModel):
     access_token: str
@@ -125,6 +134,8 @@ class UserUpdate(BaseModel):
     target_fat_g: Optional[float] = None
     target_carbs_g: Optional[float] = None
     push_subscription: Optional[str] = None
+    ai_persona: Optional[AiPersona] = None
+    ai_persona_custom_text: Optional[str] = Field(None, max_length=1000)
 
 
 class AnthropometricsUpdate(BaseModel):
@@ -155,6 +166,10 @@ class UserResponse(UserBase):
     role: UserRole
     is_active: bool
     is_premium: bool = False
+    # Plain strings, not the enum: a persona key that is no longer known must
+    # still serialise instead of turning /users/me into a 500.
+    ai_persona: Optional[str] = None
+    ai_persona_custom_text: Optional[str] = None
     meal_ai_daily_count: int = 0
     last_meal_ai_date: Optional[date] = None
     last_workout_ai_analysis_at: Optional[datetime] = None
@@ -252,6 +267,7 @@ class MealResponse(MealBase):
     quality_score: Optional[float] = None
     quality_reason: Optional[str] = None
     ai_insight: Optional[str] = None
+    ai_persona: Optional[str] = None
     created_at: UtcDateTime
     updated_at: UtcDateTime
 
@@ -517,6 +533,7 @@ __all__ = [
     "WorkoutSessionStatus",
     "Gender",
     "UserGoal",
+    "AiPersona",
     "Token",
     "TokenPayload",
     "UserRegister",

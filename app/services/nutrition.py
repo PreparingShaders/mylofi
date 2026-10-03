@@ -19,7 +19,7 @@ from app.models import Meal, MealStatus, User
 from app.schemas import MealCreate, MealUpdate, MealResponse, MealListResponse
 from app.core.config import get_settings
 from app.db.session import async_session_maker
-from app.services.ai_vision import analyze_meal_photo
+from app.services.ai_vision import analyze_meal_photo, normalize_persona
 
 settings = get_settings()
 
@@ -305,6 +305,7 @@ def meal_to_response(meal: Meal) -> MealResponse:
         quality_score=meal.quality_score,
         quality_reason=meal.quality_reason,
         ai_insight=meal.ai_insight,
+        ai_persona=meal.ai_persona,
         eaten_at=meal.eaten_at,
         created_at=meal.created_at,
         updated_at=meal.updated_at,
@@ -816,10 +817,18 @@ async def process_meal_photo_task(meal_id: int, tz_offset_minutes: int = 0) -> N
             }
 
             user_goal = None
+            persona = None
+            persona_custom_text = None
             user_result = await db.execute(select(User).where(User.id == meal.user_id))
             user = user_result.scalar_one_or_none()
             if user:
                 user_goal = user.goal
+                persona = user.ai_persona
+                persona_custom_text = user.ai_persona_custom_text
+
+            # Resolved once here, so the meal carries the persona its verdict was
+            # actually written in even if the profile changes later.
+            persona = normalize_persona(persona)
 
             # Compress and resize image before encoding
             with Image.open(meal.photo_path) as img:
@@ -850,6 +859,8 @@ async def process_meal_photo_task(meal_id: int, tz_offset_minutes: int = 0) -> N
                         targets=user_targets,
                         current_balance=current_balance,
                         user_notes=meal.notes,
+                        persona=persona,
+                        persona_custom_text=persona_custom_text,
                     ),
                     timeout=AI_TASK_TIMEOUT,
                 )
@@ -872,6 +883,7 @@ async def process_meal_photo_task(meal_id: int, tz_offset_minutes: int = 0) -> N
             meal.quality_score = float(analysis["quality_score"])
             meal.quality_reason = json.dumps(analysis.get("quality_metrics", []), ensure_ascii=False)
             meal.ai_insight = analysis.get("ai_verdict")
+            meal.ai_persona = persona
             meal.status = MealStatus.COMPLETED
             meal.error_message = None
             meal.updated_at = utcnow()

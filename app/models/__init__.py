@@ -62,6 +62,12 @@ class User(Base):
     target_fat_g: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     target_carbs_g: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
+    # AI nutritionist persona (tone of voice). Plain strings, not an Enum column:
+    # adding a persona must not need a migration, and the model already stores
+    # `gender` / `activity_level` / `goal` the same way.
+    ai_persona: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    ai_persona_custom_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     # Push notifications
     push_subscription: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
@@ -136,6 +142,10 @@ class Meal(Base):
     quality_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     quality_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     ai_insight: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Persona the verdict was written in. Copied from the user at analysis time
+    # rather than read live, so the card keeps labelling the voice the user
+    # actually got even after they switch persona.
+    ai_persona: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
     # Timing
     eaten_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)

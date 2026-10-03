@@ -5,7 +5,7 @@ import { DB } from './db.js';
 let sparklineSeq = 0;
 let tonnageChartSeq = 0;
 
-function escapeHtml(value) {
+export function escapeHtml(value) {
     return String(value ?? '')
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
@@ -39,6 +39,18 @@ const MACRO_ICON_PATHS = {
     protein: '<path d="M4 9.5v5"/><path d="M7.5 7v10"/><path d="M16.5 7v10"/><path d="M20 9.5v5"/><path d="M7.5 12h9"/>',
     fat: '<path d="M12 3.4c2.9 3.7 4.9 6.3 4.9 9a4.9 4.9 0 0 1-9.8 0c0-2.7 2-5.3 4.9-9Z"/>',
     carbs: '<path d="M12 3.6c.7 4.3 1.9 5.5 6.1 6.2-4.2.7-5.4 1.9-6.1 6.2-.7-4.3-1.9-5.5-6.1-6.2 4.2-.7 5.4-1.9 6.1-6.2Z"/>',
+};
+
+/* Verdict personas. The label is deliberately short: the badge shares a line
+   with the "Вердикт нутрициолога" heading on a 375px screen, so anything longer
+   wraps the header instead of sitting next to the score. An unknown key renders
+   no badge at all rather than an empty pill - a meal analysed before personas
+   existed simply has no voice to show. */
+const AI_PERSONA_META = {
+    kind: { emoji: '😊', label: 'Добрый нутрициолог' },
+    strict: { emoji: '🧊', label: 'Строгий тренер' },
+    sarcastic: { emoji: '😏', label: 'Саркастичный нутрициолог' },
+    custom: { emoji: '🎭', label: 'Ваш стиль' },
 };
 
 function buildSmoothPath(pts, tension = 0.2) {
@@ -110,13 +122,17 @@ export const Components = {
      * Any raw score is normalised first, so a float 0-1 answer, the 0-100 macro
      * fallback and the 1-10 API value all land on the same integer; a meal with
      * nothing to score keeps the neutral placeholder instead of a hard "1/10".
+     *
+     * A themed chip from the card's own tokens rather than the black glass pill:
+     * the score sits in the verdict header, on the card background, and a black
+     * pill there read as a system badge floating over a white card.
      */
     qualityBadge(score) {
         const value = Utils.qualityScoreFromAI(score);
         if (value === null) {
-            return `<span class="glass-badge inline-flex items-center rounded-full px-2 py-1 text-[11px] font-bold text-white/85 whitespace-nowrap" aria-label="ИИ-качество не рассчитано">—<span class="opacity-60">/10</span></span>`;
+            return `<span class="meal-card-quality" aria-label="ИИ-качество не рассчитано">—<span class="opacity-60">/10</span></span>`;
         }
-        return `<span class="glass-badge inline-flex items-center rounded-full px-2 py-1 text-[11px] font-bold text-white tabular-nums whitespace-nowrap" aria-label="ИИ-качество ${value} из 10">${value}<span class="opacity-60">/10</span></span>`;
+        return `<span class="meal-card-quality" aria-label="ИИ-качество ${value} из 10">${value}<span class="opacity-60">/10</span></span>`;
     },
 
     /**
@@ -152,6 +168,18 @@ export const Components = {
                 ${overflow > 0 ? `<span class="meal-card-metric meal-card-metric--more">+${overflow}</span>` : ''}
             </div>
         `;
+    },
+
+    /**
+     * Small chip naming the voice a verdict was written in. Empty string when the
+     * meal carries no persona (analysed before the feature, or still pending), so
+     * the caller can put it unconditionally where it belongs.
+     */
+    personaBadge(persona) {
+        const key = String(persona ?? '').trim().toLowerCase();
+        const meta = AI_PERSONA_META[key];
+        if (!meta) return '';
+        return `<span class="meal-card-persona" role="note" title="Стиль нутрициолога: ${escapeHtml(meta.label)}"><span class="meal-card-persona__emoji" aria-hidden="true">${meta.emoji}</span><span class="truncate">${escapeHtml(meta.label)}</span></span>`;
     },
 
     /**
@@ -433,14 +461,23 @@ export const Components = {
 
     /**
      * First tile of the meal carousel: opens the new-meal sheet.
+     *
+     * It is a soft card rather than a dashed placeholder: the dashed outline read
+     * as "nothing here yet" next to a fully styled meal card, and on a light
+     * background it was the only tile without the summary card's rounded-3xl
+     * silhouette. The lime disc keeps the affordance - a camera with a plus, the
+     * one action the tile performs - and the border warms up on hover instead of
+     * appearing out of nowhere.
      */
     addMealActionCard() {
         return `
             <button type="button" data-action="open-add-meal-modal" aria-label="Добавить приём пищи"
                     class="meal-action-slot btn-press flex flex-col items-center justify-center p-6 text-center cursor-pointer
-                           border-2 border-dashed border-surface-300 dark:border-zinc-700 hover:border-lime-500
-                           bg-surface-50/60 dark:bg-zinc-900/50 transition-colors">
-                <span class="w-14 h-14 rounded-2xl bg-lime-500/15 dark:bg-lime-400/10 text-lime-600 dark:text-lime-400 flex items-center justify-center mb-3 shrink-0">
+                           rounded-3xl bg-white/80 dark:bg-zinc-900/60
+                           border border-surface-200 dark:border-white/10 hover:border-lime-500/60 dark:hover:border-lime-400/40
+                           transition-colors">
+                <span class="w-14 h-14 rounded-2xl bg-lime-500/15 dark:bg-lime-400/10 text-lime-600 dark:text-lime-400
+                             flex items-center justify-center mb-3 shrink-0">
                     <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 13a3 3 0 100-6 3 3 0 010 6z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 3v4M20 5h-4"/></svg>
                 </span>
                 <span class="text-base font-bold text-surface-900 dark:text-zinc-100">Добавить приём пищи</span>
@@ -450,11 +487,15 @@ export const Components = {
     },
 
     /**
-     * Carousel tile shown when the day has no logged meals yet.
+     * Carousel tile shown when the day has no logged meals yet. It wears the same
+     * soft rounded-3xl card as the add tile so an empty carousel still reads as
+     * one row of cards rather than a bare placeholder next to a solid tile.
      */
     mealCarouselEmptyState() {
         return `
-            <div class="meal-empty-slot flex flex-col items-center justify-center p-6 text-center">
+            <div class="meal-empty-slot flex flex-col items-center justify-center p-6 text-center
+                        rounded-3xl bg-white/80 dark:bg-zinc-900/60
+                        border border-surface-200 dark:border-white/10">
                 <span class="w-14 h-14 rounded-full glass flex items-center justify-center mb-3 shrink-0">
                     <svg class="w-7 h-7 text-surface-400 dark:text-surface-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6l4 2M4 12a8 8 0 1116 0 8 8 0 01-16 0z"/></svg>
                 </span>
@@ -754,15 +795,22 @@ export const Components = {
                     ? `<p class="meal-card-ai__text">${escapeHtml(insight)}</p>`
                     : this.qualityMetrics(meal.quality_reason);
 
+        // The persona chip sits directly above the verdict box and inside the same
+        // wrapper, so the pair keeps one 4px gap whatever the card's own 12px
+        // section rhythm is: a chip separated from its verdict by the section gap
+        // read as an unrelated label.
         const verdictBlock = verdictContent
             ? `
-                <div class="meal-card-verdict">
-                    <div class="meal-card-verdict__header">
-                        <span class="meal-card-verdict__title">Вердикт нутрициолога</span>
-                        ${this.qualityBadge(qualityScore)}
-                    </div>
-                    <div class="meal-card-verdict__body">
-                        ${verdictContent}
+                <div class="meal-card-verdict-group">
+                    ${this.personaBadge(meal.ai_persona)}
+                    <div class="meal-card-verdict">
+                        <div class="meal-card-verdict__header">
+                            <span class="meal-card-verdict__title">Вердикт нутрициолога</span>
+                            ${this.qualityBadge(qualityScore)}
+                        </div>
+                        <div class="meal-card-verdict__body">
+                            ${verdictContent}
+                        </div>
                     </div>
                 </div>
             `
