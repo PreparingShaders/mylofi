@@ -532,6 +532,7 @@ async def get_nutrition_summary(
 async def get_nutrition_daily_summary(
     date: Optional[str] = Query(None, description="Date in YYYY-MM-DD format"),
     tz_offset: Optional[int] = Query(None, description=TZ_OFFSET_DESCRIPTION),
+    force: bool = Query(False, description="Regenerate the recap even when one is already stored"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -541,11 +542,13 @@ async def get_nutrition_daily_summary(
     so the card is never a second visit away from being there. Today is not
     generated - the day is still being eaten - and neither is a day without
     analysed meals; both answer with `available: false` and a reason the card
-    renders, never with an error.
+    renders, never with an error. `force=true` re-reads a finished day and
+    rewrites its stored recap in place (the manual trigger on the card); a
+    forced run that fails keeps the last known recap.
     """
     offset = normalize_tz_offset(tz_offset)
     target_date = _parse_target_date(date, offset)
-    payload = await get_or_create_daily_summary(db, current_user, target_date, offset)
+    payload = await get_or_create_daily_summary(db, current_user, target_date, offset, force=force)
     return payload
 
 

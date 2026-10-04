@@ -463,11 +463,17 @@ export const Components = {
      * same height class, instead of the page silently losing a section or
      * growing one once the upstream recovers.
      *
+     * A recap the user can ask for carries its own trigger: a past day
+     * without a recap offers "Сформировать итог дня", a stored recap a
+     * refresh glyph that re-reads the day (`force=true`). Today never
+     * offers either - the day is still being eaten.
+     *
      * `payload` is the /nutrition/daily-summary response; `dateLabel` is the
      * period header's own wording for the day, so the card can never claim a
-     * different date than the ring above it.
+     * different date than the ring above it. `allowGenerate` is the
+     * controller's verdict that the day is in the past.
      */
-    dailySummaryCard(payload = {}, { dateLabel = '' } = {}) {
+    dailySummaryCard(payload = {}, { dateLabel = '', allowGenerate = false } = {}) {
         const available = payload?.available === true;
         const text = typeof payload.summary_text === 'string' ? payload.summary_text.trim() : '';
         const score = Number(payload.overall_score);
@@ -487,6 +493,12 @@ export const Components = {
                 ${available && scoreText
                     ? `<span class="daily-summary__score"><span class="opacity-60">ИИ</span> ${scoreText}<span class="opacity-60">/10</span></span>`
                     : ''}
+                ${available
+                    ? `<button type="button" data-action="regenerate-daily-summary" class="daily-summary__refresh btn-press"
+                              aria-label="Пересчитать итог дня" title="Пересчитать итог дня">
+                          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-2.64-6.36M21 3v6h-6"/></svg>
+                      </button>`
+                    : ''}
             </div>
         `;
 
@@ -498,6 +510,12 @@ export const Components = {
                 <section class="daily-summary daily-summary--empty glass rounded-3xl" aria-label="Итог дня">
                     ${head}
                     <p class="daily-summary__empty">${escapeHtml(reason)}</p>
+                    ${allowGenerate
+                        ? `<button type="button" data-action="generate-daily-summary" class="daily-summary__generate btn-press">
+                              <svg class="daily-summary__generate-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v14M5 12h14"/></svg>
+                              <span>Сформировать итог дня</span>
+                          </button>`
+                        : ''}
                 </section>
             `;
         }
@@ -561,9 +579,9 @@ export const Components = {
      * It is a soft card rather than a dashed placeholder: the dashed outline read
      * as "nothing here yet" next to a fully styled meal card, and on a light
      * background it was the only tile without the summary card's rounded-3xl
-     * silhouette. The lime disc keeps the affordance - a camera with a plus, the
-     * one action the tile performs - and the border warms up on hover instead of
-     * appearing out of nowhere.
+     * silhouette. The lime disc keeps the affordance - a camera focus point with
+     * the plus, the one action the tile performs - and the border warms up on
+     * hover instead of appearing out of nowhere.
      */
     addMealActionCard() {
         return `
@@ -574,7 +592,7 @@ export const Components = {
                            transition-colors">
                 <span class="w-14 h-14 rounded-2xl bg-lime-500/15 dark:bg-lime-400/10 text-lime-600 dark:text-lime-400
                              flex items-center justify-center mb-3 shrink-0">
-                    <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 13a3 3 0 100-6 3 3 0 010 6z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 3v4M20 5h-4"/></svg>
+                    <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V6a2 2 0 012-2h2M16 4h2a2 2 0 012 2v2M20 16v2a2 2 0 01-2 2h-2M8 20H6a2 2 0 01-2-2v-2"/><circle cx="12" cy="12" r="4.5" stroke-width="2"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10.25v3.5M10.25 12h3.5"/></svg>
                 </span>
                 <span class="text-base font-bold text-surface-900 dark:text-zinc-100">Добавить приём пищи</span>
                 <span class="text-xs text-surface-500 dark:text-surface-400 mt-1">Сделать фото или загрузить из галереи</span>

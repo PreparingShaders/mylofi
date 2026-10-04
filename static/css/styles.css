@@ -183,7 +183,10 @@ html.dark,
     background: radial-gradient(circle at 50% 50%, rgba(192, 132, 252, 0.22), rgba(192, 132, 252, 0) 68%);
 }
 
-/* Centre readout stacked inside the ring: AI score pill above the counter. */
+/* Centre readout stacked inside the ring: AI score pill above the counter.
+   The readout is nudged a step below the geometric centre and kept tight
+   (smaller gap, padding and type), so the score pill and its glow stay
+   clear of the top arc band the 10:30 and 2:45 pills paint. */
 .nutrition-ring__center {
     position: absolute;
     inset: 0;
@@ -191,8 +194,8 @@ html.dark,
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 3px;
-    padding: 0 6px;
+    gap: 2px;
+    padding: 3px 6px 0;
     line-height: 1;
     text-align: center;
 }
@@ -202,9 +205,9 @@ html.dark,
     display: inline-flex;
     align-items: center;
     gap: 3px;
-    padding: 2px 8px 2px 6px;
+    padding: 1px 7px;
     border-radius: 9999px;
-    font-size: 9px;
+    font-size: 8.5px;
     font-weight: 700;
     letter-spacing: 0.02em;
     white-space: nowrap;
@@ -219,8 +222,8 @@ html.dark,
    a 120px dial reads as motion noise, and the score itself must stay readable.
    Reduced motion drops the animation and leaves a static sparkle. */
 .nutrition-ring__spark {
-    width: 9px;
-    height: 9px;
+    width: 8px;
+    height: 8px;
     flex-shrink: 0;
     color: currentColor;
     transform-origin: 50% 50%;
@@ -1371,6 +1374,67 @@ input, select, textarea:focus {
     font-size: 12px;
     line-height: 1.4;
     color: #71717a;
+}
+/* Manual recap trigger on the empty card: a quiet lime action, the same
+   accent the sheet chips use, so the one thing the card can do reads
+   as an action rather than as another reason line. */
+.daily-summary__generate {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    color: #4d7c0f;
+    background: rgba(132, 204, 22, 0.14);
+    border: 1px solid rgba(132, 204, 22, 0.32);
+    box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.12);
+    transition: opacity 0.15s ease;
+}
+.daily-summary__generate:disabled {
+    opacity: 0.55;
+}
+.daily-summary__generate-icon {
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+}
+.dark .daily-summary__generate {
+    color: #d9f99d;
+    background: rgba(132, 204, 22, 0.16);
+    border-color: rgba(132, 204, 22, 0.3);
+    box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.2);
+}
+/* Regeneration glyph on a stored recap: small, quiet, right of the score. */
+.daily-summary__refresh {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 9999px;
+    flex-shrink: 0;
+    color: #a1a1aa;
+    transition: color 0.15s ease, opacity 0.15s ease;
+}
+.daily-summary__refresh:hover {
+    color: #71717a;
+}
+.daily-summary__refresh:disabled {
+    opacity: 0.55;
+}
+.daily-summary__refresh svg {
+    width: 13px;
+    height: 13px;
+}
+.dark .daily-summary__refresh {
+    color: #71717a;
+}
+.dark .daily-summary__refresh:hover {
+    color: #a1a1aa;
 }
 
 /* ============ Nutrition page layout (iPhone 13 mini and up) ============ */

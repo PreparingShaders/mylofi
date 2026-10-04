@@ -35,6 +35,9 @@ export const Nutrition = {
     _editMealModalState: null,
     _editMealModalClosing: null,
     _pollingTimer: null,
+    // Recap generation in flight: the manual trigger on the daily-summary
+    // card disables itself while the day is being re-read.
+    _dailySummaryLoading: false,
     // Meals indexed by id, refreshed every render so the edit modal can pull
     // the current record without a dedicated single-meal endpoint.
     _mealsCache: new Map(),
@@ -301,6 +304,111 @@ export const Nutrition = {
             console.warn('[Nutrition] Daily summary unavailable:', error?.message);
             return null;
         }
+    },
+
+    /**
+     * Manual recap trigger, bound to both actions on the daily-summary
+     * card: "Сформировать итог день" on a past day without a recap, and
+     * the refresh glyph on a stored one. Both ask the endpoint with
+     * `force=true`, so the day is re-read and the stored row rewritten in
+     * place - the card then swaps in the fresh payload without a reload.
+     *
+     * Never throws: a failed generation toasts and leaves the card as it
+     * was, exactly like the read path it rides on.
+     */
+    async generateDailySummary() {
+        if (this._dailySummaryLoading) return;
+        const container = this.app.elements.pageContent;
+        const section = container.querySelector('.daily-summary');
+        if (!section) return;
+
+        this._dailySummaryLoading = true;
+        this.setDailySummaryBusy(section, true);
+
+        const token = this.app.state.tokens.access;
+        const endpoint = `/nutrition/daily-summary?date=${encodeURIComponent(this.selectedDate)}&force=true`;
+        try {
+            const data = await API.get(this.withTimezone(endpoint), token);
+            const payload = (data && typeof data === 'object') ? data : null;
+            // A forced run rewrites the stored row, so the cached answer
+            // for this day - which may still say "no recap" - is stale.
+            API.invalidateReadCache('/nutrition/daily-summary');
+            if (payload) {
+                this.renderDailySummaryCard(payload);
+                if (payload.available) {
+                    this.app.showToast(
+                        payload.regenerated ? 'Итог дня пересчитан' : 'Итог дня сформирован',
+                        'success'
+                    );
+                }
+            }
+        } catch (error) {
+            console.warn('[Nutrition] Daily summary generation failed:', error?.message);
+            this.app.showToast('Не удалось сформировать итог дня', 'error');
+        } finally {
+            this._dailySummaryLoading = false;
+            const current = container.querySelector('.daily-summary');
+            if (current) this.setDailySummaryBusy(current, false);
+        }
+    },
+
+    /**
+     * Swap the daily-summary card for a freshly rendered one in place,
+     * so a regenerated recap lands without reloading the page (and
+     * without disturbing the carousel or the date the user picked).
+     */
+    renderDailySummaryCard(payload) {
+        const container = this.app.elements.pageContent;
+        const section = container.querySelector('.daily-summary');
+        if (!section) return;
+
+        const host = document.createElement('div');
+        host.innerHTML = Components.dailySummaryCard(payload, {
+            dateLabel: this.formatDayMonthISO(this.selectedDate),
+            allowGenerate: this.selectedDate < this.todayISO(),
+        });
+        const fresh = host.firstElementChild;
+        if (fresh) {
+            section.replaceWith(fresh);
+            this.bindDailySummary();
+        }
+    },
+
+    /**
+     * Busy state for the card's own triggers: the generate button grows
+     * a spinner and its label, the refresh glyph starts spinning. Both
+     * are disabled for the duration of the request.
+     */
+    setDailySummaryBusy(section, busy) {
+        const generate = section.querySelector('[data-action="generate-daily-summary"]');
+        if (generate) {
+            generate.disabled = busy;
+            if (busy) {
+                generate.dataset.idleHtml = generate.innerHTML;
+                generate.innerHTML = `
+                    <svg class="animate-spin daily-summary__generate-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                    <span>Формируем итог...</span>`;
+            } else if (generate.dataset.idleHtml) {
+                generate.innerHTML = generate.dataset.idleHtml;
+                delete generate.dataset.idleHtml;
+            }
+        }
+
+        const refresh = section.querySelector('[data-action="regenerate-daily-summary"]');
+        if (refresh) {
+            refresh.disabled = busy;
+            refresh.querySelector('svg')?.classList.toggle('animate-spin', busy);
+        }
+    },
+
+    /** Both recap triggers on the card ask for the same regeneration. */
+    bindDailySummary() {
+        const container = this.app.elements.pageContent;
+        container.querySelectorAll(
+            '[data-action="generate-daily-summary"], [data-action="regenerate-daily-summary"]'
+        ).forEach((btn) => {
+            btn.onclick = () => this.generateDailySummary();
+        });
     },
 
     /**
@@ -747,9 +855,12 @@ export const Nutrition = {
             // the meal carousel starts below both without a second wrapper. Its chip
             // names the concrete day rather than reusing the header label: the recap
             // is a stored record of that date, and the header says only "Сегодня".
+            // A day in the past also earns the manual generation trigger; today
+            // never does, because the day is still being eaten.
             const dailySummaryBlock = dailySummary
                 ? Components.dailySummaryCard(dailySummary, {
                     dateLabel: this.formatDayMonthISO(this.selectedDate),
+                    allowGenerate: this.selectedDate < this.todayISO(),
                 })
                 : '';
 
@@ -817,6 +928,7 @@ export const Nutrition = {
             this.bindAddMealModal();
             this.bindMealActions();
             this.bindFailedItems();
+            this.bindDailySummary();
 
             // Every poll tick rebuilds the carousel too, so the position is put
             // back here instead of snapping to the add tile every 3 seconds.

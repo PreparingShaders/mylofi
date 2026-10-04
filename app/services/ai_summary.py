@@ -388,6 +388,7 @@ def _summary_payload(
     available: bool,
     reason: Optional[str],
     generated: bool = False,
+    regenerated: bool = False,
 ) -> Dict[str, Any]:
     """Shape of the daily-summary response, for both the read and the empty path."""
     return {
@@ -397,6 +398,7 @@ def _summary_payload(
         "ai_persona": summary.ai_persona if summary else None,
         "available": available,
         "generated": generated,
+        "regenerated": regenerated,
         "reason": reason,
     }
 
@@ -406,6 +408,7 @@ async def get_or_create_daily_summary(
     user: User,
     target_date: date,
     tz_offset_minutes: int = 0,
+    force: bool = False,
 ) -> Dict[str, Any]:
     """The recap of a day, generated on demand when it is missing.
 
@@ -414,15 +417,24 @@ async def get_or_create_daily_summary(
     wrong by the time they read it. Today's row (written by the previous run, if
     any) is still returned when it exists.
 
+    `force` re-reads the day and rewrites the stored recap in place - the
+    manual trigger on the card. A day that is still being eaten is never
+    re-judged even when forced: the stored row is returned as-is, or the
+    not-finished reason when there is nothing stored. A forced regeneration
+    that fails keeps the last known recap instead of dropping the card to an
+    empty state.
+
     Never raises. A failed generation returns the empty payload with a reason so
     the nutrition screen keeps rendering with an empty card.
     """
     existing = await get_daily_summary(db, user.id, target_date)
-    if existing is not None:
+    if existing is not None and not force:
         return _summary_payload(existing, target_date, available=True, reason=None)
 
     local_today = local_day_of(utcnow(), tz_offset_minutes)
     if target_date >= local_today:
+        if existing is not None:
+            return _summary_payload(existing, target_date, available=True, reason=None)
         return _summary_payload(None, target_date, available=False, reason=REASON_DAY_NOT_FINISHED)
 
     try:
@@ -432,11 +444,20 @@ async def get_or_create_daily_summary(
         # rollback keeps this session usable for the rest of the request.
         logger.exception(f"[AI Summary] Day {target_date} failed for user {user.id}: {e}")
         await db.rollback()
+        if existing is not None:
+            return _summary_payload(existing, target_date, available=True, reason=None)
         return _summary_payload(None, target_date, available=False, reason=REASON_FAILED)
 
     if written is None:
         return _summary_payload(None, target_date, available=False, reason=REASON_NO_MEALS)
-    return _summary_payload(written, target_date, available=True, reason=None, generated=True)
+    return _summary_payload(
+        written,
+        target_date,
+        available=True,
+        reason=None,
+        generated=True,
+        regenerated=force and existing is not None,
+    )
 
 
 async def generate_pending_daily_summaries(

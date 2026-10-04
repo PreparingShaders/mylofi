@@ -301,7 +301,8 @@ class DailySummaryResponse(BaseModel):
 
     `available` is the flag the card renders on: a missing recap is an empty
     state with a reason, not an error, so the nutrition screen keeps its layout
-    whatever the upstream did.
+    whatever the upstream did. `regenerated` is set when a stored recap was
+    rewritten in place by the manual `force` trigger.
     """
 
     date: date
@@ -310,6 +311,7 @@ class DailySummaryResponse(BaseModel):
     ai_persona: Optional[str] = None
     available: bool = False
     generated: bool = False
+    regenerated: bool = False
     reason: Optional[str] = None
 
 
