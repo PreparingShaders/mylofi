@@ -72,6 +72,30 @@ function buildSmoothPath(pts, tension = 0.2) {
     return d;
 }
 
+/**
+ * Paint tone for one macro, shared by the ring and the horizontal bars so the same
+ * figure is never one colour in the dial and another in the legend.
+ *
+ * Protein is the macro whose colour carries meaning: neutral until the day's
+ * target is reached, emerald from the target onwards. Its surplus is a good day,
+ * so it never borrows the danger crimson - a user who overshoots protein must not
+ * read the ring as a warning. Fat is the one macro whose overage is critical
+ * enough to turn crimson, and an over-target calorie intake says the same thing
+ * in the middle of the ring. Carbs stay carb-coloured either way: a day that is
+ * over on carbs is not a day that failed.
+ *
+ * An unknown target (zero, missing, unset) leaves the macro in its own colour
+ * rather than grading it against a norm the user never chose.
+ */
+function macroTone(key, current, target) {
+    const value = Number.isFinite(Number(current)) ? Number(current) : 0;
+    const goal = Number.isFinite(Number(target)) ? Number(target) : 0;
+    if (goal <= 0) return key;
+    if (key === 'protein') return value >= goal ? 'protein-goal' : 'protein';
+    if (key === 'fat') return value > goal ? 'danger' : 'fat';
+    return key;
+}
+
 export const Components = {
     loadingSpinner(size = 'h-8 w-8') {
         return `<div class="flex items-center justify-center"><div class="animate-spin rounded-full ${size} border-2 border-primary-600 dark:border-zinc-200 border-t-transparent"></div></div>`;
@@ -188,7 +212,10 @@ export const Components = {
      * grams, used by the dashboard day slide.
      *
      * The fills take the macro tokens rather than a Tailwind colour, so a bar and
-     * the ring pill above it are the same hue in both themes.
+     * the ring pill above it are the same hue in both themes - and they grade the
+     * same way, since both resolve their tone through `macroTone`. The figure
+     * beside a bar is coloured only where the colour means something (protein at
+     * its target, a fat overage); the rest stay in the neutral text colour.
      */
     macroBars(summary = {}, targets = {}) {
         const safeNum = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
@@ -196,20 +223,23 @@ export const Components = {
         const pct = (current, target) => (target > 0 ? Math.min(100, Math.round((current / target) * 100)) : 0);
 
         const rows = [
-            { label: 'Белки', current: safeNum(summary.protein), target: safeNum(targets.target_protein), tone: 'protein' },
-            { label: 'Жиры', current: safeNum(summary.fat), target: safeNum(targets.target_fat), tone: 'fat' },
-            { label: 'Углеводы', current: safeNum(summary.carbs), target: safeNum(targets.target_carbs), tone: 'carbs' },
+            { key: 'protein', label: 'Белки', current: safeNum(summary.protein), target: safeNum(targets.target_protein) },
+            { key: 'fat', label: 'Жиры', current: safeNum(summary.fat), target: safeNum(targets.target_fat) },
+            { key: 'carbs', label: 'Углеводы', current: safeNum(summary.carbs), target: safeNum(targets.target_carbs) },
         ];
 
-        return rows.map(({ label, current, target, tone }) => {
+        return rows.map(({ key, label, current, target }) => {
             const valuePct = pct(current, target);
+            const tone = macroTone(key, current, target);
+            // Only the two tones that mean something reach the number.
+            const valueTone = tone === 'danger' || tone === 'protein-goal' ? tone : '';
             return `
                 <div class="flex items-center gap-2">
                     <span class="w-[70px] shrink-0 truncate text-[10px] font-semibold uppercase tracking-wider text-surface-500 dark:text-surface-400">${escapeHtml(label)}</span>
                     <div class="flex-1 h-1.5 rounded-full bg-surface-200 dark:bg-white/10 overflow-hidden" role="progressbar" aria-valuenow="${valuePct}" aria-valuemin="0" aria-valuemax="100" aria-label="${escapeHtml(label)} ${valuePct}%">
                         <div class="h-full macro-bar__fill--${tone} rounded-full transition-all duration-500 ease-out" style="width: ${valuePct}%"></div>
                     </div>
-                    <span class="w-[72px] shrink-0 text-right text-[11px] font-semibold text-surface-800 dark:text-zinc-200 whitespace-nowrap">
+                    <span class="w-[72px] shrink-0 text-right text-[11px] font-semibold text-surface-800 dark:text-zinc-200 whitespace-nowrap${valueTone ? ` macro-bar__value--${valueTone}` : ''}">
                         ${formatNum(current)}<span class="font-normal text-surface-400 dark:text-surface-500"> / ${formatNum(target)} г</span>
                     </span>
                 </div>
@@ -277,16 +307,19 @@ export const Components = {
      * The ring is one circle cut into three 120 degree sectors - proteins, fats
      * and carbs. Every sector draws its own faint rounded track and its own filled
      * arc on top, so the three macros float as separate thick pills instead of
-     * sharing one continuous circle. Over-target macros turn crimson, as does an
-     * over-target calorie intake.
+     * sharing one continuous circle. Each pill takes its tone from `macroTone`,
+     * so a saturated orange fat and a saturated cyan carb are always the vivid
+     * accents, protein is neutral until it reaches its target and emerald from
+     * there on, and crimson is spent only on a fat overage or on the over-target
+     * calorie figure in the middle.
      *
      * Each pill is painted with its own gradient (a highlight stop down to the
      * accent) plus a drop-shadow glow in the same colour, which is what gives the
      * dial its lit depth instead of a flat stroke. Both live in CSS and are keyed
      * off the macro, so a theme switch recolours the ring without re-rendering it.
-     * Protein is the warm off-white #F1EFEB on the dark theme; the light theme
-     * uses a darkened relative of the same colour, since the pill would otherwise
-     * be invisible on a white card.
+     * Protein is white on the dark theme; the light theme uses the darkened
+     * relative of the same neutral, since the pill would otherwise be invisible on
+     * a white card.
      *
      * Round line caps bleed half a stroke past each end of an arc, so the drawn
      * path is shortened by that much on both sides; sectorGapDeg therefore stays
@@ -321,7 +354,9 @@ export const Components = {
         ].map((macro) => ({
             ...macro,
             ratio: macro.target > 0 ? macro.current / macro.target : 0,
-            over: macro.target > 0 && macro.current > macro.target,
+            // Resolved once, so the arc, the glyph, the number and the legend dot
+            // can never disagree about which side of the target the day is on.
+            tone: macroTone(macro.key, macro.current, macro.target),
         }));
 
         const calOver = targetCalories > 0 && calories > targetCalories;
@@ -342,7 +377,7 @@ export const Components = {
         // other ring on the page would otherwise share one definition and repaint
         // each other when a theme switch changed the stop colours. Allocated once
         // per tone, so the arc and the <defs> that paints it agree on the id.
-        const paintedTones = [...new Set(macros.map((macro) => (macro.over ? 'danger' : macro.tone)))];
+        const paintedTones = [...new Set(macros.map((macro) => macro.tone))];
         const gradientIds = Object.fromEntries(
             paintedTones.map((tone) => [tone, `ring-${tone}-${++ringGradientSeq}`])
         );
@@ -375,7 +410,7 @@ export const Components = {
             const sectorStart = rotation + index * sectorDeg + sectorGapDeg / 2;
             const drawStart = sectorStart + capDeg;
             const progressDeg = clamp01(macro.ratio) * pathDeg;
-            const tone = macro.over ? 'danger' : macro.tone;
+            const tone = macro.tone;
             const track = arc(drawStart, pathDeg);
             // The glyph needs a pill at least one stroke wide around it,
             // otherwise it would spill over the leading cap.
@@ -423,7 +458,7 @@ export const Components = {
         const share = (macro) => (macro.target > 0 ? `${Math.round(clamp01(macro.ratio) * 100)}%` : '—');
 
         const macroLabels = macros.map((macro) => {
-            const tone = macro.over ? 'danger' : macro.tone;
+            const tone = macro.tone;
             return `
                 <div class="macro-label ${macro.position}" style="${labelAnchors[macro.key]}" role="group"
                      aria-label="${escapeHtml(macro.label)} ${share(macro)} от цели">
@@ -463,17 +498,20 @@ export const Components = {
      * same height class, instead of the page silently losing a section or
      * growing one once the upstream recovers.
      *
-     * A recap the user can ask for carries its own trigger: a past day
-     * without a recap offers "Сформировать итог дня", a stored recap a
-     * refresh glyph that re-reads the day (`force=true`). Today never
-     * offers either - the day is still being eaten.
+     * A recap the user can ask for carries its own trigger: a finished day
+     * without a recap offers the generation button, a stored recap a
+     * refresh glyph that re-reads the day (`force=true`). A day still being
+     * eaten never offers either.
      *
-     * `payload` is the /nutrition/daily-summary response; `dateLabel` is the
-     * period header's own wording for the day, so the card can never claim a
-     * different date than the ring above it. `allowGenerate` is the
-     * controller's verdict that the day is in the past.
+     * `payload` is the /nutrition/daily-summary response. The three options are
+     * the controller's own words for the day the card is about, so the card can
+     * never name a different date than the one it was asked for: `dateLabel`
+     * (which is "Итог за вчера, 3 окт" while the header says "Сегодня"),
+     * `allowGenerate` - the controller's verdict that the day is finished - and
+     * `generateLabel` for the trigger, so the button reads "Сформировать итог за
+     * вчера" when that is the day it writes.
      */
-    dailySummaryCard(payload = {}, { dateLabel = '', allowGenerate = false } = {}) {
+    dailySummaryCard(payload = {}, { dateLabel = '', allowGenerate = false, generateLabel = 'Сформировать итог дня' } = {}) {
         const available = payload?.available === true;
         const text = typeof payload.summary_text === 'string' ? payload.summary_text.trim() : '';
         const score = Number(payload.overall_score);
@@ -513,7 +551,7 @@ export const Components = {
                     ${allowGenerate
                         ? `<button type="button" data-action="generate-daily-summary" class="daily-summary__generate btn-press">
                               <svg class="daily-summary__generate-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v14M5 12h14"/></svg>
-                              <span>Сформировать итог дня</span>
+                              <span>${escapeHtml(generateLabel)}</span>
                           </button>`
                         : ''}
                 </section>

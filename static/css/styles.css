@@ -74,51 +74,73 @@ html.dark,
 }
 
 /* ============ Macro accent tokens ============ */
-/* Declared on the root, not on a card: the same three accents are used by the
-   dashboard ring, the meal-card macro tiles and the composition dots, and a token
-   that only existed on one of those cards would have to be redeclared for the
-   others. Light theme = the defaults, dark theme = one override.
+/* Declared on the root, not on a card: the same accents are used by the dashboard
+   ring, the horizontal macro bars, the meal-card macro tiles and the composition
+   dots, and a token that only existed on one of those cards would have to be
+   redeclared for the others. Light theme = the defaults, dark theme = one
+   override. The palette is deliberately saturated - the three pills have to be
+   told apart at a glance on a 120px dial, so they are orange, cyan and a neutral
+   rather than three shades of the same grey.
 
-   Protein is the warm off-white #F1EFEB. On the dark graphite that is the accent
-   itself and the brightest thing on screen; the light theme card is white, where
-   the same colour would be unreadable, so the light value is the darkened
-   relative (#6B6459). `--macro-*-ink` is what a glyph wears on top of an accent,
-   so the dumbbell flips with the pill it sits on instead of disappearing into it. */
+   Protein wears two accents. Until the day's protein target is reached it is the
+   neutral one (white on the dark graphite, a warm grey on the white card, where
+   pure white would be invisible); from the target onwards it switches to
+   `--macro-protein-goal`, the emerald that says "goal met". Protein surplus is
+   never a warning, so it never borrows `--macro-danger`: red belongs to a fat or
+   calorie overage only.
+
+   `--macro-*-ink` is what a glyph wears on top of an accent, so the dumbbell
+   flips with the pill it sits on instead of disappearing into it. The
+   `--macro-*-text` variants are the same hues darkened for type: a 12px number
+   has to survive being read as text on the card, which a fill-bright accent does
+   not. */
 :root {
     --macro-protein: #6B6459;
-    --macro-protein-hi: #9C9488;
+    --macro-protein-hi: #A8A096;
     --macro-protein-ink: #FFFFFF;
     --macro-protein-glow: rgba(107, 100, 89, 0.30);
-    --macro-fat: #F59E0B;
-    --macro-fat-hi: #FCD34D;
-    --macro-fat-ink: #3B2A05;
-    --macro-fat-glow: rgba(245, 158, 11, 0.34);
+    --macro-protein-goal: #10B981;
+    --macro-protein-goal-hi: #6EE7B7;
+    --macro-protein-goal-ink: #04241A;
+    --macro-protein-goal-glow: rgba(16, 185, 129, 0.42);
+    --macro-protein-goal-text: #047857;
+    --macro-fat: #F97316;
+    --macro-fat-hi: #FDBA74;
+    --macro-fat-ink: #431407;
+    --macro-fat-glow: rgba(249, 115, 22, 0.42);
     --macro-carbs: #06B6D4;
     --macro-carbs-hi: #67E8F9;
     --macro-carbs-ink: #04333C;
-    --macro-carbs-glow: rgba(6, 182, 212, 0.34);
+    --macro-carbs-glow: rgba(6, 182, 212, 0.42);
     --macro-danger: #EF4444;
     --macro-danger-hi: #FCA5A5;
     --macro-danger-ink: #FFFFFF;
-    --macro-danger-glow: rgba(239, 68, 68, 0.34);
+    --macro-danger-glow: rgba(239, 68, 68, 0.42);
+    --macro-danger-text: #DC2626;
 }
 .dark {
-    --macro-protein: #F1EFEB;
+    --macro-protein: #F8FAFC;
     --macro-protein-hi: #FFFFFF;
-    --macro-protein-ink: #1C1917;
-    --macro-protein-glow: rgba(241, 239, 235, 0.45);
-    --macro-fat: #FBBF24;
-    --macro-fat-hi: #FEF3C7;
-    --macro-fat-ink: #3B2A05;
-    --macro-fat-glow: rgba(251, 191, 36, 0.40);
+    --macro-protein-ink: #0F172A;
+    --macro-protein-glow: rgba(248, 250, 252, 0.45);
+    --macro-protein-goal: #34D399;
+    --macro-protein-goal-hi: #A7F3D0;
+    --macro-protein-goal-ink: #022C22;
+    --macro-protein-goal-glow: rgba(52, 211, 153, 0.48);
+    --macro-protein-goal-text: #6EE7B7;
+    --macro-fat: #FB923C;
+    --macro-fat-hi: #FED7AA;
+    --macro-fat-ink: #431407;
+    --macro-fat-glow: rgba(251, 146, 60, 0.46);
     --macro-carbs: #22D3EE;
     --macro-carbs-hi: #A5F3FC;
     --macro-carbs-ink: #04333C;
-    --macro-carbs-glow: rgba(34, 211, 238, 0.40);
+    --macro-carbs-glow: rgba(34, 211, 238, 0.46);
     --macro-danger: #F87171;
     --macro-danger-hi: #FECACA;
     --macro-danger-ink: #3B0A0A;
-    --macro-danger-glow: rgba(248, 113, 113, 0.40);
+    --macro-danger-glow: rgba(248, 113, 113, 0.46);
+    --macro-danger-text: #FCA5A5;
 }
 
 /* Unified nutrition ring (single track + multi-segment arcs) */
@@ -147,15 +169,19 @@ html.dark,
     filter: drop-shadow(0 0 var(--ring-glow-blur, 5px) var(--ring-glow-color, transparent));
 }
 .nutrition-ring__pill--protein { --ring-glow-color: var(--macro-protein-glow); }
+.nutrition-ring__pill--protein-goal { --ring-glow-color: var(--macro-protein-goal-glow); }
 .nutrition-ring__pill--fat { --ring-glow-color: var(--macro-fat-glow); }
 .nutrition-ring__pill--carbs { --ring-glow-color: var(--macro-carbs-glow); }
 .nutrition-ring__pill--danger { --ring-glow-color: var(--macro-danger-glow); }
 /* Gradient stops live in CSS rather than in the markup so a theme switch
    recolours the ring without re-rendering it. `stop-color` is a CSS property,
    which is also why the gradient is painted through a class and not through
-   stop-color attributes. */
+   stop-color attributes. Class selectors match whole tokens, so the
+   `--protein` stops never bleed onto the `--protein-goal` gradient. */
 .nutrition-ring__gradient--protein stop:nth-child(1) { stop-color: var(--macro-protein-hi); }
 .nutrition-ring__gradient--protein stop:nth-child(2) { stop-color: var(--macro-protein); }
+.nutrition-ring__gradient--protein-goal stop:nth-child(1) { stop-color: var(--macro-protein-goal-hi); }
+.nutrition-ring__gradient--protein-goal stop:nth-child(2) { stop-color: var(--macro-protein-goal); }
 .nutrition-ring__gradient--fat stop:nth-child(1) { stop-color: var(--macro-fat-hi); }
 .nutrition-ring__gradient--fat stop:nth-child(2) { stop-color: var(--macro-fat); }
 .nutrition-ring__gradient--carbs stop:nth-child(1) { stop-color: var(--macro-carbs-hi); }
@@ -165,6 +191,7 @@ html.dark,
 /* The glyph riding the pill is a line drawing, so its ink follows the accent it
    sits on rather than a single fixed white. */
 .nutrition-ring__glyph { stroke: var(--macro-protein-ink); }
+.nutrition-ring__glyph--protein-goal { stroke: var(--macro-protein-goal-ink); }
 .nutrition-ring__glyph--fat { stroke: var(--macro-fat-ink); }
 .nutrition-ring__glyph--carbs { stroke: var(--macro-carbs-ink); }
 .nutrition-ring__glyph--danger { stroke: var(--macro-danger-ink); }
@@ -1249,19 +1276,33 @@ input, select, textarea:focus {
 }
 /* A label and its dot take the accent of the pill they describe, from the same
    tokens the arc is painted with - so a macro is one colour across the ring, the
-   number and the legend, and an over-target macro turns crimson in all three. */
+   number and the legend. Protein switches to the goal accent the moment its
+   target is reached (the `protein-goal` tone), and a fat overage is the only
+   macro that turns crimson: a carb figure above target and any protein surplus
+   stay in their own colour. */
 .macro-label__value--protein { color: var(--macro-protein); }
+.macro-label__value--protein-goal { color: var(--macro-protein-goal-text); }
 .macro-label__value--fat { color: var(--macro-fat); }
 .macro-label__value--carbs { color: var(--macro-carbs); }
-.macro-label__value--danger { color: var(--macro-danger); }
+.macro-label__value--danger { color: var(--macro-danger-text); }
 .macro-label__dot--protein { background: var(--macro-protein); }
+.macro-label__dot--protein-goal { background: var(--macro-protein-goal); }
 .macro-label__dot--fat { background: var(--macro-fat); }
 .macro-label__dot--carbs { background: var(--macro-carbs); }
 .macro-label__dot--danger { background: var(--macro-danger); }
-/* Horizontal macro bars share the same tokens as the ring pills. */
+/* Horizontal macro bars share the same tokens as the ring pills, so a bar and
+   the ring agree on whether protein has hit its target. */
 .macro-bar__fill--protein { background: var(--macro-protein); }
+.macro-bar__fill--protein-goal { background: var(--macro-protein-goal); }
 .macro-bar__fill--fat { background: var(--macro-fat); }
 .macro-bar__fill--carbs { background: var(--macro-carbs); }
+.macro-bar__fill--danger { background: var(--macro-danger); }
+/* The figure beside a bar is coloured only where colour carries meaning:
+   protein green once it is at or above its target, a fat overage red. The other
+   rows keep the neutral text colour, so three rows still read as one quiet list
+   of numbers instead of a traffic light. */
+.macro-bar__value--protein-goal { color: var(--macro-protein-goal-text); }
+.macro-bar__value--danger { color: var(--macro-danger-text); }
 /* Side labels get their vertical anchor from the JS pill geometry and are pulled
    back by half their own height, so they stay centred on their pill whatever the
    label ends up measuring. The carbs label anchors to the bottom of the box. */

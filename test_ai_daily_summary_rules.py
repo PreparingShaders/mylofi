@@ -1,9 +1,11 @@
 """Mock checks for the daily recap rules in app/services/ai_summary.py.
 
-No network and no database: the model is replaced by a canned answer, so these
-assert the two halves of the contract - the prompt states the rules for every
-persona and carries the day it is about, and the stored recap obeys the rules
-even when the model ignores them.
+No network and no database: the model is replaced by a canned answer and the
+session is a stub that replays canned rows, so these assert the two halves of the
+contract - the prompt states the rules for every persona and carries the day it is
+about, and the stored recap obeys the rules even when the model ignores them. The
+day's figures are the other half: they are summed by SQL and handed over as they
+are, so the recap can only talk about them.
 """
 
 import sys
@@ -22,9 +24,11 @@ from app.services.ai_summary import (  # noqa: E402
     SUMMARY_MIN_SENTENCES,
     _validate_daily_summary,
     build_daily_summary_prompt,
-    summarise_day,
+    get_or_create_daily_summary,
+    load_day_totals,
 )
 from app.services.ai_vision import EMOJI_PATTERN, PERSONA_PROMPTS, count_sentences  # noqa: E402
+from app.services.nutrition import local_day_of, utcnow  # noqa: E402
 
 DAY = date(2026, 10, 3)
 TARGETS = {
@@ -48,6 +52,22 @@ CHAOTIC_SUMMARY = " ".join(
 )
 
 
+def _totals(**overrides):
+    """Day figures as SQL hands them over, for the prompt builders below."""
+    totals = {
+        "meals_count": 0,
+        "calories": 0.0,
+        "protein_g": 0.0,
+        "fat_g": 0.0,
+        "carbs_g": 0.0,
+        "fiber_g": 0.0,
+        "sugar_g": 0.0,
+        "sodium_mg": 0.0,
+    }
+    totals.update(overrides)
+    return totals
+
+
 def _meal(hour: int, calories: float = 500.0, protein: float = 30.0):
     return SimpleNamespace(
         dish_name=f"Блюдо в {hour}:00",
@@ -66,13 +86,59 @@ def _prompt(persona: str, meals=None) -> str:
     meals = meals if meals is not None else [_meal(9), _meal(13), _meal(19)]
     return build_daily_summary_prompt(
         target_date=DAY,
-        totals=summarise_day(meals),
+        totals=_totals(
+            meals_count=len(meals),
+            calories=sum(m.calories or 0 for m in meals),
+            protein_g=sum(m.protein_g or 0 for m in meals),
+        ),
         meals=meals,
         tz_offset_minutes=0,
         user_goal="lose",
         targets=TARGETS,
         persona=persona,
         persona_custom_text="Разговаривай как дед, который любит внуков." if persona == "custom" else None,
+    )
+
+
+def _row(**overrides):
+    """One aggregate row as SQLAlchemy hands it back: named columns, not a dict."""
+    return SimpleNamespace(**_totals(**overrides))
+
+
+class _FakeResult:
+    """Canned answer for one `execute`, in either shape the service reads."""
+
+    def __init__(self, row=None, scalar=None):
+        self._row = row
+        self._scalar = scalar
+
+    def one(self):
+        return self._row
+
+    def scalar_one_or_none(self):
+        return self._scalar
+
+
+class _StubSession:
+    """Session stand-in that replays canned results and records its statements."""
+
+    def __init__(self, *results):
+        self.results = list(results)
+        self.statements = []
+
+    async def execute(self, statement):
+        self.statements.append(statement)
+        return self.results.pop(0)
+
+    async def rollback(self):
+        pass
+
+
+def _stored_recap():
+    return SimpleNamespace(
+        summary_text=GOOD_SUMMARY,
+        overall_score=7.5,
+        ai_persona="kind",
     )
 
 
@@ -117,7 +183,7 @@ def test_prompt_reports_which_meals_it_left_out():
 def test_prompt_says_so_when_the_day_carries_no_meals():
     prompt = build_daily_summary_prompt(
         target_date=DAY,
-        totals=summarise_day([]),
+        totals=_totals(),
         meals=[],
         user_goal=None,
         targets=None,
@@ -196,46 +262,109 @@ def test_empty_prose_is_not_a_recap():
 
 # --- day bookkeeping -----------------------------------------------------------
 
-def test_summarise_day_adds_up_the_meals():
-    meals = [_meal(9, calories=400.0, protein=30.0), _meal(19, calories=900.0, protein=60.0)]
+@pytest.mark.asyncio
+async def test_totals_are_summed_by_the_database():
+    """The figures are arithmetic, so the query is what has to be right."""
+    session = _StubSession(_FakeResult(row=_row(meals_count=2, calories=1230.0, protein_g=85.0)))
 
-    totals = summarise_day(meals)
+    totals = await load_day_totals(session, user_id=7, target_date=DAY)
 
     assert totals["meals_count"] == 2
-    assert totals["calories"] == 1300.0
-    assert totals["protein_g"] == 90.0
+    assert totals["calories"] == 1230.0
+    assert totals["protein_g"] == 85.0
+
+    sql = str(session.statements[0])
+    # The day is summed in SQL over the analysed meals of that user and day, so a
+    # figure can only be wrong if the query is wrong.
+    assert "sum(meals.calories)" in sql
+    assert "sum(meals.protein_g)" in sql
+    assert "count(meals.id)" in sql
+    assert "meals.user_id" in sql
+    assert "meals.eaten_at" in sql
+    assert "meals.status" in sql
 
 
-def test_summarise_day_treats_a_meal_without_figures_as_zero():
-    """A hand-added meal carries no macros; it must not make the day a None."""
-    bare = SimpleNamespace(
-        dish_name="Гречка без подсчёта",
-        eaten_at=datetime(2026, 10, 3, 13, tzinfo=timezone.utc),
-        calories=None,
-        protein_g=None,
-        fat_g=None,
-        carbs_g=None,
-        fiber_g=None,
-        sugar_g=None,
-        sodium_mg=None,
+@pytest.mark.asyncio
+async def test_a_day_without_figures_reads_as_zero():
+    """coalesce, not None: a day with no analysed meal is still a day of zeros."""
+    session = _StubSession(
+        _FakeResult(row=_row(meals_count=0, calories=0, protein_g=0, fat_g=None))
     )
 
-    totals = summarise_day([bare])
+    totals = await load_day_totals(session, user_id=7, target_date=DAY)
+
+    assert totals["calories"] == 0.0
+    assert totals["protein_g"] == 0.0
+    assert totals["fat_g"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_response_carries_the_exact_day_totals():
+    session = _StubSession(
+        _FakeResult(scalar=_stored_recap()),
+        _FakeResult(row=_row(meals_count=3, calories=2410.0, protein_g=164.0, fat_g=95.0)),
+    )
+    user = SimpleNamespace(id=7)
+
+    payload = await get_or_create_daily_summary(session, user, DAY)
+
+    assert payload["available"] is True
+    assert payload["summary_text"] == GOOD_SUMMARY
+    # The numbers a client renders next to the recap come from the same sums the
+    # prompt was given, so the two can never disagree.
+    assert payload["totals"]["calories"] == 2410.0
+    assert payload["totals"]["protein_g"] == 164.0
+
+
+@pytest.mark.asyncio
+async def test_totals_are_answered_even_when_there_is_no_recap():
+    """An empty card still carries the day's exact figures."""
+    session = _StubSession(
+        _FakeResult(scalar=None),
+        _FakeResult(row=_row(meals_count=1, calories=530.0)),
+    )
+    user = SimpleNamespace(id=7)
+
+    payload = await get_or_create_daily_summary(session, user, local_day_of(utcnow(), 0))
+
+    assert payload["available"] is False
+    assert payload["reason"] == REASON_DAY_NOT_FINISHED
+    assert payload["totals"]["calories"] == 530.0
+
+
+@pytest.mark.asyncio
+async def test_a_day_with_nothing_eaten_sums_to_nothing():
+    """A meal whose macros were never analysed contributes nothing, and stays a number."""
+    session = _StubSession(
+        _FakeResult(row=_row(meals_count=1, calories=0, protein_g=0, fat_g=0, carbs_g=0)),
+    )
+
+    totals = await load_day_totals(session, user_id=7, target_date=DAY)
 
     assert totals["meals_count"] == 1
-    assert totals["calories"] == 0
-    assert totals["protein_g"] == 0
+    assert all(isinstance(totals[key], float) for key in ("calories", "protein_g", "fat_g", "carbs_g"))
+
+
+def test_prompt_forbids_the_model_from_writing_figures():
+    """The recap speaks about the day; the numbers are the database's job."""
+    for persona in sorted(PERSONA_PROMPTS):
+        prompt = _prompt(persona)
+
+        assert "НИ ОДНОЙ ЦИФРЫ В summary_text" in prompt
+        # The exact sums are still context - without them the model cannot say
+        # whether the day was over its norms.
+        assert "посчитано точно по базе" in prompt
 
 
 def test_meal_times_are_read_in_the_clients_own_clock():
     """A 23:00 UTC meal eaten at UTC+3 belongs to the next local morning."""
     meal = _meal(23)
     utc_prompt = build_daily_summary_prompt(
-        target_date=DAY, totals=summarise_day([meal]), meals=[meal], tz_offset_minutes=0
+        target_date=DAY, totals=_totals(meals_count=1), meals=[meal], tz_offset_minutes=0
     )
     # UTC+3 arrives as -180 (Date.getTimezoneOffset counts minutes behind UTC).
     local_prompt = build_daily_summary_prompt(
-        target_date=DAY, totals=summarise_day([meal]), meals=[meal], tz_offset_minutes=-180
+        target_date=DAY, totals=_totals(meals_count=1), meals=[meal], tz_offset_minutes=-180
     )
 
     assert "- 23:00: Блюдо в 23:00" in utc_prompt

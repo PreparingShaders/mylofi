@@ -280,7 +280,44 @@ export const Nutrition = {
     },
 
     /**
-     * AI recap of the selected day.
+     * Day the recap card is about.
+     *
+     * A recap of today can never exist - the day is still being eaten - so while
+     * the header says "Сегодня" the card stands in for the day that *is*
+     * finished: yesterday. Any other date the user browses to names itself, which
+     * is why this is one lookup and not a flag threaded through the render.
+     */
+    recapDate() {
+        const today = this.todayISO();
+        if (this.selectedDate && this.selectedDate >= today) return this.shiftDate(today, -1);
+        return this.selectedDate;
+    },
+
+    /** True while the card is standing in for yesterday behind a "Сегодня" header. */
+    recapIsYesterday() {
+        return Boolean(this.selectedDate) && this.selectedDate >= this.todayISO();
+    },
+
+    /**
+     * Everything the recap card is rendered with, shared by the page render and
+     * the in-place swap after a regeneration: the date it names, whether its day
+     * is finished enough to generate, and the wording of that trigger. One place,
+     * so the card can never claim a different day than the request it rode on.
+     */
+    recapCardOptions() {
+        const date = this.recapDate();
+        const isYesterday = this.recapIsYesterday();
+        return {
+            dateLabel: isYesterday
+                ? `Итог за вчера, ${this.formatDayMonthISO(date)}`
+                : this.formatDayMonthISO(date),
+            allowGenerate: Boolean(date) && date < this.todayISO(),
+            generateLabel: isYesterday ? 'Сформировать итог за вчера' : 'Сформировать итог дня',
+        };
+    },
+
+    /**
+     * AI recap of the card's day (yesterday while "Today" is selected).
      *
      * Only the day view asks for it: a recap covers one calendar day, so a week
      * or a month window has no single day to recap and the card is left out
@@ -296,7 +333,7 @@ export const Nutrition = {
         if (this.selectedPeriod !== 'day') return null;
 
         const token = this.app.state.tokens.access;
-        const endpoint = `/nutrition/daily-summary?date=${encodeURIComponent(this.selectedDate)}`;
+        const endpoint = `/nutrition/daily-summary?date=${encodeURIComponent(this.recapDate())}`;
         try {
             const data = await API.get(this.withTimezone(endpoint), token);
             return (data && typeof data === 'object') ? data : null;
@@ -308,10 +345,11 @@ export const Nutrition = {
 
     /**
      * Manual recap trigger, bound to both actions on the daily-summary
-     * card: "Сформировать итог день" on a past day without a recap, and
+     * card: "Сформировать итог..." on a finished day without a recap, and
      * the refresh glyph on a stored one. Both ask the endpoint with
-     * `force=true`, so the day is re-read and the stored row rewritten in
-     * place - the card then swaps in the fresh payload without a reload.
+     * `force=true` for the same day the card names, so the day is re-read and
+     * the stored row rewritten in place - the card then swaps in the fresh
+     * payload without a reload.
      *
      * Never throws: a failed generation toasts and leaves the card as it
      * was, exactly like the read path it rides on.
@@ -326,7 +364,7 @@ export const Nutrition = {
         this.setDailySummaryBusy(section, true);
 
         const token = this.app.state.tokens.access;
-        const endpoint = `/nutrition/daily-summary?date=${encodeURIComponent(this.selectedDate)}&force=true`;
+        const endpoint = `/nutrition/daily-summary?date=${encodeURIComponent(this.recapDate())}&force=true`;
         try {
             const data = await API.get(this.withTimezone(endpoint), token);
             const payload = (data && typeof data === 'object') ? data : null;
@@ -363,10 +401,7 @@ export const Nutrition = {
         if (!section) return;
 
         const host = document.createElement('div');
-        host.innerHTML = Components.dailySummaryCard(payload, {
-            dateLabel: this.formatDayMonthISO(this.selectedDate),
-            allowGenerate: this.selectedDate < this.todayISO(),
-        });
+        host.innerHTML = Components.dailySummaryCard(payload, this.recapCardOptions());
         const fresh = host.firstElementChild;
         if (fresh) {
             section.replaceWith(fresh);
@@ -855,13 +890,10 @@ export const Nutrition = {
             // the meal carousel starts below both without a second wrapper. Its chip
             // names the concrete day rather than reusing the header label: the recap
             // is a stored record of that date, and the header says only "Сегодня".
-            // A day in the past also earns the manual generation trigger; today
-            // never does, because the day is still being eaten.
+            // A finished day also earns the manual generation trigger; a day still
+            // being eaten never does.
             const dailySummaryBlock = dailySummary
-                ? Components.dailySummaryCard(dailySummary, {
-                    dateLabel: this.formatDayMonthISO(this.selectedDate),
-                    allowGenerate: this.selectedDate < this.todayISO(),
-                })
+                ? Components.dailySummaryCard(dailySummary, this.recapCardOptions())
                 : '';
 
             let html = `

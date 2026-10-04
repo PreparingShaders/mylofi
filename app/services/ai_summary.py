@@ -10,6 +10,11 @@ already written can be re-read while the upstream is down. Generation is bounded
 as a whole (`DAILY_SUMMARY_TASK_TIMEOUT`) and never raises out of the read path:
 a missing recap degrades to an empty card instead of taking the nutrition page
 down with it.
+
+The model's job is the verdict and the score. Every number in the product comes
+from SQL: `load_day_totals` sums the day exactly, the prompt carries those sums as
+context and forbids the model from writing any figure of its own, and the response
+hands the same sums back verbatim.
 """
 
 import asyncio
@@ -17,7 +22,7 @@ import logging
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -100,17 +105,53 @@ async def load_day_meals(
     return list(result.scalars().all())
 
 
-def summarise_day(meals: List[Meal]) -> Dict[str, Any]:
-    """Day totals the prompt reasons about, plus the meal count for context."""
+async def load_day_totals(
+    db: AsyncSession,
+    user_id: int,
+    target_date: date,
+    tz_offset_minutes: int = 0,
+) -> Dict[str, Any]:
+    """Exact KBZhU of one local day, added up by the database.
+
+    These figures are arithmetic, never the model's: SQL sums the same COMPLETED
+    meals over the same local window `load_day_meals` reads, so the totals a recap
+    reasons about are the totals the nutrition ring shows for that day. They are
+    what the prompt gets as context (and is forbidden from restating - rule 6), and
+    what the response carries verbatim, so no digit in the product can come from a
+    language model.
+
+    `coalesce` turns a day with no analysed meal into zeros rather than a NULL, and
+    a meal whose macros were never analysed contributes nothing to the sums, which
+    is what the rest of the app already assumes of it.
+    """
+    start_dt, end_dt = day_bounds_utc(target_date, target_date, tz_offset_minutes)
+    result = await db.execute(
+        select(
+            func.count(Meal.id).label("meals_count"),
+            func.coalesce(func.sum(Meal.calories), 0).label("calories"),
+            func.coalesce(func.sum(Meal.protein_g), 0).label("protein_g"),
+            func.coalesce(func.sum(Meal.fat_g), 0).label("fat_g"),
+            func.coalesce(func.sum(Meal.carbs_g), 0).label("carbs_g"),
+            func.coalesce(func.sum(Meal.fiber_g), 0).label("fiber_g"),
+            func.coalesce(func.sum(Meal.sugar_g), 0).label("sugar_g"),
+            func.coalesce(func.sum(Meal.sodium_mg), 0).label("sodium_mg"),
+        ).where(
+            Meal.user_id == user_id,
+            Meal.eaten_at >= start_dt,
+            Meal.eaten_at <= end_dt,
+            Meal.status == MealStatus.COMPLETED,
+        )
+    )
+    row = result.one()
     return {
-        "meals_count": len(meals),
-        "calories": sum(m.calories or 0 for m in meals),
-        "protein_g": sum(m.protein_g or 0 for m in meals),
-        "fat_g": sum(m.fat_g or 0 for m in meals),
-        "carbs_g": sum(m.carbs_g or 0 for m in meals),
-        "fiber_g": sum(m.fiber_g or 0 for m in meals),
-        "sugar_g": sum(m.sugar_g or 0 for m in meals),
-        "sodium_mg": sum(m.sodium_mg or 0 for m in meals),
+        "meals_count": int(row.meals_count or 0),
+        "calories": float(row.calories or 0),
+        "protein_g": float(row.protein_g or 0),
+        "fat_g": float(row.fat_g or 0),
+        "carbs_g": float(row.carbs_g or 0),
+        "fiber_g": float(row.fiber_g or 0),
+        "sugar_g": float(row.sugar_g or 0),
+        "sodium_mg": float(row.sodium_mg or 0),
     }
 
 
@@ -150,8 +191,13 @@ def build_daily_summary_prompt(
     """Prompt for one day's recap, in the user's own nutritionist voice.
 
     The persona is a tone of voice, not a task: it is stated once and the rules
-    below (the JSON contract, the length, the no-emoji rule) stay binding
-    regardless of voice, exactly as they do for the dish verdict.
+    below (the JSON contract, the length, the no-emoji rule, the no-digits rule)
+    stay binding regardless of voice, exactly as they do for the dish verdict.
+
+    `totals` are the exact day sums the database produced (`load_day_totals`). They
+    are context for the judgement, not something to repeat: the recap is prose plus
+    a score, and every figure the user sees is rendered from the same arithmetic
+    outside the model.
     """
     t_cal = targets.get("target_calories") if targets else None
     t_pro = targets.get("target_protein_g") if targets else None
@@ -166,7 +212,7 @@ def build_daily_summary_prompt(
     )
 
     totals_line = (
-        f"Итого за {day_label(target_date)} ({totals['meals_count']} приёмов пищи): "
+        f"Итого за {day_label(target_date)} ({totals['meals_count']} приёмов пищи), посчитано точно по базе: "
         f"{format_amount(totals['calories'])} ккал, белки {format_amount(totals['protein_g'])} г, "
         f"жиры {format_amount(totals['fat_g'])} г, углеводы {format_amount(totals['carbs_g'])} г, "
         f"клетчатка {format_amount(totals['fiber_g'])} г, сахар {format_amount(totals['sugar_g'])} г, "
@@ -212,9 +258,9 @@ def build_daily_summary_prompt(
 3. НИКАКИХ СПИСКОВ И РАЗМЕТОК: summary_text - один абзац обычным текстом, без маркеров, нумерации, заголовков и переносов строк.
 4. О ЧЁМ ГОВОРИТЬ: как распределился день по времени (что оказалось тяжёлым приёмом, а что лёгким), что в составе было плюсом и где риск (сахар, соль, переработка, недостаток овощей или клетчатки), насколько день вписан в цель пользователя и одно конкретное действие на завтра.
 5. ЧЕСТНОСТЬ: если день вышел за нормы - назови это прямо и конкретно ("превышено по калориям", "жиры выше нормы"), без приуменьшений. Если всё в пределах нормы - скажи это прямо. Если норм нет ('?') - оценивай день само по себе, без сравнения.
-6. ЦИФРЫ В ИТОГЕ: числа макросов в summary_text допустимы и помогают - в отличие от вердикта по одному блюду, здесь итог сам по себе и есть смысл.
+6. НИ ОДНОЙ ЦИФРЫ В summary_text: калории, белки, жиры, углеводы, клетчатку, сахар и натрий система уже посчитала точно по базе и показывает пользователю отдельно. В тексте итога чисел нет - говори словами ("превышено по калориям", "белка выше нормы", "жиры заметно выше нормы") и опирайся на точные итоги из блока Контекст. Любая цифра или число прописью в summary_text - нарушение.
 7. БЕЛОК - ВСЕГДА ПЛЮС: превышение белка никогда не подаётся как ошибка, избыток или замечание. Белок выше нормы - это польза для мышц и для сытости, и модель обязана это отметить.
-8. ПЕРСОНА - ТОЛЬКО ТОН: любая персона задаёт только тон формулировок. Длина, отсутствие эмодзи, формат ответа, честность по превышениям и похвала белка действуют при любой персона.
+8. ПЕРСОНА - ТОЛЬКО ТОН: любая персона задаёт только тон формулировок. Длина, отсутствие эмодзи, запрет цифр, формат ответа, честность по превышениям и похвала белка действуют при любой персона.
 
 {persona_line}
 
@@ -358,6 +404,10 @@ async def write_daily_summary(
     if not meals:
         return None
 
+    # The exact sums the prompt reasons about and the response carries, straight
+    # from SQL: the recap never gets to invent a calorie.
+    totals = await load_day_totals(db, user.id, target_date, tz_offset_minutes)
+
     targets = {
         "target_calories": user.target_calories,
         "target_protein_g": user.target_protein_g,
@@ -366,7 +416,7 @@ async def write_daily_summary(
     }
     payload = await generate_daily_summary_payload(
         target_date=target_date,
-        totals=summarise_day(meals),
+        totals=totals,
         meals=meals,
         tz_offset_minutes=tz_offset_minutes,
         user_goal=user.goal,
@@ -387,15 +437,22 @@ def _summary_payload(
     *,
     available: bool,
     reason: Optional[str],
+    totals: Optional[Dict[str, Any]] = None,
     generated: bool = False,
     regenerated: bool = False,
 ) -> Dict[str, Any]:
-    """Shape of the daily-summary response, for both the read and the empty path."""
+    """Shape of the daily-summary response, for both the read and the empty path.
+
+    `totals` are the day's exact KBZhU as the database summed them, and they travel
+    with every answer - including the "no recap" ones - so a client never has to
+    add the day up itself and the figures can never disagree with the ring.
+    """
     return {
         "date": target_date,
         "summary_text": summary.summary_text if summary else None,
         "overall_score": summary.overall_score if summary else None,
         "ai_persona": summary.ai_persona if summary else None,
+        "totals": totals,
         "available": available,
         "generated": generated,
         "regenerated": regenerated,
@@ -424,18 +481,24 @@ async def get_or_create_daily_summary(
     that fails keeps the last known recap instead of dropping the card to an
     empty state.
 
+    Every answer carries the day's exact totals, read once from SQL and computed
+    whether or not a recap exists.
+
     Never raises. A failed generation returns the empty payload with a reason so
     the nutrition screen keeps rendering with an empty card.
     """
     existing = await get_daily_summary(db, user.id, target_date)
+    totals = await load_day_totals(db, user.id, target_date, tz_offset_minutes)
     if existing is not None and not force:
-        return _summary_payload(existing, target_date, available=True, reason=None)
+        return _summary_payload(existing, target_date, available=True, reason=None, totals=totals)
 
     local_today = local_day_of(utcnow(), tz_offset_minutes)
     if target_date >= local_today:
         if existing is not None:
-            return _summary_payload(existing, target_date, available=True, reason=None)
-        return _summary_payload(None, target_date, available=False, reason=REASON_DAY_NOT_FINISHED)
+            return _summary_payload(existing, target_date, available=True, reason=None, totals=totals)
+        return _summary_payload(
+            None, target_date, available=False, reason=REASON_DAY_NOT_FINISHED, totals=totals
+        )
 
     try:
         written = await write_daily_summary(db, user, target_date, tz_offset_minutes)
@@ -445,16 +508,19 @@ async def get_or_create_daily_summary(
         logger.exception(f"[AI Summary] Day {target_date} failed for user {user.id}: {e}")
         await db.rollback()
         if existing is not None:
-            return _summary_payload(existing, target_date, available=True, reason=None)
-        return _summary_payload(None, target_date, available=False, reason=REASON_FAILED)
+            return _summary_payload(existing, target_date, available=True, reason=None, totals=totals)
+        return _summary_payload(None, target_date, available=False, reason=REASON_FAILED, totals=totals)
 
     if written is None:
-        return _summary_payload(None, target_date, available=False, reason=REASON_NO_MEALS)
+        return _summary_payload(
+            None, target_date, available=False, reason=REASON_NO_MEALS, totals=totals
+        )
     return _summary_payload(
         written,
         target_date,
         available=True,
         reason=None,
+        totals=totals,
         generated=True,
         regenerated=force and existing is not None,
     )
@@ -528,7 +594,7 @@ __all__ = [
     "get_daily_summary",
     "get_or_create_daily_summary",
     "load_day_meals",
+    "load_day_totals",
     "store_daily_summary",
-    "summarise_day",
     "write_daily_summary",
 ]

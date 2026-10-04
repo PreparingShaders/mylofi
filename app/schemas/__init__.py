@@ -296,19 +296,40 @@ class PhotoUploadResponse(BaseModel):
     message: str
 
 
+class DailySummaryTotals(BaseModel):
+    """A day's KBZhU as the database summed it.
+
+    These are arithmetic, not text: the recap is only allowed to speak about the
+    day, never to state its figures, so the numbers the user sees are read from
+    here. `meals_count` counts analysed meals, which is why it can be 0 while the
+    day still has calendar days on either side of it.
+    """
+
+    meals_count: int = 0
+    calories: float = 0
+    protein_g: float = 0
+    fat_g: float = 0
+    carbs_g: float = 0
+    fiber_g: float = 0
+    sugar_g: float = 0
+    sodium_mg: float = 0
+
+
 class DailySummaryResponse(BaseModel):
     """One day's AI recap, or the reason there is none.
 
     `available` is the flag the card renders on: a missing recap is an empty
     state with a reason, not an error, so the nutrition screen keeps its layout
     whatever the upstream did. `regenerated` is set when a stored recap was
-    rewritten in place by the manual `force` trigger.
+    rewritten in place by the manual `force` trigger. `totals` is present on every
+    answer, recap or not, so a client never has to add the day up itself.
     """
 
     date: date
     summary_text: Optional[str] = None
     overall_score: Optional[float] = None
     ai_persona: Optional[str] = None
+    totals: Optional[DailySummaryTotals] = None
     available: bool = False
     generated: bool = False
     regenerated: bool = False
@@ -576,6 +597,7 @@ __all__ = [
     "MealListResponse",
     "PhotoUploadResponse",
     "DailySummaryResponse",
+    "DailySummaryTotals",
     "WorkoutTemplateExerciseBase",
     "WorkoutTemplateExerciseCreate",
     "WorkoutTemplateExerciseUpdate",
