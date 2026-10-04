@@ -296,6 +296,23 @@ class PhotoUploadResponse(BaseModel):
     message: str
 
 
+class DailySummaryResponse(BaseModel):
+    """One day's AI recap, or the reason there is none.
+
+    `available` is the flag the card renders on: a missing recap is an empty
+    state with a reason, not an error, so the nutrition screen keeps its layout
+    whatever the upstream did.
+    """
+
+    date: date
+    summary_text: Optional[str] = None
+    overall_score: Optional[float] = None
+    ai_persona: Optional[str] = None
+    available: bool = False
+    generated: bool = False
+    reason: Optional[str] = None
+
+
 # Workout schemas
 class WorkoutTemplateExerciseBase(BaseModel):
     name: str = Field(max_length=255)
@@ -556,6 +573,7 @@ __all__ = [
     "MealResponse",
     "MealListResponse",
     "PhotoUploadResponse",
+    "DailySummaryResponse",
     "WorkoutTemplateExerciseBase",
     "WorkoutTemplateExerciseCreate",
     "WorkoutTemplateExerciseUpdate",

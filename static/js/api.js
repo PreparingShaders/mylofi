@@ -13,13 +13,14 @@ const READ_CACHE_MAX_ENTRY_BYTES = 300 * 1024;
 const READ_CACHE_TOTAL_BYTES = 2 * 1024 * 1024;
 
 // Every nutrition read the dashboard can be showing: the day log, the period
-// summaries and the custom-range endpoints.
+// summaries, the custom-range endpoints and the daily recap.
 const NUTRITION_READS = [
     'nutrition/logs',
     'nutrition/summary',
     'nutrition/week',
     'nutrition/month',
     'nutrition/range',
+    'nutrition/daily-summary',
 ];
 
 // Cache entries invalidated together when a mutation touches a resource

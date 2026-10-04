@@ -4,6 +4,7 @@ import { DB } from './db.js';
 
 let sparklineSeq = 0;
 let tonnageChartSeq = 0;
+let ringGradientSeq = 0;
 
 export function escapeHtml(value) {
     return String(value ?? '')
@@ -185,6 +186,9 @@ export const Components = {
     /**
      * Three horizontal macro bars (protein/fat/carbs) with current vs target
      * grams, used by the dashboard day slide.
+     *
+     * The fills take the macro tokens rather than a Tailwind colour, so a bar and
+     * the ring pill above it are the same hue in both themes.
      */
     macroBars(summary = {}, targets = {}) {
         const safeNum = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
@@ -192,18 +196,18 @@ export const Components = {
         const pct = (current, target) => (target > 0 ? Math.min(100, Math.round((current / target) * 100)) : 0);
 
         const rows = [
-            { label: 'Белки', current: safeNum(summary.protein), target: safeNum(targets.target_protein), color: 'bg-sky-500' },
-            { label: 'Жиры', current: safeNum(summary.fat), target: safeNum(targets.target_fat), color: 'bg-rose-400' },
-            { label: 'Углеводы', current: safeNum(summary.carbs), target: safeNum(targets.target_carbs), color: 'bg-lime-500' },
+            { label: 'Белки', current: safeNum(summary.protein), target: safeNum(targets.target_protein), tone: 'protein' },
+            { label: 'Жиры', current: safeNum(summary.fat), target: safeNum(targets.target_fat), tone: 'fat' },
+            { label: 'Углеводы', current: safeNum(summary.carbs), target: safeNum(targets.target_carbs), tone: 'carbs' },
         ];
 
-        return rows.map(({ label, current, target, color }) => {
+        return rows.map(({ label, current, target, tone }) => {
             const valuePct = pct(current, target);
             return `
                 <div class="flex items-center gap-2">
                     <span class="w-[70px] shrink-0 truncate text-[10px] font-semibold uppercase tracking-wider text-surface-500 dark:text-surface-400">${escapeHtml(label)}</span>
                     <div class="flex-1 h-1.5 rounded-full bg-surface-200 dark:bg-white/10 overflow-hidden" role="progressbar" aria-valuenow="${valuePct}" aria-valuemin="0" aria-valuemax="100" aria-label="${escapeHtml(label)} ${valuePct}%">
-                        <div class="h-full ${color} rounded-full transition-all duration-500 ease-out" style="width: ${valuePct}%"></div>
+                        <div class="h-full macro-bar__fill--${tone} rounded-full transition-all duration-500 ease-out" style="width: ${valuePct}%"></div>
                     </div>
                     <span class="w-[72px] shrink-0 text-right text-[11px] font-semibold text-surface-800 dark:text-zinc-200 whitespace-nowrap">
                         ${formatNum(current)}<span class="font-normal text-surface-400 dark:text-surface-500"> / ${formatNum(target)} г</span>
@@ -270,11 +274,19 @@ export const Components = {
     /**
      * Compact single-ring "Mercedes" summary for the dashboard slides.
      *
-     * The ring is one circle cut into three 120 degree sectors - proteins
-     * (emerald), fats (orange), carbs (cyan). Every sector draws its own faint
-     * rounded track and its own filled arc on top, so the three macros float as
-     * separate thick pills instead of sharing one continuous circle. Over-target
-     * macros turn crimson (#EF4444), as does an over-target calorie intake.
+     * The ring is one circle cut into three 120 degree sectors - proteins, fats
+     * and carbs. Every sector draws its own faint rounded track and its own filled
+     * arc on top, so the three macros float as separate thick pills instead of
+     * sharing one continuous circle. Over-target macros turn crimson, as does an
+     * over-target calorie intake.
+     *
+     * Each pill is painted with its own gradient (a highlight stop down to the
+     * accent) plus a drop-shadow glow in the same colour, which is what gives the
+     * dial its lit depth instead of a flat stroke. Both live in CSS and are keyed
+     * off the macro, so a theme switch recolours the ring without re-rendering it.
+     * Protein is the warm off-white #F1EFEB on the dark theme; the light theme
+     * uses a darkened relative of the same colour, since the pill would otherwise
+     * be invisible on a white card.
      *
      * Round line caps bleed half a stroke past each end of an arc, so the drawn
      * path is shortened by that much on both sides; sectorGapDeg therefore stays
@@ -287,8 +299,10 @@ export const Components = {
      * bottom) instead of the old macro table underneath, which is what keeps the
      * header inside ~200-220px.
      *
-     * Each filled pill carries a small white line-art glyph (dumbbell, oil drop,
-     * spark) parked at its leading edge, so the icon travels as the value grows.
+     * Each filled pill carries a small line-art glyph (dumbbell, oil drop, spark)
+     * parked at its leading edge, so the icon travels as the value grows. Its ink
+     * follows the pill it sits on, or it would vanish into the near-white protein
+     * arc on the dark theme.
      */
     mercedesComboRing(summary = {}, targets = {}, qualityScore = null, size = 120, strokeWidth = 19, sectorGapDeg = 14) {
         const safeNum = (val) => (Number.isFinite(Number(val)) ? Number(val) : 0);
@@ -298,10 +312,12 @@ export const Components = {
         const calories = safeNum(summary.calories);
         const targetCalories = safeNum(targets.target_calories);
 
+        // `tone` is a macro key, not a Tailwind colour: the arc, the glyph ink and
+        // the label all resolve it through the same CSS token.
         const macros = [
-            { key: 'protein', label: 'Белки', icon: 'protein', tone: 'emerald-500', position: 'macro-label-protein', current: safeNum(summary.protein), target: safeNum(targets.target_protein) },
-            { key: 'fat', label: 'Жиры', icon: 'fat', tone: 'orange-500', position: 'macro-label-fat', current: safeNum(summary.fat), target: safeNum(targets.target_fat) },
-            { key: 'carbs', label: 'Углеводы', icon: 'carbs', tone: 'cyan-500', position: 'macro-label-carbs', current: safeNum(summary.carbs), target: safeNum(targets.target_carbs) },
+            { key: 'protein', label: 'Белки', icon: 'protein', tone: 'protein', position: 'macro-label-protein', current: safeNum(summary.protein), target: safeNum(targets.target_protein) },
+            { key: 'fat', label: 'Жиры', icon: 'fat', tone: 'fat', position: 'macro-label-fat', current: safeNum(summary.fat), target: safeNum(targets.target_fat) },
+            { key: 'carbs', label: 'Углеводы', icon: 'carbs', tone: 'carbs', position: 'macro-label-carbs', current: safeNum(summary.carbs), target: safeNum(targets.target_carbs) },
         ].map((macro) => ({
             ...macro,
             ratio: macro.target > 0 ? macro.current / macro.target : 0,
@@ -322,6 +338,15 @@ export const Components = {
         const glyphSize = strokeWidth * 0.6;
         const rotation = 165;
 
+        // Gradient ids must be unique per instance: the dashboard ring and any
+        // other ring on the page would otherwise share one definition and repaint
+        // each other when a theme switch changed the stop colours. Allocated once
+        // per tone, so the arc and the <defs> that paints it agree on the id.
+        const paintedTones = [...new Set(macros.map((macro) => (macro.over ? 'danger' : macro.tone)))];
+        const gradientIds = Object.fromEntries(
+            paintedTones.map((tone) => [tone, `ring-${tone}-${++ringGradientSeq}`])
+        );
+
         const point = (deg) => {
             const rad = (deg * Math.PI) / 180;
             return [center + radius * Math.cos(rad), center + radius * Math.sin(rad)];
@@ -334,12 +359,13 @@ export const Components = {
             return `M ${x1.toFixed(2)} ${y1.toFixed(2)} A ${radius.toFixed(2)} ${radius.toFixed(2)} 0 ${sweepDeg > 180 ? 1 : 0} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`;
         };
 
-        const glyph = (macro, deg) => {
+        const glyph = (macro, tone, deg) => {
             const [x, y] = point(deg);
             const offset = glyphSize / 2;
             return `<svg x="${(x - offset).toFixed(2)}" y="${(y - offset).toFixed(2)}"
                              width="${glyphSize.toFixed(2)}" height="${glyphSize.toFixed(2)}" viewBox="0 0 24 24"
-                             fill="none" stroke="#FFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+                             class="nutrition-ring__glyph nutrition-ring__glyph--${tone}"
+                             fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
                              aria-hidden="true">${MACRO_ICON_PATHS[macro.icon]}</svg>`;
         };
 
@@ -349,22 +375,34 @@ export const Components = {
             const sectorStart = rotation + index * sectorDeg + sectorGapDeg / 2;
             const drawStart = sectorStart + capDeg;
             const progressDeg = clamp01(macro.ratio) * pathDeg;
-            const tone = macro.over ? 'red-500' : macro.tone;
+            const tone = macro.over ? 'danger' : macro.tone;
             const track = arc(drawStart, pathDeg);
             // The glyph needs a pill at least one stroke wide around it,
             // otherwise it would spill over the leading cap.
             const showGlyph = (progressDeg / 360) * circumference >= strokeWidth;
+            const gradient = gradientIds[tone];
             return `
                 <g>
                     ${track ? `<path d="${track}" class="nutrition-ring__track" fill="none" stroke-width="${strokeWidth}" stroke-linecap="round"/>` : ''}
                     ${progressDeg > 0.05 ? `
-                        <path d="${arc(drawStart, progressDeg)}" class="nutrition-ring__pill text-${tone}"
-                              fill="none" stroke="currentColor" stroke-width="${strokeWidth}" stroke-linecap="round"/>
+                        <path d="${arc(drawStart, progressDeg)}" class="nutrition-ring__pill nutrition-ring__pill--${tone}"
+                              fill="none" stroke="url(#${gradient})" stroke-width="${strokeWidth}" stroke-linecap="round"/>
                     ` : ''}
-                    ${showGlyph ? glyph(macro, drawStart + progressDeg) : ''}
+                    ${showGlyph ? glyph(macro, tone, drawStart + progressDeg) : ''}
                 </g>
             `;
         };
+
+        // One gradient per tone in play, defined before the arcs that reference it.
+        // An arc with nothing to show draws no path, and an unused gradient costs
+        // nothing to have defined.
+        const gradientDefs = paintedTones.map((tone) => `
+            <linearGradient id="${gradientIds[tone]}" class="nutrition-ring__gradient--${tone}"
+                            x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-opacity="0.95"></stop>
+                <stop offset="100%" stop-opacity="1"></stop>
+            </linearGradient>
+        `).join('');
 
         // Label anchors are derived from the same geometry so each label sits on
         // its own pill: the side labels are centred vertically on their pill
@@ -385,13 +423,13 @@ export const Components = {
         const share = (macro) => (macro.target > 0 ? `${Math.round(clamp01(macro.ratio) * 100)}%` : '—');
 
         const macroLabels = macros.map((macro) => {
-            const tone = macro.over ? 'red-500' : macro.tone;
+            const tone = macro.over ? 'danger' : macro.tone;
             return `
                 <div class="macro-label ${macro.position}" style="${labelAnchors[macro.key]}" role="group"
                      aria-label="${escapeHtml(macro.label)} ${share(macro)} от цели">
-                    <span class="macro-label__value text-${tone}">${formatNum(macro.current)}<span class="macro-label__target">${macro.target > 0 ? `/ ${formatNum(macro.target)} г` : ' г'}</span></span>
+                    <span class="macro-label__value macro-label__value--${tone}">${formatNum(macro.current)}<span class="macro-label__target">${macro.target > 0 ? `/ ${formatNum(macro.target)} г` : ' г'}</span></span>
                     <span class="macro-label__name">
-                        <span class="macro-label__dot bg-${tone}"></span>${escapeHtml(macro.label)}
+                        <span class="macro-label__dot macro-label__dot--${tone}"></span>${escapeHtml(macro.label)}
                     </span>
                 </div>
             `;
@@ -400,17 +438,75 @@ export const Components = {
         return `
             <div class="nutrition-ring-container">
                 <div class="relative flex items-center justify-center shrink-0" style="width: ${size}px; height: ${size}px;">
+                    <div class="nutrition-ring__aura" aria-hidden="true"></div>
                     <svg class="absolute inset-0" width="${size}" height="${size}" role="img"
                          aria-label="Белки ${share(macros[0])}, жиры ${share(macros[1])}, углеводы ${share(macros[2])}">
+                        <defs>${gradientDefs}</defs>
                         ${macros.map(sector).join('')}
                     </svg>
                     <div class="nutrition-ring__center">
-                        <span class="nutrition-ring__score bg-purple-500/15 text-purple-500 dark:text-purple-400">ИИ ${scoreText}<span class="opacity-60">/10</span></span>
+                        <span class="nutrition-ring__score text-purple-600 dark:text-purple-300"><svg class="nutrition-ring__spark" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>ИИ ${scoreText}<span class="opacity-60">/10</span></span>
                         <span class="nutrition-ring__calories tabular-nums ${calOver ? 'text-red-500 dark:text-red-400' : 'text-surface-900 dark:text-zinc-100'}">${formatNum(calories)}<span class="nutrition-ring__calories-target">/ ${formatNum(targetCalories)} ккал</span></span>
                     </div>
                 </div>
                 ${macroLabels}
             </div>
+        `;
+    },
+
+    /**
+     * Daily AI recap of one day, as a card under the dashboard.
+     *
+     * The card has two states and no third: the recap, or the reason there is
+     * none ("the day is not over", "no meals that day", "the model did not
+     * answer"). A failed recap therefore still occupies the same slot with the
+     * same height class, instead of the page silently losing a section or
+     * growing one once the upstream recovers.
+     *
+     * `payload` is the /nutrition/daily-summary response; `dateLabel` is the
+     * period header's own wording for the day, so the card can never claim a
+     * different date than the ring above it.
+     */
+    dailySummaryCard(payload = {}, { dateLabel = '' } = {}) {
+        const available = payload?.available === true;
+        const text = typeof payload.summary_text === 'string' ? payload.summary_text.trim() : '';
+        const score = Number(payload.overall_score);
+        const hasScore = Number.isFinite(score) && score > 0;
+        // The server prints the score on its 1-10 scale; the ring shows the same
+        // figure with one decimal, so the card matches it rather than inventing a
+        // second precision.
+        const scoreText = hasScore ? score.toFixed(1) : null;
+
+        const head = `
+            <div class="daily-summary__head">
+                <span class="daily-summary__title">
+                    <svg class="daily-summary__icon" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>
+                    Итог дня
+                </span>
+                ${dateLabel ? `<span class="daily-summary__date">${escapeHtml(dateLabel)}</span>` : ''}
+                ${available && scoreText
+                    ? `<span class="daily-summary__score"><span class="opacity-60">ИИ</span> ${scoreText}<span class="opacity-60">/10</span></span>`
+                    : ''}
+            </div>
+        `;
+
+        if (!available || !text) {
+            const reason = typeof payload.reason === 'string' && payload.reason.trim()
+                ? payload.reason.trim()
+                : 'Нет данных за день';
+            return `
+                <section class="daily-summary daily-summary--empty glass rounded-3xl" aria-label="Итог дня">
+                    ${head}
+                    <p class="daily-summary__empty">${escapeHtml(reason)}</p>
+                </section>
+            `;
+        }
+
+        return `
+            <section class="daily-summary glass rounded-3xl" aria-label="Итог дня">
+                ${head}
+                <p class="daily-summary__text">${escapeHtml(text)}</p>
+            </section>
         `;
     },
 
@@ -1225,6 +1321,82 @@ export const Components = {
                             <span>Отправить / Анализировать</span>
                         </button>
                         </div>
+                </div>
+            </div>
+         `;
+    },
+
+    /**
+     * Edit Meal Modal: a drum-sheet bottom sheet pre-filled with the current
+     * meal values. Fields are nullable so clearing one sends null and the
+     * server drops it instead of leaving a stale figure behind.
+     */
+    editMealModal(meal = {}) {
+        const fieldClass = 'w-full px-3 py-2.5 rounded-xl bg-zinc-100 dark:bg-zinc-800/80 border border-zinc-200 dark:border-white/10 text-zinc-900 dark:text-zinc-100 text-sm focus:border-lime-500 focus:outline-none';
+        const labelClass = 'block text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold mb-1.5';
+        const safeText = (v) => escapeHtml(v ?? '');
+        const safeNum = (v) => (v === null || v === undefined || v === '') ? '' : escapeHtml(String(v));
+        const tags = Array.isArray(meal.tags) ? meal.tags.filter(Boolean).join(', ') : '';
+
+        return `
+            <div class="drum-sheet fixed inset-0 z-50 pointer-events-auto">
+                <div class="drum-sheet-backdrop absolute inset-0 bg-black/40 dark:bg-black/60" data-action="close-edit-meal-modal"></div>
+                <div class="drum-sheet-panel absolute bottom-0 left-0 right-0 bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 rounded-t-2xl border-t border-zinc-200 dark:border-white/10 flex flex-col drum-sheet-safe" role="dialog" aria-modal="true" aria-labelledby="edit-meal-title">
+                    <div class="flex flex-col gap-3.5 px-4 pt-0 pb-1">
+                        <div class="w-10 h-1 rounded-full bg-zinc-300 dark:bg-white/20 mx-auto drum-sheet-handle flex-shrink-0"></div>
+
+                        <div class="flex items-start justify-between gap-3">
+                            <div class="min-w-0">
+                                <div class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-500 font-semibold truncate">ПИТАНИЕ</div>
+                                <h3 id="edit-meal-title" class="text-base font-bold text-zinc-900 dark:text-zinc-100 truncate">Редактировать блюдо</h3>
+                            </div>
+                            <button type="button" data-action="close-edit-meal-modal" aria-label="Закрыть" class="sheet-close-btn w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0 flex items-center justify-center hover:text-zinc-900 dark:hover:text-zinc-50 transition-colors">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6l12 12M18 6L6 18"/></svg>
+                            </button>
+                        </div>
+
+                        <div>
+                            <label for="edit-meal-dish-name" class="${labelClass}">Название блюда</label>
+                            <input type="text" id="edit-meal-dish-name" placeholder="Например: Салат с курицей" value="${safeText(meal.dish_name)}" class="${fieldClass}">
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2.5">
+                            <div>
+                                <label for="edit-meal-calories" class="${labelClass}">Ккал</label>
+                                <input type="number" inputmode="numeric" id="edit-meal-calories" placeholder="0" value="${safeNum(meal.calories)}" class="${fieldClass}">
+                            </div>
+                            <div>
+                                <label for="edit-meal-protein" class="${labelClass}">Белки, г</label>
+                                <input type="number" inputmode="numeric" id="edit-meal-protein" placeholder="0" value="${safeNum(meal.protein_g)}" class="${fieldClass}">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2.5">
+                            <div>
+                                <label for="edit-meal-fat" class="${labelClass}">Жиры, г</label>
+                                <input type="number" inputmode="numeric" id="edit-meal-fat" placeholder="0" value="${safeNum(meal.fat_g)}" class="${fieldClass}">
+                            </div>
+                            <div>
+                                <label for="edit-meal-carbs" class="${labelClass}">Углеводы, г</label>
+                                <input type="number" inputmode="numeric" id="edit-meal-carbs" placeholder="0" value="${safeNum(meal.carbs_g)}" class="${fieldClass}">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label for="edit-meal-tags" class="${labelClass}">Теги <span class="opacity-60 normal-case tracking-normal">(через запятую)</span></label>
+                            <input type="text" id="edit-meal-tags" placeholder="например: завтрак, белковый" value="${escapeHtml(tags)}" class="${fieldClass}">
+                        </div>
+
+                        <div>
+                            <label for="edit-meal-notes" class="${labelClass}">Комментарий <span class="opacity-60 normal-case tracking-normal">(необязательно)</span></label>
+                            <textarea id="edit-meal-notes" rows="2" placeholder="Например: без сахара" class="${fieldClass}">${safeText(meal.notes)}</textarea>
+                        </div>
+
+                        <button type="button" id="edit-meal-submit" data-action="submit-edit-meal" class="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-lime-500 hover:bg-lime-400 text-zinc-950 font-semibold text-base shadow-lg shadow-lime-500/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-lime-500 disabled:shadow-none">
+                            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                            <span>Сохранить</span>
+                        </button>
+                    </div>
                 </div>
             </div>
         `;

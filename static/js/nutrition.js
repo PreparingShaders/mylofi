@@ -32,7 +32,12 @@ export const Nutrition = {
     _newMealModalClosing: null,
     _periodSheetState: null,
     _periodSheetClosing: null,
+    _editMealModalState: null,
+    _editMealModalClosing: null,
     _pollingTimer: null,
+    // Meals indexed by id, refreshed every render so the edit modal can pull
+    // the current record without a dedicated single-meal endpoint.
+    _mealsCache: new Map(),
     // Polling budget of the batch currently on screen: attempts spent so far,
     // whether it already timed out, and whether the render in flight was
     // triggered by the poll loop (a timed-out batch must not renew its own).
@@ -269,6 +274,33 @@ export const Nutrition = {
             console.warn('[Nutrition] Period average unavailable:', error?.message);
         }
         return null;
+    },
+
+    /**
+     * AI recap of the selected day.
+     *
+     * Only the day view asks for it: a recap covers one calendar day, so a week
+     * or a month window has no single day to recap and the card is left out
+     * entirely. The endpoint generates it on demand for a finished day, and a day
+     * without a recap answers with `available: false` plus a reason rather than an
+     * error - the card renders that reason, so a failed generation costs the user
+     * nothing but a quiet line.
+     *
+     * Never throws: the nutrition page must render even when the recap cannot be
+     * fetched, and it is already reading two other endpoints here.
+     */
+    async loadDailySummary() {
+        if (this.selectedPeriod !== 'day') return null;
+
+        const token = this.app.state.tokens.access;
+        const endpoint = `/nutrition/daily-summary?date=${encodeURIComponent(this.selectedDate)}`;
+        try {
+            const data = await API.get(this.withTimezone(endpoint), token);
+            return (data && typeof data === 'object') ? data : null;
+        } catch (error) {
+            console.warn('[Nutrition] Daily summary unavailable:', error?.message);
+            return null;
+        }
     },
 
     /**
@@ -619,6 +651,7 @@ export const Nutrition = {
         // Close any open modal before re-rendering
         this.closeNewMealModal();
         this.closePeriodSheet();
+        this.closeEditMealModal();
 
         // The carousel is rebuilt from scratch below, so the place the user
         // scrolled to has to be read before the first innerHTML swap wipes it.
@@ -630,11 +663,14 @@ export const Nutrition = {
         let pendingMeals = [];
 
         try {
-            // The period summary is only needed outside the day view, and it is
-            // started here so both requests fly in parallel.
+            // The period summary is only needed outside the day view, and the day
+            // recap only inside it; both are started here so all three requests
+            // fly in parallel.
             const periodDataPromise = this.loadPeriodData();
+            const dailySummaryPromise = this.loadDailySummary();
             const loaded = await this.loadData();
             const periodData = await periodDataPromise;
+            const dailySummary = await dailySummaryPromise;
             const { summary, targets: apiTargets, failedItems, fromCache } = loaded;
             serverMeals = loaded.serverMeals;
             pendingMeals = loaded.pendingMeals;
@@ -661,6 +697,16 @@ export const Nutrition = {
             const pendingSorted = pendingMeals
                 .slice()
                 .sort((a, b) => this.mealTimestamp(b) - this.mealTimestamp(a));
+
+            // Index every meal with an id so the edit modal can look it up
+            // without a dedicated single-meal GET endpoint.
+            this._mealsCache = new Map();
+            for (const meal of sortedMeals) {
+                if (meal.id != null) this._mealsCache.set(String(meal.id), meal);
+            }
+            for (const meal of pendingSorted) {
+                if (meal.id != null) this._mealsCache.set(String(meal.id), meal);
+            }
 
             const totalMeals = sortedMeals.length + pendingSorted.length;
             // Wider periods need the eaten date on every card, otherwise tiles
@@ -697,6 +743,16 @@ export const Nutrition = {
                 body: this.renderNutritionSlide(ringSummary, ringTargets, qualityScore, this.periodCaption(periodData)),
             });
 
+            // The recap sits directly under the dashboard, inside the header, so
+            // the meal carousel starts below both without a second wrapper. Its chip
+            // names the concrete day rather than reusing the header label: the recap
+            // is a stored record of that date, and the header says only "Сегодня".
+            const dailySummaryBlock = dailySummary
+                ? Components.dailySummaryCard(dailySummary, {
+                    dateLabel: this.formatDayMonthISO(this.selectedDate),
+                })
+                : '';
+
             let html = `
                 <div class="single-viewport px-4 pt-4 pb-20">
                     <!-- HEADER -->
@@ -705,6 +761,7 @@ export const Nutrition = {
 
                         <!-- Period dashboard: day, 7 days, month or custom range -->
                         <div class="mt-2">${dashboard}</div>
+                        ${dailySummaryBlock}
                     </div>
 
                     <!-- PENDING SYNC BANNER -->
@@ -1352,7 +1409,7 @@ export const Nutrition = {
                 e.stopPropagation();
                 e.preventDefault();
                 const mealId = btn.dataset.mealId;
-                this.app.showToast(`Редактирование: ${mealId}`, 'info');
+                this.openEditMealModal(mealId);
             };
         });
 
@@ -1382,4 +1439,144 @@ export const Nutrition = {
             };
         });
     },
+
+    /**
+     * Edit meal modal: bottom sheet pre-filled with the current meal data,
+     * following the same drum-sheet open/close lifecycle as the new-meal sheet.
+     */
+    openEditMealModal(mealId) {
+        if (this._editMealModalState || this._editMealModalClosing) return;
+
+        const meal = this._mealsCache.get(String(mealId));
+        if (!meal) {
+            this.app.showToast('Не удалось загрузить данные блюда', 'error');
+            return;
+        }
+
+        const modalHtml = Components.editMealModal(meal);
+        const modalContainer = document.createElement('div');
+        modalContainer.innerHTML = modalHtml;
+        const modalEl = modalContainer.firstElementChild;
+        document.body.appendChild(modalEl);
+
+        this._editMealModalState = {
+            modalEl,
+            mealId,
+            panelEl: modalEl.querySelector('.drum-sheet-panel'),
+        };
+
+        this._editMealModalState.bodyWasLocked = document.body.classList.contains('overflow-hidden');
+        document.body.classList.add('overflow-hidden');
+
+        this.bindEditMealModalEvents(modalEl, this._editMealModalState);
+    },
+
+    closeEditMealModal() {
+        if (!this._editMealModalState) return;
+
+        const { modalEl, panelEl, onKeydown, bodyWasLocked } = this._editMealModalState;
+        this._editMealModalState = null;
+        if (onKeydown) {
+            document.removeEventListener('keydown', onKeydown);
+        }
+        if (!bodyWasLocked) {
+            document.body.classList.remove('overflow-hidden');
+        }
+
+        panelEl?.classList.add('is-closing');
+        modalEl.querySelector('.drum-sheet-backdrop')?.classList.add('is-closing');
+
+        this._editMealModalClosing = modalEl;
+        setTimeout(() => {
+            modalEl.remove();
+            if (this._editMealModalClosing === modalEl) {
+                this._editMealModalClosing = null;
+            }
+        }, 220);
+    },
+
+    bindEditMealModalEvents(modalEl, state) {
+        // Backdrop closes the sheet
+        modalEl.querySelector('.drum-sheet-backdrop')?.addEventListener('click', () => {
+            this.closeEditMealModal();
+        });
+        modalEl.querySelector('.drum-sheet-panel [data-action="close-edit-meal-modal"]')?.addEventListener('click', () => {
+            this.closeEditMealModal();
+        });
+
+        // Escape key
+        const onKeydown = (e) => {
+            if (e.key === 'Escape') this.closeEditMealModal();
+        };
+        state.onKeydown = onKeydown;
+        document.addEventListener('keydown', onKeydown);
+
+        // Submit button
+        modalEl.querySelector('[data-action="submit-edit-meal"]')?.addEventListener('click', () => {
+            this.handleEditMealSubmit(modalEl, state);
+        });
+    },
+
+    /**
+     * Gather edited fields, PATCH the meal, then re-render so the card and the
+     * daily summary ring/totals both update in place without a page reload.
+     * Fields are always sent (null when blank) so clearing one drops the stored
+     * value instead of leaving a stale figure.
+     */
+    async handleEditMealSubmit(modalEl, state) {
+        const mealId = state.mealId;
+        const token = this.app.state.tokens.access;
+
+        const dishNameInput = modalEl.querySelector('#edit-meal-dish-name');
+        const caloriesInput = modalEl.querySelector('#edit-meal-calories');
+        const proteinInput = modalEl.querySelector('#edit-meal-protein');
+        const fatInput = modalEl.querySelector('#edit-meal-fat');
+        const carbsInput = modalEl.querySelector('#edit-meal-carbs');
+        const tagsInput = modalEl.querySelector('#edit-meal-tags');
+        const notesInput = modalEl.querySelector('#edit-meal-notes');
+
+        const toNumOrNull = (input) => {
+            const val = input?.value?.trim();
+            return val !== '' ? Number(val) : null;
+        };
+        const toTextOrNull = (input) => {
+            const val = input?.value?.trim();
+            return val !== '' ? val : null;
+        };
+
+        const tagsRaw = tagsInput?.value?.trim() ?? '';
+        const tags = tagsRaw ? tagsRaw.split(',').map((t) => t.trim()).filter(Boolean) : [];
+
+        const updateData = {
+            dish_name: toTextOrNull(dishNameInput),
+            calories: toNumOrNull(caloriesInput),
+            protein_g: toNumOrNull(proteinInput),
+            fat_g: toNumOrNull(fatInput),
+            carbs_g: toNumOrNull(carbsInput),
+            tags: tags.length > 0 ? tags : null,
+            notes: toTextOrNull(notesInput),
+        };
+
+        const submitBtn = modalEl.querySelector('#edit-meal-submit');
+        const originalHTML = submitBtn.innerHTML;
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `
+            <svg class="animate-spin w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+            <span class="text-sm font-semibold">Сохранение...</span>
+        `;
+
+        try {
+            const updated = await API.patch(`/nutrition/meals/${mealId}`, updateData, token);
+            this._mealsCache.set(String(mealId), updated);
+            this.closeEditMealModal();
+            this.app.showToast('Блюдо обновлено', 'success');
+            await this.render(this.app.elements.pageContent, this.app, this.selectedDate);
+        } catch (error) {
+            console.error('[Nutrition] Edit meal error:', error);
+            this.app.showToast(error?.data?.detail || 'Ошибка сохранения', 'error');
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = originalHTML;
+        }
+    }
 };

@@ -12,6 +12,7 @@ from sqlalchemy import (
     Text,
     Boolean,
     Index,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -97,6 +98,9 @@ class User(Base):
     refresh_tokens: Mapped[list["RefreshToken"]] = relationship(
         "RefreshToken", back_populates="user", cascade="all, delete-orphan"
     )
+    daily_summaries: Mapped[list["DailySummary"]] = relationship(
+        "DailySummary", back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class RefreshToken(Base):
@@ -157,6 +161,40 @@ class Meal(Base):
     user: Mapped["User"] = relationship("User", back_populates="meals")
 
     __table_args__ = (Index("ix_meals_user_eaten_at", "user_id", "eaten_at"),)
+
+
+class DailySummary(Base):
+    """One AI-written recap of a single calendar day of meals.
+
+    One row per (user, date): the endpoint regenerates in place rather than
+    appending, so a day never collects several takes of the same recap and a
+    re-read of the card can never pick up a stale one.
+    """
+
+    __tablename__ = "daily_summaries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    # The user's local calendar day, exactly as the nutrition day view files the
+    # meals. Stored as a plain date so the recap survives the client that asked
+    # for it going away. Indexed on its own because the batch pass walks one day
+    # for every user; (user_id, date) is served by the unique constraint below.
+    date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    summary_text: Mapped[str] = mapped_column(Text, nullable=False)
+    overall_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Persona the recap was written in. Copied from the profile at generation
+    # time, for the same reason meals carry theirs: switching persona must not
+    # relabel text that was written in another voice.
+    ai_persona: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    user: Mapped["User"] = relationship("User", back_populates="daily_summaries")
+
+    __table_args__ = (UniqueConstraint("user_id", "date", name="uq_daily_summaries_user_date"),)
 
 
 class WorkoutTemplate(Base):
@@ -280,6 +318,7 @@ __all__ = [
     "RefreshToken",
     "Meal",
     "MealStatus",
+    "DailySummary",
     "WorkoutTemplate",
     "WorkoutTemplateExercise",
     "WorkoutSession",

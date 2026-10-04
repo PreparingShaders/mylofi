@@ -3,7 +3,7 @@ import base64
 import logging
 import re
 import time
-from typing import Optional, Dict, Any, List
+from typing import Awaitable, Callable, Optional, Dict, Any, List
 import httpx
 
 from app.core.config import get_settings
@@ -118,7 +118,7 @@ def _sanitize_user_notes(notes: Optional[str]) -> str:
     return cleaned
 
 
-def _fmt_amount(value: Any) -> str:
+def format_amount(value: Any) -> str:
     """Format a target/consumed figure for the prompt.
 
     None (the profile has no such number yet) becomes "?", but a real zero is
@@ -134,6 +134,22 @@ def _fmt_amount(value: Any) -> str:
     return f"{number:g}"
 
 
+# How the stored goal key reads inside a prompt. Shared by the dish verdict and
+# the daily recap so the same profile never describes itself two different ways.
+GOAL_LABELS = {
+    "lose": "дефицит калорий (похудение)",
+    "maintain": "поддержание веса",
+    "gain": "профицит калорий (набор массы)",
+    "deficit": "дефицит калорий (похудение)",
+    "surplus": "профицит калорий (набор массы)",
+}
+
+
+def describe_goal(user_goal: Optional[str]) -> str:
+    """Prompt wording for a stored goal key, falling back to 'not set'."""
+    return GOAL_LABELS.get(user_goal or "", "не определена")
+
+
 def normalize_persona(persona: Optional[str]) -> str:
     """The persona key to use, falling back to the default for unusable input.
 
@@ -145,7 +161,7 @@ def normalize_persona(persona: Optional[str]) -> str:
     return key if key in PERSONA_PROMPTS else DEFAULT_PERSONA
 
 
-def _sanitize_persona_text(text: Optional[str]) -> str:
+def sanitize_persona_text(text: Optional[str]) -> str:
     """Flatten the user's own persona wording into a bounded prompt block."""
     if not text:
         return ""
@@ -165,14 +181,7 @@ def build_prompt(
     persona: Optional[str] = None,
     persona_custom_text: Optional[str] = None,
 ) -> str:
-    goal_map = {
-        "lose": "дефицит калорий (похудение)",
-        "maintain": "поддержание веса",
-        "gain": "профицит калорий (набор массы)",
-        "deficit": "дефицит калорий (похудение)",
-        "surplus": "профицит калорий (набор массы)",
-    }
-    goal_text = goal_map.get(user_goal, "не определена")
+    goal_text = describe_goal(user_goal)
 
     t_cal = targets.get("target_calories") if targets else None
     t_pro = targets.get("target_protein_g") if targets else None
@@ -186,14 +195,14 @@ def build_prompt(
 
     target_line = (
         f"Цель пользователя: {goal_text}. "
-        f"Дневные нормы: {_fmt_amount(t_cal)} ккал, белки {_fmt_amount(t_pro)} г, "
-        f"жиры {_fmt_amount(t_fat)} г, углеводы {_fmt_amount(t_carb)} г. "
+        f"Дневные нормы: {format_amount(t_cal)} ккал, белки {format_amount(t_pro)} г, "
+        f"жиры {format_amount(t_fat)} г, углеводы {format_amount(t_carb)} г. "
         if t_cal or t_pro or t_fat or t_carb
         else "Дневные нормы пользователя не заданы (знак '?' означает, что нормы нет): оценивай блюдо без сравнения с нормами. "
     )
     balance_line = (
-        f"Уже потреблено сегодня до этого приёма пищи: {_fmt_amount(b_cal)} ккал, белки {_fmt_amount(b_pro)} г, "
-        f"жиры {_fmt_amount(b_fat)} г, углеводы {_fmt_amount(b_carb)} г. "
+        f"Уже потреблено сегодня до этого приёма пищи: {format_amount(b_cal)} ккал, белки {format_amount(b_pro)} г, "
+        f"жиры {format_amount(b_fat)} г, углеводы {format_amount(b_carb)} г. "
         if b_cal is not None or b_pro is not None or b_fat is not None or b_carb is not None
         else ""
     )
@@ -213,7 +222,7 @@ def build_prompt(
     # the rules below keep every one of them (the JSON contract, the verdict
     # length, the no-emoji and no-digits rules) binding regardless of voice.
     persona_key = normalize_persona(persona)
-    persona_text = _sanitize_persona_text(persona_custom_text)
+    persona_text = sanitize_persona_text(persona_custom_text)
     persona_line = (
         f"Персонализация: {PERSONA_PROMPTS[persona_key]}"
         + (
@@ -312,7 +321,7 @@ def count_sentences(text: str) -> int:
     return len(SENTENCE_SPLIT_PATTERN.split(stripped))
 
 
-def _strip_emojis(text: str) -> str:
+def strip_emojis(text: str) -> str:
     """Drop every emoji and its glue, then repair the spacing it leaves."""
     cleaned = EMOJI_PATTERN.sub("", text)
     # An emoji between words leaves a doubled or trailing space, and between two
@@ -322,7 +331,7 @@ def _strip_emojis(text: str) -> str:
     return cleaned.strip()
 
 
-def _clamp_sentences(text: str, max_sentences: int = VERDICT_MAX_SENTENCES) -> str:
+def clamp_sentences(text: str, max_sentences: int = VERDICT_MAX_SENTENCES) -> str:
     """Keep the first `max_sentences` sentences, cutting only on a sentence end.
 
     Every kept segment ends in sentence punctuation by construction: a split only
@@ -348,9 +357,9 @@ def _sanitize_verdict(verdict: str) -> str:
     verdict that runs on for a dozen sentences. It never adds content: a verdict
     that came back too short is left short rather than padded with filler.
     """
-    cleaned = _strip_emojis(re.sub(r"\s+", " ", verdict).strip())
+    cleaned = strip_emojis(re.sub(r"\s+", " ", verdict).strip())
     if count_sentences(cleaned) > VERDICT_MAX_SENTENCES:
-        cleaned = _clamp_sentences(cleaned)
+        cleaned = clamp_sentences(cleaned)
     if count_sentences(cleaned) < VERDICT_MIN_SENTENCES:
         logger.info(
             f"[AI Vision] ai_verdict is shorter than {VERDICT_MIN_SENTENCES} sentences: "
@@ -409,6 +418,40 @@ async def _call_openrouter(model_name: str, base64_img: str, client: httpx.Async
     return _parse_llm_json(text)
 
 
+# Text-only twins of the two calls above. Same endpoints, same credentials, same
+# parsing - the only difference is that there is no image part in the payload, so
+# the daily summary can reuse this cascade instead of growing a second list of
+# models, timeouts and fallbacks next to the vision one.
+async def _call_gemini_text(model_name: str, client: httpx.AsyncClient, prompt: str) -> Dict[str, Any]:
+    url = f"{WORKER_BASE_URL}/v1beta/models/{model_name}:generateContent?key={settings.GEMINI_API_KEY}"
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    response = await client.post(url, json=payload, timeout=MODEL_REQUEST_TIMEOUT)
+    response.raise_for_status()
+    data = response.json()
+    candidates = data.get("candidates", [])
+    if not candidates:
+        raise ValueError("Empty candidates from Gemini")
+    text = candidates[0]["content"]["parts"][0]["text"]
+    return _parse_llm_json(text)
+
+
+async def _call_openrouter_text(model_name: str, client: httpx.AsyncClient, prompt: str) -> Dict[str, Any]:
+    url = f"{WORKER_BASE_URL}/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {settings.OPEN_ROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {"model": model_name, "messages": [{"role": "user", "content": prompt}]}
+    response = await client.post(url, headers=headers, json=payload, timeout=MODEL_REQUEST_TIMEOUT)
+    response.raise_for_status()
+    data = response.json()
+    choices = data.get("choices", [])
+    if not choices:
+        raise ValueError("Empty choices from OpenRouter")
+    text = choices[0]["message"]["content"]
+    return _parse_llm_json(text)
+
+
 REQUIRED_FIELDS = [
     "dish_name", "calories", "protein_g", "fat_g", "carbs_g",
     "fiber_g", "sugar_g", "sodium_mg", "tags", "quality_score",
@@ -416,7 +459,7 @@ REQUIRED_FIELDS = [
 ]
 
 
-def _normalise_score(raw: Any, low: float = 1.0, high: float = 10.0) -> float:
+def normalise_score(raw: Any, low: float = 1.0, high: float = 10.0) -> float:
     """Put a model score on the 1-10 scale the UI prints.
 
     Models answer either 1.0-10.0 or the same judgement written as 0.0-1.0; a
@@ -443,7 +486,7 @@ def _validate_analysis(result: Dict[str, Any]) -> Dict[str, Any]:
         if field not in result:
             raise ValueError(f"Missing required field: {field}")
 
-    result["quality_score"] = _normalise_score(result["quality_score"])
+    result["quality_score"] = normalise_score(result["quality_score"])
 
     qm = result.get("quality_metrics", [])
     if not isinstance(qm, list):
@@ -451,7 +494,7 @@ def _validate_analysis(result: Dict[str, Any]) -> Dict[str, Any]:
     for item in qm:
         if not isinstance(item, dict) or "label" not in item or "score" not in item:
             raise ValueError("Each quality_metric must have label and score")
-        item["score"] = _normalise_score(item["score"], low=0.0)
+        item["score"] = normalise_score(item["score"], low=0.0)
 
     if not isinstance(result.get("ai_verdict"), str) or not result["ai_verdict"].strip():
         raise ValueError("ai_verdict must be a non-empty string")
@@ -465,6 +508,130 @@ def _validate_analysis(result: Dict[str, Any]) -> Dict[str, Any]:
     result["ai_verdict"] = sanitized
 
     return result
+
+
+async def _run_cascade(
+    call_model: Callable[[str, httpx.AsyncClient], Awaitable[Dict[str, Any]]],
+    validate: Callable[[Dict[str, Any]], Dict[str, Any]],
+    log_prefix: str = "[AI Vision]",
+) -> Dict[str, Any]:
+    """Walk UNIFIED_MODEL_CASCADE until one model returns a usable payload.
+
+    `call_model` performs the request for a single model and `validate` checks
+    and normalises its answer. A `validate` that raises is treated like any other
+    model failure: the cascade moves on to the next model, so one chatty free
+    model cannot cost the user their analysis.
+
+    Credential checks, the hard per-call timeouts and the error classification
+    live here so the vision and the text-only callers fail the same way and log
+    under the same prefix.
+    """
+    last_error: Optional[BaseException] = None
+    skipped: List[str] = []
+    attempted = 0
+
+    timeout = httpx.Timeout(
+        MODEL_REQUEST_TIMEOUT,
+        connect=MODEL_CONNECT_TIMEOUT,
+    )
+    limits = httpx.Limits(max_connections=1, max_keepalive_connections=1)
+
+    async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
+        for model_name in UNIFIED_MODEL_CASCADE:
+            is_gemini = _is_gemini_model(model_name)
+            required_key = settings.GEMINI_API_KEY if is_gemini else settings.OPEN_ROUTER_API_KEY
+            if not required_key:
+                skipped.append(model_name)
+                logger.warning(
+                    f"{log_prefix} Skipping {model_name}: "
+                    f"{'GEMINI_API_KEY' if is_gemini else 'OPEN_ROUTER_API_KEY'} not set"
+                )
+                continue
+
+            attempted += 1
+            started = time.perf_counter()
+            try:
+                logger.info(
+                    f"{log_prefix} Trying model {model_name} "
+                    f"(attempt {attempted}/{len(UNIFIED_MODEL_CASCADE)})"
+                )
+                result = validate(await call_model(model_name, client))
+                elapsed = time.perf_counter() - started
+                logger.info(f"{log_prefix} Success with {model_name} in {elapsed:.1f}s")
+                return result
+
+            except httpx.HTTPStatusError as e:
+                last_error = e
+                status = e.response.status_code
+                elapsed = time.perf_counter() - started
+                logger.warning(
+                    f"{log_prefix} {model_name} failed after {elapsed:.1f}s "
+                    f"with HTTP {status}: {e.response.text[:200]}"
+                )
+                if status in (401, 403):
+                    logger.error(
+                        f"{log_prefix} {model_name} rejected credentials "
+                        f"({'GEMINI_API_KEY' if is_gemini else 'OPEN_ROUTER_API_KEY'} is invalid)"
+                    )
+                continue
+            except (httpx.TimeoutException, httpx.RequestError) as e:
+                last_error = e
+                elapsed = time.perf_counter() - started
+                logger.warning(
+                    f"{log_prefix} {model_name} request failed after {elapsed:.1f}s "
+                    f"(timeout={MODEL_REQUEST_TIMEOUT}s): {type(e).__name__}: {e}"
+                )
+                continue
+            except (ValueError, KeyError, TypeError, IndexError, json.JSONDecodeError) as e:
+                last_error = e
+                elapsed = time.perf_counter() - started
+                logger.warning(
+                    f"{log_prefix} {model_name} returned an unusable response after {elapsed:.1f}s: {e}"
+                )
+                continue
+            except Exception as e:
+                last_error = e
+                elapsed = time.perf_counter() - started
+                logger.exception(
+                    f"{log_prefix} Unexpected error from {model_name} after {elapsed:.1f}s"
+                )
+                continue
+
+    detail = f"{type(last_error).__name__}: {last_error}" if last_error else "no error captured"
+    if attempted == 0:
+        skipped_detail = ", ".join(skipped) or "cascade is empty"
+        raise RuntimeError(
+            f"No model was attempted: every model in the cascade was skipped ({skipped_detail}). "
+            "Check GEMINI_API_KEY / OPEN_ROUTER_API_KEY and WORKER_URL."
+        )
+    raise RuntimeError(
+        f"All {attempted} attempted models failed. Last error -> {detail}"
+    )
+
+
+async def run_text_cascade(
+    prompt: str,
+    validate: Callable[[Dict[str, Any]], Dict[str, Any]],
+    log_prefix: str = "[AI Summary]",
+) -> Dict[str, Any]:
+    """Run the same cascade as the photo analysis, without an image.
+
+    Text-only tasks (the daily recap) reuse the vision model list rather than
+    keeping their own: one place decides which models exist, which key each of
+    them needs and how long it may take.
+
+    Raises RuntimeError only once every model has failed, exactly like
+    `analyze_meal_photo`.
+    """
+    if not settings.WORKER_URL:
+        raise ValueError("WORKER_URL not configured")
+
+    def call_model(model_name: str, client: httpx.AsyncClient) -> Awaitable[Dict[str, Any]]:
+        if _is_gemini_model(model_name):
+            return _call_gemini_text(model_name, client, prompt)
+        return _call_openrouter_text(model_name, client, prompt)
+
+    return await _run_cascade(call_model, validate, log_prefix)
 
 
 async def analyze_meal_photo(
@@ -500,89 +667,11 @@ async def analyze_meal_photo(
         persona_custom_text,
     )
 
-    last_error: Optional[BaseException] = None
-    skipped: List[str] = []
-    attempted = 0
+    def call_model(model_name: str, client: httpx.AsyncClient) -> Awaitable[Dict[str, Any]]:
+        if _is_gemini_model(model_name):
+            return _call_gemini(model_name, base64_img, client, prompt)
+        return _call_openrouter(model_name, base64_img, client, prompt)
 
-    timeout = httpx.Timeout(
-        MODEL_REQUEST_TIMEOUT,
-        connect=MODEL_CONNECT_TIMEOUT,
-    )
-    limits = httpx.Limits(max_connections=1, max_keepalive_connections=1)
-
-    async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
-        for model_name in UNIFIED_MODEL_CASCADE:
-            is_gemini = _is_gemini_model(model_name)
-            required_key = settings.GEMINI_API_KEY if is_gemini else settings.OPEN_ROUTER_API_KEY
-            if not required_key:
-                skipped.append(model_name)
-                logger.warning(
-                    f"[AI Vision] Skipping {model_name}: "
-                    f"{'GEMINI_API_KEY' if is_gemini else 'OPEN_ROUTER_API_KEY'} not set"
-                )
-                continue
-
-            attempted += 1
-            started = time.perf_counter()
-            try:
-                logger.info(
-                    f"[AI Vision] Trying model {model_name} "
-                    f"(attempt {attempted}/{len(UNIFIED_MODEL_CASCADE)})"
-                )
-                if is_gemini:
-                    raw = await _call_gemini(model_name, base64_img, client, prompt)
-                else:
-                    raw = await _call_openrouter(model_name, base64_img, client, prompt)
-
-                result = _validate_analysis(raw)
-                elapsed = time.perf_counter() - started
-                logger.info(f"[AI Vision] Success with {model_name} in {elapsed:.1f}s: {result['dish_name']}")
-                return result
-
-            except httpx.HTTPStatusError as e:
-                last_error = e
-                status = e.response.status_code
-                elapsed = time.perf_counter() - started
-                logger.warning(
-                    f"[AI Vision] {model_name} failed after {elapsed:.1f}s "
-                    f"with HTTP {status}: {e.response.text[:200]}"
-                )
-                if status in (401, 403):
-                    logger.error(
-                        f"[AI Vision] {model_name} rejected credentials "
-                        f"({'GEMINI_API_KEY' if is_gemini else 'OPEN_ROUTER_API_KEY'} is invalid)"
-                    )
-                continue
-            except (httpx.TimeoutException, httpx.RequestError) as e:
-                last_error = e
-                elapsed = time.perf_counter() - started
-                logger.warning(
-                    f"[AI Vision] {model_name} request failed after {elapsed:.1f}s "
-                    f"(timeout={MODEL_REQUEST_TIMEOUT}s): {type(e).__name__}: {e}"
-                )
-                continue
-            except (ValueError, KeyError, TypeError, IndexError, json.JSONDecodeError) as e:
-                last_error = e
-                elapsed = time.perf_counter() - started
-                logger.warning(
-                    f"[AI Vision] {model_name} returned an unusable response after {elapsed:.1f}s: {e}"
-                )
-                continue
-            except Exception as e:
-                last_error = e
-                elapsed = time.perf_counter() - started
-                logger.exception(
-                    f"[AI Vision] Unexpected error from {model_name} after {elapsed:.1f}s"
-                )
-                continue
-
-    detail = f"{type(last_error).__name__}: {last_error}" if last_error else "no error captured"
-    if attempted == 0:
-        skipped_detail = ", ".join(skipped) or "cascade is empty"
-        raise RuntimeError(
-            f"No model was attempted: every model in the cascade was skipped ({skipped_detail}). "
-            "Check GEMINI_API_KEY / OPEN_ROUTER_API_KEY and WORKER_URL."
-        )
-    raise RuntimeError(
-        f"All {attempted} attempted models failed. Last error -> {detail}"
-    )
+    result = await _run_cascade(call_model, _validate_analysis, "[AI Vision]")
+    logger.info(f"[AI Vision] Analysis answered: {result['dish_name']}")
+    return result

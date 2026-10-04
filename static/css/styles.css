@@ -73,6 +73,54 @@ html.dark,
     transition: stroke-dashoffset 0.5s ease-out;
 }
 
+/* ============ Macro accent tokens ============ */
+/* Declared on the root, not on a card: the same three accents are used by the
+   dashboard ring, the meal-card macro tiles and the composition dots, and a token
+   that only existed on one of those cards would have to be redeclared for the
+   others. Light theme = the defaults, dark theme = one override.
+
+   Protein is the warm off-white #F1EFEB. On the dark graphite that is the accent
+   itself and the brightest thing on screen; the light theme card is white, where
+   the same colour would be unreadable, so the light value is the darkened
+   relative (#6B6459). `--macro-*-ink` is what a glyph wears on top of an accent,
+   so the dumbbell flips with the pill it sits on instead of disappearing into it. */
+:root {
+    --macro-protein: #6B6459;
+    --macro-protein-hi: #9C9488;
+    --macro-protein-ink: #FFFFFF;
+    --macro-protein-glow: rgba(107, 100, 89, 0.30);
+    --macro-fat: #F59E0B;
+    --macro-fat-hi: #FCD34D;
+    --macro-fat-ink: #3B2A05;
+    --macro-fat-glow: rgba(245, 158, 11, 0.34);
+    --macro-carbs: #06B6D4;
+    --macro-carbs-hi: #67E8F9;
+    --macro-carbs-ink: #04333C;
+    --macro-carbs-glow: rgba(6, 182, 212, 0.34);
+    --macro-danger: #EF4444;
+    --macro-danger-hi: #FCA5A5;
+    --macro-danger-ink: #FFFFFF;
+    --macro-danger-glow: rgba(239, 68, 68, 0.34);
+}
+.dark {
+    --macro-protein: #F1EFEB;
+    --macro-protein-hi: #FFFFFF;
+    --macro-protein-ink: #1C1917;
+    --macro-protein-glow: rgba(241, 239, 235, 0.45);
+    --macro-fat: #FBBF24;
+    --macro-fat-hi: #FEF3C7;
+    --macro-fat-ink: #3B2A05;
+    --macro-fat-glow: rgba(251, 191, 36, 0.40);
+    --macro-carbs: #22D3EE;
+    --macro-carbs-hi: #A5F3FC;
+    --macro-carbs-ink: #04333C;
+    --macro-carbs-glow: rgba(34, 211, 238, 0.40);
+    --macro-danger: #F87171;
+    --macro-danger-hi: #FECACA;
+    --macro-danger-ink: #3B0A0A;
+    --macro-danger-glow: rgba(248, 113, 113, 0.40);
+}
+
 /* Unified nutrition ring (single track + multi-segment arcs) */
 .nutrition-ring__track {
     stroke: #e4e4e7;
@@ -86,12 +134,55 @@ html.dark,
     transition: stroke-dasharray 0.6s ease-out, stroke-dashoffset 0.6s ease-out;
     stroke-linecap: round;
 }
-/* Filled macro pill: only the colour can change between renders, the geometry
-   is baked into the path, so the transition is kept on stroke alone. */
+/* Filled macro pill: the geometry is baked into the path, so only the paint can
+   change between renders and the transition is kept on stroke alone.
+
+   The paint is a gradient (see the .nutrition-ring__gradient-* rules below) with
+   a drop-shadow glow in the macro's own colour, which is what gives the ring its
+   depth: the pill reads as a lit bar rather than a flat stroke. The glow is a
+   filter and not a second stroke, so it never changes the pill's width. */
 .nutrition-ring__pill {
     stroke-linecap: round;
     transition: stroke 0.6s ease-out;
+    filter: drop-shadow(0 0 var(--ring-glow-blur, 5px) var(--ring-glow-color, transparent));
 }
+.nutrition-ring__pill--protein { --ring-glow-color: var(--macro-protein-glow); }
+.nutrition-ring__pill--fat { --ring-glow-color: var(--macro-fat-glow); }
+.nutrition-ring__pill--carbs { --ring-glow-color: var(--macro-carbs-glow); }
+.nutrition-ring__pill--danger { --ring-glow-color: var(--macro-danger-glow); }
+/* Gradient stops live in CSS rather than in the markup so a theme switch
+   recolours the ring without re-rendering it. `stop-color` is a CSS property,
+   which is also why the gradient is painted through a class and not through
+   stop-color attributes. */
+.nutrition-ring__gradient--protein stop:nth-child(1) { stop-color: var(--macro-protein-hi); }
+.nutrition-ring__gradient--protein stop:nth-child(2) { stop-color: var(--macro-protein); }
+.nutrition-ring__gradient--fat stop:nth-child(1) { stop-color: var(--macro-fat-hi); }
+.nutrition-ring__gradient--fat stop:nth-child(2) { stop-color: var(--macro-fat); }
+.nutrition-ring__gradient--carbs stop:nth-child(1) { stop-color: var(--macro-carbs-hi); }
+.nutrition-ring__gradient--carbs stop:nth-child(2) { stop-color: var(--macro-carbs); }
+.nutrition-ring__gradient--danger stop:nth-child(1) { stop-color: var(--macro-danger-hi); }
+.nutrition-ring__gradient--danger stop:nth-child(2) { stop-color: var(--macro-danger); }
+/* The glyph riding the pill is a line drawing, so its ink follows the accent it
+   sits on rather than a single fixed white. */
+.nutrition-ring__glyph { stroke: var(--macro-protein-ink); }
+.nutrition-ring__glyph--fat { stroke: var(--macro-fat-ink); }
+.nutrition-ring__glyph--carbs { stroke: var(--macro-carbs-ink); }
+.nutrition-ring__glyph--danger { stroke: var(--macro-danger-ink); }
+
+/* Neon backdrop behind the ring: a soft radial that lifts the dial off the card
+   without touching the data. Purely decorative and behind the arcs, so it is
+   hidden from assistive tech along with the rest of the ring chrome. */
+.nutrition-ring__aura {
+    position: absolute;
+    inset: 6%;
+    border-radius: 9999px;
+    background: radial-gradient(circle at 50% 50%, rgba(168, 85, 247, 0.16), rgba(168, 85, 247, 0) 68%);
+    pointer-events: none;
+}
+.dark .nutrition-ring__aura {
+    background: radial-gradient(circle at 50% 50%, rgba(192, 132, 252, 0.22), rgba(192, 132, 252, 0) 68%);
+}
+
 /* Centre readout stacked inside the ring: AI score pill above the counter. */
 .nutrition-ring__center {
     position: absolute;
@@ -105,15 +196,42 @@ html.dark,
     line-height: 1;
     text-align: center;
 }
+/* The AI score sits on its own lit disc rather than a flat pill, so the middle of
+   the ring reads as the machine's own readout and not as another macro. */
 .nutrition-ring__score {
     display: inline-flex;
     align-items: center;
-    padding: 2px 7px;
+    gap: 3px;
+    padding: 2px 8px 2px 6px;
     border-radius: 9999px;
     font-size: 9px;
     font-weight: 700;
     letter-spacing: 0.02em;
     white-space: nowrap;
+    background: rgba(168, 85, 247, 0.12);
+    box-shadow: 0 0 10px rgba(168, 85, 247, 0.28), inset 0 0 8px rgba(168, 85, 247, 0.18);
+}
+.dark .nutrition-ring__score {
+    background: rgba(192, 132, 252, 0.16);
+    box-shadow: 0 0 12px rgba(192, 132, 252, 0.42), inset 0 0 10px rgba(192, 132, 252, 0.26);
+}
+/* Sparkle next to the score. It breathes rather than spins: a spinning sparkle on
+   a 120px dial reads as motion noise, and the score itself must stay readable.
+   Reduced motion drops the animation and leaves a static sparkle. */
+.nutrition-ring__spark {
+    width: 9px;
+    height: 9px;
+    flex-shrink: 0;
+    color: currentColor;
+    transform-origin: 50% 50%;
+    animation: ai-spark-pulse 2.6s ease-in-out infinite;
+}
+@keyframes ai-spark-pulse {
+    0%, 100% { opacity: 0.55; transform: scale(0.85); }
+    50% { opacity: 1; transform: scale(1.15); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .nutrition-ring__spark { animation: none; }
 }
 .nutrition-ring__calories {
     font-size: 18px;
@@ -478,9 +596,9 @@ html.dark,
     white-space: nowrap;
 }
 .meal-card-macro--calories .meal-card-macro__value { color: var(--meal-text); }
-.meal-card-macro--protein .meal-card-macro__value { color: #10b981; }
-.meal-card-macro--fat .meal-card-macro__value { color: #f59e0b; }
-.meal-card-macro--carbs .meal-card-macro__value { color: #06b6d4; }
+.meal-card-macro--protein .meal-card-macro__value { color: var(--macro-protein); }
+.meal-card-macro--fat .meal-card-macro__value { color: var(--macro-fat); }
+.meal-card-macro--carbs .meal-card-macro__value { color: var(--macro-carbs); }
 
 /* Composition: a short label over either a two-column list or a row of tags.
    The body is capped in rows rather than allowed to collapse, so a squeezed
@@ -1126,6 +1244,21 @@ input, select, textarea:focus {
     border-radius: 9999px;
     flex-shrink: 0;
 }
+/* A label and its dot take the accent of the pill they describe, from the same
+   tokens the arc is painted with - so a macro is one colour across the ring, the
+   number and the legend, and an over-target macro turns crimson in all three. */
+.macro-label__value--protein { color: var(--macro-protein); }
+.macro-label__value--fat { color: var(--macro-fat); }
+.macro-label__value--carbs { color: var(--macro-carbs); }
+.macro-label__value--danger { color: var(--macro-danger); }
+.macro-label__dot--protein { background: var(--macro-protein); }
+.macro-label__dot--fat { background: var(--macro-fat); }
+.macro-label__dot--carbs { background: var(--macro-carbs); }
+.macro-label__dot--danger { background: var(--macro-danger); }
+/* Horizontal macro bars share the same tokens as the ring pills. */
+.macro-bar__fill--protein { background: var(--macro-protein); }
+.macro-bar__fill--fat { background: var(--macro-fat); }
+.macro-bar__fill--carbs { background: var(--macro-carbs); }
 /* Side labels get their vertical anchor from the JS pill geometry and are pulled
    back by half their own height, so they stay centred on their pill whatever the
    label ends up measuring. The carbs label anchors to the bottom of the box. */
@@ -1153,6 +1286,91 @@ input, select, textarea:focus {
 /* Progress bar in metric columns */
 .grid-cols-5 .h-1 > div {
     transition: width 0.5s ease-out;
+}
+
+/* ============ Daily AI recap ============ */
+/* One card under the dashboard: the title and the date on the first line, the AI
+   score on the right of that same line, the recap underneath as plain prose. The
+   score badge wears the same neon disc as the ring's centre score, so the two AI
+   readouts on the screen are recognisably the same voice. */
+.daily-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 12px 14px;
+}
+.daily-summary__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+.daily-summary__title {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #52525b;
+}
+.dark .daily-summary__title {
+    color: #a1a1aa;
+}
+.daily-summary__icon {
+    width: 11px;
+    height: 11px;
+    color: #9333ea;
+}
+.dark .daily-summary__icon {
+    color: #c084fc;
+}
+.daily-summary__date {
+    min-width: 0;
+    font-size: 11px;
+    font-weight: 600;
+    color: #71717a;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.daily-summary__score {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: auto;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    color: #7e22ce;
+    background: rgba(168, 85, 247, 0.12);
+    box-shadow: 0 0 10px rgba(168, 85, 247, 0.26);
+}
+.dark .daily-summary__score {
+    color: #d8b4fe;
+    background: rgba(192, 132, 252, 0.16);
+    box-shadow: 0 0 12px rgba(192, 132, 252, 0.38);
+}
+.daily-summary__text {
+    font-size: 13px;
+    line-height: 1.45;
+    color: #3f3f46;
+}
+.dark .daily-summary__text {
+    color: #d4d4d8;
+}
+/* Empty state: same card, one quiet line. It keeps the slot so the meal carousel
+   below does not jump once a recap arrives. */
+.daily-summary__empty {
+    font-size: 12px;
+    line-height: 1.4;
+    color: #71717a;
 }
 
 /* ============ Nutrition page layout (iPhone 13 mini and up) ============ */

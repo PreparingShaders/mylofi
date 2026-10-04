@@ -23,6 +23,7 @@ from app.schemas import (
     MealResponse,
     MealListResponse,
     PhotoUploadResponse,
+    DailySummaryResponse,
     MealStatus,
     WorkoutTemplateCreate,
     WorkoutTemplateUpdate,
@@ -74,6 +75,7 @@ from app.services.nutrition import (
     normalize_tz_offset,
     resolve_eaten_at,
     utcnow,
+    meal_to_response,
 )
 from app.services.workout import (
     create_workout_template,
@@ -113,6 +115,7 @@ from app.services.nutrition_targets import (
     normalize_activity_level,
     normalize_goal,
 )
+from app.services.ai_summary import get_or_create_daily_summary
 from app.models import User, Meal
 from app.ws.manager import manager, get_websocket_user
 
@@ -525,6 +528,27 @@ async def get_nutrition_summary(
     return await get_daily_nutrition_summary(db, current_user.id, _parse_target_date(date, offset), offset)
 
 
+@router.get("/nutrition/daily-summary", response_model=DailySummaryResponse)
+async def get_nutrition_daily_summary(
+    date: Optional[str] = Query(None, description="Date in YYYY-MM-DD format"),
+    tz_offset: Optional[int] = Query(None, description=TZ_OFFSET_DESCRIPTION),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """AI recap of one day, generated on demand when it is missing.
+
+    A finished day with no stored recap is written on the first request for it,
+    so the card is never a second visit away from being there. Today is not
+    generated - the day is still being eaten - and neither is a day without
+    analysed meals; both answer with `available: false` and a reason the card
+    renders, never with an error.
+    """
+    offset = normalize_tz_offset(tz_offset)
+    target_date = _parse_target_date(date, offset)
+    payload = await get_or_create_daily_summary(db, current_user, target_date, offset)
+    return payload
+
+
 def _parse_target_date(date: Optional[str], tz_offset_minutes: int = 0) -> date:
     """Parse an optional YYYY-MM-DD query param, falling back to today.
 
@@ -612,7 +636,9 @@ async def update_meal_endpoint(
     meal = await update_meal(db, meal_id, current_user.id, meal_data)
     if not meal:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meal not found")
-    return meal
+    # `meal_to_response` parses the JSON-encoded `tags` column into a list so the
+    # MealResponse schema (which expects List[str]) validates instead of 500-ing.
+    return meal_to_response(meal)
 
 
 @router.delete("/nutrition/meals/{meal_id}")
