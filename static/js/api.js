@@ -23,11 +23,15 @@ const NUTRITION_READS = [
     'nutrition/daily-summary',
 ];
 
-// Cache entries invalidated together when a mutation touches a resource
+// Cache entries invalidated together when a mutation touches a resource.
+// The coach's verdict is keyed to a session, so completing or editing a session
+// moves the stored verdict with it - otherwise the history card would keep
+// rendering a verdict for a session the user has since changed.
 const READ_CACHE_RELATIONSHIPS = {
-    'workouts/sets': ['workouts/sessions', 'workouts/statistics', 'workouts/history'],
-    'workouts/sessions': ['workouts/sessions', 'workouts/statistics', 'workouts/history'],
+    'workouts/sets': ['workouts/sessions', 'workouts/statistics', 'workouts/history', 'ai/workout-summary'],
+    'workouts/sessions': ['workouts/sessions', 'workouts/statistics', 'workouts/history', 'ai/workout-summary'],
     'workouts/templates': ['workouts/templates'],
+    'ai/workout-summary': ['ai/workout-summary'],
     'nutrition/meals': NUTRITION_READS,
     'nutrition/photos': NUTRITION_READS,
     // Targets live on the user profile, so a profile change moves every
@@ -381,6 +385,15 @@ class APIClient {
     
     get(endpoint, accessToken = null) { return this.getWithReadCache(endpoint, accessToken); }
     post(endpoint, data, accessToken = null, isFormData = false) { return this.request('POST', endpoint, data, accessToken, isFormData); }
+    /**
+     * A POST that must never enter the offline queue.
+     *
+     * The coach's two calls are the exception: a plan replayed hours later lands
+     * on a workout that is over, and a verdict replayed later spends the Free
+     * tier's one weekly analysis on a session from yesterday. Both fail loudly
+     * instead, and the UI already treats them as optional.
+     */
+    postImmediate(endpoint, data, accessToken = null) { return this.request('POST', endpoint, data, accessToken, false, true); }
     patch(endpoint, data, accessToken = null) { return this.request('PATCH', endpoint, data, accessToken); }
     delete(endpoint, accessToken = null) { return this.request('DELETE', endpoint, null, accessToken); }
     deleteMeal(mealId, accessToken = null) { return this.request('DELETE', `/nutrition/meals/${mealId}`, null, accessToken); }

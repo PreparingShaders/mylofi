@@ -60,6 +60,18 @@ const SET_ADVANCE_DELAY_MS = 350;
 // gap-4 between carousel cards, used to derive the horizontal scroll step.
 const CAROUSEL_GAP_PX = 16;
 
+// The coach answers at the two ends of a session and both calls are refused
+// offline: the plan is wanted before the first set and the verdict right after
+// the last one, and neither is worth a queued request the user would read hours
+// later. The offline queue stays for what the user typed.
+const AI_OFFLINE_MESSAGE = 'ИИ-тренер работает только с подключением к интернету';
+// Shown when the plan is asked for and does not arrive. The workout continues
+// either way: a plan is an addition to a session, never a condition for it.
+const AI_PLAN_UNAVAILABLE_MESSAGE = 'ИИ-план недоступен, тренировка без него';
+// Icon-only split action next to "Начать тренировку": the label lives in the
+// title and the aria-label so the button is not a mystery on a phone.
+const AI_START_ICON = '\u{1F916}';
+
 export const Workouts = {
     app: null,
     workoutTimerInterval: null,
@@ -67,6 +79,16 @@ export const Workouts = {
     stats: null,
     tonnageData: null,
     tonnageState: { period: 'week', filters: { start_date: '', end_date: '', muscle_group: '', exercise_name: '', template_id: '' } },
+
+    // Coach plan for the session in progress, { focus, motivation,
+    // recommendations } as the /ai/workout-preview response. Kept on the instance
+    // rather than on the session object because it describes the workout the user
+    // is doing right now and must not survive into the next one.
+    aiPlan: null,
+    // Analysis request in flight: the trigger on the workout card disables
+    // itself while the cascade is running, so a second tap cannot spend the
+    // weekly allowance twice.
+    _aiAnalysisLoading: false,
 
     escapeHtml(value) {
         return String(value ?? '')
@@ -881,10 +903,17 @@ export const Workouts = {
                                     ${t.exercises.map(ex => ex.name).join(', ')}
                                 </div>
                             </div>
-                            <button data-action="start-template" data-template-id="${t.id}" ${hasActiveSession ? 'disabled' : ''}
-                                    class="w-full py-1.5 flex items-center justify-center gap-1.5 ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'bg-primary-600 text-white'} rounded-xl text-[11px] font-semibold text-center shadow-sm">
-                                ${hasActiveSession ? `${LOCK_ICON}<span>Активна тренировка</span>` : '<span>Начать тренировку →</span>'}
-                            </button>
+                            <div class="flex gap-1.5">
+                                <button data-action="start-template" data-template-id="${t.id}" ${hasActiveSession ? 'disabled' : ''}
+                                        class="flex-1 min-w-0 py-1.5 flex items-center justify-center gap-1.5 ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'bg-primary-600 text-white'} rounded-xl text-[11px] font-semibold text-center shadow-sm">
+                                    ${hasActiveSession ? `${LOCK_ICON}<span>Активна тренировка</span>` : '<span>Начать тренировку →</span>'}
+                                </button>
+                                <button data-action="start-template-ai" data-template-id="${t.id}" ${hasActiveSession ? 'disabled' : ''}
+                                        title="Начать с ИИ-тренером" aria-label="Начать с ИИ-тренером"
+                                        class="flex-shrink-0 w-9 py-1.5 flex items-center justify-center rounded-xl text-[13px] ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'bg-surface-800 dark:bg-white dark:text-zinc-950'} shadow-sm">
+                                    ${AI_START_ICON}
+                                </button>
+                            </div>
                         </div>
                     `).join('')}
                 </div>`}
@@ -1065,6 +1094,14 @@ export const Workouts = {
             });
         });
 
+        container.querySelectorAll('[data-action="start-template-ai"]').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const templateId = parseInt(btn.dataset.templateId);
+                await this.startTemplateWithAi(container, app, templateId);
+            });
+        });
+
         if (activeSession) {
             this.startWorkoutTimer(activeSession, 'dashboard-workout-timer');
         }
@@ -1171,6 +1208,282 @@ export const Workouts = {
         }, 1000);
     },
 
+    // ===== AI workout coach =====
+
+    /**
+     * The coach's plan for one session, kept on the instance so the exercise
+     * cards can look up their own targets while the screen renders. Returns the
+     * payload on success and null on anything else - offline, quota, a model
+     * that did not answer - because the workout starts with or without it.
+     */
+    async loadAiPlan(app, body) {
+        if (navigator.onLine === false) {
+            app.showToast(AI_OFFLINE_MESSAGE, 'info');
+            return null;
+        }
+        try {
+            const payload = await API.postImmediate('/ai/workout-preview', body, app.state.tokens.access);
+            if (payload?.available) return payload;
+            app.showToast(payload?.reason || AI_PLAN_UNAVAILABLE_MESSAGE, 'info');
+            return null;
+        } catch (err) {
+            // Never surfaced as an error toast: the workout is what the user came
+            // for, and a plan that did not arrive is not a failure.
+            console.warn('[Workouts] AI plan failed:', err);
+            app.showToast(AI_PLAN_UNAVAILABLE_MESSAGE, 'info');
+            return null;
+        }
+    },
+
+    /**
+     * Starts a template's session with the coach's plan already in hand.
+     *
+     * Both requests go out in parallel with the countdown, as the plain start
+     * does, and the plan is awaited only as far as the screen is: a plan that
+     * fails costs the badges, never the workout. The offline branch falls back to
+     * the local session exactly like the plain start - the plan needs a
+     * connection, the session does not.
+     */
+    async startTemplateWithAi(container, app, templateId) {
+        if (isNaN(templateId) || templateId == null) return;
+        const token = app.state.tokens.access;
+        const startEndpoint = `/workouts/templates/${templateId}/start`;
+
+        this.renderCountdown(container, () => {});
+
+        const sessionPromise = API.post(startEndpoint, {}, token);
+        const planPromise = this.loadAiPlan(app, { template_id: templateId });
+
+        try {
+            const [session, plan] = await Promise.all([
+                sessionPromise,
+                planPromise,
+            ]);
+            this.aiPlan = plan ? { ...plan, sessionId: session.id } : null;
+            await this.renderWorkoutScreen(container, app, session.id);
+        } catch (err) {
+            console.error('[Workouts] Start with AI error:', err);
+            app.showToast(err?.message || 'Ошибка запуска', 'error');
+            await this.render(container, app);
+        }
+    },
+
+    /** The quick-start variants are chosen by goal, so the goal travels with the plan. */
+    async startQuickWorkoutWithAi(app, goal) {
+        if (navigator.onLine === false) {
+            app.showToast(AI_OFFLINE_MESSAGE, 'info');
+            return;
+        }
+        const token = app.state.tokens.access;
+        const goalLabel = (QUICK_GOALS.find(g => g.value === goal) || {}).title;
+
+        this.renderCountdown(app.elements.pageContent, () => {});
+
+        const sessionPromise = API.post('/workouts/sessions/quick-start', { goal }, token);
+        const planPromise = this.loadAiPlan(app, { goal, name: `Быстрый старт: ${goalLabel}` });
+
+        try {
+            const [{ session_id: sessionId }, plan] = await Promise.all([
+                sessionPromise,
+                planPromise,
+            ]);
+            this.aiPlan = plan ? { ...plan, sessionId } : null;
+            await this.renderWorkoutScreen(app.elements.pageContent, app, sessionId);
+        } catch (err) {
+            console.error('[Workouts] Quick start with AI error:', err);
+            app.showToast(err?.message || 'Ошибка быстрого старта', 'error');
+            await this.render(app.elements.pageContent, app);
+        }
+    },
+
+    /**
+     * The plan for one exercise card, matched by name the way the server matched
+     * it: session exercises are free-text names, so the comparison trims and folds
+     * case rather than testing equality.
+     */
+    findAiPlanFor(exerciseName) {
+        const wanted = String(exerciseName || '').trim().toLowerCase();
+        if (!wanted || !this.aiPlan) return null;
+        return (this.aiPlan.recommendations || [])
+            .find(r => String(r?.name || '').trim().toLowerCase() === wanted) || null;
+    },
+
+    /**
+     * The session-level coach line above the carousel: one focus sentence and one
+     * to start with. Quiet by design - the exercise cards carry the per-set
+     * detail, so this is the one thing the user reads before the first set.
+     */
+    renderAiPlanNote() {
+        const focus = this.aiPlan?.focus;
+        const motivation = this.aiPlan?.motivation;
+        if (!focus && !motivation) return '';
+        return `
+            <div class="ai-plan mb-4">
+                ${focus ? `<span class="ai-plan__focus">${this.escapeHtml(focus)}</span>` : ''}
+                ${motivation ? `<span class="ai-plan__motivation">${this.escapeHtml(motivation)}</span>` : ''}
+            </div>
+        `;
+    },
+
+    /** The stored verdict of a session, or null when there is none to read. */
+    async loadAiAnalysis(app, sessionId, { quiet = true } = {}) {
+        try {
+            return await API.get(`/ai/workout-summary/${sessionId}`, app.state.tokens.access);
+        } catch (err) {
+            console.warn('[Workouts] AI analysis read failed:', err);
+            if (!quiet) app.showToast(err?.message || 'Не удалось загрузить разбор', 'error');
+            return null;
+        }
+    },
+
+    /**
+     * Ask the model for the verdict on a finished session.
+     *
+     * The trigger disables itself for the duration so a second tap cannot spend
+     * the weekly allowance twice, and the answer is never treated as an error:
+     * `available: false` carries the reason - a spent quota, a session without
+     * weighted sets, a model that failed - and the card shows that line instead.
+     *
+     * `rerender` is called with the payload so the caller can swap the card in
+     * place rather than reloading the screen underneath the user.
+     */
+    async analyzeWorkout(app, sessionId, { force = false, notes = null, rerender = null } = {}) {
+        const id = parseInt(sessionId);
+        if (isNaN(id)) return null;
+        if (this._aiAnalysisLoading) return null;
+        if (navigator.onLine === false) {
+            app.showToast(AI_OFFLINE_MESSAGE, 'info');
+            return null;
+        }
+
+        this._aiAnalysisLoading = true;
+        try {
+            const payload = await API.postImmediate(
+                `/ai/workout-summary/${id}`,
+                { notes, force },
+                app.state.tokens.access
+            );
+            // A verdict that was just written invalidates the cached read of it.
+            API.invalidateReadCache(`/ai/workout-summary/${id}`);
+            if (payload?.available) {
+                app.showToast(force ? 'Разбор пересчитан' : 'Тренировка разобрана', 'success');
+            } else {
+                app.showToast(payload?.reason || 'Не удалось разобрать тренировку', 'info');
+            }
+            if (rerender) rerender(payload);
+            return payload;
+        } catch (err) {
+            console.error('[Workouts] AI analysis failed:', err);
+            app.showToast(err?.offlineQueued ? AI_OFFLINE_MESSAGE : (err?.message || 'Не удалось разобрать тренировку'), 'error');
+            return null;
+        } finally {
+            this._aiAnalysisLoading = false;
+        }
+    },
+
+    /**
+     * Finish a session and have the coach read it, in one press.
+     *
+     * The workout is completed first and on its own terms: if the completion
+     * fails, or the session was started offline and has no server id yet, the
+     * analysis is skipped and the plain flow takes over - a verdict is never
+     * worth a lost workout. Only after the session is safely stored is the
+     * cascade asked, and its answer is a modal over the dashboard rather than a
+     * second screen.
+     */
+    async completeWorkoutWithAi(app, event) {
+        const sessionKey = event.target.closest('[data-session-id]')?.dataset.sessionId;
+        const sessionId = parseInt(sessionKey, 10);
+
+        // A session started offline lives in localStorage until it syncs, so it
+        // has no id the coach could read. Say so instead of completing silently.
+        if (isNaN(sessionId)) {
+            app.showToast('ИИ-разбор недоступен: тренировка ещё не синхронизирована', 'info');
+            await app.handleCompleteWorkout(event);
+            return;
+        }
+        if (navigator.onLine === false) {
+            app.showToast(AI_OFFLINE_MESSAGE, 'info');
+            await app.handleCompleteWorkout(event);
+            return;
+        }
+
+        if (!await Components.confirmModal({
+            title: 'Завершить и разобрать с ИИ?',
+            message: 'Тренировка будет закрыта, а ИИ-тренер разберёт её и покажет вердикт. На Free это один разбор в 7 дней.',
+            confirmText: 'Завершить и разобрать',
+            confirmClass: 'bg-primary-600 hover:bg-primary-700 text-white dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200 font-semibold shadow-md',
+            cancelText: 'Назад'
+        })) return;
+
+        // The coach reads the completed sets, so every typed value goes out
+        // before the session closes.
+        await app.flushPendingSetEdits();
+
+        const button = event.target.closest('[data-action="complete-workout-ai"]');
+        if (button) {
+            button.disabled = true;
+            button.innerHTML = '<span>Завершаем и разбираем...</span>';
+        }
+
+        try {
+            await API.post(`/workouts/sessions/${sessionId}/complete`, null, app.state.tokens.access);
+        } catch (err) {
+            console.error('[Workouts] Complete with AI failed:', err);
+            app.showToast(err?.offlineQueued ? OFFLINE_COMPLETE_MESSAGE : (err?.message || 'Ошибка завершения тренировки'), 'error');
+            await app.renderPage('workouts');
+            return;
+        }
+
+        const payload = await this.analyzeWorkout(app, sessionId);
+        await app.renderPage('workouts');
+
+        // No verdict (a spent quota, no weighted sets, a model that failed) is not
+        // a dead end: the reason is on the toast and the session can be re-read in
+        // the history, where the same card offers the analysis again.
+        if (payload) {
+            this.showAiSummaryModal(app, payload);
+        }
+    },
+
+    /**
+     * The verdict on its own, right after the last set: a modal over the app so
+     * the read is immediate and the workout screen underneath is untouched. The
+     * same card is rendered inline in the history, so there is one card and one
+     * breakdown.
+     */
+    showAiSummaryModal(app, payload, { title = 'Разбор тренировки' } = {}) {
+        const modal = document.createElement('div');
+        modal.className = 'fixed inset-0 z-50 flex items-end sm:items-center justify-center modal-backdrop pointer-events-auto';
+        modal.innerHTML = `
+            <div class="glass-strong rounded-t-3xl sm:rounded-3xl p-5 w-full sm:max-w-md max-h-[85vh] overflow-y-auto">
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="text-lg font-bold truncate">${this.escapeHtml(title)}</h3>
+                    <button type="button" data-action="close-ai-summary" class="text-surface-500 hover:text-surface-900 dark:text-surface-400 p-1" aria-label="Закрыть">✕</button>
+                </div>
+                <div id="ai-summary-card">
+                    ${Components.aiWorkoutCard(payload, { title: 'Разбор от ИИ-тренера' })}
+                </div>
+            </div>
+        `;
+
+        const close = () => {
+            document.removeEventListener('keydown', onKeydown);
+            modal.remove();
+        };
+        const onKeydown = (e) => {
+            if (e.key === 'Escape') close();
+        };
+
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) close();
+        });
+        modal.querySelector('[data-action="close-ai-summary"]').addEventListener('click', close);
+        document.addEventListener('keydown', onKeydown);
+        (document.getElementById('modals') || document.body).appendChild(modal);
+        return modal;
+    },
+
     async renderTemplateDetails(container, app, template) {
         this.app = app;
         const html = `
@@ -1256,6 +1569,11 @@ export const Workouts = {
             app.showToast('Нет активной тренировки', 'info');
             return;
         }
+        // The plan belongs to the session it was made for: resuming that one keeps
+        // the badges, and starting any other workout drops them.
+        if (this.aiPlan && String(this.aiPlan.sessionId) !== String(session.id)) {
+            this.aiPlan = null;
+        }
         app.state.currentSessionId = session.isLocal ? session.key : session.id;
 
         const completedHistorySessions = [...(historyData?.sessions || [])]
@@ -1282,10 +1600,12 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         <button type="button" data-action="move-ex-down" data-ex-id="${ex.id}" class="w-8 h-8 glass rounded-xl text-xs font-bold hover:bg-surface-200 transition-colors ${index === arr.length - 1 ? 'opacity-30 cursor-not-allowed' : ''}">▼</button>
                     </div>
                 </div>
-                
+
                   <div class="min-h-[140px]">
                       ${Components.sparkline(historyPoints, 72)}
                   </div>
+
+                 ${Components.aiWorkoutPlanBadge(this.findAiPlanFor(ex.name))}
 
                  <div class="space-y-2">
                     ${(ex.sets || []).map(set => {
@@ -1358,7 +1678,11 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             </div>
         `;
         const completeCard = `
-            <div class="w-[98vw] max-w-[500px] snap-center glass rounded-2xl p-6 flex flex-col items-center justify-center min-h-[520px]">
+            <div class="w-[98vw] max-w-[500px] snap-center glass rounded-2xl p-6 flex flex-col items-center justify-center gap-3 min-h-[520px]">
+                <button data-action="complete-workout-ai" data-session-id="${sessionKey}"
+                        class="w-full py-5 border-2 border-dashed border-primary-500/60 dark:border-primary-400/40 rounded-2xl text-primary-600 dark:text-primary-400 font-bold text-base btn-press">
+                    Завершить и разобрать с ИИ
+                </button>
                 <button data-action="complete-workout" data-session-id="${sessionKey}"
                         class="w-full py-5 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-2xl font-bold text-base">
                     Завершить тренировку
@@ -1389,6 +1713,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         <div id="workout-progress-bar" class="h-full rounded-full bg-surface-800 dark:bg-zinc-100 transition-all duration-300" style="width: ${initialPercent}%"></div>
                     </div>
                 </div>
+
+                ${this.renderAiPlanNote()}
 
                 <div class="flex overflow-x-auto snap-x snap-mandatory gap-4 pb-10 px-4 -mx-4" id="carousel">
                     ${allCards.join('')}
@@ -2053,6 +2379,11 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     ${items.map(session => {
                         const metrics = this.getWorkoutMetrics(session);
                         const stamp = new Date(session.completed_at || session.started_at);
+                        // The coach only reads a session that was actually done, so
+                        // an active or cancelled row never offers the analysis.
+                        const analyzable = (session.status === 'completed' || !session.status)
+                            && metrics.completed > 0
+                            && !isNaN(parseInt(session.id));
                         return `
                             <div class="glass rounded-2xl p-4 cursor-pointer btn-press" data-action="open-history-session" data-session-id="${session.id}">
                                 <div class="flex items-start justify-between gap-3">
@@ -2073,6 +2404,11 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                                     <span>${(session.exercises || []).length} упр.</span>
                                     <span>·</span>
                                     <span>${statusLabel(session.status)}</span>
+                                    ${analyzable ? `<button type="button" data-action="history-analyze-ai" data-session-id="${session.id}"
+                                            class="ml-auto flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold ${session.has_ai_analysis ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400' : 'bg-surface-100 dark:bg-white/5 text-surface-500 dark:text-surface-400'}">
+                                            <span>${AI_START_ICON}</span>
+                                            <span>${session.has_ai_analysis ? 'Пересчитать' : 'Разобрать'}</span>
+                                        </button>` : ''}
                                 </div>
                             </div>
                         `;
@@ -2100,6 +2436,16 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         `;
 
         container.innerHTML = html;
+
+        container.querySelectorAll('[data-action="history-analyze-ai"]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                // The row itself opens the session detail; the coach button is a
+                // sibling action, so the click must not travel up to it.
+                e.stopPropagation();
+                const sessionId = parseInt(e.currentTarget.dataset.sessionId);
+                if (!isNaN(sessionId)) this.analyzeWorkout(app, sessionId);
+            });
+        });
 
         container.querySelectorAll('[data-action="open-history-session"]').forEach(card => {
             card.addEventListener('click', (e) => {
@@ -2240,6 +2586,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     </div>
                 ` : ''}
 
+                <div id="ai-workout-detail"></div>
+
                 <h3 class="text-sm font-semibold text-surface-500 uppercase tracking-wider mb-3">
                     Упражнения (${(detail.exercises || []).length})
                 </h3>
@@ -2253,6 +2601,48 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             e.stopPropagation();
             this.renderHistory(container, app, { limit: this.historyState?.limit || 20 });
         });
+
+        // The verdict is a separate read from the session detail (it has its own
+        // quota and its own empty state), so the screen renders first and the card
+        // lands in its slot without the detail waiting on it.
+        await this.mountAiDetailCard(container, app, detail.id);
+    },
+
+    /**
+     * Puts the coach's verdict of a session into the history detail screen.
+     *
+     * A second analysis is a rewrite of the stored verdict (`force=true`), which is
+     * why the trigger reads "Пересчитать разбор" once there is one. The card is
+     * swapped in place when the answer arrives, so the session's metrics, trends
+     * and set list underneath are not re-rendered under the user's thumb.
+     */
+    async mountAiDetailCard(container, app, sessionId) {
+        const host = container.querySelector('#ai-workout-detail');
+        if (!host) return null;
+
+        const payload = await this.loadAiAnalysis(app, sessionId);
+        if (!payload) {
+            host.remove();
+            return null;
+        }
+
+        const draw = (current, busy = false) => {
+            host.innerHTML = Components.aiWorkoutCard(current, { allowAnalyze: true, busy });
+            const trigger = host.querySelector('[data-action="analyze-workout-ai"]');
+            trigger?.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                trigger.disabled = true;
+                const next = await this.analyzeWorkout(app, sessionId, {
+                    force: current?.available === true,
+                    rerender: (result) => draw(result),
+                });
+                // A failed run leaves the card exactly as it was, trigger included.
+                if (!next) draw(current);
+            });
+        };
+
+        draw(payload);
+        return payload;
     },
 
     showQuickStartModal(app) {
@@ -2271,16 +2661,26 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 </p>
                 <div class="space-y-2">
                     ${QUICK_GOALS.map(goal => `
-                        <button type="button" data-goal="${goal.value}"
-                                class="w-full flex items-center justify-between gap-3 p-3.5 rounded-2xl glass text-left btn-press">
-                            <span class="min-w-0">
-                                <span class="block font-semibold text-sm">${goal.title}</span>
-                                <span class="block text-[11px] text-surface-500 dark:text-surface-400">${goal.subtitle}</span>
-                            </span>
-                            <span class="text-surface-300 flex-shrink-0">→</span>
-                        </button>
+                        <div class="glass rounded-2xl p-1.5 flex items-center gap-1.5">
+                            <button type="button" data-goal="${goal.value}"
+                                    class="flex-1 min-w-0 flex items-center justify-between gap-3 p-2 rounded-2xl text-left btn-press">
+                                <span class="min-w-0">
+                                    <span class="block font-semibold text-sm">${goal.title}</span>
+                                    <span class="block text-[11px] text-surface-500 dark:text-surface-400">${goal.subtitle}</span>
+                                </span>
+                                <span class="text-surface-300 flex-shrink-0">→</span>
+                            </button>
+                            <button type="button" data-goal-ai="${goal.value}"
+                                    title="Начать с ИИ-тренером" aria-label="Начать ${goal.title} с ИИ-тренером"
+                                    class="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-2xl text-base bg-surface-800 dark:bg-white dark:text-zinc-950 btn-press">
+                                ${AI_START_ICON}
+                            </button>
+                        </div>
                     `).join('')}
                 </div>
+                <p class="text-[11px] text-surface-500 dark:text-surface-400 mt-3">
+                    Кнопка с роботом запускает ту же тренировку и просит ИИ-тренер подобрать вес, повторы и отдых под вашу историю.
+                </p>
             </div>
         `;
 
@@ -2301,6 +2701,13 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 const goal = btn.dataset.goal;
                 close();
                 await this.startQuickWorkout(app, goal);
+            });
+        });
+        modal.querySelectorAll('[data-goal-ai]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const goal = btn.dataset.goalAi;
+                close();
+                await this.startQuickWorkoutWithAi(app, goal);
             });
         });
         document.addEventListener('keydown', onKeydown);
@@ -2394,10 +2801,17 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                                     <h3 class="font-semibold truncate">${t.name}</h3>
                                     <p class="text-xs text-surface-400">${t.exercises.length} упр.</p>
                                 </div>
-                                <button data-action="start-template" data-template-id="${t.id}" ${hasActiveSession ? 'disabled' : ''}
-                                        class="px-3 py-1.5 flex items-center gap-1.5 flex-shrink-0 ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'bg-primary-600 text-white'} rounded text-xs">
-                                    ${hasActiveSession ? `${LOCK_ICON}<span>Активна тренировка</span>` : '<span>Начать</span>'}
-                                </button>
+                                <div class="flex items-center gap-1.5 flex-shrink-0">
+                                    <button data-action="start-template-ai" data-template-id="${t.id}" ${hasActiveSession ? 'disabled' : ''}
+                                            title="Начать с ИИ-тренером" aria-label="Начать ${this.escapeHtml(t.name)} с ИИ-тренером"
+                                            class="w-8 h-8 flex items-center justify-center rounded-lg text-sm ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'bg-surface-800 dark:bg-white dark:text-zinc-950'}">
+                                        ${AI_START_ICON}
+                                    </button>
+                                    <button data-action="start-template" data-template-id="${t.id}" ${hasActiveSession ? 'disabled' : ''}
+                                            class="px-3 py-1.5 flex items-center gap-1.5 ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'bg-primary-600 text-white'} rounded text-xs">
+                                        ${hasActiveSession ? `${LOCK_ICON}<span>Активна тренировка</span>` : '<span>Начать</span>'}
+                                    </button>
+                                </div>
                             </div>
                         `).join('')}
                     </div>
@@ -2453,6 +2867,14 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     button.disabled = false;
                     button.innerHTML = originalHtml;
                 }
+            });
+        });
+
+        container.querySelectorAll('[data-action="start-template-ai"]').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const templateId = parseInt(btn.dataset.templateId);
+                await this.startTemplateWithAi(container, app, templateId);
             });
         });
         } catch (err) {

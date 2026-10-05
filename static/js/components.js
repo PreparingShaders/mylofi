@@ -567,6 +567,164 @@ export const Components = {
     },
 
     /**
+     * AI coach verdict on one workout session.
+     *
+     * `payload` is the /ai/workout-summary response and the card has the same
+     * two states as the daily recap: the verdict, or the reason there is none.
+     * A session that was never analysed, a spent quota and a model that failed
+     * all render the same empty slot, so the history screen keeps its layout
+     * whatever the tier or the upstream did.
+     *
+     * The breakdown is collapsed by default: the verdict is the one glance, and
+     * the tonnage per muscle group, the recovery advice and the recommendations
+     * are the study material behind it. Every figure on the card is the
+     * arithmetic the server rendered - the card prints `muscle_groups[].tonnage_kg`
+     * rather than counting anything itself, so it can never disagree with the
+     * tonnage chart.
+     *
+     * `allowAnalyze` is the controller's verdict that asking is worth it (a real
+     * connection and a spent-or-free tier state it has already decided on), and
+     * `analyzeLabel`/`busy` drive the trigger: the same button reads
+     * "Разобрать с ИИ" on an unanalysed session and "Разбираем..." while the
+     * request is in flight.
+     */
+    aiWorkoutCard(payload = {}, {
+        allowAnalyze = false,
+        analyzeLabel = 'Разобрать с ИИ',
+        reanalyzeLabel = 'Пересчитать разбор',
+        busy = false,
+        title = 'Разбор от ИИ-тренера',
+    } = {}) {
+        const available = payload?.available === true;
+        const text = typeof payload.ai_summary === 'string' ? payload.ai_summary.trim() : '';
+        const score = Number(payload.overall_score);
+        const hasScore = Number.isFinite(score) && score > 0;
+        const scoreText = hasScore ? score.toFixed(1) : null;
+
+        const limit = payload?.limit || null;
+        const quotaLine = limit && limit.allowed === false && typeof limit.message === 'string' && limit.message.trim()
+            ? `<p class="ai-workout__quota">${escapeHtml(limit.message.trim())}</p>`
+            : '';
+
+        const head = `
+            <div class="ai-workout__head">
+                <span class="ai-workout__title">
+                    <svg class="ai-workout__icon" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>
+                    ${escapeHtml(title)}
+                </span>
+                ${available && scoreText
+                    ? `<span class="ai-workout__score"><span class="opacity-60">ИИ</span> ${scoreText}<span class="opacity-60">/10</span></span>`
+                    : ''}
+                ${payload?.analyzed_at
+                    ? `<span class="ai-workout__date">${escapeHtml(Utils.formatDate(payload.analyzed_at))}</span>`
+                    : ''}
+            </div>
+        `;
+
+        const trigger = allowAnalyze
+            ? `<button type="button" data-action="analyze-workout-ai" class="ai-workout__analyze btn-press"${busy ? ' disabled' : ''}>
+                  <svg class="ai-workout__analyze-icon${busy ? ' animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v14M5 12h14"/></svg>
+                  <span>${escapeHtml(busy ? 'Разбираем...' : (available ? reanalyzeLabel : analyzeLabel))}</span>
+              </button>`
+            : '';
+
+        if (!available || !text) {
+            const reason = typeof payload?.reason === 'string' && payload.reason.trim()
+                ? payload.reason.trim()
+                : 'Тренировка ещё не разобрана';
+            return `
+                <section class="ai-workout ai-workout--empty glass rounded-3xl" aria-label="${escapeHtml(title)}">
+                    ${head}
+                    <p class="ai-workout__empty">${escapeHtml(reason)}</p>
+                    ${quotaLine}
+                    ${trigger}
+                </section>
+            `;
+        }
+
+        const groups = Array.isArray(payload.muscle_groups) ? payload.muscle_groups.filter(g => g && g.muscle_group) : [];
+        const topTonnage = groups.reduce((max, g) => Math.max(max, Number(g.tonnage_kg) || 0), 0);
+        const groupRows = groups.map((g) => {
+            const tonnage = Number(g.tonnage_kg) || 0;
+            const width = topTonnage > 0 ? Math.max(6, Math.round((tonnage / topTonnage) * 100)) : 0;
+            return `
+                <div class="ai-workout__group">
+                    <div class="ai-workout__group-head">
+                        <span class="ai-workout__group-name">${escapeHtml(g.muscle_group)}</span>
+                        <span class="ai-workout__group-value">${Math.round(tonnage)} кг · ${Number(g.sets_count) || 0} подх.</span>
+                    </div>
+                    <div class="ai-workout__group-bar"><span style="width: ${width}%"></span></div>
+                </div>
+            `;
+        }).join('');
+
+        const highlights = Array.isArray(payload.highlights) ? payload.highlights.filter(Boolean) : [];
+        const highlightsBlock = highlights.length
+            ? `<ul class="ai-workout__highlights">${highlights.map(h => `<li>${escapeHtml(h)}</li>`).join('')}</ul>`
+            : '';
+
+        const recovery = typeof payload.recovery_advice === 'string' && payload.recovery_advice.trim()
+            ? `<p class="ai-workout__recovery">${escapeHtml(payload.recovery_advice.trim())}</p>`
+            : '';
+
+        const recommendations = (Array.isArray(payload.recommendations) ? payload.recommendations : [])
+            .filter(r => r && r.title && r.text)
+            .map(r => `
+                <li class="ai-workout__rec">
+                    <span class="ai-workout__rec-title">${escapeHtml(r.title)}</span>
+                    <span class="ai-workout__rec-text">${escapeHtml(r.text)}</span>
+                </li>
+            `).join('');
+
+        const breakdown = groupRows || recommendations ? `
+            <details class="ai-workout__details">
+                <summary class="ai-workout__summary">Детали разбора</summary>
+                ${groupRows ? `<div class="ai-workout__groups">${groupRows}</div>` : ''}
+                ${highlightsBlock}
+                ${recovery}
+                ${recommendations ? `<ul class="ai-workout__recs">${recommendations}</ul>` : ''}
+            </details>
+        ` : (highlightsBlock || recovery ? `${highlightsBlock}${recovery}` : '');
+
+        return `
+            <section class="ai-workout glass rounded-3xl" aria-label="${escapeHtml(title)}">
+                ${head}
+                <p class="ai-workout__text">${escapeHtml(text)}</p>
+                ${breakdown}
+                ${trigger}
+            </section>
+        `;
+    },
+
+    /**
+     * The coach's plan for one exercise, as a badge on the active workout card.
+     *
+     * The targets are the first thing read and the focus line the second, so the
+     * weight sits in the badge and the sentence under it stays quiet. A
+     * recommendation the model left without a weight (an exercise the user has
+     * never loaded) prints the sets and reps alone rather than a dash: there is
+     * no target to show, and "—" would read as a broken value.
+     */
+    aiWorkoutPlanBadge(recommendation = {}) {
+        if (!recommendation) return '';
+        const targets = [
+            recommendation.sets ? `${recommendation.sets}×${recommendation.reps ?? '—'}` : null,
+            Number(recommendation.weight_kg) > 0 ? `${recommendation.weight_kg} кг` : null,
+        ].filter(Boolean).join(' · ');
+        const focus = typeof recommendation.focus === 'string' ? recommendation.focus.trim() : '';
+        const motivation = typeof recommendation.motivation === 'string' ? recommendation.motivation.trim() : '';
+        if (!targets && !focus && !motivation) return '';
+
+        return `
+            <div class="ai-plan">
+                ${targets ? `<span class="ai-plan__targets">${escapeHtml(targets)}</span>` : ''}
+                ${focus ? `<span class="ai-plan__focus">${escapeHtml(focus)}</span>` : ''}
+                ${motivation ? `<span class="ai-plan__motivation">${escapeHtml(motivation)}</span>` : ''}
+            </div>
+        `;
+    },
+
+    /**
      * Nutrition dashboard: title row with the period switcher, then a single
      * ring slide for the selected period. The period tabs live in the title
      * row, so switching granularity costs no extra vertical space - the card

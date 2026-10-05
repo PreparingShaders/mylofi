@@ -597,20 +597,13 @@ async def build_workout_session(
     return await get_workout_session(db, session.id, user_id)
 
 
-async def quick_start_workout(
-    db: AsyncSession,
-    user_id: int,
-    goal: str,
-) -> WorkoutSession:
-    """Create a workout session from catalog exercises for a given goal.
+async def select_quick_start_exercises(db: AsyncSession, goal: str) -> List[ExerciseCatalog]:
+    """The catalog picks a quick start is built from, for a goal.
 
-    Goal presets:
-      - strength:   compound lifts, 1 per major muscle group, 3x5
-      - hypertrophy: compound lifts + isolation accessories, 3x10
-      - endurance:  compound lifts + abs, 2x15
+    Shared with the AI preview: the plan has to talk about the movements the
+    quick start will really create, not a guess at them, or the badges would
+    describe a different workout than the one on screen.
     """
-    settings = WORKOUT_GOAL_SETTINGS.get(goal, WORKOUT_GOAL_SETTINGS["hypertrophy"])
-
     selected: List[ExerciseCatalog] = []
     for group in MAJOR_MUSCLE_GROUPS:
         result = await db.execute(
@@ -640,6 +633,25 @@ async def quick_start_workout(
             ex = result.scalar_one_or_none()
             if ex:
                 selected.append(ex)
+
+    return selected
+
+
+async def quick_start_workout(
+    db: AsyncSession,
+    user_id: int,
+    goal: str,
+) -> WorkoutSession:
+    """Create a workout session from catalog exercises for a given goal.
+
+    Goal presets:
+      - strength:   compound lifts, 1 per major muscle group, 3x5
+      - hypertrophy: compound lifts + isolation accessories, 3x10
+      - endurance:  compound lifts + abs, 2x15
+    """
+    settings = WORKOUT_GOAL_SETTINGS.get(goal, WORKOUT_GOAL_SETTINGS["hypertrophy"])
+
+    selected = await select_quick_start_exercises(db, goal)
 
     if not selected:
         raise ValueError("Exercise catalog is empty")

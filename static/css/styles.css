@@ -1478,6 +1478,312 @@ input, select, textarea:focus {
     color: #a1a1aa;
 }
 
+/* ============ AI workout coach ============ */
+/* The verdict on a session, with the same two states as the daily recap: the
+   verdict or the reason there is none. It is a sibling of .daily-summary on
+   purpose - same slot, same empty line, same accent - so the history screen does
+   not read as two different kinds of card depending on which feature answered. */
+.ai-workout {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 10px;
+    padding: 12px 14px;
+}
+.ai-workout__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+.ai-workout__title {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #52525b;
+}
+.dark .ai-workout__title {
+    color: #a1a1aa;
+}
+.ai-workout__icon {
+    width: 11px;
+    height: 11px;
+    color: #7c3aed;
+}
+.dark .ai-workout__icon {
+    color: #c084fc;
+}
+.ai-workout__date {
+    min-width: 0;
+    font-size: 11px;
+    font-weight: 600;
+    color: #71717a;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.ai-workout__score {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: auto;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    color: #6d28d9;
+    background: rgba(139, 92, 246, 0.12);
+    box-shadow: 0 0 10px rgba(139, 92, 246, 0.26);
+}
+.dark .ai-workout__score {
+    color: #d8b4fe;
+    background: rgba(192, 132, 252, 0.16);
+    box-shadow: 0 0 12px rgba(192, 132, 252, 0.38);
+}
+.ai-workout__text {
+    font-size: 13px;
+    line-height: 1.45;
+    color: #3f3f46;
+}
+.dark .ai-workout__text {
+    color: #d4d4d8;
+}
+.ai-workout__empty {
+    font-size: 12px;
+    line-height: 1.4;
+    color: #71717a;
+}
+/* Quota note under an empty card: why the verdict is missing when the tier is
+   the reason. Same voice as .daily-summary__empty, one line darker. */
+.ai-workout__quota {
+    font-size: 11px;
+    line-height: 1.4;
+    color: #a16207;
+}
+.dark .ai-workout__quota {
+    color: #fbbf24;
+}
+/* Breakdown behind <details>: the verdict is the glance, the figures are opt-in. */
+.ai-workout__details {
+    margin-top: 2px;
+}
+.ai-workout__summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 5px 0;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #71717a;
+    user-select: none;
+}
+.ai-workout__summary::-webkit-details-marker {
+    display: none;
+}
+.ai-workout__summary::after {
+    content: "›";
+    display: inline-block;
+    margin-left: 4px;
+    transition: transform 0.15s ease;
+}
+.ai-workout__details[open] .ai-workout__summary::after {
+    transform: rotate(90deg);
+}
+.dark .ai-workout__summary {
+    color: #a1a1aa;
+}
+/* Volume per muscle group: the bar is scaled to the heaviest group in the
+   session, so the card reads as a distribution rather than as absolute
+   magnitudes the user would have to know the totals to judge. */
+.ai-workout__groups {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 2px 0 6px;
+}
+.ai-workout__group-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 11px;
+}
+.ai-workout__group-name {
+    font-weight: 600;
+    color: #52525b;
+    text-transform: capitalize;
+}
+.dark .ai-workout__group-name {
+    color: #d4d4d8;
+}
+.ai-workout__group-value {
+    font-variant-numeric: tabular-nums;
+    color: #71717a;
+    white-space: nowrap;
+}
+.ai-workout__group-bar {
+    height: 4px;
+    border-radius: 9999px;
+    background: rgba(120, 113, 108, 0.16);
+    overflow: hidden;
+    margin-top: 2px;
+}
+.ai-workout__group-bar span {
+    display: block;
+    height: 100%;
+    border-radius: 9999px;
+    background: linear-gradient(90deg, #a855f7, #6366f1);
+    transition: width 0.3s ease;
+}
+.dark .ai-workout__group-bar span {
+    background: linear-gradient(90deg, #c084fc, #818cf8);
+}
+.ai-workout__highlights {
+    margin: 0 0 6px;
+    padding-left: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #3f3f46;
+}
+.dark .ai-workout__highlights {
+    color: #d4d4d8;
+}
+.ai-workout__recovery {
+    margin: 0 0 6px;
+    padding: 8px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #3f3f46;
+    background: rgba(132, 204, 22, 0.1);
+    border: 1px solid rgba(132, 204, 22, 0.24);
+}
+.dark .ai-workout__recovery {
+    color: #d4d4d8;
+    background: rgba(132, 204, 22, 0.12);
+    border-color: rgba(132, 204, 22, 0.22);
+}
+.ai-workout__recs {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.ai-workout__rec {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 7px 10px;
+    border-radius: 12px;
+    background: rgba(120, 113, 108, 0.08);
+}
+.dark .ai-workout__rec {
+    background: rgba(255, 255, 255, 0.05);
+}
+.ai-workout__rec-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: #52525b;
+}
+.dark .ai-workout__rec-title {
+    color: #e4e4e7;
+}
+.ai-workout__rec-text {
+    font-size: 12px;
+    line-height: 1.4;
+    color: #71717a;
+}
+/* Analysis trigger on the workout card, the same lime action the daily recap
+   uses: the card always has exactly one thing it can do, and it reads as a
+   button rather than as another line of prose. */
+.ai-workout__analyze {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+    padding: 7px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    color: #4d7c0f;
+    background: rgba(132, 204, 22, 0.14);
+    border: 1px solid rgba(132, 204, 22, 0.32);
+    box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.12);
+    transition: opacity 0.15s ease;
+}
+.ai-workout__analyze:disabled {
+    opacity: 0.55;
+}
+.ai-workout__analyze-icon {
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+}
+.dark .ai-workout__analyze {
+    color: #d9f99d;
+    background: rgba(132, 204, 22, 0.16);
+    border-color: rgba(132, 204, 22, 0.3);
+    box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.2);
+}
+/* The coach's plan on an active exercise card. One soft row: the targets in the
+   accent, the focus line beside them, the motivation line underneath in the
+   quietest text on the card. It must not compete with the set rows below it. */
+.ai-plan {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
+    padding: 7px 10px;
+    border-radius: 14px;
+    font-size: 11px;
+    line-height: 1.35;
+    background: rgba(168, 85, 247, 0.08);
+    border: 1px solid rgba(168, 85, 247, 0.22);
+}
+.dark .ai-plan {
+    background: rgba(192, 132, 252, 0.1);
+    border-color: rgba(192, 132, 252, 0.2);
+}
+.ai-plan__targets {
+    flex-shrink: 0;
+    padding: 2px 7px;
+    border-radius: 9999px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: #7e22ce;
+    background: rgba(168, 85, 247, 0.14);
+}
+.dark .ai-plan__targets {
+    color: #d8b4fe;
+    background: rgba(192, 132, 252, 0.16);
+}
+.ai-plan__focus {
+    min-width: 0;
+    color: #52525b;
+}
+.dark .ai-plan__focus {
+    color: #d4d4d8;
+}
+.ai-plan__motivation {
+    flex-basis: 100%;
+    color: #71717a;
+}
+
 /* ============ Nutrition page layout (iPhone 13 mini and up) ============ */
 /* The nutrition page is a scrolling document, not a fixed one-screen shell: the
    dashboard plus the meal cards are taller than any phone, and a card that has to

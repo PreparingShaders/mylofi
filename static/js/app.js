@@ -586,6 +586,9 @@ const App = {
             case 'complete-workout':
                 await this.handleCompleteWorkout(event);
                 break;
+            case 'complete-workout-ai':
+                await Workouts.completeWorkoutWithAi(this, event);
+                break;
             case 'cancel-workout':
                 await this.handleCancelWorkout(event);
                 break;
@@ -697,18 +700,7 @@ const App = {
         }
 
         // Flush all active weight and rep inputs before completing
-        const inputs = document.querySelectorAll('[data-set-id] input[data-field]');
-        const promises = Array.from(inputs).map(async input => {
-            const row = input.closest('[data-set-id]');
-            if (!row) return;
-            const setId = parseInt(row.dataset.setId);
-            const field = input.dataset.field;
-            const value = field === 'weight' ? parseFloat(input.value) : parseInt(input.value);
-            if (!isNaN(value)) {
-                await API.patch(`/workouts/sets/${setId}`, { [field]: value }, this.state.tokens.access).catch(() => {});
-            }
-        });
-        await Promise.all(promises);
+        await this.flushPendingSetEdits();
 
         try {
             await API.post(`/workouts/sessions/${sessionId}/complete`, null, this.state.tokens.access);
@@ -725,6 +717,27 @@ const App = {
             return;
         }
         await this.renderPage('workouts');
+    },
+
+    /**
+     * Push every weight and rep the user has typed but not yet sent, so the
+     * numbers a verdict is written about are the ones on screen. Shared by both
+     * completion paths: the coach reads the completed sets, so a value still
+     * sitting in an input would be analysed as the previous one.
+     */
+    async flushPendingSetEdits() {
+        const inputs = document.querySelectorAll('[data-set-id] input[data-field]');
+        const promises = Array.from(inputs).map(async input => {
+            const row = input.closest('[data-set-id]');
+            if (!row) return;
+            const setId = parseInt(row.dataset.setId);
+            const field = input.dataset.field;
+            const value = field === 'weight' ? parseFloat(input.value) : parseInt(input.value);
+            if (!isNaN(value)) {
+                await API.patch(`/workouts/sets/${setId}`, { [field]: value }, this.state.tokens.access).catch(() => {});
+            }
+        });
+        await Promise.all(promises);
     },
 
     async handleCancelWorkout(event) {

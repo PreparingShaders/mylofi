@@ -244,6 +244,24 @@ class WorkoutSession(Base):
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # AI coach verdict for this session. All three are nullable: a session is
+    # written before it is analysed and most are never analysed at all, so the
+    # feature is opt-in rather than part of the session's lifecycle.
+    # `ai_summary` is the headline text the history card renders,
+    # `ai_recommendations_json` the JSON-encoded breakdown under it (overall
+    # score, per-muscle-group volume, recovery advice, recommendations) - plain
+    # text like `Meal.tags`, so no JSON column is needed on SQLite either.
+    # `analyzed_at` records when the verdict was written, so a re-analysis is
+    # visible as such and the Free-tier cooldown has a date to count from.
+    ai_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ai_recommendations_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    analyzed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Persona the verdict was written in. Copied from the profile at analysis time
+    # rather than read live, for the same reason meals and daily recaps carry
+    # theirs: switching persona must not relabel text written in another voice.
+    ai_persona: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -256,6 +274,15 @@ class WorkoutSession(Base):
     )
 
     __table_args__ = (Index("ix_workout_sessions_user_started", "user_id", "started_at"),)
+
+    @property
+    def has_ai_analysis(self) -> bool:
+        """Whether this session already carries an AI verdict.
+
+        Read by the history list to tell "analyze" from "re-analyze" without
+        shipping the whole verdict text in a list of a hundred sessions.
+        """
+        return bool(self.ai_summary) or bool(self.analyzed_at)
 
 
 class WorkoutSessionExercise(Base):

@@ -478,6 +478,10 @@ class WorkoutSessionResponse(WorkoutSessionBase):
     completed_at: Optional[datetime] = None
     duration_seconds: Optional[int] = None
     exercises: List[WorkoutSessionExerciseResponse] = []
+    # Read from the model's property rather than the columns: the history list
+    # renders one row per session and only needs to know which ones carry a
+    # verdict, not the verdict itself.
+    has_ai_analysis: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -567,6 +571,21 @@ class WSMealUpdatePayload(BaseModel):
     error_message: Optional[str] = None
 
 
+# The AI workout coach keeps its contracts in their own module (they answer a
+# different question than everything above, and they are the only ones that carry
+# a quota block). Imported at the bottom because the module reuses the datetime
+# serializer defined at the top of this file.
+from app.schemas.ai_workout import (  # noqa: E402
+    AIWorkoutMuscleVolume,
+    AIWorkoutPreviewExercise,
+    AIWorkoutPreviewRequest,
+    AIWorkoutPreviewResponse,
+    AIWorkoutRecommendation,
+    AIWorkoutSummaryRequest,
+    AIWorkoutSummaryResponse,
+)
+
+
 __all__ = [
     "UserRole",
     "MealStatus",
@@ -629,4 +648,11 @@ __all__ = [
     "BuildWorkoutSessionRequest",
     "QuickStartWorkoutRequest",
     "QuickStartWorkoutResponse",
+    "AIWorkoutPreviewExercise",
+    "AIWorkoutPreviewRequest",
+    "AIWorkoutPreviewResponse",
+    "AIWorkoutSummaryRequest",
+    "AIWorkoutSummaryResponse",
+    "AIWorkoutMuscleVolume",
+    "AIWorkoutRecommendation",
 ]

@@ -47,6 +47,10 @@ from app.schemas import (
     QuickStartWorkoutResponse,
     WorkoutSetUpdate,
     WorkoutSetCreate,
+    AIWorkoutPreviewRequest,
+    AIWorkoutPreviewResponse,
+    AIWorkoutSummaryRequest,
+    AIWorkoutSummaryResponse,
 )
 from app.services.auth import (
     verify_password,
@@ -116,6 +120,11 @@ from app.services.nutrition_targets import (
     normalize_goal,
 )
 from app.services.ai_summary import get_or_create_daily_summary
+from app.services.ai_workout_service import (
+    analyze_workout_session,
+    build_workout_preview,
+    get_workout_analysis,
+)
 from app.models import User, Meal
 from app.ws.manager import manager, get_websocket_user
 
@@ -1058,6 +1067,93 @@ async def update_set_endpoint(
     if not workout_set:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Set not found")
     return {"message": "Set updated", "is_completed": workout_set.is_completed}
+
+
+# ===== AI Workout Coach Routes =====
+# The coach answers at the two ends of a session: a plan before the first set, a
+# verdict after the last one. Both degrade to an empty state with a reason rather
+# than failing the request - the workout is what the user came for, and neither
+# the model nor the tier may take it away. That also keeps a quota answer out of
+# HTTP 403, which the client treats as a reason to drop the session.
+@router.post("/ai/workout-preview", response_model=AIWorkoutPreviewResponse)
+async def ai_workout_preview(
+    request: AIWorkoutPreviewRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Recommended weights, reps and focus notes for the session about to start.
+
+    Answers for a saved template (`template_id`) or for a plain list of exercise
+    names, so a session assembled from the catalog can be planned too. Nothing is
+    stored and no quota is spent: the plan belongs to the workout in progress,
+    and the weekly allowance is for the retrospective analysis. A model failure
+    answers `available: false` with a reason and the user starts the workout
+    without the coach.
+    """
+    template = None
+    if request.template_id is not None:
+        template = await get_workout_template(db, request.template_id, current_user.id)
+        if template is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+
+    return await build_workout_preview(
+        db,
+        current_user,
+        template=template,
+        exercises=request.exercises,
+        goal=request.goal,
+        name=request.name,
+    )
+
+
+@router.post("/ai/workout-summary/{workout_id}", response_model=AIWorkoutSummaryResponse)
+async def ai_workout_summary(
+    workout_id: int,
+    request: Optional[AIWorkoutSummaryRequest] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Analyse a finished or historical workout and store the verdict on it.
+
+    `notes` is what the model cannot see on its own (a sore shoulder, a rushed
+    session), and `force=true` rewrites a verdict that is already stored - the
+    re-analyze button on the history card, which on the Free tier spends the same
+    weekly allowance as a first analysis.
+
+    A session that was never analysed, a spent quota and a failed generation all
+    answer `available: false` with a reason, and a failed re-analysis keeps the
+    verdict that was already stored.
+    """
+    data = request or AIWorkoutSummaryRequest()
+    session = await get_workout_session(db, workout_id, current_user.id)
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    return await analyze_workout_session(
+        db,
+        current_user,
+        session,
+        notes=data.notes,
+        force=data.force,
+    )
+
+
+@router.get("/ai/workout-summary/{workout_id}", response_model=AIWorkoutSummaryResponse)
+async def ai_workout_summary_read(
+    workout_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Read the stored verdict of a workout, or the reason there is none.
+
+    Never asks the model: re-opening a session in the history costs no quota, and
+    a session that was never analysed is an empty card rather than a silent spend.
+    """
+    session = await get_workout_session(db, workout_id, current_user.id)
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    return await get_workout_analysis(db, current_user, session)
 
 
 # ===== WebSocket =====
