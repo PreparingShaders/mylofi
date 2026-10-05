@@ -502,6 +502,10 @@ const App = {
     
     showPage(pageName) {
         console.log(`[App] Showing page: ${pageName}`);
+        // Any page change tears the workout screen down, so a break still being
+        // timed is over: record the seconds that were actually taken instead of
+        // letting the interval keep counting against a bar nobody can see.
+        Workouts.stopRestTimer({ app: this });
         this.state.currentPage = pageName;
         this.elements.navItems.forEach(item => item.classList.toggle('active', item.dataset.page === pageName));
         this.renderPage(pageName);
@@ -693,6 +697,10 @@ const App = {
             cancelText: 'Назад'
         })) return;
 
+        // The session ends here, so the break still running belongs to it: record
+        // the seconds that were actually taken before anything is closed.
+        Workouts.stopRestTimer({ app: this });
+
         // A session created offline has no server id yet: close it locally and queue the request
         if (Workouts.completeLocalSession(this)) {
             await this.renderPage('workouts');
@@ -749,6 +757,11 @@ const App = {
             confirmClass: 'bg-red-600 hover:bg-red-700 text-white shadow-md',
             cancelText: 'Назад'
         })) return;
+
+        // The session ends here, so the break still running belongs to it: record
+        // the seconds that were actually taken before anything is closed.
+        Workouts.stopRestTimer({ app: this });
+
         if (Workouts.cancelLocalSession(this)) {
             await this.renderPage('workouts');
             return;

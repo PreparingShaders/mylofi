@@ -15,17 +15,19 @@ error, and a stored verdict must survive every failed path.
 import json
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from app.services.ai_vision import EMOJI_PATTERN, count_sentences  # noqa: E402
 from app.services.ai_workout_service import (  # noqa: E402
     MAX_EXERCISES_IN_PROMPT,
+    MAX_HISTORY_SETS,
     REASON_FAILED,
     REASON_NO_EXERCISES,
     REASON_NO_SETS,
@@ -34,14 +36,22 @@ from app.services.ai_workout_service import (  # noqa: E402
     MAX_NOTES_CHARS,
     SUMMARY_MAX_SENTENCES,
     SUMMARY_MIN_SENTENCES,
+    TIP_MAX_WORDS,
+    TIP_MIN_WORDS,
+    _clean_tip,
+    _performance_line,
     build_summary_payload,
     build_workout_preview_prompt,
     build_workout_summary_prompt,
+    load_recent_performance,
     load_stored_analysis,
     _preview_validator,
+    _validate_workout_preview,
     _validate_workout_summary,
 )
+from app.schemas import WorkoutSetUpdate  # noqa: E402
 from app.services.limits import AI_ANALYSIS_COOLDOWN_DAYS, can_run_workout_ai  # noqa: E402
+from app.services.workout import resolve_duration_seconds, update_set_completion  # noqa: E402
 
 # Four days ago, i.e. inside the 7-day window: a Free user who ran the coach then
 # is blocked until the cooldown is out.
@@ -167,6 +177,9 @@ class _FakeResult:
 
     def scalars(self):
         return SimpleNamespace(all=lambda: list(self._scalars))
+
+    def scalar_one_or_none(self):
+        return self._scalars[0] if self._scalars else None
 
 
 class _StubSession:
@@ -322,6 +335,43 @@ def test_preview_prompt_states_the_no_digit_and_no_emoji_rules():
     assert "БЕЗ ЦИФР В ТЕКСТЕ" in prompt
     assert "НОЛЬ ЭМОДЗИ" in prompt
     assert not EMOJI_PATTERN.search(prompt)
+
+
+def test_preview_prompt_holds_the_weight_when_the_reps_fell():
+    """Adding weight on top of a dropped rep range is the advice that makes a
+    lifter stall, so the plan has to keep the weight and name the reps."""
+    prompt = _preview_prompt()
+
+    assert "ПРОГРЕССИВНАЯ ПЕРЕГРУЗКА" in prompt
+    assert "НЕ повышай рабочий вес" in prompt
+    assert "вернуть повторения в целевой диапазон" in prompt
+    # The rule is about the weight fields, so it is bound to the persona rule the
+    # way the closed exercise list is.
+    assert "правило прогрессии" in prompt
+
+
+def test_summary_prompt_holds_the_weight_when_the_reps_fell():
+    prompt = _summary_prompt()
+
+    assert "ПРОГРЕССИВНАЯ ПЕРЕГРУЗКА" in prompt
+    assert "НЕ рекомендуй увеличивать рабочий вес" in prompt
+    assert "закрепить текущий вес" in prompt
+    # The verdict is about this session, so the guard is stated in its terms.
+    assert "ниже целевого диапазона" in prompt
+
+
+def test_summary_prompt_bans_abstract_and_poetic_phrasing():
+    """Metaphors were the failure mode: a verdict about 'созерцание тренажера'
+    describes nothing the user can act on."""
+    prompt = _summary_prompt()
+
+    assert "СПОРТИВНАЯ КОНКРЕТИКА" in prompt
+    assert "запрещены абстрактные, метафорические и философские формулировки" in prompt.lower()
+    assert "созерцание тренажера" in prompt
+    assert "виток Вселенной" in prompt
+    # The rule names what to say instead, not only what not to say.
+    assert "тоннаж, интенсивность, плотность подходов" in prompt
+    assert "спортивная конкретика" in prompt
 
 
 def test_preview_prompt_reports_when_there_is_no_history_to_plan_from():
@@ -613,6 +663,7 @@ async def test_a_failed_model_keeps_the_last_verdict(monkeypatch):
         _FakeResult(scalars=[]),
         _FakeResult(scalars=[]),
         _FakeResult(scalars=[]),
+        _FakeResult(scalars=[]),
     )
     payload = await service.analyze_workout_session(db, _user(), stored, force=True)
 
@@ -646,6 +697,7 @@ async def test_a_first_verdict_is_generated_and_stored(monkeypatch):
         _FakeResult(scalars=[]),
         _FakeResult(scalars=[]),
         _FakeResult(scalars=[]),
+        _FakeResult(scalars=[]),
     )
     user = _user()
     session = _session()
@@ -674,6 +726,7 @@ async def test_reanalysing_is_flagged_as_a_rewrite(monkeypatch):
     db = _StubSession(
         _FakeResult(row=_metrics_row()),
         _FakeResult(scalars=[10]),
+        _FakeResult(scalars=[]),
         _FakeResult(scalars=[]),
         _FakeResult(scalars=[]),
         _FakeResult(scalars=[]),
@@ -909,12 +962,20 @@ async def test_the_history_of_the_judged_session_is_left_out(monkeypatch):
         _FakeResult(scalars=[]),
         _FakeResult(scalars=[]),
         _FakeResult(scalars=[]),
+        _FakeResult(scalars=[]),
     )
 
     await service.analyze_workout_session(db, _user(), _session(id=11))
 
-    aggregate = str(db.statements[2])
-    assert "!= 11" in aggregate or "!= :" in aggregate
+    # Both reads of the history have to leave the judged session out, otherwise
+    # the working sets the coach is told about end in the set it is judging.
+    history_reads = [
+        str(statement)
+        for statement in db.statements
+        if "workout_session_exercises.session_id IN" in str(statement)
+    ]
+    assert len(history_reads) == 2
+    assert all("workout_sessions.id !=" in sql for sql in history_reads)
 
 
 def test_a_session_with_no_known_duration_does_not_claim_zero_minutes():
@@ -939,3 +1000,320 @@ def test_the_weekly_allowance_is_the_same_one_the_limits_table_advertises():
     assert decision.allowed is False
     assert decision.resets_at is not None
     assert (decision.resets_at - RECENT).days == AI_ANALYSIS_COOLDOWN_DAYS
+
+
+# --- the history the coach reasons about --------------------------------------
+
+OLD_SESSION = datetime(2026, 9, 1, 18, tzinfo=timezone.utc)
+NEW_SESSION = datetime(2026, 9, 8, 18, tzinfo=timezone.utc)
+
+
+def _aggregate_row(**overrides):
+    row = {
+        "name": "Жим лёжа",
+        "session_id": 10,
+        "tonnage_kg": 480.0,
+        "sets_count": 3,
+        "top_weight_kg": 55.0,
+        "top_reps": 10,
+        "best_e1rm": 73.3,
+        "started_at": OLD_SESSION,
+    }
+    row.update(overrides)
+    return SimpleNamespace(**row)
+
+
+def _set_row(session_id, weight_kg, reps, name="Жим лёжа"):
+    return SimpleNamespace(name=name, session_id=session_id, weight_kg=weight_kg, reps=reps)
+
+
+@pytest.mark.asyncio
+async def test_the_history_pairs_each_weight_with_the_reps_actually_done():
+    """The aggregate's max weight and max reps can come from two different sets:
+    60 kg was never done for 10 reps, and a coach told that loads it. The sets
+    themselves are read, so the line is the heaviest set that really happened."""
+    db = _StubSession(
+        _FakeResult(scalars=[10, 11]),
+        _FakeResult(
+            scalars=[
+                _aggregate_row(),
+                _aggregate_row(
+                    session_id=11,
+                    tonnage_kg=440.0,
+                    top_weight_kg=60.0,
+                    top_reps=5,
+                    best_e1rm=70.0,
+                    started_at=NEW_SESSION,
+                ),
+            ]
+        ),
+        _FakeResult(
+            scalars=[
+                _set_row(10, 40.0, 10),
+                _set_row(10, 55.0, 8),
+                _set_row(11, 50.0, 10),
+                _set_row(11, 60.0, 5),
+            ]
+        ),
+    )
+
+    profile = (await load_recent_performance(db, 7, ["Жим лёжа"]))["жим лёжа"]
+    line = _performance_line(profile)
+
+    # Newest first, and paired per session: 60x5 in the newest session is a
+    # regression against 55x8, which is what the overload guard has to see.
+    assert profile["recent_sets"] == [
+        {"weight_kg": 60.0, "reps": 5},
+        {"weight_kg": 55.0, "reps": 8},
+    ]
+    assert "60x5 -> 55x8" in line
+    assert "60x10" not in line
+    # The trend stays oldest first, so "up" in the prompt reads as up on screen.
+    assert profile["tonnage_trend"] == [480.0, 440.0]
+
+
+@pytest.mark.asyncio
+async def test_the_history_line_is_built_for_an_exercise_with_no_sets_to_read():
+    """A session that contributed aggregates but no readable working set leaves
+    the sequence empty rather than printing a made-up pair."""
+    db = _StubSession(
+        _FakeResult(scalars=[10]),
+        _FakeResult(scalars=[_aggregate_row()]),
+        _FakeResult(scalars=[]),
+    )
+
+    profile = (await load_recent_performance(db, 7, ["Жим лёжа"]))["жим лёжа"]
+    line = _performance_line(profile)
+
+    assert profile["recent_sets"] == []
+    assert "рабочие подходы последних тренировок (от свежей к старой): ?" in line
+    assert "55 кг на 10 повт." in line
+
+
+@pytest.mark.asyncio
+async def test_the_history_caps_the_working_sets_it_spells_out():
+    """A long history stays a readable line: the last few sessions are what the
+    next session starts from, older ones are the tonnage trend's business."""
+    ids = list(range(20, 20 + MAX_HISTORY_SETS + 3))
+    db = _StubSession(
+        _FakeResult(scalars=ids),
+        _FakeResult(
+            scalars=[
+                _aggregate_row(
+                    session_id=session_id,
+                    started_at=OLD_SESSION + timedelta(days=session_id - 20),
+                )
+                for session_id in ids
+            ]
+        ),
+        _FakeResult(scalars=[_set_row(session_id, 40.0 + session_id, 8) for session_id in ids]),
+    )
+
+    profile = (await load_recent_performance(db, 7, ["Жим лёжа"]))["жим лёжа"]
+
+    assert len(profile["recent_sets"]) == MAX_HISTORY_SETS
+    assert profile["sessions"] == len(ids)
+    # The newest ones are the ones kept: the next session starts from those.
+    assert profile["recent_sets"][0]["weight_kg"] == float(40 + ids[-1])
+
+
+@pytest.mark.asyncio
+async def test_the_duration_the_coach_is_told_never_goes_negative():
+    """A row written before durations were normalised can still hold a negative
+    value, and it is read back through the SQL fallback for closed sessions."""
+    import app.services.ai_workout_service as service
+
+    db = _StubSession(_FakeResult(row=_metrics_row(duration_seconds=-10620)))
+
+    await service.load_workout_metrics(db, 42)
+
+    assert "greatest(" in str(db.statements[0]).lower()
+
+
+# --- the session clock --------------------------------------------------------
+
+def test_a_duration_is_never_negative_when_the_clocks_disagree():
+    """The bug this guards: a session opened with a local +03:00 wall clock and
+    closed by a UTC server comes back as an inverted interval, which is how a
+    three-hour workout was stored and shown back as -177 minutes."""
+    # The session really ran from 02:00 local (23:00 UTC) to 23:03 UTC.
+    completed_utc = datetime(2026, 9, 8, 23, 3, tzinfo=timezone.utc)
+    stored_start = datetime(2026, 9, 9, 2, 0)
+
+    # The naive wall clock the column hands back is the local one, so the raw
+    # interval reads as -177 min; the magnitude is the only honest figure left.
+    assert resolve_duration_seconds(stored_start, completed_utc) == 177 * 60
+
+    # The same start carrying its offset is measured exactly instead of estimated.
+    started_local = stored_start.replace(tzinfo=timezone(timedelta(hours=3)))
+    assert resolve_duration_seconds(started_local, completed_utc) == 3 * 60
+
+
+def test_a_duration_is_the_same_instant_whatever_offset_it_arrives_in():
+    start = datetime(2026, 9, 8, 20, 0, tzinfo=timezone.utc)
+    end = start + timedelta(minutes=45)
+
+    assert resolve_duration_seconds(start, end) == 45 * 60
+    # A naive stamp is read as UTC, which is what the column stores.
+    assert resolve_duration_seconds(start.replace(tzinfo=None), end.replace(tzinfo=None)) == 45 * 60
+    # The same moment written in another zone is still zero, not a negative hour.
+    assert resolve_duration_seconds(start, start.astimezone(timezone(timedelta(hours=5)))) == 0
+    assert resolve_duration_seconds(start, end.astimezone(timezone(timedelta(hours=5)))) == 45 * 60
+
+
+def test_a_session_without_a_start_has_no_duration():
+    assert resolve_duration_seconds(None, datetime(2026, 9, 8, 20, 0, tzinfo=timezone.utc)) == 0
+    assert resolve_duration_seconds(datetime(2026, 9, 8, 20, 0, tzinfo=timezone.utc), None) == 0
+    assert resolve_duration_seconds(None, None) == 0
+
+
+# --- the rest the coach never sees ---------------------------------------------
+
+LONG_TIP = (
+    "Следи за глубиной амплитуды в нижней точке и не позволяй плечам "
+    "заваливаться вперёд, иначе нагрузка уйдёт не туда и упражнение перестанет "
+    "работать так, как задумано"
+)
+
+
+def test_an_exercise_tip_is_cut_to_the_length_the_card_has_room_for():
+    """A long tip is not a small problem: on a 500px card it pushes the set rows
+    off the screen, so the clamp is enforced rather than only requested."""
+    cut = _clean_tip(LONG_TIP)
+
+    assert cut is not None
+    assert len(cut.split()) == TIP_MAX_WORDS
+    # Cut on a word end, not mid-word, so the card never shows half a word.
+    assert cut.endswith(LONG_TIP.split()[TIP_MAX_WORDS - 1])
+
+
+def test_a_tip_that_already_fits_is_left_exactly_as_written():
+    """Padding or rewording a tip the model got right is worse than leaving it."""
+    tip = "Держи лопатки сведёнными и не прогибайся в пояснице на финише подхода"
+
+    assert len(tip.split()) <= TIP_MAX_WORDS
+    assert _clean_tip(tip) == tip
+
+
+def test_a_tip_that_is_only_markup_or_emoji_reads_as_no_tip_at_all():
+    """The same rules as the verdict: an emoji-only or bullet-only field must not
+    render as an empty purple row on the card."""
+    assert _clean_tip("🔥💪") is None
+    assert _clean_tip("- ") is None
+    assert _clean_tip(None) is None
+
+
+def test_the_preview_prompt_states_the_tip_length_and_the_persona_rule_keeps_it():
+    prompt = _preview_prompt()
+
+    assert "КОРОТКО" in prompt
+    assert f"каждая строка focus и motivation - {TIP_MIN_WORDS}-{TIP_MAX_WORDS} слов" in prompt
+    # The JSON contract has to say the same thing, or the model reads the field as
+    # an open-ended one and the rule is ignored.
+    assert f"Одно предложение из {TIP_MIN_WORDS}-{TIP_MAX_WORDS} слов" in prompt
+    assert "длина строк" in prompt
+
+
+def test_a_tip_the_model_wrote_at_length_still_fits_the_card():
+    """End to end through the validator: what the card renders is clamped even
+    when the prompt was ignored."""
+    result = _validate_workout_preview(
+        {
+            "focus": LONG_TIP,
+            "motivation": LONG_TIP,
+            "recommendations": [
+                {
+                    "name": "Жим лёжа",
+                    "sets": 4,
+                    "reps": 8,
+                    "weight_kg": 62.5,
+                    "rest_seconds": 120,
+                    "focus": LONG_TIP,
+                    "motivation": LONG_TIP,
+                }
+            ],
+        },
+        ["жим лёжа"],
+    )
+
+    recommendation = result["recommendations"][0]
+    assert len(recommendation["focus"].split()) == TIP_MAX_WORDS
+    assert len(recommendation["motivation"].split()) == TIP_MAX_WORDS
+
+
+@pytest.mark.asyncio
+async def test_the_rest_actually_taken_is_stored_next_to_the_rest_that_was_planned():
+    """The two are separate columns on purpose: `rest_seconds` is what the plan
+    asked for, `rest_time_seconds` is what the user took, and the gap between
+    them is the only thing a rest timer can tell us."""
+    workout_set = SimpleNamespace(
+        is_completed=True,
+        completed_at=datetime(2026, 9, 8, 20, 0, tzinfo=timezone.utc),
+        weight_kg=60.0,
+        reps=8,
+        rpe=None,
+        rest_seconds=120,
+        rest_time_seconds=None,
+    )
+    db = _StubSession(_FakeResult(scalars=[workout_set]))
+
+    stored = await update_set_completion(db, 5, 7, rest_time_seconds=95)
+
+    assert stored is workout_set
+    assert workout_set.rest_time_seconds == 95
+    # The planned rest is the target, never the measurement.
+    assert workout_set.rest_seconds == 120
+    assert db.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_undoing_a_set_drops_the_rest_measured_after_it():
+    """An unchecked set was not performed, so the break the timer recorded after
+    it describes a set that does not exist - and would otherwise survive as a
+    plausible-looking number in the history."""
+    workout_set = SimpleNamespace(
+        is_completed=True,
+        completed_at=datetime(2026, 9, 8, 20, 0, tzinfo=timezone.utc),
+        weight_kg=60.0,
+        reps=8,
+        rpe=None,
+        rest_seconds=120,
+        rest_time_seconds=95,
+    )
+    db = _StubSession(_FakeResult(scalars=[workout_set]))
+
+    await update_set_completion(db, 5, 7, is_completed=False)
+
+    assert workout_set.is_completed is False
+    assert workout_set.completed_at is None
+    assert workout_set.rest_time_seconds is None
+
+
+@pytest.mark.asyncio
+async def test_a_measurement_survives_the_uncheck_that_shared_its_patch():
+    """Order inside the update matters: the rest is applied after the completion
+    branch, so an explicit measurement is never swallowed by the clear above."""
+    workout_set = SimpleNamespace(
+        is_completed=True,
+        completed_at=datetime(2026, 9, 8, 20, 0, tzinfo=timezone.utc),
+        weight_kg=60.0,
+        reps=8,
+        rpe=None,
+        rest_seconds=120,
+        rest_time_seconds=95,
+    )
+    db = _StubSession(_FakeResult(scalars=[workout_set]))
+
+    await update_set_completion(db, 5, 7, is_completed=False, rest_time_seconds=42)
+
+    assert workout_set.rest_time_seconds == 42
+
+
+def test_the_set_patch_accepts_the_measured_rest_and_refuses_a_negative_one():
+    """`ge=0` is the whole guard: a client that sends -30 must be rejected rather
+    than stored as a break that lasts minus half a minute."""
+    patch = WorkoutSetUpdate(rest_time_seconds=0)
+    assert patch.rest_time_seconds == 0
+
+    with pytest.raises(ValidationError):
+        WorkoutSetUpdate(rest_time_seconds=-30)

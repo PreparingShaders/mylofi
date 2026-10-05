@@ -337,10 +337,14 @@
         </div>
         
         <!-- Toast Container -->
-        <div id="toast-container" class="fixed bottom-24 left-4 right-4 z-50 flex flex-col gap-2 pointer-events-none"></div>
-        
+        <!-- Above the modal host, and both above the start countdown (z-[100], the
+             blurred overlay). A countdown runs while requests are already in
+             flight, so its own toasts - "нет сети", "шаблон удалён" - used to land
+             behind the blur and go unseen until it lifted. -->
+        <div id="toast-container" class="fixed bottom-24 left-4 right-4 z-[130] flex flex-col gap-2 pointer-events-none"></div>
+
         <!-- Modals Container -->
-        <div id="modals" class="fixed inset-0 z-50 pointer-events-none"></div>
+        <div id="modals" class="fixed inset-0 z-[120] pointer-events-none"></div>
     </div>
 
     <!-- Service Worker Registration -->

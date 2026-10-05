@@ -27,7 +27,7 @@ import json
 import logging
 import math
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import case, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -77,6 +77,18 @@ SUMMARY_MAX_SENTENCES = 6
 MAX_EXERCISES_IN_PROMPT = 12
 MAX_NOTES_CHARS = 400
 MAX_RECENT_SESSIONS = 8
+# Working sets spelled out per exercise in the prompt, newest first: the last few
+# sessions of "weight x reps" are what makes a weight going up while the reps go
+# down visible, which a single "last weight" figure cannot show.
+MAX_HISTORY_SETS = 3
+# Length of the coach's per-exercise lines on the active workout card. The card is
+# one exercise wide between two set rows, so a line the model writes at length
+# pushes the set list off the screen on a phone and shrinks to nothing on a
+# desktop. 12-15 words is what fits there without being cut mid-thought. The upper
+# bound is enforced by a clamp; the lower one is a prompt rule only, because
+# padding a tip the model already wrote well is worse than a slightly short one.
+TIP_MIN_WORDS = 12
+TIP_MAX_WORDS = 15
 MAX_MUSCLE_GROUPS = 8
 MAX_HIGHLIGHTS = 4
 MAX_RECOMMENDATIONS = 4
@@ -180,6 +192,26 @@ def _clean_line(value: Any, limit: int) -> Optional[str]:
         return None
     # A field the model filled with a bare list marker reads as a broken card.
     return cleaned.lstrip("-•*— ").strip() or None
+
+
+def _clean_tip(value: Any) -> Optional[str]:
+    """A coach's line for one exercise, cut to TIP_MAX_WORDS words.
+
+    The rule is asked for in the prompt and applied here, because a model that
+    ignores the length still has to produce a card that fits: the cut lands on a
+    word end so the line stays readable, and a tip that already fits is left
+    exactly as written rather than rephrased.
+    """
+    cleaned = _clean_line(value, MAX_NOTE_CHARS)
+    if not cleaned:
+        return None
+    words = cleaned.split()
+    if len(words) <= TIP_MAX_WORDS:
+        return cleaned
+    logger.info(
+        f"[AI Workout] Exercise tip is {len(words)} words, cutting to {TIP_MAX_WORDS}: {cleaned!r}"
+    )
+    return " ".join(words[:TIP_MAX_WORDS])
 
 
 def _clean_optional_number(value: Any, low: float, high: float) -> Optional[float]:
@@ -316,9 +348,15 @@ async def load_workout_metrics(db: AsyncSession, session_id: int) -> Dict[str, A
             func.coalesce(func.sum(WorkoutSet.reps), 0).label("reps"),
             # The stored duration is filled in when the timer closes the session;
             # the timestamps are the fallback for a session closed another way.
-            func.coalesce(
-                func.nullif(WorkoutSession.duration_seconds, 0),
-                func.extract("epoch", WorkoutSession.completed_at - WorkoutSession.started_at),
+            # `greatest(0, ...)` is the backstop for a row written before the
+            # duration was normalised: a negative epoch would otherwise reach the
+            # prompt and be quoted back to the user as a negative workout length.
+            func.greatest(
+                func.coalesce(
+                    func.nullif(WorkoutSession.duration_seconds, 0),
+                    func.extract("epoch", WorkoutSession.completed_at - WorkoutSession.started_at),
+                ),
+                0,
             ).label("duration_seconds"),
             WorkoutSession.name.label("name"),
         )
@@ -396,6 +434,63 @@ async def load_muscle_volume(db: AsyncSession, session_id: int, user_id: int) ->
     ]
 
 
+async def _load_working_sets(
+    db: AsyncSession,
+    session_ids: Sequence[int],
+    *,
+    exclude_session_id: Optional[int] = None,
+) -> Dict[Tuple[str, int], Dict[str, float]]:
+    """The working set of every exercise in every given session, keyed by both.
+
+    The aggregate above reports the heaviest weight and the highest reps of a
+    session as two separate maxima, which can come from two different sets: a
+    "60 kg on 12 reps" line that was never performed. This reads the sets of the
+    same bounded window and keeps the heaviest one per exercise per session, so
+    a "60x8" in the prompt is a set the user actually did.
+
+    One query for the whole window, the same reason as the aggregate above: a
+    12-exercise plan stays a fixed number of reads instead of one per exercise.
+    """
+    if not session_ids:
+        return {}
+
+    result = await db.execute(
+        select(
+            WorkoutSessionExercise.name.label("name"),
+            WorkoutSession.id.label("session_id"),
+            WorkoutSet.weight_kg.label("weight_kg"),
+            WorkoutSet.reps.label("reps"),
+        )
+        .select_from(WorkoutSessionExercise)
+        .join(WorkoutSet, WorkoutSet.exercise_id == WorkoutSessionExercise.id)
+        .join(WorkoutSession, WorkoutSession.id == WorkoutSessionExercise.session_id)
+        .where(
+            WorkoutSessionExercise.session_id.in_(session_ids),
+            WorkoutSet.is_completed.is_(True),
+            WorkoutSet.weight_kg.isnot(None),
+            WorkoutSet.reps.isnot(None),
+            *(
+                [WorkoutSession.id != exclude_session_id]
+                if exclude_session_id is not None
+                else []
+            ),
+        )
+    )
+
+    working: Dict[Tuple[str, int], Dict[str, float]] = {}
+    for row in result.all():
+        key = _exercise_key(row.name)
+        if not key:
+            continue
+        pair = {"weight_kg": float(row.weight_kg or 0), "reps": int(row.reps or 0)}
+        best = working.get((key, row.session_id))
+        # Heaviest set wins, and equal weight is broken by reps, so a top set of
+        # eight reads as the working set instead of the five that preceded it.
+        if best is None or (pair["weight_kg"], pair["reps"]) > (best["weight_kg"], best["reps"]):
+            working[(key, row.session_id)] = pair
+    return working
+
+
 async def load_recent_performance(
     db: AsyncSession,
     user_id: int,
@@ -407,13 +502,15 @@ async def load_recent_performance(
 
     The preview may not invent a working weight, so it has to be told the real
     one. This is the history the plan reasons about: the last working set, the
+    working sets of the last `MAX_HISTORY_SETS` sessions as weight x reps, the
     best estimated 1RM (Epley, the same formula the tonnage trend uses) and the
     tonnage of the recent sessions, oldest first, so "up" reads as up.
 
-    The window is the last `MAX_RECENT_SESSIONS` completed sessions in one query
-    rather than one query per exercise, so a 12-exercise plan stays a single read.
+    The window is the last `MAX_RECENT_SESSIONS` completed sessions, read in two
+    queries (aggregates, then the sets themselves) rather than one query per
+    exercise, so a 12-exercise plan stays a fixed number of reads.
 
-    `exclude_session_id` leaves one session out of the aggregates: when the verdict
+    `exclude_session_id` leaves one session out of both reads: when the verdict
     is built for a session, its own sets are already given exactly above, and
     counting them twice would make every trend end in the number being judged.
     """
@@ -480,6 +577,10 @@ async def load_recent_performance(
             }
         )
 
+    working_sets = await _load_working_sets(
+        db, session_ids, exclude_session_id=exclude_session_id
+    )
+
     profile: Dict[str, Dict[str, Any]] = {}
     # A session with no start time sorts first rather than crashing the
     # comparison between an aware and a naive datetime.
@@ -488,11 +589,21 @@ async def load_recent_performance(
         newest = max(entries, key=lambda entry: (entry["started_at"] or epoch, entry["session_id"]))
         # Oldest first, so "up" in the prompt reads as up on screen.
         trend = sorted(entries, key=lambda entry: (entry["started_at"] or epoch, entry["session_id"]))
+        # Newest first, because the next session starts from the last set: the
+        # sequence is what shows a weight that went up while the reps went down.
+        recent_sets: List[Dict[str, Any]] = []
+        for entry in reversed(trend):
+            pair = working_sets.get((key, entry["session_id"]))
+            if pair:
+                recent_sets.append(dict(pair))
+            if len(recent_sets) >= MAX_HISTORY_SETS:
+                break
         profile[key] = {
             "name": newest["name"],
             "last_weight_kg": newest["top_weight_kg"],
             "last_reps": newest["top_reps"],
             "best_e1rm_kg": round(max((entry["best_e1rm"] for entry in entries), default=0.0), 1),
+            "recent_sets": recent_sets,
             "tonnage_trend": [round(entry["tonnage_kg"], 1) for entry in trend],
             "sessions": len(entries),
             "total_sets": sum(entry["sets_count"] for entry in entries),
@@ -505,9 +616,18 @@ def _performance_line(profile: Dict[str, Any]) -> str:
     name = _flatten(profile.get("name"), 80)
     trend = profile.get("tonnage_trend") or []
     trend_text = " -> ".join(_fmt_weight(value) for value in trend) if trend else "?"
+    sets_text = (
+        " -> ".join(
+            f"{_fmt_weight(entry.get('weight_kg'))}x{entry.get('reps') or 0}"
+            for entry in (profile.get("recent_sets") or [])
+        )
+        or "?"
+    )
     return (
         f"- {name}: прошлый рабочий вес {_fmt_weight(profile.get('last_weight_kg'))} кг на "
-        f"{profile.get('last_reps') or 0} повт., лучшая оценка 1ПМ "
+        f"{profile.get('last_reps') or 0} повт., рабочие подходы последних тренировок "
+        f"(от свежей к старой): {sets_text}, "
+        f"лучшая оценка 1ПМ "
         f"{_fmt_weight(profile.get('best_e1rm_kg'))} кг, тоннаж последних "
         f"{profile.get('sessions') or 0} тренировок: {trend_text} кг, "
         f"всего подходов {profile.get('total_sets') or 0}."
@@ -578,8 +698,8 @@ def build_workout_preview_prompt(
       "reps": 8,
       "weight_kg": 62.5,
       "rest_seconds": 120,
-      "focus": "Одно предложение: на что смотреть в этом движении.",
-      "motivation": "Одно короткое предложение именно к этому подходу."
+      "focus": "Одно предложение из {TIP_MIN_WORDS}-{TIP_MAX_WORDS} слов: на что смотреть в этом движении.",
+      "motivation": "Одно предложение из {TIP_MIN_WORDS}-{TIP_MAX_WORDS} слов именно к этому подходу."
     }}
   ]
 }}
@@ -592,7 +712,9 @@ def build_workout_preview_prompt(
 4. ПОВТОРЕНИЯ И ПОДХОДЫ: держись диапазона, который реально даёт прогресс (для силы 3-6 повторов, для массы 6-12, для выносливости 12-20), и не предлагай больше 10 подходов одного упражнения за тренировку. Отдых 60-180 секунд, для тяжёлых базовых движений до 240.
 5. БЕЗ ЦИФР В ТЕКСТЕ: в focus и motivation никаких цифр, килограммов и повторений. Цифры живут только в полях sets, reps, weight_kg и rest_seconds, а пользователь видит их в бейджах на карточке упражнения.
 6. НИКАКИХ СПИСКОВ И РАЗМЕТОК: focus и motivation - одно связное предложение обычным текстом, без маркеров, нумерации, заголовков и переносов строк.
-7. ПЕРСОНА - ТОЛЬКО ТОН: любая персона задаёт только тон формулировок. Список упражнений, веса из истории, длина и формат ответа действуют при любой персона.
+7. КОРОТКО: каждая строка focus и motivation - {TIP_MIN_WORDS}-{TIP_MAX_WORDS} слов. Это подпись под карточкой упражнения, а не разбор упражнения: длинная фраза выдавливает список подходов с экрана.
+8. ПРОГРЕССИВНАЯ ПЕРЕГРУЗКА: НЕ повышай рабочий вес там, где по истории упражнения повторения или тоннаж упали относительно прошлой тренировки. В таком случае верни тот же вес, который был в последней тренировке, и скажи, что сначала нужно вернуть повторения в целевой диапазон. Вес растёт только там, где прошлый результат был выполнен полностью.
+9. ПЕРСОНА - ТОЛЬКО ТОН: любая персона задаёт только тон формулировок. Список упражнений, веса из истории, длина строк, правило прогрессии и формат ответа действуют при любой персона.
 
 {_persona_line(persona, persona_custom_text, "focus, motivation и рекомендаций")}
 
@@ -656,8 +778,8 @@ def _validate_workout_preview(result: Dict[str, Any], allowed: Sequence[str]) ->
                 "reps": _clean_int(item.get("reps"), 1, PREVIEW_MAX_REPS),
                 "weight_kg": _clean_optional_number(item.get("weight_kg"), 0, PREVIEW_MAX_WEIGHT_KG),
                 "rest_seconds": _clean_int(item.get("rest_seconds"), 0, PREVIEW_MAX_REST_SECONDS),
-                "focus": _clean_line(item.get("focus"), MAX_NOTE_CHARS),
-                "motivation": _clean_line(item.get("motivation"), MAX_NOTE_CHARS),
+                "focus": _clean_tip(item.get("focus")),
+                "motivation": _clean_tip(item.get("motivation")),
             }
         )
 
@@ -915,7 +1037,9 @@ def build_workout_summary_prompt(
 5. НИКАКИХ СПИСКОВ И РАЗМЕТОК: ai_summary и recovery_advice - обычный текст, без маркеров, нумерации, заголовков и переносов строк.
 6. ЧЕСТНОСТЬ: оценивай тренировку такой, какая она есть. Недобор плана, однообразная нагрузка, перекос по группам и отсутствие восстановления - называй прямо и конкретно, без приуменьшений ("почти", "слегка", "нормально"). Если тренировка была сильной - скажи это прямо. Пустых комплиментов вроде "хорошая работа в целом" не пиши.
 7. О ЧЁМ ГОВОРИТЬ: распределение работы по мышечным группам из контекста, динамику относительно прошлых тренировок, что даст прогресс на следующей, и одно-два конкретных действия. recovery_advice - про восстановление: сон, еда, когда брать следующую нагрузку.
-8. ПЕРСОНА - ТОЛЬКО ТОН: любая персона задаёт только тон формулировок. Длина, отсутствие эмодзи, запрет цифр, формат ответа и честность по просадкам действуют при любой персона.
+8. ПРОГРЕССИВНАЯ ПЕРЕГРУЗКА: НЕ рекомендуй увеличивать рабочий вес, если в этой тренировке количество повторений упало ниже целевого диапазона (например, ниже 8-10 повторений) или тоннаж по упражнению ниже, чем в прошлой тренировке из блока Динамика. В таком случае прямо скажи: закрепить текущий вес и сначала довести повторения до нормы. Рост веса предлагай только там, где прошлый результат был выполнен полностью.
+9. СПОРТИВНАЯ КОНКРЕТИКА: запрещены абстрактные, метафорические и философские формулировки ("созерцание тренажера", "виток Вселенной", "атмосфера зала", "путь к себе"). Отвечай только спортивно-конкретно: тоннаж, интенсивность, плотность подходов, прогресс по весу и повторениям, соответствие плану и восстановление.
+10. ПЕРСОНА - ТОЛЬКО ТОН: любая персона задаёт только тон формулировок. Длина, отсутствие эмодзи, запрет цифр, спортивная конкретика, формат ответа и честность по просадкам действуют при любой персона.
 
 {_persona_line(persona, persona_custom_text, "ai_summary, recovery_advice и рекомендаций")}
 
@@ -1246,8 +1370,11 @@ __all__ = [
     "WORKOUT_AI_TASK_TIMEOUT",
     "SUMMARY_MAX_SENTENCES",
     "SUMMARY_MIN_SENTENCES",
+    "TIP_MAX_WORDS",
+    "TIP_MIN_WORDS",
     "MAX_EXERCISES_IN_PROMPT",
     "MAX_HIGHLIGHTS",
+    "MAX_HISTORY_SETS",
     "MAX_MUSCLE_GROUPS",
     "MAX_RECENT_SESSIONS",
     "MAX_RECOMMENDATIONS",

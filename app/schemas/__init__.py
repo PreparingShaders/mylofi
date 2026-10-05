@@ -401,7 +401,11 @@ class WorkoutSetBase(BaseModel):
     reps: int = Field(ge=1)
     rpe: Optional[float] = Field(None, ge=1, le=10)
     is_completed: bool = False
+    # Rest target for this set (what the plan asked for) and rest measured after
+    # it (what the user actually took). Two fields, because the gap between them
+    # is the only thing a rest timer can tell us.
     rest_seconds: Optional[int] = Field(None, ge=0)
+    rest_time_seconds: Optional[int] = Field(None, ge=0)
 
 
 class WorkoutSetCreate(WorkoutSetBase):
@@ -414,6 +418,7 @@ class WorkoutSetUpdate(BaseModel):
     rpe: Optional[float] = Field(None, ge=1, le=10)
     is_completed: Optional[bool] = None
     rest_seconds: Optional[int] = Field(None, ge=0)
+    rest_time_seconds: Optional[int] = Field(None, ge=0)
 
 
 class WorkoutSetResponse(WorkoutSetBase):

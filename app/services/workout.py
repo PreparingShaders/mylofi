@@ -169,6 +169,7 @@ async def create_workout_session(
                 rpe=set_data.rpe,
                 is_completed=set_data.is_completed,
                 rest_seconds=set_data.rest_seconds,
+                rest_time_seconds=set_data.rest_time_seconds,
             )
             db.add(workout_set)
 
@@ -258,6 +259,7 @@ async def update_workout_session(
                                     workout_set.rpe = set_data.rpe
                                     workout_set.is_completed = set_data.is_completed
                                     workout_set.rest_seconds = set_data.rest_seconds
+                                    workout_set.rest_time_seconds = set_data.rest_time_seconds
                                     if set_data.is_completed and not workout_set.completed_at:
                                         workout_set.completed_at = datetime.now(timezone.utc)
                             else:
@@ -270,6 +272,7 @@ async def update_workout_session(
                                     rpe=set_data.rpe,
                                     is_completed=set_data.is_completed,
                                     rest_seconds=set_data.rest_seconds,
+                                    rest_time_seconds=set_data.rest_time_seconds,
                                 )
                                 db.add(workout_set)
             else:
@@ -292,6 +295,7 @@ async def update_workout_session(
                         rpe=set_data.rpe,
                         is_completed=set_data.is_completed,
                         rest_seconds=set_data.rest_seconds,
+                        rest_time_seconds=set_data.rest_time_seconds,
                     )
                     db.add(workout_set)
 
@@ -309,12 +313,7 @@ async def complete_workout_session(db: AsyncSession, session_id: int, user_id: i
     session.status = WorkoutSessionStatus.COMPLETED
     completed_at = datetime.now(timezone.utc)
     session.completed_at = completed_at
-    if session.started_at:
-        # Ensure both datetimes are timezone-aware
-        started_at = session.started_at
-        if started_at.tzinfo is None:
-            started_at = started_at.replace(tzinfo=timezone.utc)
-        session.duration_seconds = int((completed_at - started_at).total_seconds())
+    session.duration_seconds = resolve_duration_seconds(session.started_at, completed_at)
     session.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
@@ -330,12 +329,7 @@ async def cancel_workout_session(db: AsyncSession, session_id: int, user_id: int
     session.status = WorkoutSessionStatus.CANCELLED
     completed_at = datetime.now(timezone.utc)
     session.completed_at = completed_at
-    if session.started_at:
-        # Ensure both datetimes are timezone-aware
-        started_at = session.started_at
-        if started_at.tzinfo is None:
-            started_at = started_at.replace(tzinfo=timezone.utc)
-        session.duration_seconds = int((completed_at - started_at).total_seconds())
+    session.duration_seconds = resolve_duration_seconds(session.started_at, completed_at)
     session.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
@@ -379,6 +373,7 @@ async def update_set_completion(
     weight_kg: Optional[float] = None,
     reps: Optional[int] = None,
     rpe: Optional[float] = None,
+    rest_time_seconds: Optional[int] = None,
 ) -> Optional[WorkoutSet]:
     """Update a workout set completion status"""
     result = await db.execute(
@@ -399,6 +394,9 @@ async def update_set_completion(
             workout_set.completed_at = datetime.now(timezone.utc)
         elif not is_completed:
             workout_set.completed_at = None
+            # Undoing the check means the set was not performed, so any break
+            # measured after it belongs to a set that does not exist yet.
+            workout_set.rest_time_seconds = None
         workout_set.is_completed = is_completed
     if weight_kg is not None:
         workout_set.weight_kg = weight_kg
@@ -406,6 +404,10 @@ async def update_set_completion(
         workout_set.reps = reps
     if rpe is not None:
         workout_set.rpe = rpe
+    # Applied after the completion branch so an explicit measurement is never
+    # dropped by the clear above; the client writes it on its own patch.
+    if rest_time_seconds is not None:
+        workout_set.rest_time_seconds = rest_time_seconds
 
     await db.commit()
     await db.refresh(workout_set)
@@ -859,6 +861,24 @@ def as_utc(value: Optional[datetime]) -> Optional[datetime]:
     return value.astimezone(timezone.utc)
 
 
+def resolve_duration_seconds(started_at: Optional[datetime], completed_at: Optional[datetime]) -> int:
+    """How long a session took, in seconds, never negative.
+
+    `started_at` reaches the database from a client clock while `completed_at` is
+    the server's, so a session opened with a local wall clock and closed in UTC
+    comes back as an inverted interval - that is how a 177-minute workout was
+    stored as -177 minutes and shown back to the user as such. Both stamps are
+    normalised to UTC first, and the magnitude is taken, so a mismatched offset
+    costs the verdict its sign but not its length. A missing stamp has no
+    duration to report, so it reads as 0.
+    """
+    start = as_utc(started_at)
+    end = as_utc(completed_at)
+    if start is None or end is None:
+        return 0
+    return abs(int((end - start).total_seconds()))
+
+
 def parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
     """Parse an ISO-8601 date or datetime, returning None for unusable input."""
     if not value:
@@ -1196,7 +1216,9 @@ async def get_workout_session_detail(
         round((metrics["completed_sets"] / metrics["total_sets"]) * 100) if metrics["total_sets"] else 0
     )
     metrics["tonnage_kg"] = round(metrics["tonnage_kg"], 1)
-    duration_seconds = session.duration_seconds or 0
+    # A session closed before durations were normalised can still hold a negative
+    # value, and the history card prints this figure as it is.
+    duration_seconds = abs(session.duration_seconds or 0)
     metrics["duration_seconds"] = duration_seconds
     metrics["duration_min"] = round(duration_seconds / 60, 1) if duration_seconds else 0
 
@@ -1335,6 +1357,8 @@ async def get_workout_session_detail(
                         "reps": workout_set.reps,
                         "rpe": workout_set.rpe,
                         "is_completed": workout_set.is_completed,
+                        "rest_seconds": workout_set.rest_seconds,
+                        "rest_time_seconds": workout_set.rest_time_seconds,
                     }
                     for workout_set in sorted(exercise.sets or [], key=lambda s: s.set_number)
                 ],

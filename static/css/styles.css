@@ -1773,7 +1773,13 @@ input, select, textarea:focus {
     background: rgba(192, 132, 252, 0.16);
 }
 .ai-plan__focus {
+    /* Its own row, always. Sharing a line with the targets pill meant the pill
+       won on a 500px desktop card and squeezed the tip into a sliver, while a
+       narrow phone wrapped it into three lines - so the tip was readable on one
+       viewport and invisible on the other. */
+    flex: 1 1 100%;
     min-width: 0;
+    overflow-wrap: anywhere;
     color: #52525b;
 }
 .dark .ai-plan__focus {
@@ -1781,6 +1787,8 @@ input, select, textarea:focus {
 }
 .ai-plan__motivation {
     flex-basis: 100%;
+    min-width: 0;
+    overflow-wrap: anywhere;
     color: #71717a;
 }
 
@@ -2241,4 +2249,200 @@ input[data-field="reps"] {
 }
 .is-open > .landing-menu-icon-close {
     display: block;
+}
+
+/* ============ Active Workout Carousel ============ */
+/* One card width for every viewport. The markup asked for `98vw` capped at
+   500px, which means a desktop card was a fifth of the window with the rest of
+   the row empty, while the first `92vw` cards on a phone never reached the cap.
+   The card is viewport-relative until there is room for the full 500px, and
+   exactly 500px from there on - so the set rows, the AI tip and the drum picker
+   inside it are laid out identically on a phone and on a desktop. */
+.workout-card {
+    width: min(92vw, 500px);
+    flex-shrink: 0;
+}
+@media (min-width: 560px) {
+    .workout-card {
+        width: 500px;
+    }
+}
+/* The row of cards scrolls; the header above it must not inherit that scroll. */
+.workout-carousel {
+    scroll-snap-type: x mandatory;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* ============ Rest Timer between Sets ============ */
+/* A floating bar rather than a row inside a card: the card the user is looking
+   at changes with every set, and a timer that moved with it would be unreadable
+   exactly when it matters. Fixed to the bottom, above the nav, so it is visible
+   while the carousel scrolls sideways. `data-state` carries the only thing worth
+   signalling: `reached` once the target rest has actually been taken. */
+.rest-timer {
+    position: fixed;
+    left: 50%;
+    bottom: calc(5.25rem + env(safe-area-inset-bottom, 0px));
+    transform: translateX(-50%);
+    z-index: 45;
+    width: min(92vw, 460px);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 14px 12px;
+    border-radius: 18px;
+    pointer-events: auto;
+    background: rgba(255, 255, 255, 0.94);
+    border: 1px solid rgba(132, 204, 22, 0.35);
+    box-shadow: 0 12px 30px -12px rgba(0, 0, 0, 0.45);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+}
+.dark .rest-timer {
+    background: rgba(24, 24, 27, 0.94);
+    border-color: rgba(132, 204, 22, 0.25);
+}
+.rest-timer--hidden {
+    display: none;
+}
+/* The bar owns the strip just above the nav for as long as a break is being
+   timed, so toasts move above it rather than landing on top of the clock. The
+   class is on <body> because the bar lives inside the scroll container while the
+   toast host is a sibling of the screens - there is no shared ancestor closer
+   than that. */
+body.rest-timer-active #toast-container {
+    bottom: 11.5rem;
+}
+.rest-timer[data-state='running'] {
+    border-color: rgba(132, 204, 22, 0.45);
+}
+.rest-timer[data-state='reached'] {
+    border-color: rgba(132, 204, 22, 0.9);
+    box-shadow: 0 0 0 3px rgba(132, 204, 22, 0.18), 0 12px 30px -12px rgba(0, 0, 0, 0.45);
+}
+.rest-timer__head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+}
+.rest-timer__label {
+    flex-shrink: 0;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #71717a;
+}
+.dark .rest-timer__label {
+    color: #a1a1aa;
+}
+.rest-timer__name {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 11px;
+    font-weight: 600;
+    color: #3f3f46;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.dark .rest-timer__name {
+    color: #d4d4d8;
+}
+.rest-timer__target {
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: #71717a;
+}
+.dark .rest-timer__target {
+    color: #a1a1aa;
+}
+.rest-timer__body {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.rest-timer__clock {
+    flex-shrink: 0;
+    font-size: 28px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    color: #18181b;
+}
+.dark .rest-timer__clock {
+    color: #fafafa;
+}
+.rest-timer[data-state='reached'] .rest-timer__clock {
+    color: #65a30d;
+}
+.rest-timer__actions {
+    display: flex;
+    gap: 6px;
+    margin-left: auto;
+}
+.rest-timer__btn {
+    padding: 7px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #18181b;
+    background: rgba(132, 204, 22, 0.22);
+}
+.rest-timer__btn--ghost {
+    color: #71717a;
+    background: rgba(161, 161, 170, 0.14);
+}
+.dark .rest-timer__btn {
+    color: #09090b;
+}
+.dark .rest-timer__btn--ghost {
+    color: #d4d4d8;
+    background: rgba(255, 255, 255, 0.06);
+}
+/* Share of the target rest already taken. An unfinished bar is the honest read
+   of a break cut short; the clock alone cannot show that. */
+.rest-timer__track {
+    height: 4px;
+    border-radius: 9999px;
+    overflow: hidden;
+    background: rgba(161, 161, 170, 0.2);
+}
+.dark .rest-timer__track {
+    background: rgba(255, 255, 255, 0.1);
+}
+.rest-timer__fill {
+    height: 100%;
+    width: 0;
+    border-radius: 9999px;
+    background: #84cc16;
+    transition: width 0.4s linear;
+}
+/* Spinner inside the "Finish & Analyze" button while the verdict is generated */
+.btn-spinner {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    animation: btn-spinner-turn 0.7s linear infinite;
+}
+@keyframes btn-spinner-turn {
+    to {
+        transform: rotate(360deg);
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .btn-spinner {
+        animation-duration: 2.4s;
+    }
+    .rest-timer__fill {
+        transition: none;
+    }
 }

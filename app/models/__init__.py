@@ -310,6 +310,12 @@ class WorkoutSet(Base):
     rpe: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # Rate of Perceived Exertion
     is_completed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     rest_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Measured rest after this set, as opposed to `rest_seconds` above, which is
+    # what the plan asked for. Kept as two columns because the difference is the
+    # point: a break that came up short of the target is what the coach reads.
+    # Nullable - a set done without the timer, or one written before it existed,
+    # simply has no measured rest.
+    rest_time_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

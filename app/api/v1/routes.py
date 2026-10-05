@@ -1060,13 +1060,24 @@ async def update_set_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Update a workout set (complete, update weight/reps)"""
+    """Update a workout set (complete, update weight/reps, record the measured rest)"""
     workout_set = await update_set_completion(
-        db, set_id, current_user.id, set_data.is_completed, set_data.weight_kg, set_data.reps, set_data.rpe
+        db,
+        set_id,
+        current_user.id,
+        set_data.is_completed,
+        set_data.weight_kg,
+        set_data.reps,
+        set_data.rpe,
+        set_data.rest_time_seconds,
     )
     if not workout_set:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Set not found")
-    return {"message": "Set updated", "is_completed": workout_set.is_completed}
+    return {
+        "message": "Set updated",
+        "is_completed": workout_set.is_completed,
+        "rest_time_seconds": workout_set.rest_time_seconds,
+    }
 
 
 # ===== AI Workout Coach Routes =====
