@@ -60,23 +60,6 @@ const SET_ADVANCE_DELAY_MS = 350;
 // gap-4 between carousel cards, used to derive the horizontal scroll step.
 const CAROUSEL_GAP_PX = 16;
 
-// ===== Rest timer =====
-// The target comes from the set itself (`rest_seconds`, which the quick-start
-// presets fill in as 45/60/90s) and falls back to the classic 90s when a plan
-// left it empty. It is clamped to the range the presets actually use, so one
-// hand-typed 0 or 600 does not turn the bar into a lie.
-const DEFAULT_TARGET_REST_SECONDS = 90;
-const MIN_TARGET_REST_SECONDS = 45;
-const MAX_TARGET_REST_SECONDS = 240;
-// Nudge on the bar, the step every gym timer offers when the next set needs more.
-const REST_TIMER_STEP_SECONDS = 15;
-// Rest shorter than this is an accidental tap rather than a break: recorded as
-// nothing rather than as a set of zero-second rests that drag the average down.
-const MIN_RECORDED_REST_SECONDS = 5;
-// Upper bound on a recorded break, so a session left open overnight cannot write
-// an 8-hour "rest" onto one set.
-const MAX_RECORDED_REST_SECONDS = 3600;
-
 // The coach answers at the two ends of a session and both calls are refused
 // offline: the plan is wanted before the first set and the verdict right after
 // the last one, and neither is worth a queued request the user would read hours
@@ -106,11 +89,13 @@ export const Workouts = {
     // itself while the cascade is running, so a second tap cannot spend the
     // weekly allowance twice.
     _aiAnalysisLoading: false,
-    // The break being timed after the last completed set, or null when no break
-    // is running: { setId, exerciseName, startedAt, targetSeconds, extraSeconds,
-    // interval, session, isLocal, token }. Kept on the instance rather than on
-    // the set so it survives the re-renders that a set completion triggers.
-    restTimer: null,
+    // Background rest chronometry: when the current session started (from the
+    // server's started_at or the local clock) and when the last set of this
+    // session was completed. The gap between them is the rest the user actually
+    // took before the next set, sent inline with each set's completion PATCH so
+    // the coach reads real breaks without a floating timer bar on screen.
+    sessionStartTimestamp: null,
+    lastSetCompletedAt: null,
 
     escapeHtml(value) {
         return String(value ?? '')
@@ -1207,163 +1192,6 @@ export const Workouts = {
         }
     },
 
-    // ===== Rest timer =====
-
-    /** The rest asked for by one set, clamped into the range the presets use. */
-    targetRestSeconds(set) {
-        const raw = Number(set?.rest_seconds ?? set?.target_rest_seconds);
-        if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_TARGET_REST_SECONDS;
-        return Math.min(MAX_TARGET_REST_SECONDS, Math.max(MIN_TARGET_REST_SECONDS, Math.round(raw)));
-    },
-
-    /** MM:SS, the format a phone timer is read in. */
-    formatRestClock(seconds) {
-        const total = Math.max(0, Math.round(Number(seconds) || 0));
-        const minutes = Math.floor(total / 60);
-        return `${String(minutes).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
-    },
-
-    /**
-     * The bar, written once by the workout screen and moved by renderRestTimer
-     * alone. It carries no state of its own: hiding and showing it is the whole
-     * of its behaviour, so a re-render can rebuild it without knowing whether a
-     * break was running.
-     */
-    renderRestTimerBar() {
-        return `
-            <div id="rest-timer" class="rest-timer rest-timer--hidden" data-state="idle" aria-label="Отдых между подходами">
-                <div class="rest-timer__head">
-                    <span class="rest-timer__label">Отдых</span>
-                    <span class="rest-timer__name" data-rest-exercise></span>
-                    <span class="rest-timer__target" data-rest-target></span>
-                </div>
-                <div class="rest-timer__body">
-                    <span class="rest-timer__clock" data-rest-clock role="timer" aria-live="off">00:00</span>
-                    <div class="rest-timer__actions">
-                        <button type="button" data-action="rest-timer-add" class="rest-timer__btn">+${REST_TIMER_STEP_SECONDS}с</button>
-                        <button type="button" data-action="rest-timer-skip" class="rest-timer__btn rest-timer__btn--ghost">Пропустить</button>
-                    </div>
-                </div>
-                <div class="rest-timer__track"><div class="rest-timer__fill" data-rest-fill></div></div>
-            </div>
-        `;
-    },
-
-    restElapsedSeconds(timer) {
-        if (!timer) return 0;
-        return Math.max(0, Math.round((Date.now() - timer.startedAt) / 1000)) + (timer.extraSeconds || 0);
-    },
-
-    /**
-     * Paints the break from `this.restTimer`, or hides the bar when no break is
-     * running. Everything the bar shows is derived here rather than tracked in
-     * the DOM, so a tick that lands after the bar is gone cannot resurrect it.
-     */
-    renderRestTimer() {
-        const timer = this.restTimer;
-        // Tracked on <body> rather than on the bar, so the toast host moves above
-        // the clock even on the tick that finds the bar already gone.
-        document.body.classList.toggle('rest-timer-active', Boolean(timer));
-
-        const bar = document.getElementById('rest-timer');
-        if (!bar) return;
-        if (!timer) {
-            bar.classList.add('rest-timer--hidden');
-            bar.dataset.state = 'idle';
-            return;
-        }
-        const elapsed = this.restElapsedSeconds(timer);
-        const remaining = Math.max(0, timer.targetSeconds - elapsed);
-        bar.classList.remove('rest-timer--hidden');
-        // `reached` is the threshold indicator: the target rest is behind us, so
-        // the clock stops at zero instead of counting the overrun away.
-        bar.dataset.state = remaining === 0 ? 'reached' : 'running';
-
-        const clock = bar.querySelector('[data-rest-clock]');
-        if (clock) clock.textContent = this.formatRestClock(remaining);
-        const target = bar.querySelector('[data-rest-target]');
-        if (target) target.textContent = `цель ${this.formatRestClock(timer.targetSeconds)}`;
-        const name = bar.querySelector('[data-rest-exercise]');
-        if (name) name.textContent = timer.exerciseName || '';
-        const fill = bar.querySelector('[data-rest-fill]');
-        if (fill) {
-            const ratio = timer.targetSeconds > 0 ? elapsed / timer.targetSeconds : 1;
-            fill.style.width = `${Math.round(Math.min(1, ratio) * 100)}%`;
-        }
-    },
-
-    /** Starts timing the break after a completed set, recording the previous one. */
-    startRestTimer(session, set, { app, exerciseName = '' } = {}) {
-        // Completing two sets in a row ends the first break: recording it here is
-        // what keeps every set from butting against its neighbour with no rest.
-        this.stopRestTimer({ app });
-        if (!set || set.id == null) return;
-
-        this.restTimer = {
-            setId: set.id,
-            exerciseName,
-            startedAt: Date.now(),
-            targetSeconds: this.targetRestSeconds(set),
-            extraSeconds: 0,
-            interval: null,
-            session,
-            isLocal: this.isLocalSession(session),
-            token: app?.state?.tokens?.access || null,
-        };
-        this.restTimer.interval = setInterval(() => this.renderRestTimer(), 1000);
-        this.renderRestTimer();
-    },
-
-    /**
-     * Ends the running break. `record: false` is for the paths that throw the
-     * session away rather than finish it - a failed re-render - where the break
-     * happened but belongs to a screen that no longer exists.
-     */
-    stopRestTimer({ app, record = true } = {}) {
-        const timer = this.restTimer;
-        this.restTimer = null;
-        if (timer?.interval) clearInterval(timer.interval);
-        this.renderRestTimer();
-        if (!timer || !record) return;
-
-        const elapsed = this.restElapsedSeconds(timer);
-        if (elapsed < MIN_RECORDED_REST_SECONDS) return;
-        this.persistRestTime(timer, elapsed, { app });
-    },
-
-    /** +15s on the bar: the break is still going, it just needs longer. */
-    addRestTime(seconds = REST_TIMER_STEP_SECONDS) {
-        if (!this.restTimer) return;
-        this.restTimer.extraSeconds += seconds;
-        this.renderRestTimer();
-    },
-
-    /**
-     * Writes the measured break onto the set it followed. `rest_seconds` on that
-     * set stays what the plan asked for - the two are compared later, so
-     * overwriting the target would erase the very gap the timer exists to show.
-     */
-    persistRestTime(timer, elapsedSeconds, { app } = {}) {
-        const seconds = Math.min(MAX_RECORDED_REST_SECONDS, Math.max(0, Math.round(elapsedSeconds)));
-        const session = timer.session;
-        const set = this.findSetInSession(session, timer.setId);
-        if (set) set.rest_time_seconds = seconds;
-
-        if (timer.isLocal) {
-            if (session) this.persistLocalSession(session);
-            this.recordLocalSetPatch(session?.key, timer.setId, { rest_time_seconds: seconds });
-            return;
-        }
-        if (!timer.token || timer.setId == null || timer.setId < 0) return;
-        API.patch(`/workouts/sets/${timer.setId}`, { rest_time_seconds: seconds }, timer.token)
-            .catch(err => {
-                // An offline patch is queued by the sync layer and replays with
-                // the rest of the session edits; a real failure is not worth a
-                // toast mid-workout, but it must not stay silent in the console.
-                if (!err?.offlineQueued) console.warn('[Workouts] Rest time save failed:', err);
-            });
-    },
-
     async renderCountdown(container, onComplete) {
         const overlay = document.createElement('div');
         overlay.className = 'fixed inset-0 z-[100] flex items-center justify-center modal-backdrop transition-opacity';
@@ -1578,11 +1406,6 @@ export const Workouts = {
             cancelText: 'Назад'
         })) return;
 
-        // The session is about to close, so the break still running is the last
-        // one of the workout: record it before the completion request goes out,
-        // otherwise the two race and the set keeps a rest of zero.
-        this.stopRestTimer({ app });
-
         // The coach reads the completed sets, so every typed value goes out
         // before the session closes.
         await app.flushPendingSetEdits();
@@ -1770,6 +1593,12 @@ export const Workouts = {
         }
         app.state.currentSessionId = session.isLocal ? session.key : session.id;
 
+        // Anchor the silent rest clock to when the session started, falling back
+        // to the local clock for sessions that never got a server timestamp.
+        const sessionStart = session.started_at ? new Date(session.started_at).getTime() : Date.now();
+        this.sessionStartTimestamp = sessionStart;
+        this.lastSetCompletedAt = null;
+
         const completedHistorySessions = [...(historyData?.sessions || [])]
             .filter(s => s.status === 'completed')
             .sort((a, b) => new Date(a.started_at) - new Date(b.started_at));
@@ -1911,9 +1740,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 <div class="flex overflow-x-auto gap-4 pb-6 px-4 -mx-4 workout-carousel" id="carousel">
                     ${allCards.join('')}
                 </div>
-
-                ${this.renderRestTimerBar()}
-            </div>
+                
+             </div>
         `;
         container.innerHTML = html;
         
@@ -1929,19 +1757,10 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         // Event listeners for workout screen
         this.bindWorkoutScreenEvents(container, app, session);
 
-        // The break survives the re-render (reordering exercises rebuilds this
-        // screen mid-rest), so the fresh bar is painted from the running timer
-        // rather than starting over.
-        this.renderRestTimer();
-
         // Start live timer
         this.startWorkoutTimer(session);
         } catch (error) {
             console.error('[Workouts] Workout screen render error:', error);
-            // The screen is being replaced by an error state, so a break in
-            // progress has no bar left to count on. It still happened, so it is
-            // recorded rather than dropped.
-            this.stopRestTimer({ app });
             container.innerHTML = Components.errorState('Ошибка загрузки тренировки');
         }
     },
@@ -2104,21 +1923,26 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 if (isCompleted) {
                     this.flashSetSaved(row);
                     this.scheduleCarouselAdvance(session, row);
-                    // The break after this set starts now. Unchecking instead
-                    // ends the break that was running, so its seconds are still
-                    // recorded - the user did take them.
-                    this.startRestTimer(session, this.findSetInSession(session, setId), {
-                        app,
-                        exerciseName: card?.querySelector('h3')?.textContent?.trim() || '',
-                    });
-                } else {
-                    this.stopRestTimer({ app });
                 }
                 const payload = {
                     is_completed: isCompleted,
                     weight_kg: isNaN(weight_kg) ? null : weight_kg,
                     reps: isNaN(reps) ? null : reps
                 };
+                // Background rest chronometry: the gap between the last completed
+                // set (or the session start, for the first set) and now is the
+                // rest this set took. Measured silently and sent inline so the
+                // coach reads real breaks without a floating timer bar on screen.
+                if (isCompleted) {
+                    const referenceAt = this.lastSetCompletedAt || this.sessionStartTimestamp;
+                    if (referenceAt && this.sessionStartTimestamp) {
+                        const restSeconds = Math.round((Date.now() - referenceAt) / 1000);
+                        payload.rest_time_seconds = Math.max(0, restSeconds);
+                    }
+                    this.lastSetCompletedAt = Date.now();
+                } else {
+                    this.lastSetCompletedAt = null;
+                }
                 if (isLocal) {
                     this.persistLocalSession(session);
                     this.recordLocalSetPatch(session.key, setId, payload);
@@ -2256,29 +2080,11 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     return;
                 }
                 input.blur();
-                // Opening the picker is the other way a break is over: the user is
-                // already loading the next set, so the running one is recorded.
-                this.stopRestTimer({ app });
                 this.openDrumPicker(input, { app });
             };
             input.addEventListener('click', openPicker);
             input.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' || e.key === ' ') openPicker(e);
-            });
-        });
-
-        // Rest timer: +15s extends the running break, "Пропустить" ends it and
-        // keeps the seconds that were actually taken.
-        container.querySelectorAll('[data-action="rest-timer-add"]').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.addRestTime();
-            });
-        });
-        container.querySelectorAll('[data-action="rest-timer-skip"]').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.stopRestTimer({ app });
             });
         });
 
@@ -2329,9 +2135,6 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         container.querySelector('[data-action="back-to-workouts"]')?.addEventListener('click', (e) => {
             e.stopPropagation();
             this.stopWorkoutTimer();
-            // Leaving the screen ends the workout, so the break in progress is
-            // the last one of the session and is recorded like any other.
-            this.stopRestTimer({ app });
             app.showPage('workouts');
         });
     },

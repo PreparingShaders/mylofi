@@ -205,6 +205,11 @@ def _clean_tip(value: Any) -> Optional[str]:
     cleaned = _clean_line(value, MAX_NOTE_CHARS)
     if not cleaned:
         return None
+    if count_sentences(cleaned) > 1:
+        logger.info(
+            f"[AI Workout] Exercise tip is {count_sentences(cleaned)} sentences, clamping to 1: {cleaned!r}"
+        )
+        cleaned = clamp_sentences(cleaned, 1)
     words = cleaned.split()
     if len(words) <= TIP_MAX_WORDS:
         return cleaned
