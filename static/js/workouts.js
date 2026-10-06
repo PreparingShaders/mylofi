@@ -2550,18 +2550,21 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         }
 
         const metrics = detail.metrics || {};
-        const delta = detail.delta || {};
-        const deltaPercent = delta.percent;
+        const deltaPercent = detail.delta?.percent;
         const statusLabel = detail.status === 'completed' ? 'Завершена' : detail.status === 'cancelled' ? 'Отменена' : 'Активна';
 
-        const deltaBlock = deltaPercent === null || deltaPercent === undefined
-            ? `<p class="text-xs text-surface-400">Нет предыдущей тренировки для сравнения</p>`
-            : `<p class="text-sm">
-                    <span class="${deltaPercent >= 0 ? 'text-lime-600 dark:text-lime-400' : 'text-rose-500 dark:text-rose-400'} font-bold">
-                        ${deltaPercent >= 0 ? '+' : ''}${deltaPercent}%
-                    </span>
-                    <span class="text-surface-500 dark:text-surface-400"> к «${this.escapeHtml(delta.previous_session_name || 'прошлой тренировке')}»</span>
-                </p>`;
+        // Compact trend badge for the tonnage KPI tile: a single pill that names
+        // the delta and the comparison session, so the tile reads as one line
+        // instead of a separate block under the grid.
+        const tonnageTrend = deltaPercent === null || deltaPercent === undefined
+            ? `<span class="text-[10px] text-surface-400 dark:text-surface-500">Нет сравнения</span>`
+            : `<span class="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-md ${deltaPercent >= 0
+                ? 'text-lime-600 dark:text-lime-400 bg-lime-500/10 dark:bg-lime-400/10'
+                : 'text-rose-500 dark:text-rose-400 bg-rose-500/10 dark:bg-rose-400/10'}">
+                    <span>${deltaPercent >= 0 ? '▲' : '▼'}</span>
+                    <span class="tabular-nums">${deltaPercent >= 0 ? '+' : ''}${deltaPercent}%</span>
+                    <span class="font-normal opacity-70 truncate max-w-[80px]">к прошлой</span>
+                </span>`;
 
         const exerciseBlocks = (detail.exercises || []).map(exercise => {
             const tonnagePoints = (exercise.tonnage_series || []).map(point => point.value);
@@ -2626,6 +2629,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     <div class="glass rounded-2xl p-3">
                         <p class="text-xs text-surface-500 dark:text-surface-400">Тоннаж</p>
                         <p class="text-2xl font-bold">${Math.round(metrics.tonnage_kg || 0)} кг</p>
+                        ${tonnageTrend}
                     </div>
                     <div class="glass rounded-2xl p-3">
                         <p class="text-xs text-surface-500 dark:text-surface-400">Длительность</p>
@@ -2640,18 +2644,6 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         <p class="text-2xl font-bold">${metrics.completion_percent || 0}%</p>
                     </div>
                 </div>
-
-                <div class="glass rounded-2xl p-4 mb-4">
-                    <h3 class="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-1.5">Динамика тоннажа</h3>
-                    ${deltaBlock}
-                </div>
-
-                ${detail.summary ? `
-                    <div class="glass rounded-2xl p-4 mb-4">
-                        <h3 class="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-1.5">Резюме</h3>
-                        <p class="text-sm text-surface-700 dark:text-surface-300 leading-relaxed">${this.escapeHtml(detail.summary)}</p>
-                    </div>
-                ` : ''}
 
                 <div id="ai-workout-detail"></div>
 

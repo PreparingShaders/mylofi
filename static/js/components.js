@@ -643,18 +643,14 @@ export const Components = {
         }
 
         const groups = Array.isArray(payload.muscle_groups) ? payload.muscle_groups.filter(g => g && g.muscle_group) : [];
-        const topTonnage = groups.reduce((max, g) => Math.max(max, Number(g.tonnage_kg) || 0), 0);
-        const groupRows = groups.map((g) => {
+        const groupPills = groups.map((g) => {
             const tonnage = Number(g.tonnage_kg) || 0;
-            const width = topTonnage > 0 ? Math.max(6, Math.round((tonnage / topTonnage) * 100)) : 0;
+            const sets = Number(g.sets_count) || 0;
             return `
-                <div class="ai-workout__group">
-                    <div class="ai-workout__group-head">
-                        <span class="ai-workout__group-name">${escapeHtml(g.muscle_group)}</span>
-                        <span class="ai-workout__group-value">${Math.round(tonnage)} кг · ${Number(g.sets_count) || 0} подх.</span>
-                    </div>
-                    <div class="ai-workout__group-bar"><span style="width: ${width}%"></span></div>
-                </div>
+                <span class="ai-workout__pill" title="${escapeHtml(g.muscle_group)}">
+                    <span class="ai-workout__pill-name">${escapeHtml(g.muscle_group)}</span>
+                    <span class="ai-workout__pill-value">${Math.round(tonnage)} кг · ${sets} подх.</span>
+                </span>
             `;
         }).join('');
 
@@ -668,45 +664,57 @@ export const Components = {
             : '';
 
         const intensity = typeof payload.intensity_conclusions === 'string' && payload.intensity_conclusions.trim()
-            ? `<p class="ai-workout__intensity">${escapeHtml(payload.intensity_conclusions.trim())}</p>`
+            ? `<div class="ai-workout__callout ai-workout__callout--amber">${escapeHtml(payload.intensity_conclusions.trim())}</div>`
             : '';
 
         const balance = typeof payload.balance_analysis === 'string' && payload.balance_analysis.trim()
-            ? `<p class="ai-workout__balance">${escapeHtml(payload.balance_analysis.trim())}</p>`
+            ? `<div class="ai-workout__callout ai-workout__callout--indigo">${escapeHtml(payload.balance_analysis.trim())}</div>`
             : '';
 
         const recommendations = (Array.isArray(payload.recommendations) ? payload.recommendations : [])
             .filter(r => r && r.title && r.text)
             .map(r => `
-                <li class="ai-workout__rec">
-                    <span class="ai-workout__rec-title">${escapeHtml(r.title)}</span>
-                    <span class="ai-workout__rec-text">${escapeHtml(r.text)}</span>
+                <li class="ai-workout__checklist-item">
+                    <span class="ai-workout__checklist-marker" aria-hidden="true">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                    </span>
+                    <span class="ai-workout__checklist-body">
+                        <span class="ai-workout__checklist-title">${escapeHtml(r.title)}</span>
+                        <span class="ai-workout__checklist-text">${escapeHtml(r.text)}</span>
+                    </span>
                 </li>
             `).join('');
 
         const focus = Array.isArray(payload.next_workout_focus) ? payload.next_workout_focus.filter(Boolean) : [];
         const focusBlock = focus.length
-            ? `<ul class="ai-workout__focus">${focus.map(f => `<li>${escapeHtml(f)}</li>`).join('')}</ul>`
+            ? `<ul class="ai-workout__checklist">${focus.map(f => `
+                    <li class="ai-workout__checklist-item">
+                        <span class="ai-workout__checklist-marker" aria-hidden="true">
+                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                        </span>
+                        <span class="ai-workout__checklist-text">${escapeHtml(f)}</span>
+                    </li>
+                `).join('')}</ul>`
             : '';
 
-        const breakdown = groupRows || recommendations || focusBlock || intensity || balance ? `
-            <details class="ai-workout__details">
-                <summary class="ai-workout__summary">Детали разбора</summary>
+        const hasBody = groupPills || intensity || balance || highlightsBlock || recovery || focusBlock || recommendations;
+        const body = hasBody ? `
+            <div class="ai-workout__body">
+                ${groupPills ? `<div class="ai-workout__pills"><span class="ai-workout__pills-label">Нагрузка по группам</span>${groupPills}</div>` : ''}
                 ${intensity}
                 ${balance}
-                ${groupRows ? `<div class="ai-workout__groups">${groupRows}</div>` : ''}
                 ${highlightsBlock}
                 ${recovery}
-                ${focusBlock ? `<div class="ai-workout__focus-wrap"><span class="ai-workout__focus-label">Фокус на следующей:</span>${focusBlock}</div>` : ''}
-                ${recommendations ? `<ul class="ai-workout__recs">${recommendations}</ul>` : ''}
-            </details>
-        ` : (highlightsBlock || recovery ? `${highlightsBlock}${recovery}` : '');
+                ${focusBlock ? `<div class="ai-workout__focus-wrap"><span class="ai-workout__focus-label">Фокус на следующей тренировке</span>${focusBlock}</div>` : ''}
+                ${recommendations ? `<div class="ai-workout__checklist-wrap"><span class="ai-workout__focus-label">Рекомендации</span><ul class="ai-workout__checklist">${recommendations}</ul></div>` : ''}
+            </div>
+        ` : '';
 
         return `
             <section class="ai-workout glass rounded-3xl" aria-label="${escapeHtml(title)}">
                 ${head}
                 <p class="ai-workout__text">${escapeHtml(text)}</p>
-                ${breakdown}
+                ${body}
                 ${trigger}
             </section>
         `;

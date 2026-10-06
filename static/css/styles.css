@@ -1570,81 +1570,59 @@ input, select, textarea:focus {
 .dark .ai-workout__quota {
     color: #fbbf24;
 }
-/* Breakdown behind <details>: the verdict is the glance, the figures are opt-in. */
-.ai-workout__details {
-    margin-top: 2px;
+/* Muscle group volume: a row of compact pills under the verdict, one per group.
+   The pill carries the group name, the tonnage and the set count in a single
+   inline line, so the whole distribution reads at a glance without the bars
+   that used to sit under each group. */
+.ai-workout__pills {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin: 4px 0 6px;
 }
-.ai-workout__summary {
-    cursor: pointer;
-    list-style: none;
-    padding: 5px 0;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
+.ai-workout__pills-label {
+    flex: 1 1 100%;
+    min-width: 0;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
     color: #71717a;
-    user-select: none;
 }
-.ai-workout__summary::-webkit-details-marker {
-    display: none;
-}
-.ai-workout__summary::after {
-    content: "›";
-    display: inline-block;
-    margin-left: 4px;
-    transition: transform 0.15s ease;
-}
-.ai-workout__details[open] .ai-workout__summary::after {
-    transform: rotate(90deg);
-}
-.dark .ai-workout__summary {
+.dark .ai-workout__pills-label {
     color: #a1a1aa;
 }
-/* Volume per muscle group: the bar is scaled to the heaviest group in the
-   session, so the card reads as a distribution rather than as absolute
-   magnitudes the user would have to know the totals to judge. */
-.ai-workout__groups {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin: 2px 0 6px;
-}
-.ai-workout__group-head {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 8px;
+.ai-workout__pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: 999px;
     font-size: 11px;
-}
-.ai-workout__group-name {
-    font-weight: 600;
+    line-height: 1.3;
     color: #52525b;
+    background: rgba(124, 58, 237, 0.08);
+    border: 1px solid rgba(124, 58, 237, 0.18);
+    white-space: nowrap;
+    max-width: 100%;
+}
+.dark .ai-workout__pill {
+    color: #c4b5fd;
+    background: rgba(124, 58, 237, 0.16);
+    border-color: rgba(124, 58, 237, 0.28);
+}
+.ai-workout__pill-name {
+    font-weight: 700;
     text-transform: capitalize;
 }
-.dark .ai-workout__group-name {
-    color: #d4d4d8;
-}
-.ai-workout__group-value {
+.ai-workout__pill-value {
     font-variant-numeric: tabular-nums;
     color: #71717a;
-    white-space: nowrap;
+    font-weight: 500;
 }
-.ai-workout__group-bar {
-    height: 4px;
-    border-radius: 9999px;
-    background: rgba(120, 113, 108, 0.16);
-    overflow: hidden;
-    margin-top: 2px;
-}
-.ai-workout__group-bar span {
-    display: block;
-    height: 100%;
-    border-radius: 9999px;
-    background: linear-gradient(90deg, #a855f7, #6366f1);
-    transition: width 0.3s ease;
-}
-.dark .ai-workout__group-bar span {
-    background: linear-gradient(90deg, #c084fc, #818cf8);
+.dark .ai-workout__pill-value {
+    color: #a1a1aa;
 }
 .ai-workout__highlights {
     margin: 0 0 6px;
@@ -1674,33 +1652,35 @@ input, select, textarea:focus {
     background: rgba(132, 204, 22, 0.12);
     border-color: rgba(132, 204, 22, 0.22);
 }
-.ai-workout__intensity {
+/* Callout boxes: a tinted observation that deserves its own block. The verdict
+   text is the glance, these are the supporting detail - intensity in warm amber,
+   balance in cool indigo, recovery in lime. Each keeps the same tint, border and
+   text tone as the card's own accent, so the three never read as three different
+   components dropped into one card. */
+.ai-workout__callout {
     margin: 0 0 6px;
     padding: 8px 10px;
     border-radius: 12px;
     font-size: 12px;
     line-height: 1.4;
     color: #3f3f46;
+}
+.ai-workout__callout--amber {
     background: rgba(251, 146, 6, 0.1);
     border: 1px solid rgba(251, 146, 6, 0.24);
 }
-.dark .ai-workout__intensity {
-    color: #d4d4d8;
-    background: rgba(251, 146, 6, 0.12);
-    border-color: rgba(251, 146, 6, 0.22);
-}
-.ai-workout__balance {
-    margin: 0 0 6px;
-    padding: 8px 10px;
-    border-radius: 12px;
-    font-size: 12px;
-    line-height: 1.4;
-    color: #3f3f46;
+.ai-workout__callout--indigo {
     background: rgba(168, 175, 240, 0.1);
     border: 1px solid rgba(168, 175, 240, 0.24);
 }
-.dark .ai-workout__balance {
+.dark .ai-workout__callout {
     color: #d4d4d8;
+}
+.dark .ai-workout__callout--amber {
+    background: rgba(251, 146, 6, 0.12);
+    border-color: rgba(251, 146, 6, 0.22);
+}
+.dark .ai-workout__callout--indigo {
     background: rgba(168, 175, 240, 0.12);
     border-color: rgba(168, 175, 240, 0.22);
 }
@@ -1717,7 +1697,12 @@ input, select, textarea:focus {
 .dark .ai-workout__focus-label {
     color: #a1a1aa;
 }
-.ai-workout__focus {
+/* Unified action checklist: the next-workout focus and the recommendations are
+   the same kind of thing - things to do - so they share one look. Each item is a
+   row with a checkmark marker on the left and its text on the right; the focus
+   items are single-line and the recommendations carry a title line plus their
+   own body, which is what makes a recommendation different from a bullet. */
+.ai-workout__checklist {
     list-style: none;
     margin: 0;
     padding: 0;
@@ -1725,60 +1710,60 @@ input, select, textarea:focus {
     flex-direction: column;
     gap: 4px;
 }
-.ai-workout__focus li {
+.ai-workout__checklist-item {
     display: flex;
     align-items: flex-start;
-    gap: 4px;
-    padding: 6px 10px;
-    border-radius: 10px;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: 12px;
     font-size: 12px;
     line-height: 1.4;
     color: #3f3f46;
     background: rgba(251, 146, 6, 0.06);
     border: 1px solid rgba(251, 146, 6, 0.12);
 }
-.dark .ai-workout__focus li {
+.dark .ai-workout__checklist-item {
     color: #d4d4d8;
     background: rgba(251, 146, 6, 0.08);
     border-color: rgba(251, 146, 6, 0.1);
 }
-.ai-workout__focus li::before {
-    content: "•";
+.ai-workout__checklist-marker {
+    display: inline-flex;
+    flex-shrink:0;
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
     color: #fb9206;
-    font-weight: 700;
-    margin-right: 4px;
+    background: rgba(251, 146, 6, 0.14);
 }
-.ai-workout__recs {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
+.dark .ai-workout__checklist-marker {
+    color: #fbbf24;
+    background: rgba(251, 146, 6, 0.2);
 }
-.ai-workout__rec {
+.ai-workout__checklist-body {
     display: flex;
     flex-direction: column;
     gap: 1px;
-    padding: 7px 10px;
-    border-radius: 12px;
-    background: rgba(120, 113, 108, 0.08);
+    min-width: 0;
 }
-.dark .ai-workout__rec {
-    background: rgba(255, 255, 255, 0.05);
+.ai-workout__checklist-text {
+    font-size: 12px;
+    line-height: 1.4;
+    color: #3f3f46;
 }
-.ai-workout__rec-title {
+.dark .ai-workout__checklist-text {
+    color: #d4d4d8;
+}
+.ai-workout__checklist-title {
     font-size: 12px;
     font-weight: 700;
     color: #52525b;
 }
-.dark .ai-workout__rec-title {
+.dark .ai-workout__checklist-title {
     color: #e4e4e7;
-}
-.ai-workout__rec-text {
-    font-size: 12px;
-    line-height: 1.4;
-    color: #71717a;
 }
 /* Analysis trigger on the workout card, the same lime action the daily recap
    uses: the card always has exactly one thing it can do, and it reads as a
