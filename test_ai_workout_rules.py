@@ -732,6 +732,7 @@ async def test_a_first_verdict_is_generated_and_stored(monkeypatch):
         _FakeResult(scalars=[]),
         _FakeResult(scalars=[]),
         _FakeResult(scalars=[]),
+        _FakeResult(scalars=[]),
     )
     user = _user()
     session = _session()
@@ -760,6 +761,7 @@ async def test_reanalysing_is_flagged_as_a_rewrite(monkeypatch):
     db = _StubSession(
         _FakeResult(row=_metrics_row()),
         _FakeResult(scalars=[10]),
+        _FakeResult(scalars=[]),
         _FakeResult(scalars=[]),
         _FakeResult(scalars=[]),
         _FakeResult(scalars=[]),
@@ -993,6 +995,7 @@ async def test_the_history_of_the_judged_session_is_left_out(monkeypatch):
     db = _StubSession(
         _FakeResult(row=_metrics_row()),
         _FakeResult(scalars=[10, 11]),
+        _FakeResult(scalars=[]),
         _FakeResult(scalars=[]),
         _FakeResult(scalars=[]),
         _FakeResult(scalars=[]),

@@ -1,60 +1,41 @@
-# Comprehensive Workout AI Analysis, Duration, UI/UX, and Rest Timer Plan
+# Final Architecture Plan: Duration, Rest Intervals & Strict Russian Localization in AI Workout Service
 
 ## Overview
-This plan outlines all necessary backend and frontend changes for the MyLofi workout system:
-1. **Duration Bug Fix**: Absolute time difference and UTC normalization (`-177 min` fix).
-2. **Progressive Overload Guard**: Prevent weight increases when reps drop below target range.
-3. **Report Specificity**: Rich historical context and strict ban on abstract/metaphorical language.
-4. **Unified UI/UX (Mobile & Desktop)**: Consistent card display, desktop AI tip visibility, and 12–15 word limit on exercise tips.
-5. **Top AI Comment Removal**: Remove the top AI motivator block under the progress bar.
-6. **Push Notification / Start Overlay**: Ensure push notifications render above the blurred start overlay (`z-index` adjustment).
-7. **"Finish & Analyze with AI" Modal UX**: Loading state, spinner, text ("ИИ анализирует тренировку..."), smooth fade-in/scale-up animation, and consistent design.
-8. **Rest Timer & Data Schema**: `rest_time_seconds` column in `WorkoutSet`, automatic rest timer on set completion, and target rest time tracking (`target_rest_seconds`).
+This plan details the implementation for:
+1. **Accurate Session Duration & Timezone Handling**: Using `resolve_duration_seconds` (UTC-normalized `abs()` diff) across all workout completion flows and AI summaries.
+2. **Rest Interval Tracking & Prompt Integration (`rest_stats`)**:
+   - Query completed `workout_sets` for `completed_at` and `created_at` timestamps.
+   - Calculate `avg_rest_seconds` and `max_rest_seconds` between consecutive completed sets.
+   - Pass `rest_stats` payload into `WORKOUT_ANALYSIS_PROMPT` and instruct the AI coach to evaluate rest efficiency and pacing.
+3. **Strict Russian Localization Enforcement**:
+   - Add explicit system prompt rules: *"ALL fields in the JSON response MUST be strictly in Russian."* and *"NEVER use English words for muscle groups, exercise advice, or focus points."*
+   - Validate and sanitize responses to ensure zero English drift in muscle groups and advice.
 
 ---
 
-## Detailed Task Breakdown
+## Detailed Implementation Steps
 
-### 1. Negative Workout Duration Bug Fix (`app/services/workout.py`)
-- Normalize `started_at` and `completed_at` to UTC via `as_utc()`.
-- Wrap duration calculation in `abs()` to prevent negative durations if timestamps drift.
-- Update SQL aggregation in `ai_workout_service.py` to ensure non-negative duration epochs.
+### 1. Session Duration Verification
+- Ensure `complete_workout_session` and `cancel_workout_session` in `app/services/workout.py` call `resolve_duration_seconds(session.started_at, completed_at)`.
+- Ensure `load_workout_metrics` in `ai_workout_service.py` correctly uses `duration_seconds` or falls back to robust UTC epoch differences.
 
-### 2. Progressive Overload Guard (`app/services/ai_workout_service.py`)
-- Update AI summary and preview prompts with a strict rule: do not recommend weight increases if reps dropped below target range; recommend consolidating weight and hitting target reps instead.
+### 2. Rest Interval Metrics (`rest_stats`)
+- In `app/services/ai_workout_service.py` (or helper function), iterate through completed sets ordered chronologically by `completed_at` (or `started_at`/`id`).
+- Compute time gaps between consecutive completed sets as rest intervals.
+- Compute average rest (`avg_rest_seconds`) and maximum rest (`max_rest_seconds`).
+- Inject `rest_stats` into the summary prompt:
+  ```python
+  rest_stats_line = f"Интервалы отдыха между подходами: среднее время отдыха {rest_stats['avg_rest_seconds']} сек, максимальное {rest_stats['max_rest_seconds']} сек."
+  ```
+- Instruct AI: *"Оценивай плотность нагрузки и эффективность восстановления, опираясь на фактические интервалы отдыха."*
 
-### 3. Report Specificity & Historical Context (`app/services/ai_workout_service.py`)
-- Pass past 2–3 workouts' weight × reps history into prompt context.
-- Add strict prompt ban against abstract/poetic metaphors ("созерцание тренажера", "виток Вселенной") in favor of strict sports metrics (tonnage, intensity, progression).
-
-### 4. Unified UI/UX for Mobile & Desktop (`static/js/workouts.js`, CSS)
-- Ensure exercise carousel and cards render consistently across viewports (`max-w-[500px]` or responsive grid).
-- Verify AI tip (`aiWorkoutPlanBadge`) visibility on desktop viewports.
-- Restrict AI tips/focus sentences to a concise 12–15 word limit.
-
-### 5. Removal of Top AI Comment (`static/js/workouts.js`)
-- Remove `${this.renderAiPlanNote()}` from the header section right below the workout progress bar.
-
-### 6. Push Notification & Start Overlay Fix (`static/js/workouts.js`, CSS)
-- Elevate toast / push notification container `z-index` above the blur overlay (`backdrop-blur` / start countdown overlay).
-
-### 7. "Finish & Analyze with AI" UX (`static/js/workouts.js`, CSS)
-- On click of "Завершить и разобрать с ИИ": disable button, show spinner loader and "ИИ анализирует тренировку..." text.
-- Implement smooth fade-in / scale-up modal animation with app-consistent styling.
-
-### 8. Rest Timer between Sets + Data Schema (`app/models/__init__.py`, `static/js/workouts.js`, DB migration)
-- **Database & Schemas**: Add `rest_time_seconds: Optional[int]` to `WorkoutSet` model and schema. Create Alembic migration.
-- **Frontend**: 
-  - Trigger rest timer when a set is completed (`is_completed = true`).
-  - Display timer in `MM:SS` format within the exercise card or bottom floating bar.
-  - Reset and record actual rest duration when the next set is checked or interacted with.
-  - Compare against `target_rest_seconds` (default 90–120s) for visual threshold indicators.
+### 3. Strict Russian Prompt Enforcement
+- Update `WORKOUT_ANALYSIS_PROMPT` and preview prompts with mandatory rules:
+  - *"ЯЗЫК: ВСЕ поля в JSON-ответе (включая группы мышц, названия, советы, рекомендации) ДОЛЖНЫ быть строго на русском языке. Использование английских слов запрещено."*
+- Ensure validation routines check for English characters in generated muscle groups or fallback to Russian equivalents.
 
 ---
 
 ## Validation Plan
-1. **Unit Tests**:
-   - Verify duration calculation with aware/naive timestamps.
-   - Test rest time persistence and AI prompt guard assertions.
-2. **Linting & Type Checking**:
-   - Run `ruff check .` for Python changes.
+1. **Plan Review**: Verify all requirements are addressed.
+2. **Readiness**: Save plan, call `open_plan`, and exit planning mode.

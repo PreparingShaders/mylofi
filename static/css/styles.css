@@ -1637,6 +1637,9 @@ input, select, textarea:focus {
 .dark .ai-workout__highlights {
     color: #d4d4d8;
 }
+/* Recovery advice: the same quiet surface as the callouts, lime-accented via the
+   shared left-border token, so it reads as a section of the card rather than a
+   separate colored panel. */
 .ai-workout__recovery {
     margin: 0 0 6px;
     padding: 8px 10px;
@@ -1644,19 +1647,25 @@ input, select, textarea:focus {
     font-size: 12px;
     line-height: 1.4;
     color: #3f3f46;
-    background: rgba(132, 204, 22, 0.1);
-    border: 1px solid rgba(132, 204, 22, 0.24);
+    background: var(--ai-callout-bg, rgba(24, 24, 27, 0.03));
+    border-left: 2px solid var(--ai-callout-accent, rgba(132, 204, 22, 0.5));
+    border-top: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
+    border-right: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
+    border-bottom: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
+    --ai-callout-accent: rgba(132, 204, 22, 0.5);
 }
 .dark .ai-workout__recovery {
     color: #d4d4d8;
-    background: rgba(132, 204, 22, 0.12);
-    border-color: rgba(132, 204, 22, 0.22);
+    --ai-callout-bg: rgba(255, 255, 255, 0.03);
+    --ai-callout-border: rgba(255, 255, 255, 0.06);
+    --ai-callout-accent: rgba(132, 204, 22, 0.45);
 }
-/* Callout boxes: a tinted observation that deserves its own block. The verdict
-   text is the glance, these are the supporting detail - intensity in warm amber,
-   balance in cool indigo, recovery in lime. Each keeps the same tint, border and
-   text tone as the card's own accent, so the three never read as three different
-   components dropped into one card. */
+/* Callout boxes: a quiet observation that deserves its own block. The verdict
+   text is the glance, these are the supporting detail. All three share one
+   surface - the card's own glass - and differ only in a 2px left border, so
+   they read as sections of one card rather than three colored panels dropped
+   into it. Intensity keeps the amber accent, balance the indigo, recovery
+   the lime; the fill is never a second color. */
 .ai-workout__callout {
     margin: 0 0 6px;
     padding: 8px 10px;
@@ -1664,25 +1673,28 @@ input, select, textarea:focus {
     font-size: 12px;
     line-height: 1.4;
     color: #3f3f46;
+    background: var(--ai-callout-bg, rgba(24, 24, 27, 0.03));
+    border-left: 2px solid var(--ai-callout-accent, rgba(124, 58, 237, 0.4));
+    border-top: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
+    border-right: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
+    border-bottom: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
 }
 .ai-workout__callout--amber {
-    background: rgba(251, 146, 6, 0.1);
-    border: 1px solid rgba(251, 146, 6, 0.24);
+    --ai-callout-accent: rgba(251, 146, 6, 0.55);
 }
 .ai-workout__callout--indigo {
-    background: rgba(168, 175, 240, 0.1);
-    border: 1px solid rgba(168, 175, 240, 0.24);
+    --ai-callout-accent: rgba(124, 58, 237, 0.55);
 }
 .dark .ai-workout__callout {
     color: #d4d4d8;
+    --ai-callout-bg: rgba(255, 255, 255, 0.03);
+    --ai-callout-border: rgba(255, 255, 255, 0.06);
 }
 .dark .ai-workout__callout--amber {
-    background: rgba(251, 146, 6, 0.12);
-    border-color: rgba(251, 146, 6, 0.22);
+    --ai-callout-accent: rgba(251, 191, 36, 0.5);
 }
 .dark .ai-workout__callout--indigo {
-    background: rgba(168, 175, 240, 0.12);
-    border-color: rgba(168, 175, 240, 0.22);
+    --ai-callout-accent: rgba(192, 132, 252, 0.5);
 }
 .ai-workout__focus-wrap {
     margin: 6px 0;
@@ -1719,13 +1731,18 @@ input, select, textarea:focus {
     font-size: 12px;
     line-height: 1.4;
     color: #3f3f46;
-    background: rgba(251, 146, 6, 0.06);
-    border: 1px solid rgba(251, 146, 6, 0.12);
+    background: var(--ai-callout-bg, rgba(24, 24, 27, 0.03));
+    border-left: 2px solid var(--ai-callout-accent, rgba(251, 146, 6, 0.5));
+    border-top: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
+    border-right: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
+    border-bottom: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
+    --ai-callout-accent: rgba(251, 146, 6, 0.5);
 }
 .dark .ai-workout__checklist-item {
     color: #d4d4d8;
-    background: rgba(251, 146, 6, 0.08);
-    border-color: rgba(251, 146, 6, 0.1);
+    --ai-callout-bg: rgba(255, 255, 255, 0.03);
+    --ai-callout-border: rgba(255, 255, 255, 0.06);
+    --ai-callout-accent: rgba(251, 191, 36, 0.45);
 }
 .ai-workout__checklist-marker {
     display: inline-flex;

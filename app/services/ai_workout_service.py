@@ -26,6 +26,7 @@ import asyncio
 import json
 import logging
 import math
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -135,6 +136,58 @@ AI_PLAN_STATUS_NO_EXERCISES = "no_exercises"
 # stores free-text names, so this is the honest bucket: it is counted, but the
 # model is told it is an unnamed group rather than being given a fake name.
 OTHER_MUSCLE_GROUP = "прочие мышцы"
+
+# How the database's lowercase English muscle group keys read in Russian.
+# The catalog stores `back`, `chest`, `quadriceps` and the rest; the user and
+# the coach both speak Russian, so every line that names a group is translated
+# here rather than in the markup. A key that is not in the map falls back to
+# `OTHER_MUSCLE_GROUP` (which is already Russian), so an unknown group never
+# reaches the prompt as raw English.
+MUSCLE_GROUP_LABELS = {
+    "back": "Спина",
+    "chest": "Грудь",
+    "quadriceps": "Квадрицепс",
+    "hamstrings": "Бицепс бедра",
+    "glutes": "Ягодицы",
+    "shoulders": "Плечи",
+    "biceps": "Бицепс",
+    "triceps": "Трицепс",
+    "abs": "Пресс",
+    "calves": "Икры",
+    OTHER_MUSCLE_GROUP: "Прочие мышцы",
+}
+
+_MUSCLE_RU_RE = re.compile(
+    r"\b(" + "|".join(re.escape(k) for k in MUSCLE_GROUP_LABELS if k != OTHER_MUSCLE_GROUP) + r")\b",
+    re.IGNORECASE,
+)
+_MUSCLE_RU_MAP = {k.lower(): v for k, v in MUSCLE_GROUP_LABELS.items() if k != OTHER_MUSCLE_GROUP}
+
+
+def _russianize_muscle_groups(text: str) -> str:
+    """Replace known English muscle group keys in text with Russian labels."""
+    if not text:
+        return text
+
+    def _replace(match: re.Match) -> str:
+        return _MUSCLE_RU_MAP.get(match.group(0).lower(), match.group(0))
+
+    return _MUSCLE_RU_RE.sub(_replace, text)
+
+
+def _translate_muscle_group(value: Any) -> str:
+    """The Russian label for a muscle group key, or the honest fallback.
+
+    The database stores lowercase English slugs (`back`, `chest`); everything
+    the user sees - the volume pills, the balance analysis, the prompt's
+    context block - is Russian. Unknown keys keep their own text rather than
+    being mapped to the fallback, so a typo in the catalog does not silently
+    rename a group.
+    """
+    key = " ".join(str(value or "").split()).lower()
+    if not key:
+        return OTHER_MUSCLE_GROUP
+    return MUSCLE_GROUP_LABELS.get(key, key)
 
 # How the stored workout goal key reads inside a prompt. The profile goal
 # (`lose`/`maintain`/`gain`) describes the body, this one describes the session.
@@ -446,12 +499,39 @@ async def load_muscle_volume(db: AsyncSession, session_id: int, user_id: int) ->
     )
     return [
         {
-            "muscle_group": row.muscle_group,
+            "muscle_group": _translate_muscle_group(row.muscle_group),
             "tonnage_kg": round(float(row.tonnage_kg or 0), 1),
             "sets_count": int(row.sets_count or 0),
         }
         for row in result.all()
     ]
+
+
+async def load_rest_stats(db: AsyncSession, session_id: int) -> Dict[str, Any]:
+    """Rest intervals between consecutive completed sets, computed from timestamps."""
+    result = await db.execute(
+        select(WorkoutSet.completed_at)
+        .join(WorkoutSessionExercise, WorkoutSet.exercise_id == WorkoutSessionExercise.id)
+        .where(
+            WorkoutSessionExercise.session_id == session_id,
+            WorkoutSet.is_completed.is_(True),
+            WorkoutSet.completed_at.isnot(None),
+        )
+        .order_by(WorkoutSet.completed_at.asc())
+    )
+    timestamps = [as_utc(row.completed_at) for row in result.all()]
+    timestamps = [t for t in timestamps if t is not None]
+    if len(timestamps) < 2:
+        return {"avg_rest_seconds": 0, "max_rest_seconds": 0}
+
+    intervals = []
+    for i in range(1, len(timestamps)):
+        intervals.append(abs(int((timestamps[i] - timestamps[i - 1]).total_seconds())))
+
+    return {
+        "avg_rest_seconds": int(sum(intervals) / len(intervals)),
+        "max_rest_seconds": int(max(intervals)),
+    }
 
 
 async def _load_working_sets(
@@ -726,6 +806,7 @@ def build_workout_preview_prompt(
 Все числовые значения — float. weight_kg может быть null. Никаких пояснений, только JSON.
 
 Правила плана (обязательно):
+0. ЯЗЫК: ВСЕ поля в JSON-ответе (включая названия упражнений, фокус, мотивацию, советы, рекомендации) ДОЛЖНЫ быть строго на русском языке. Использование английских слов запрещено.
 1. СПИСОК ЗАКРЫТ: в recommendations РОВНО один объект на каждое упражнение из списка ниже, в том же порядке и с тем же названием. Не добавляй упражнений, не убирай их и не переименовывай.
 2. НОЛЬ ЭМОДЗИ: ни одного эмодзи, смайлика, иконки или символического значка из наборов эмодзи - ни в focus, ни в motivation, ни в name. Только обычные буквы, пробелы и знаки препинания.
 3. ВЕС - ИЗ ИСТОРИИ, А НЕ ИЗ ГОЛОВЫ: если по упражнению есть история, отталкивайся от прошлого рабочего веса и добавь не больше 10% на силовые базовые движения и не больше 5% на изоляцию. Если истории по упражнению нет - верни weight_kg: null и не выдумывай число. Никогда не указывай вес, которого пользователь не поднимал.
@@ -1067,6 +1148,7 @@ def build_workout_summary_prompt(
     athlete_line: str = "",
     persona: Optional[str] = None,
     persona_custom_text: Optional[str] = None,
+    rest_stats: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Prompt for the verdict on a finished session, in the user's coach voice.
 
@@ -1102,7 +1184,16 @@ def build_workout_summary_prompt(
         else ""
     )
 
-    return f"""Ты — тренер по силовым тренировкам. Ты уже видел всю тренировку пользователя и верни СТРОГО валидный JSON с полями:
+    rest_stats = rest_stats or {}
+    rest_stats_line = (
+        f"Интервалы отдыха между подходами: среднее время отдыха {rest_stats.get('avg_rest_seconds', 0)} сек, "
+        f"максимальное {rest_stats.get('max_rest_seconds', 0)} сек. "
+        "Оценивай плотность нагрузки и эффективность восстановления, опираясь на фактические интервалы отдыха. "
+        if rest_stats.get("avg_rest_seconds") or rest_stats.get("max_rest_seconds")
+        else ""
+    )
+
+    return f"""Ты — поддерживающий, профессиональный и аналитически строгий тренер по силовым тренировкам. Ты уже видел всю тренировку пользователя и верни СТРОГО валидный JSON с полями:
 {{
   "ai_summary": "Оценка тренировки РОВНО из 3-6 связанных предложений: без эмодзи и без цифр.",
   "overall_score": 7.5,
@@ -1118,6 +1209,7 @@ def build_workout_summary_prompt(
 Все числовые значения — float. overall_score от 1.0 до 10.0: это оценка тренировки целиком, а не средняя оценка упражнений. highlights — массив из 2-4 коротких строк. next_workout_focus — массив из 1-3 конкретных действий. recommendations — массив из 1-3 объектов с полями title и text. Никаких пояснений, только JSON.
 
 Правила разбора тренировки (обязательно):
+0. ЯЗЫК: ВСЕ поля в JSON-ответе (включая группы мышц, названия, советы, рекомендации) ДОЛЖНЫ быть строго на русском языке. Использование английских слов запрещено.
 1. ДЛИНА: в ai_summary РОВНО {SUMMARY_MIN_SENTENCES}-{SUMMARY_MAX_SENTENCES} предложений, связанных в один связный текст. Меньше {SUMMARY_MIN_SENTENCES} или больше {SUMMARY_MAX_SENTENCES} - нарушение. Каждое предложение несуще: не добивай объём дежурными фразами.
 2. НОЛЬ ЭМОДЗИ: ни одного эмодзи, смайлика, иконки или символического значка из наборов эмодзи - ни в ai_summary, ни в recovery_advice, ни в highlights, ни в intensity_conclusions, ни в balance_analysis, ни в next_workout_focus, ни в recommendations. Только обычные буквы, пробелы и знаки препинания.
 3. НИ ОДНОЙ ЦИФРЫ В текстовых полях: тоннаж, подходы, повторения, веса и время система уже посчитала точно по базе и показывает пользователю отдельно. Говори словами ("тоннаж вырос", "подходов сделано меньше плана", "работа была тяжёлой") и опирайся на точные итоги из блока Контекст. Любая цифра или число прописью - нарушение. Цифры допустимы только в recommendations (вес, повторения, подходы уместны и желательны).
@@ -1127,12 +1219,14 @@ def build_workout_summary_prompt(
 7. ПРОГРЕССИВНАЯ ПЕРЕГРУЗКА: НЕ рекомендуй увеличивать рабочий вес, если в этой тренировке количество повторений упало ниже целевого диапазона или тоннаж по упражнению ниже, чем в прошлой тренировке из блока Динамика. В таком случае прямо скажи: закрепить текущий вес и сначала довести повторения до нормы. Рост веса предлагай только там, где прошлый результат был выполнен полностью.
 8. СПОРТИВНАЯ КОНКРЕТИКА: запрещены абстрактные, метафорические и философские формулировки ("созерцание тренажера", "виток Вселенной", "атмосфера зала", "путь к себе"). Отвечай только спортивно-конкретно: интенсивность, темп, утомление, распределение по группам, прогресс по весу и повторениям, соответствие плану и восстановление.
 9. ПЕРСОНА - ТОЛЬКО ТОН: любая персона задаёт только тон формулировок. Длина, отсутствие эмодзи, запрет цифр, спортивная конкретика, формат ответа и честность по просадкам действуют при любой персона.
+10. НАЗВАНИЯ МЫШЕЧНЫХ ГРУПП - ТОЛЬКО НА РУССКОМ: в balance_analysis и везде, где ты упоминаешь мышечную группу, используй русские названия из блока Контекст (Спина, Грудь, Квадрицепс, Бицепс бедра, Ягодицы, Плечи, Бицепс, Трицепс, Пресс, Икры, Прочие мышцы). Английские ключи вроде `back` или `quadriceps` в ответе недопустимы - это не названия групп, это служебные ключи базы.
+11. ОТДЫХ И ПЛОТНОСТЬ НАГРУЗКИ: в recommendations и в разговоре о темпе тренировки учитывай реальный отдых. Для тяжёлых базовых движений (приседания, становая, жимы) норма 2-3 минута, для изоляционных упражнений и среднего веса - 1-2 минуты, для высокоповторных упражнений на выносливость - 60-90 секунд. Если в прошлой тренировке отдых был короче и Quality (качество) упражнения упала - предложи увеличить отдых, а не сокращать. Плотность - соотношение полезной работы и общего времени: если тренировка растянулась на 2+ часа при нормальном объёме, скажи это прямо и предложи сжать за счёт более коротких пауз.
+12. ДЛИТЕЛЬНОСТЬ ТРЕНИРОВКИ: в ai_summary и recommendations учитывай время из блока Контекст. Целевая продолжительность - 45-75 минут для силовой и на массу, 30-45 минут для выносливости. Если тренировка короче - возможно, не хватило времени на все подходы; если длиннее - паузы были слишком длинными или работа шла с перерывами. Упоминай это конкретно, без общих фраз вроде "всё было в норме".
 
 {_persona_line(persona, persona_custom_text, "ai_summary, recovery_advice и рекомендаций")}
 
 Контекст:
-Название тренировки: {_flatten(session_name, 80)}. {goal_line}{athlete_line}{totals_line}{notes_line}
-Работа по мышечным группам (точные цифры из базы, названия не выдумывай):
+Название тренировки: {_flatten(session_name, 80)}. {goal_line}{athlete_line}{totals_line}{notes_line}{rest_stats_line}Работа по мышечным группам (точные цифры из базы, названия не выдумывай):
 {muscle_lines if muscle_lines else 'Распределение по мышечным группам определить не удалось.'}
 Динамика по упражнениям, с которыми сравнивается эта тренировка:
 {performance_lines if performance_lines else 'Предыдущих тренировок по этим упражнениям нет.'}"""
@@ -1154,12 +1248,12 @@ def _validate_workout_summary(result: Dict[str, Any]) -> Dict[str, Any]:
     summary = _sanitize_verdict(result["ai_summary"])
     if not summary.strip():
         raise ValueError("ai_summary is empty after removing emoji")
-    result["ai_summary"] = summary
+    result["ai_summary"] = _russianize_muscle_groups(summary)
 
     result["overall_score"] = normalise_score(result["overall_score"])
 
     recovery = _clean_line(result.get("recovery_advice"), MAX_RECOVERY_CHARS)
-    result["recovery_advice"] = recovery
+    result["recovery_advice"] = _russianize_muscle_groups(recovery) if recovery else None
 
     highlights: List[str] = []
     raw_highlights = result.get("highlights")
@@ -1168,7 +1262,7 @@ def _validate_workout_summary(result: Dict[str, Any]) -> Dict[str, Any]:
     for item in raw_highlights[:MAX_HIGHLIGHTS]:
         clean = _clean_line(item, MAX_HIGHLIGHT_CHARS)
         if clean:
-            highlights.append(clean)
+            highlights.append(_russianize_muscle_groups(clean))
     if not highlights:
         raise ValueError("highlights are empty after cleaning")
     result["highlights"] = highlights
@@ -1183,18 +1277,18 @@ def _validate_workout_summary(result: Dict[str, Any]) -> Dict[str, Any]:
         title = _clean_line(item.get("title"), MAX_HIGHLIGHT_CHARS)
         text = _clean_line(item.get("text"), MAX_RECOMMENDATION_CHARS)
         if title and text:
-            recommendations.append({"title": title, "text": text})
+            recommendations.append({"title": _russianize_muscle_groups(title), "text": _russianize_muscle_groups(text)})
     result["recommendations"] = recommendations
 
     # New structured sections: intensity_conclusions, balance_analysis,
     # and next_workout_focus. These travel with the summary but are optional:
     # a plan that answers the headline without them still stores a verdict.
-    result["intensity_conclusions"] = _clean_line(
-        result.get("intensity_conclusions"), MAX_INTENSITY_CONCLUSIONS_CHARS
+    result["intensity_conclusions"] = _russianize_muscle_groups(
+        _clean_line(result.get("intensity_conclusions"), MAX_INTENSITY_CONCLUSIONS_CHARS)
     )
 
-    result["balance_analysis"] = _clean_line(
-        result.get("balance_analysis"), MAX_BALANCE_ANALYSIS_CHARS
+    result["balance_analysis"] = _russianize_muscle_groups(
+        _clean_line(result.get("balance_analysis"), MAX_BALANCE_ANALYSIS_CHARS)
     )
 
     raw_focus = result.get("next_workout_focus")
@@ -1205,7 +1299,7 @@ def _validate_workout_summary(result: Dict[str, Any]) -> Dict[str, Any]:
         for item in raw_focus[:MAX_NEXT_WORKOUT_FOCUS_ITEMS]:
             clean = _clean_line(item, MAX_NEXT_WORKOUT_FOCUS_CHARS)
             if clean:
-                focus_items.append(clean)
+                focus_items.append(_russianize_muscle_groups(clean))
         result["next_workout_focus"] = focus_items
     else:
         result["next_workout_focus"] = []
@@ -1222,6 +1316,7 @@ async def generate_workout_summary_payload(
     notes: Optional[str] = None,
     goal: Optional[str] = None,
     user: User,
+    rest_stats: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Ask the cascade for one session verdict, bounded as a whole."""
     prompt = build_workout_summary_prompt(
@@ -1234,6 +1329,7 @@ async def generate_workout_summary_payload(
         athlete_line=_athlete_line(user),
         persona=user.ai_persona,
         persona_custom_text=user.ai_persona_custom_text,
+        rest_stats=rest_stats,
     )
     return await asyncio.wait_for(
         run_text_cascade(prompt, _validate_workout_summary, "[AI Workout Summary]"),
@@ -1313,7 +1409,6 @@ async def store_workout_analysis(
     user.last_workout_ai_analysis_at = session.analyzed_at
     user.updated_at = utcnow()
     await db.commit()
-    await db.refresh(session)
 
 
 def _limit_entry(decision: Optional[LimitDecision]) -> Optional[Dict[str, Any]]:
@@ -1451,6 +1546,7 @@ async def analyze_workout_session(
     ]
 
     muscle_lines = [_muscle_line(entry) for entry in await load_muscle_volume(db, session.id, user.id)]
+    rest_stats = await load_rest_stats(db, session.id)
 
     try:
         payload = await generate_workout_summary_payload(
@@ -1461,6 +1557,7 @@ async def analyze_workout_session(
             notes=notes,
             goal=None,
             user=user,
+            rest_stats=rest_stats,
         )
     except Exception as e:
         # The failing statement may have left the session mid-transaction; the
@@ -1525,6 +1622,7 @@ __all__ = [
     "get_workout_analysis",
     "load_muscle_volume",
     "load_recent_performance",
+    "load_rest_stats",
     "load_stored_analysis",
     "load_stored_ai_plan",
     "load_workout_metrics",
