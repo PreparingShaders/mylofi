@@ -45,6 +45,9 @@ from app.schemas import (
     BuildWorkoutSessionRequest,
     QuickStartWorkoutRequest,
     QuickStartWorkoutResponse,
+    TemplateStartRequest,
+    WorkoutCompletionRequest,
+    WorkoutCompletionResponse,
     WorkoutSetUpdate,
     WorkoutSetCreate,
     AIWorkoutPreviewRequest,
@@ -121,9 +124,12 @@ from app.services.nutrition_targets import (
 )
 from app.services.ai_summary import get_or_create_daily_summary
 from app.services.ai_workout_service import (
+    AI_PLAN_STATUS_PENDING,
     analyze_workout_session,
     build_workout_preview,
+    build_workout_preview_and_store,
     get_workout_analysis,
+    load_stored_ai_plan,
 )
 from app.models import User, Meal
 from app.ws.manager import manager, get_websocket_user
@@ -830,13 +836,23 @@ async def delete_workout_template_endpoint(
 
 
 # ===== Workout Session Routes =====
-@router.post("/workouts/sessions/quick-start", response_model=QuickStartWorkoutResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/workouts/sessions/quick-start",
+    response_model=QuickStartWorkoutResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def quick_start_session(
     request: QuickStartWorkoutRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Create a ready-to-go workout session based on a goal"""
+    """Create a ready-to-go workout session based on a goal.
+
+    When `request.with_ai_plan` is set, an AI plan is generated in the background
+    and stored on the session so the preview endpoint can serve it immediately on
+    the next call, without blocking the session creation.
+    """
     active = await get_active_workout_session(db, current_user.id)
     if active:
         raise HTTPException(
@@ -850,6 +866,12 @@ async def quick_start_session(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+
+    if getattr(request, "with_ai_plan", False):
+        session.ai_plan_status = AI_PLAN_STATUS_PENDING
+        await db.commit()
+        background_tasks.add_task(build_workout_preview_and_store, db, session.id)
+
     return QuickStartWorkoutResponse(session_id=session.id)
 
 
@@ -909,17 +931,47 @@ async def update_workout_session_endpoint(
     return session
 
 
-@router.post("/workouts/sessions/{session_id}/complete", response_model=WorkoutSessionResponse)
+@router.post(
+    "/workouts/sessions/{session_id}/complete",
+    response_model=WorkoutCompletionResponse,
+)
 async def complete_workout_session_endpoint(
     session_id: int,
+    request: Optional[WorkoutCompletionRequest] = None,
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Complete a workout session"""
+    """Complete a workout session, optionally triggering AI analysis.
+
+    With `with_ai_analysis=true`, the retrospective verdict is enqueued as a
+    background task and a 202 answer is returned immediately: the verdict lands
+    on the session asynchronously and the client picks it up from the history
+    card via GET /ai/workout-summary/{workout_id}. Without the flag the session
+    is completed synchronously and the caller receives a `WorkoutCompletionResponse`.
+    """
+    data = request or WorkoutCompletionRequest()
     session = await complete_workout_session(db, session_id, current_user.id)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    return session
+
+    if data.with_ai_analysis:
+        background_tasks.add_task(
+            analyze_workout_session,
+            db,
+            current_user,
+            session,
+            notes=data.notes,
+            force=False,
+        )
+        return WorkoutCompletionResponse(
+            session_id=session.id,
+            message="Workout completed; AI analysis started.",
+        )
+    return WorkoutCompletionResponse(
+        session_id=session.id,
+        message="Workout completed.",
+    )
 
 
 @router.post("/workouts/sessions/{session_id}/cancel", response_model=WorkoutSessionResponse)
@@ -938,10 +990,18 @@ async def cancel_workout_session_endpoint(
 @router.post("/workouts/templates/{template_id}/start", response_model=WorkoutSessionResponse, status_code=status.HTTP_201_CREATED)
 async def start_workout_from_template(
     template_id: int,
+    request: Optional[TemplateStartRequest] = None,
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Start a workout session from a template"""
+    """Start a workout session from a template.
+
+    With `with_ai_plan=true` the AI preview is generated in the background and
+    stored on the new session, so the preview endpoint can serve it without a
+    model round-trip on the first open.
+    """
+    data = request or TemplateStartRequest()
     active = await get_active_workout_session(db, current_user.id)
     if active:
         raise HTTPException(
@@ -992,6 +1052,15 @@ async def start_workout_from_template(
         exercises=session_exercises,
     )
     session = await create_workout_session(db, current_user.id, session_data)
+
+    if data.with_ai_plan:
+        session.ai_plan_status = AI_PLAN_STATUS_PENDING
+        await db.commit()
+        background_tasks.add_task(build_workout_preview_and_store, db, session.id)
+        session = await get_workout_session(db, session.id, current_user.id)
+        if session is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
     return session
 
 
@@ -1100,12 +1169,24 @@ async def ai_workout_preview(
     and the weekly allowance is for the retrospective analysis. A model failure
     answers `available: false` with a reason and the user starts the workout
     without the coach.
+
+    When a plan was already generated and stored for a session (started with
+    `with_ai_plan`), it is read from the database instead of recomputing it, so
+    the preview survives across page loads while the workout is in progress.
     """
     template = None
     if request.template_id is not None:
         template = await get_workout_template(db, request.template_id, current_user.id)
         if template is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+
+    stored = None
+    if request.session_id is not None:
+        session = await get_workout_session(db, request.session_id, current_user.id)
+        if session is not None:
+            stored = load_stored_ai_plan(session)
+    if stored is not None:
+        return stored
 
     return await build_workout_preview(
         db,

@@ -487,6 +487,9 @@ class WorkoutSessionResponse(WorkoutSessionBase):
     # renders one row per session and only needs to know which ones carry a
     # verdict, not the verdict itself.
     has_ai_analysis: bool = False
+    # AI plan fields: stored when the session was started with `with_ai_plan=true`.
+    ai_plan_json: Optional[str] = None
+    ai_plan_status: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -544,6 +547,13 @@ class BuildWorkoutSessionRequest(BaseModel):
 
 class QuickStartWorkoutRequest(BaseModel):
     goal: WorkoutGoal = Field(default=WorkoutGoal.STRENGTH)
+    with_ai_plan: bool = False
+
+
+class TemplateStartRequest(BaseModel):
+    """Optional flags for starting a session from a template."""
+
+    with_ai_plan: bool = False
 
 
 class QuickStartWorkoutResponse(BaseModel):
@@ -588,8 +598,9 @@ from app.schemas.ai_workout import (  # noqa: E402
     AIWorkoutRecommendation,
     AIWorkoutSummaryRequest,
     AIWorkoutSummaryResponse,
+    WorkoutCompletionRequest,
+    WorkoutCompletionResponse,
 )
-
 
 __all__ = [
     "UserRole",
@@ -653,6 +664,7 @@ __all__ = [
     "BuildWorkoutSessionRequest",
     "QuickStartWorkoutRequest",
     "QuickStartWorkoutResponse",
+    "TemplateStartRequest",
     "AIWorkoutPreviewExercise",
     "AIWorkoutPreviewRequest",
     "AIWorkoutPreviewResponse",
@@ -660,4 +672,6 @@ __all__ = [
     "AIWorkoutSummaryResponse",
     "AIWorkoutMuscleVolume",
     "AIWorkoutRecommendation",
+    "WorkoutCompletionRequest",
+    "WorkoutCompletionResponse",
 ]

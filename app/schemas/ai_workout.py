@@ -46,13 +46,16 @@ class AIWorkoutPreviewRequest(BaseModel):
 
     Exactly one source is expected. `exercises` is the fallback for a session the
     user is about to build from scratch, where there is no template id yet; the
-    service prefers the template and falls back to the names.
+    service prefers the template and falls back to the names. `session_id` is set
+    when a plan was already generated and stored for the session in progress: the
+    preview endpoint then reads the cached plan instead of regenerating it.
     """
 
     template_id: Optional[int] = None
     exercises: Optional[List[str]] = Field(None, max_length=40)
     goal: Optional[str] = Field(None, max_length=40)
     name: Optional[str] = Field(None, max_length=255)
+    session_id: Optional[int] = None
 
 
 class AIWorkoutPreviewResponse(BaseModel):
@@ -114,6 +117,11 @@ class AIWorkoutSummaryResponse(BaseModel):
     empty state rather than an error. `generated` marks a first analysis and
     `reanalyzed` a rewrite of a stored one. `limit` travels on every answer,
     allowed or not, so the history card can show the tier state without guessing.
+
+    The new report structure adds structured sections beyond the headline
+    `ai_summary`: `intensity_conclusions` (how hard the work was relative to plan
+    and history), `balance_analysis` (distribution across muscle groups), and
+    `next_workout_focus` (1-3 concrete actions for the following session).
     """
 
     workout_id: int
@@ -125,11 +133,39 @@ class AIWorkoutSummaryResponse(BaseModel):
     recovery_advice: Optional[str] = None
     highlights: List[str] = []
     recommendations: List[AIWorkoutRecommendation] = []
+    # New structured sections for the refactored report.
+    intensity_conclusions: Optional[str] = None
+    balance_analysis: Optional[str] = None
+    next_workout_focus: List[str] = []
     ai_persona: Optional[str] = None
     analyzed_at: Optional[UtcDateTime] = None
     generated: bool = False
     reanalyzed: bool = False
     limit: Optional[UsageLimitEntry] = None
+
+
+class WorkoutCompletionResponse(BaseModel):
+    """Acknowledgement for an async workout completion with AI analysis.
+
+    The completion endpoint returns 202 Accepted immediately when
+    `with_ai_analysis=true`: the session is stored, the background task is
+    queued, and the verdict will appear in the history once the model answers.
+    """
+
+    session_id: int
+    message: str
+
+
+class WorkoutCompletionRequest(BaseModel):
+    """Optional flags for completing a workout session.
+
+    `with_ai_analysis` enqueues the retrospective verdict as a background task
+    (HTTP 202) instead of requiring a separate call. `notes` carries user
+    context for the model that cannot be read from the database alone.
+    """
+
+    with_ai_analysis: bool = False
+    notes: Optional[str] = Field(None, max_length=400)
 
 
 __all__ = [
@@ -140,4 +176,6 @@ __all__ = [
     "AIWorkoutSummaryResponse",
     "AIWorkoutMuscleVolume",
     "AIWorkoutRecommendation",
+    "WorkoutCompletionResponse",
+    "WorkoutCompletionRequest",
 ]

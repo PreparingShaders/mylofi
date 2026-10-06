@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import case, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models import (
     ExerciseCatalog,
@@ -93,6 +94,14 @@ MAX_MUSCLE_GROUPS = 8
 MAX_HIGHLIGHTS = 4
 MAX_RECOMMENDATIONS = 4
 
+# Upper bounds on the new structured report fields. These are advice sections,
+# not prose dumps: one line each, clamped so a chatty model cannot push the
+# card off the screen.
+MAX_INTENSITY_CONCLUSIONS_CHARS = 400
+MAX_BALANCE_ANALYSIS_CHARS = 400
+MAX_NEXT_WORKOUT_FOCUS_CHARS = 200
+MAX_NEXT_WORKOUT_FOCUS_ITEMS = 3
+
 # Plausible ranges for the figures the model proposes. A value outside one of them
 # is dropped rather than clamped: printing "340 кг" as a working weight would be
 # worse advice than printing no weight at all.
@@ -115,6 +124,12 @@ REASON_NO_SETS = "Нет выполненных подходов с весом"
 REASON_FAILED = "Не удалось разобрать тренировку"
 REASON_NOT_ANALYZED = "Тренировка ещё не разобрана"
 REASON_NOT_FOUND = "Тренировка не найдена"
+
+# Status values for the async AI plan generation on WorkoutSession.ai_plan_status.
+AI_PLAN_STATUS_PENDING = "pending"
+AI_PLAN_STATUS_AVAILABLE = "available"
+AI_PLAN_STATUS_FAILED = "failed"
+AI_PLAN_STATUS_NO_EXERCISES = "no_exercises"
 
 # Which group an exercise that is not in the catalog is filed under. The session
 # stores free-text names, so this is the honest bucket: it is counted, but the
@@ -953,6 +968,89 @@ async def build_workout_preview(
     )
 
 
+async def build_workout_preview_and_store(
+    db: AsyncSession,
+    session_id: int,
+) -> None:
+    """Generate a preview plan for a session and persist it.
+
+    Called as a background task when a session is started with
+    `with_ai_plan=true`. The plan is generated from the session's template (or
+    its exercises) and stored on `ai_plan_json` with the status on
+    `ai_plan_status`. A failure sets the status to `failed` but never raises:
+    the workout must start regardless of whether the coach answered.
+    """
+    result = await db.execute(
+        select(WorkoutSession)
+        .where(WorkoutSession.id == session_id)
+        .options(
+            selectinload(WorkoutSession.template),
+            selectinload(WorkoutSession.exercises),
+        )
+    )
+    session = result.scalar_one_or_none()
+    if session is None:
+        logger.warning(f"[AI Workout Preview] Session {session_id} not found")
+        return
+
+    user = await db.get(User, session.user_id)
+    if user is None:
+        logger.warning(f"[AI Workout Preview] User {session.user_id} for session {session_id} not found")
+        return
+
+    session.ai_plan_status = AI_PLAN_STATUS_PENDING
+    await db.commit()
+
+    try:
+        template = session.template
+
+        exercise_names: Optional[List[str]] = None
+        if session.exercises:
+            exercise_names = [
+                ex.name
+                for ex in sorted(session.exercises, key=lambda e: (e.order or 0, e.id))
+            ]
+
+        payload = await build_workout_preview(
+            db,
+            user,
+            template=template,
+            exercises=exercise_names,
+            goal=None,
+            name=session.name,
+        )
+
+        if payload.get("available"):
+            session.ai_plan_json = json.dumps(payload, ensure_ascii=False)
+            session.ai_plan_status = AI_PLAN_STATUS_AVAILABLE
+        else:
+            session.ai_plan_json = None
+            session.ai_plan_status = AI_PLAN_STATUS_FAILED
+
+        await db.commit()
+    except Exception as e:
+        logger.exception(
+            f"[AI Workout Preview] Failed to store plan for session {session_id}: {e}"
+        )
+        session.ai_plan_status = AI_PLAN_STATUS_FAILED
+        session.ai_plan_json = None
+        await db.rollback()
+        await db.commit()
+
+
+def load_stored_ai_plan(session: WorkoutSession) -> Optional[Dict[str, Any]]:
+    """Read the stored AI plan from a session, or None if not yet generated."""
+    raw = getattr(session, "ai_plan_json", None)
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        logger.warning(f"[AI Workout Preview] Stored plan for session {session.id} is not readable JSON")
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 # ===== summary =================================================================
 
 SUMMARY_REQUIRED_FIELDS = ["ai_summary", "overall_score"]
@@ -978,17 +1076,16 @@ def build_workout_summary_prompt(
     one place figures are allowed - they are advice about the next session, not a
     reading of this one.
     """
-    duration_min = round((metrics.get("duration_seconds") or 0) / 60)
+    goal_text = WORKOUT_GOAL_LABELS.get((goal or "").strip().lower(), "")
+    goal_line = f"Цель тренировки: {goal_text}. " if goal_text else ""
 
+    duration_min = round((metrics.get("duration_seconds") or 0) / 60)
     totals_line = (
         f"Итоги тренировки, посчитано точно по базе: тоннаж {_fmt_weight(metrics.get('tonnage_kg'))} кг, "
         f"выполнено {metrics.get('completed_sets') or 0} из {metrics.get('sets_count') or 0} подходов, "
         f"повторений {metrics.get('reps') or 0}, тяжёлый подход {_fmt_weight(metrics.get('top_weight_kg'))} кг, "
         f"время {duration_min} мин. "
         if duration_min
-        # A session closed without the timer running has no stored duration, and
-        # "время 0 мин" would be read as a verdict on a workout that took an hour.
-        # No time at all is the honest answer when both sources are empty.
         else (
             f"Итоги тренировки, посчитано точно по базе: тоннаж {_fmt_weight(metrics.get('tonnage_kg'))} кг, "
             f"выполнено {metrics.get('completed_sets') or 0} из {metrics.get('sets_count') or 0} подходов, "
@@ -996,23 +1093,6 @@ def build_workout_summary_prompt(
             "Длительность тренировки неизвестна, оценивай её по объёму работы. "
         )
     )
-
-    muscle_block = "\n".join(muscle_lines)
-    muscle_text = (
-        f"Работа по мышечным группам (точные цифры из базы, названия не выдумывай):\n{muscle_block}\n"
-        if muscle_block
-        else "Распределение по мышечным группам определить не удалось, оценивай по упражнениям. "
-    )
-
-    history_block = "\n".join(performance_lines)
-    history_text = (
-        f"Динамика по упражнениям, с которыми сравнивается эта тренировка:\n{history_block}\n"
-        if history_block
-        else "Предыдущих тренировок по этим упражнениям нет, сравнивать не с чем. "
-    )
-
-    goal_text = WORKOUT_GOAL_LABELS.get((goal or "").strip().lower(), "")
-    goal_line = f"Цель тренировки: {goal_text}. " if goal_text else ""
 
     clean_notes = _flatten(notes, MAX_NOTES_CHARS)
     notes_line = (
@@ -1027,29 +1107,35 @@ def build_workout_summary_prompt(
   "ai_summary": "Оценка тренировки РОВНО из 3-6 связанных предложений: без эмодзи и без цифр.",
   "overall_score": 7.5,
   "recovery_advice": "Одно-два предложения о восстановлении: без эмодзи и без цифр.",
-  "highlights": ["что получилось", "что требует внимания"],
+  "highlights": ["кратко о чем получилось", "кратко о чем требует внимания"],
+  "intensity_conclusions": "Одно-два предложения о том, насколько тяжело шла тренировка: интенсивность, темп, утомление - без эмодзи и без цифр.",
+  "balance_analysis": "Одно-два предложения о распределении нагрузки по мышечным группам: чем хороша, где перекос - без эмодзи и без цифр.",
+  "next_workout_focus": ["Четкое действие 1", "Четкое действие 2", "Четкое действие 3"],
   "recommendations": [
-    {{"title": "Короткий заголовок действия", "text": "Одно-два предложения: что делать в следующей тренировке"}}
+    {{"title": "Краткий заголовок действия", "text": "Одно-два предложения: что делать в следующей тренировке"}}
   ]
 }}
-Все числовые значения — float. overall_score от 1.0 до 10.0: это оценка тренировки целиком, а не средняя оценка упражнений. highlights — массив из 2-4 коротких строк. recommendations — массив из 2-4 объектов с полями title и text. Никаких пояснений, только JSON.
+Все числовые значения — float. overall_score от 1.0 до 10.0: это оценка тренировки целиком, а не средняя оценка упражнений. highlights — массив из 2-4 коротких строк. next_workout_focus — массив из 1-3 конкретных действий. recommendations — массив из 1-3 объектов с полями title и text. Никаких пояснений, только JSON.
 
 Правила разбора тренировки (обязательно):
 1. ДЛИНА: в ai_summary РОВНО {SUMMARY_MIN_SENTENCES}-{SUMMARY_MAX_SENTENCES} предложений, связанных в один связный текст. Меньше {SUMMARY_MIN_SENTENCES} или больше {SUMMARY_MAX_SENTENCES} - нарушение. Каждое предложение несуще: не добивай объём дежурными фразами.
-2. НОЛЬ ЭМОДЗИ: ни одного эмодзи, смайлика, иконки или символического значка из наборов эмодзи - ни в ai_summary, ни в recovery_advice, ни в highlights, ни в recommendations. Только обычные буквы, пробелы и знаки препинания.
-3. НИ ОДНОЙ ЦИФРЫ В ai_summary И recovery_advice: тоннаж, подходы, повторения, веса и время система уже посчитала точно по базе и показывает пользователю отдельно. В этих двух полях чисел нет - говори словами ("тоннаж вырос", "подходов сделано меньше плана", "работа была тяжёлой") и опирайся на точные итоги из блока Контекст. Любая цифра или число прописью там - нарушение.
-4. ЦИФРЫ РАЗРЕШЕНЫ ТОЛЬКО В recommendations: это совет на следующую тренировку, и там вес, повторения и подходы уместны и желательны.
-5. НИКАКИХ СПИСКОВ И РАЗМЕТОК: ai_summary и recovery_advice - обычный текст, без маркеров, нумерации, заголовков и переносов строк.
-6. ЧЕСТНОСТЬ: оценивай тренировку такой, какая она есть. Недобор плана, однообразная нагрузка, перекос по группам и отсутствие восстановления - называй прямо и конкретно, без приуменьшений ("почти", "слегка", "нормально"). Если тренировка была сильной - скажи это прямо. Пустых комплиментов вроде "хорошая работа в целом" не пиши.
-7. О ЧЁМ ГОВОРИТЬ: распределение работы по мышечным группам из контекста, динамику относительно прошлых тренировок, что даст прогресс на следующей, и одно-два конкретных действия. recovery_advice - про восстановление: сон, еда, когда брать следующую нагрузку.
-8. ПРОГРЕССИВНАЯ ПЕРЕГРУЗКА: НЕ рекомендуй увеличивать рабочий вес, если в этой тренировке количество повторений упало ниже целевого диапазона (например, ниже 8-10 повторений) или тоннаж по упражнению ниже, чем в прошлой тренировке из блока Динамика. В таком случае прямо скажи: закрепить текущий вес и сначала довести повторения до нормы. Рост веса предлагай только там, где прошлый результат был выполнен полностью.
-9. СПОРТИВНАЯ КОНКРЕТИКА: запрещены абстрактные, метафорические и философские формулировки ("созерцание тренажера", "виток Вселенной", "атмосфера зала", "путь к себе"). Отвечай только спортивно-конкретно: тоннаж, интенсивность, плотность подходов, прогресс по весу и повторениям, соответствие плану и восстановление.
-10. ПЕРСОНА - ТОЛЬКО ТОН: любая персона задаёт только тон формулировок. Длина, отсутствие эмодзи, запрет цифр, спортивная конкретика, формат ответа и честность по просадкам действуют при любой персона.
+2. НОЛЬ ЭМОДЗИ: ни одного эмодзи, смайлика, иконки или символического значка из наборов эмодзи - ни в ai_summary, ни в recovery_advice, ни в highlights, ни в intensity_conclusions, ни в balance_analysis, ни в next_workout_focus, ни в recommendations. Только обычные буквы, пробелы и знаки препинания.
+3. НИ ОДНОЙ ЦИФРЫ В текстовых полях: тоннаж, подходы, повторения, веса и время система уже посчитала точно по базе и показывает пользователю отдельно. Говори словами ("тоннаж вырос", "подходов сделано меньше плана", "работа была тяжёлой") и опирайся на точные итоги из блока Контекст. Любая цифра или число прописью - нарушение. Цифры допустимы только в recommendations (вес, повторения, подходы уместны и желательны).
+4. НИКАКИХ СПИСКОВ И РАЗМЕТОК: ai_summary, recovery_advice, intensity_conclusions и balance_analysis - обычный текст, без маркеров, нумерации, заголовков и переносов строк.
+5. ЧЕСТНОСТЬ: оценивай тренировку такой, какая она есть. Недобор плана, однообразная нагрузка, перекос по группам и отсутствие восстановления - называй прямо и конкретно, без приуменьшений ("почти", "слегка", "нормально"). Если тренировка была сильной - скажи это прямо. Пустых комплиментов вроде "хорошая работа в целом" не пиши.
+6. ГЛУБИНА АНАЛИЗА: intensity_conclusions - оцени интенсивность тренировки (была тяжела, легко, рваная, ровная?). balance_analysis - проанализируй распределение работы по мышечным группам: есть ли перекосы? next_workout_focus - приди 1-3 конкретных действий на следующую тренировку (какие упражнения добавить, что увеличить, что убрать). Каждое действие - кратко и по делу.
+7. ПРОГРЕССИВНАЯ ПЕРЕГРУЗКА: НЕ рекомендуй увеличивать рабочий вес, если в этой тренировке количество повторений упало ниже целевого диапазона или тоннаж по упражнению ниже, чем в прошлой тренировке из блока Динамика. В таком случае прямо скажи: закрепить текущий вес и сначала довести повторения до нормы. Рост веса предлагай только там, где прошлый результат был выполнен полностью.
+8. СПОРТИВНАЯ КОНКРЕТИКА: запрещены абстрактные, метафорические и философские формулировки ("созерцание тренажера", "виток Вселенной", "атмосфера зала", "путь к себе"). Отвечай только спортивно-конкретно: интенсивность, темп, утомление, распределение по группам, прогресс по весу и повторениям, соответствие плану и восстановление.
+9. ПЕРСОНА - ТОЛЬКО ТОН: любая персона задаёт только тон формулировок. Длина, отсутствие эмодзи, запрет цифр, спортивная конкретика, формат ответа и честность по просадкам действуют при любой персона.
 
 {_persona_line(persona, persona_custom_text, "ai_summary, recovery_advice и рекомендаций")}
 
 Контекст:
-Название тренировки: {_flatten(session_name, 80)}. {goal_line}{athlete_line}{totals_line}{notes_line}{muscle_text}{history_text}"""
+Название тренировки: {_flatten(session_name, 80)}. {goal_line}{athlete_line}{totals_line}{notes_line}
+Работа по мышечным группам (точные цифры из базы, названия не выдумывай):
+{muscle_lines if muscle_lines else 'Распределение по мышечным группам определить не удалось.'}
+Динамика по упражнениям, с которыми сравнивается эта тренировка:
+{performance_lines if performance_lines else 'Предыдущих тренировок по этим упражнениям нет.'}"""
 
 
 def _validate_workout_summary(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -1099,6 +1185,30 @@ def _validate_workout_summary(result: Dict[str, Any]) -> Dict[str, Any]:
         if title and text:
             recommendations.append({"title": title, "text": text})
     result["recommendations"] = recommendations
+
+    # New structured sections: intensity_conclusions, balance_analysis,
+    # and next_workout_focus. These travel with the summary but are optional:
+    # a plan that answers the headline without them still stores a verdict.
+    result["intensity_conclusions"] = _clean_line(
+        result.get("intensity_conclusions"), MAX_INTENSITY_CONCLUSIONS_CHARS
+    )
+
+    result["balance_analysis"] = _clean_line(
+        result.get("balance_analysis"), MAX_BALANCE_ANALYSIS_CHARS
+    )
+
+    raw_focus = result.get("next_workout_focus")
+    if raw_focus is None:
+        result["next_workout_focus"] = []
+    elif isinstance(raw_focus, list):
+        focus_items: List[str] = []
+        for item in raw_focus[:MAX_NEXT_WORKOUT_FOCUS_ITEMS]:
+            clean = _clean_line(item, MAX_NEXT_WORKOUT_FOCUS_CHARS)
+            if clean:
+                focus_items.append(clean)
+        result["next_workout_focus"] = focus_items
+    else:
+        result["next_workout_focus"] = []
 
     return result
 
@@ -1164,6 +1274,9 @@ def load_stored_analysis(session: WorkoutSession) -> Optional[Dict[str, Any]]:
         "recovery_advice": breakdown.get("recovery_advice"),
         "highlights": breakdown.get("highlights") or [],
         "recommendations": breakdown.get("recommendations") or [],
+        "intensity_conclusions": breakdown.get("intensity_conclusions"),
+        "balance_analysis": breakdown.get("balance_analysis"),
+        "next_workout_focus": breakdown.get("next_workout_focus") or [],
     }
 
 
@@ -1187,6 +1300,9 @@ async def store_workout_analysis(
             "recovery_advice": payload.get("recovery_advice"),
             "highlights": payload.get("highlights") or [],
             "recommendations": payload.get("recommendations") or [],
+            "intensity_conclusions": payload.get("intensity_conclusions"),
+            "balance_analysis": payload.get("balance_analysis"),
+            "next_workout_focus": payload.get("next_workout_focus") or [],
         },
         ensure_ascii=False,
     )
@@ -1246,6 +1362,9 @@ async def build_summary_payload(
         "recovery_advice": stored.get("recovery_advice"),
         "highlights": stored.get("highlights") or [],
         "recommendations": stored.get("recommendations") or [],
+        "intensity_conclusions": stored.get("intensity_conclusions"),
+        "balance_analysis": stored.get("balance_analysis"),
+        "next_workout_focus": stored.get("next_workout_focus") or [],
         "ai_persona": getattr(session, "ai_persona", None),
         "analyzed_at": session.analyzed_at,
         "generated": generated,
@@ -1384,6 +1503,10 @@ __all__ = [
     "MAX_RECENT_SESSIONS",
     "MAX_RECOMMENDATIONS",
     "OTHER_MUSCLE_GROUP",
+    "AI_PLAN_STATUS_PENDING",
+    "AI_PLAN_STATUS_AVAILABLE",
+    "AI_PLAN_STATUS_FAILED",
+    "AI_PLAN_STATUS_NO_EXERCISES",
     "REASON_FAILED",
     "REASON_NO_EXERCISES",
     "REASON_NO_SETS",
@@ -1394,6 +1517,7 @@ __all__ = [
     "analyze_workout_session",
     "build_summary_payload",
     "build_workout_preview",
+    "build_workout_preview_and_store",
     "build_workout_preview_prompt",
     "build_workout_summary_prompt",
     "generate_workout_preview_payload",
@@ -1402,6 +1526,7 @@ __all__ = [
     "load_muscle_volume",
     "load_recent_performance",
     "load_stored_analysis",
+    "load_stored_ai_plan",
     "load_workout_metrics",
     "store_workout_analysis",
 ]

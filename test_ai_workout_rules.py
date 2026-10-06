@@ -38,6 +38,9 @@ from app.services.ai_workout_service import (  # noqa: E402
     SUMMARY_MIN_SENTENCES,
     TIP_MAX_WORDS,
     TIP_MIN_WORDS,
+    AI_PLAN_STATUS_AVAILABLE,
+    AI_PLAN_STATUS_FAILED,
+    load_stored_ai_plan,
     _clean_tip,
     _performance_line,
     build_summary_payload,
@@ -132,13 +135,16 @@ def _session(**overrides):
         "user_id": 7,
         "name": "Верх",
         "exercises": [
-            SimpleNamespace(name="Жим лёжа"),
-            SimpleNamespace(name="Тяга"),
+            SimpleNamespace(name="Жим лёжа", order=0, id=1),
+            SimpleNamespace(name="Тяга", order=1, id=2),
         ],
+        "template": None,
         "ai_summary": None,
         "ai_recommendations_json": None,
         "analyzed_at": None,
         "ai_persona": None,
+        "ai_plan_json": None,
+        "ai_plan_status": None,
     }
     fields.update(overrides)
     return SimpleNamespace(**fields)
@@ -154,6 +160,9 @@ def _stored_session():
                 "recovery_advice": "Сон и белок",
                 "highlights": ["Объём вырос"],
                 "recommendations": [{"title": "Тяга", "text": "Добавь 3 подхода"}],
+                "intensity_conclusions": "Тренировка шла тяжело",
+                "balance_analysis": "Кроссовер в грудь, спина отстаёт",
+                "next_workout_focus": ["Добавить тягу", "Увеличить вес"],
             },
             ensure_ascii=False,
         ),
@@ -185,17 +194,21 @@ class _FakeResult:
 class _StubSession:
     """Session stand-in that replays canned results and records its statements."""
 
-    def __init__(self, *results):
+    def __init__(self, *results, entities=None):
         self.results = list(results)
         self.statements = []
         self.commits = 0
         self.rolled_back = False
+        self._entities = entities or {}
 
     async def execute(self, statement):
         self.statements.append(statement)
         if not self.results:
             raise AssertionError("unexpected extra query")
         return self.results.pop(0)
+
+    async def get(self, model, pk):
+        return self._entities.get((model.__name__, pk))
 
     async def commit(self):
         self.commits += 1
@@ -266,7 +279,7 @@ def test_summary_prompt_carries_the_rules_for_every_persona(persona):
 def test_summary_prompt_forbids_the_model_from_restating_the_figures():
     prompt = _summary_prompt()
 
-    assert "НИ ОДНОЙ ЦИФРЫ В ai_summary И recovery_advice" in prompt
+    assert "НИ ОДНОЙ ЦИФРЫ В текстовых полях" in prompt
     # The exact sums are still context - without them the coach cannot say whether
     # the session was light or heavy.
     assert "посчитано точно по базе" in prompt
@@ -278,7 +291,7 @@ def test_summary_prompt_forbids_the_model_from_restating_the_figures():
 def test_summary_prompt_allows_figures_only_in_the_recommendations():
     prompt = _summary_prompt()
 
-    assert "ЦИФРЫ РАЗРЕШЕНЫ ТОЛЬКО В recommendations" in prompt
+    assert "Цифры допустимы только в recommendations" in prompt
 
 
 def test_summary_prompt_carries_the_session_it_is_about():
@@ -370,7 +383,8 @@ def test_summary_prompt_bans_abstract_and_poetic_phrasing():
     assert "созерцание тренажера" in prompt
     assert "виток Вселенной" in prompt
     # The rule names what to say instead, not only what not to say.
-    assert "тоннаж, интенсивность, плотность подходов" in prompt
+    assert "интенсивность, темп, утомление, распределение по группам" in prompt
+    assert "спортивная конкретика" in prompt
     assert "спортивная конкретика" in prompt
 
 
@@ -444,6 +458,9 @@ def test_validate_cleans_the_breakdown_the_verdict_comes_with():
             "overall_score": 7.5,
             "recovery_advice": "  Сон 😴\nи белок  ",
             "highlights": ["- Объём вырос 📈", "   ", None],
+            "intensity_conclusions": "  Тренировка шла тяжело, но ровно  ",
+            "balance_analysis": "  Кроссовер в грудь, спина отстаёт  ",
+            "next_workout_focus": ["Добавить тягу", "  Увеличить вес на 5 кг  ", None],
             "recommendations": [
                 {"title": "Тяга", "text": "Добавь 3 подхода"},
                 {"title": "", "text": "пропустить"},
@@ -456,6 +473,9 @@ def test_validate_cleans_the_breakdown_the_verdict_comes_with():
     assert result["recovery_advice"] == "Сон и белок"
     assert result["highlights"] == ["Объём вырос"]
     assert result["recommendations"] == [{"title": "Тяга", "text": "Добавь 3 подхода"}]
+    assert result["intensity_conclusions"] == "Тренировка шла тяжело, но ровно"
+    assert result["balance_analysis"] == "Кроссовер в грудь, спина отстаёт"
+    assert result["next_workout_focus"] == ["Добавить тягу", "Увеличить вес на 5 кг"]
 
 
 def test_validate_rejects_a_breakdown_with_nothing_in_it():
@@ -530,6 +550,9 @@ def test_stored_verdict_is_read_back_out_of_the_json_column():
     assert stored["overall_score"] == 7.5
     assert stored["recovery_advice"] == "Сон и белок"
     assert stored["recommendations"] == [{"title": "Тяга", "text": "Добавь 3 подхода"}]
+    assert stored["intensity_conclusions"] == "Тренировка шла тяжело"
+    assert stored["balance_analysis"] == "Кроссовер в грудь, спина отстаёт"
+    assert stored["next_workout_focus"] == ["Добавить тягу", "Увеличить вес"]
 
 
 def test_a_session_that_was_never_analysed_has_no_verdict():
@@ -556,11 +579,22 @@ async def test_writing_a_verdict_stamps_the_analysis_and_the_weekly_cooldown(mon
         db,
         user,
         session,
-        {"ai_summary": GOOD_SUMMARY, "overall_score": 7.5, "highlights": ["Объём вырос"], "recommendations": []},
+        {
+            "ai_summary": GOOD_SUMMARY,
+            "overall_score": 7.5,
+            "highlights": ["Объём вырос"],
+            "recommendations": [],
+            "intensity_conclusions": "Тяжело, но ровно",
+            "balance_analysis": "Перекос в грудь",
+            "next_workout_focus": ["Добавить тягу"],
+        },
     )
 
     assert session.ai_summary == GOOD_SUMMARY
     assert json.loads(session.ai_recommendations_json)["overall_score"] == 7.5
+    assert json.loads(session.ai_recommendations_json)["intensity_conclusions"] == "Тяжело, но ровно"
+    assert json.loads(session.ai_recommendations_json)["balance_analysis"] == "Перекос в грудь"
+    assert json.loads(session.ai_recommendations_json)["next_workout_focus"] == ["Добавить тягу"]
     # The cooldown reads this column, so a Free user who got a verdict cannot ask
     # again until the week is out.
     assert user.last_workout_ai_analysis_at == session.analyzed_at
@@ -1000,6 +1034,99 @@ def test_the_weekly_allowance_is_the_same_one_the_limits_table_advertises():
     assert decision.allowed is False
     assert decision.resets_at is not None
     assert (decision.resets_at - RECENT).days == AI_ANALYSIS_COOLDOWN_DAYS
+
+
+# --- stored plan ----------------------------------------------------------------
+
+def _fake_preview_returning(payload):
+    """A build_workout_preview stand-in that returns a canned payload."""
+
+    async def _fake(*args, **kwargs):
+        return json.loads(json.dumps(payload))
+
+    return _fake
+
+
+@pytest.mark.asyncio
+async def test_build_workout_preview_and_store_writes_a_successful_plan(monkeypatch):
+    """A plan that the model agreed with is stored with status `available`."""
+    import app.services.ai_workout_service as service
+
+    saved_session = _session()
+
+    db = _StubSession(
+        _FakeResult(scalars=[saved_session]),
+        entities={("User", 7): _user()},
+    )
+    stored_preview = dict(GOOD_PREVIEW, available=True, name="Верх")
+    monkeypatch.setattr(
+        service, "build_workout_preview", _fake_preview_returning(stored_preview)
+    )
+
+    await service.build_workout_preview_and_store(db, saved_session.id)
+
+    stored = json.loads(saved_session.ai_plan_json)
+    assert stored["available"] is True
+    assert saved_session.ai_plan_status == AI_PLAN_STATUS_AVAILABLE
+    assert db.commits == 2
+
+
+@pytest.mark.asyncio
+async def test_build_workout_preview_and_store_marks_failure_without_raising(monkeypatch):
+    """A plan that the model refuses still sets status `failed`, never raises."""
+    import app.services.ai_workout_service as service
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("model down")
+
+    saved_session = _session()
+    db = _StubSession(
+        _FakeResult(scalars=[saved_session]),
+        entities={("User", 7): _user()},
+    )
+    monkeypatch.setattr(service, "build_workout_preview", _boom)
+
+    # Must not raise: the workout starts regardless of the coach's answer.
+    await service.build_workout_preview_and_store(db, saved_session.id)
+
+    assert saved_session.ai_plan_status == AI_PLAN_STATUS_FAILED
+    assert saved_session.ai_plan_json is None
+
+
+@pytest.mark.asyncio
+async def test_build_workout_preview_and_store_skips_when_session_is_missing(monkeypatch):
+    """A session id that does not exist is a no-op, not an error."""
+    import app.services.ai_workout_service as service
+
+    db = _StubSession(_FakeResult(scalars=[]))
+    monkeypatch.setattr(
+        service, "build_workout_preview",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not be called")),
+    )
+
+    await service.build_workout_preview_and_store(db, 999)
+
+    assert db.commits == 0
+
+
+def test_load_stored_ai_plan_reads_the_json_column():
+    raw = json.dumps({"available": True, "recommendations": []}, ensure_ascii=False)
+    session = _session(ai_plan_json=raw, ai_plan_status=AI_PLAN_STATUS_AVAILABLE)
+
+    stored = load_stored_ai_plan(session)
+
+    assert stored is not None
+    assert stored["available"] is True
+
+
+def test_load_stored_ai_plan_returns_none_when_unset():
+    session = _session(ai_plan_json=None, ai_plan_status=None)
+    assert load_stored_ai_plan(session) is None
+
+
+def test_load_stored_ai_plan_returns_none_on_corrupt_json():
+    session = _session(ai_plan_json="{not json", ai_plan_status=AI_PLAN_STATUS_AVAILABLE)
+    assert load_stored_ai_plan(session) is None
 
 
 # --- the history the coach reasons about --------------------------------------

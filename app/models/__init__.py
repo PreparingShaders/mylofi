@@ -262,6 +262,14 @@ class WorkoutSession(Base):
     # theirs: switching persona must not relabel text written in another voice.
     ai_persona: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
+    # AI coach preview plan for this session. Generated asynchronously when the
+    # session is started with `with_ai_plan=True`, and stored so the workout screen
+    # can read it back after the countdown without a second model call.
+    # `ai_plan_json` holds the plan payload (focus, motivation, recommendations),
+    # and `ai_plan_status` tracks whether generation is pending, done, or failed.
+    ai_plan_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ai_plan_status: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False

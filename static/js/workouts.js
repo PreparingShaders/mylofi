@@ -1245,11 +1245,14 @@ export const Workouts = {
     /**
      * Starts a template's session with the coach's plan already in hand.
      *
-     * Both requests go out in parallel with the countdown, as the plain start
-     * does, and the plan is awaited only as far as the screen is: a plan that
-     * fails costs the badges, never the workout. The offline branch falls back to
-     * the local session exactly like the plain start - the plan needs a
-     * connection, the session does not.
+     * The start endpoint is called with `with_ai_plan=true`, which enqueues a
+     * background task that generates and stores the plan on the session. The plan
+     * is fetched in parallel from the preview endpoint, which reads the stored
+     * plan if it is already available (or generates it on demand). The plan is
+     * awaited only as far as the screen is: a plan that fails costs the badges,
+     * never the workout. The offline branch falls back to the local session
+     * exactly like the plain start - the plan needs a connection, the session
+     * does not.
      */
     async startTemplateWithAi(container, app, templateId) {
         if (isNaN(templateId) || templateId == null) return;
@@ -1258,16 +1261,16 @@ export const Workouts = {
 
         this.renderCountdown(container, () => {});
 
-        const sessionPromise = API.post(startEndpoint, {}, token);
-        const planPromise = this.loadAiPlan(app, { template_id: templateId });
+        const sessionPromise = API.post(startEndpoint, { with_ai_plan: true }, token);
 
         try {
-            const [session, plan] = await Promise.all([
-                sessionPromise,
-                planPromise,
-            ]);
-            this.aiPlan = plan ? { ...plan, sessionId: session.id } : null;
-            await this.renderWorkoutScreen(container, app, session.id);
+            const session = await sessionPromise;
+            const sessionId = session.id;
+            // Try to read the stored plan; if the background task has not stored
+            // it yet, the preview endpoint falls back to generating it on the fly.
+            const plan = await this.loadAiPlan(app, { session_id: sessionId, template_id: templateId, name: session.name });
+            this.aiPlan = plan ? { ...plan, sessionId } : null;
+            await this.renderWorkoutScreen(container, app, sessionId);
         } catch (err) {
             console.error('[Workouts] Start with AI error:', err);
             app.showToast(err?.message || 'Ошибка запуска', 'error');
@@ -1286,14 +1289,15 @@ export const Workouts = {
 
         this.renderCountdown(app.elements.pageContent, () => {});
 
-        const sessionPromise = API.post('/workouts/sessions/quick-start', { goal }, token);
-        const planPromise = this.loadAiPlan(app, { goal, name: `Быстрый старт: ${goalLabel}` });
-
         try {
-            const [{ session_id: sessionId }, plan] = await Promise.all([
-                sessionPromise,
-                planPromise,
-            ]);
+            const { session_id: sessionId } = await API.post(
+                '/workouts/sessions/quick-start',
+                { goal, with_ai_plan: true },
+                token,
+            );
+            // Read the stored plan; the preview endpoint generates it on demand
+            // if the background task has not stored it yet.
+            const plan = await this.loadAiPlan(app, { goal, name: `Быстрый старт: ${goalLabel}`, session_id: sessionId });
             this.aiPlan = plan ? { ...plan, sessionId } : null;
             await this.renderWorkoutScreen(app.elements.pageContent, app, sessionId);
         } catch (err) {
@@ -1372,6 +1376,33 @@ export const Workouts = {
     },
 
     /**
+     * Poll the summary endpoint until the background analysis lands.
+     *
+     * The complete endpoint returns 202 immediately when `with_ai_analysis=true`;
+     * the verdict is produced by a background task. This caller polls the read
+     * endpoint with exponential backoff, up to a few minutes, so the user sees the
+     * coach's verdict as soon as it is ready rather than on the next page load.
+     */
+    async pollForAiAnalysis(app, sessionId, { timeoutMs = 180000, intervalMs = 3000 } = {}) {
+        const id = parseInt(sessionId);
+        if (isNaN(id)) return null;
+
+        const start = Date.now();
+        let delay = intervalMs;
+
+        while (Date.now() - start < timeoutMs) {
+            const payload = await this.loadAiAnalysis(app, id, { quiet: true });
+            if (payload) return payload;
+
+            await new Promise(resolve => setTimeout(resolve, delay));
+            delay = Math.min(delay * 2, 15000);
+        }
+
+        app.showToast('ИИ-разбор ещё готовится, проверьте историю позже', 'info');
+        return null;
+    },
+
+    /**
      * Finish a session and have the coach read it, in one press.
      *
      * The workout is completed first and on its own terms: if the completion
@@ -1424,7 +1455,7 @@ export const Workouts = {
         }
 
         try {
-            await API.post(`/workouts/sessions/${sessionId}/complete`, null, app.state.tokens.access);
+            await API.post(`/workouts/sessions/${sessionId}/complete`, { with_ai_analysis: true }, app.state.tokens.access);
         } catch (err) {
             console.error('[Workouts] Complete with AI failed:', err);
             app.showToast(err?.offlineQueued ? OFFLINE_COMPLETE_MESSAGE : (err?.message || 'Ошибка завершения тренировки'), 'error');
@@ -1432,12 +1463,11 @@ export const Workouts = {
             return;
         }
 
-        const payload = await this.analyzeWorkout(app, sessionId);
+        // The verdict is generated in the background. Poll the summary endpoint
+        // until the verdict lands; the same card is rendered inline in history.
+        const payload = await this.pollForAiAnalysis(app, sessionId);
         await app.renderPage('workouts');
 
-        // No verdict (a spent quota, no weighted sets, a model that failed) is not
-        // a dead end: the reason is on the toast and the session can be re-read in
-        // the history, where the same card offers the analysis again.
         if (payload) {
             this.showAiSummaryModal(app, payload);
         }

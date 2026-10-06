@@ -667,6 +667,14 @@ export const Components = {
             ? `<p class="ai-workout__recovery">${escapeHtml(payload.recovery_advice.trim())}</p>`
             : '';
 
+        const intensity = typeof payload.intensity_conclusions === 'string' && payload.intensity_conclusions.trim()
+            ? `<p class="ai-workout__intensity">${escapeHtml(payload.intensity_conclusions.trim())}</p>`
+            : '';
+
+        const balance = typeof payload.balance_analysis === 'string' && payload.balance_analysis.trim()
+            ? `<p class="ai-workout__balance">${escapeHtml(payload.balance_analysis.trim())}</p>`
+            : '';
+
         const recommendations = (Array.isArray(payload.recommendations) ? payload.recommendations : [])
             .filter(r => r && r.title && r.text)
             .map(r => `
@@ -676,12 +684,20 @@ export const Components = {
                 </li>
             `).join('');
 
-        const breakdown = groupRows || recommendations ? `
+        const focus = Array.isArray(payload.next_workout_focus) ? payload.next_workout_focus.filter(Boolean) : [];
+        const focusBlock = focus.length
+            ? `<ul class="ai-workout__focus">${focus.map(f => `<li>${escapeHtml(f)}</li>`).join('')}</ul>`
+            : '';
+
+        const breakdown = groupRows || recommendations || focusBlock || intensity || balance ? `
             <details class="ai-workout__details">
                 <summary class="ai-workout__summary">Детали разбора</summary>
+                ${intensity}
+                ${balance}
                 ${groupRows ? `<div class="ai-workout__groups">${groupRows}</div>` : ''}
                 ${highlightsBlock}
                 ${recovery}
+                ${focusBlock ? `<div class="ai-workout__focus-wrap"><span class="ai-workout__focus-label">Фокус на следующей:</span>${focusBlock}</div>` : ''}
                 ${recommendations ? `<ul class="ai-workout__recs">${recommendations}</ul>` : ''}
             </details>
         ` : (highlightsBlock || recovery ? `${highlightsBlock}${recovery}` : '');
