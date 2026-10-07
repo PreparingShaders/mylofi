@@ -5,14 +5,130 @@ import { Components } from './components.js';
 const Admin = {
     app: null,
     container: null,
+    userModal: null,
+
+    state: {
+        search: '',
+        is_active: null,
+        is_admin: null,
+        page: 1,
+        page_size: 20,
+        total: 0,
+        total_pages: 1,
+    },
 
     async render(container, app) {
         this.app = app;
         this.container = container;
 
-        container.innerHTML = Components.loadingSpinner();
+        this.state.search = '';
+        this.state.is_active = null;
+        this.state.is_admin = null;
+        this.state.page = 1;
+
+        container.innerHTML = this.renderShell();
         await this.loadStats();
         await this.loadUsers();
+    },
+
+    renderShell() {
+        return `
+            <div class="admin-panel space-y-6">
+                <div id="admin-stats" class="space-y-4"></div>
+
+                <div class="flex flex-col sm:flex-row gap-3">
+                    <div class="relative flex-1">
+                        <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-400 dark:text-surface-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                        </svg>
+                        <input type="text" id="admin-search" data-action="admin-search"
+                               placeholder="Поиск по email или имени..."
+                               class="w-full pl-10 pr-4 py-2.5 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 placeholder-surface-400 dark:placeholder-surface-500 focus:outline-none focus:ring-2 focus:ring-lime-500/30">
+                    </div>
+                    <div class="flex gap-2">
+                        <select id="admin-filter-active" data-action="admin-filter" data-filter="is_active"
+                                class="px-3 py-2 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-lime-500/30">
+                            <option value="">Все статусы</option>
+                            <option value="true">Активные</option>
+                            <option value="false">Заблокированные</option>
+                        </select>
+                        <select id="admin-filter-admin" data-action="admin-filter" data-filter="is_admin"
+                                class="px-3 py-2 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-lime-500/30">
+                            <option value="">Все роли</option>
+                            <option value="true">Админы</option>
+                            <option value="false">Пользователи</option>
+                        </select>
+                        <button data-action="admin-reset-filters"
+                                class="px-3 py-2 rounded-xl glass text-xs font-semibold text-surface-600 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-white/5 transition-colors">
+                            Сбросить
+                        </button>
+                    </div>
+                </div>
+
+                <div id="admin-users" class="min-h-[120px]"></div>
+
+                <div id="admin-pagination" class="flex justify-center"></div>
+            </div>
+        `;
+    },
+
+    buildUsersQuery() {
+        const params = new URLSearchParams();
+        if (this.state.search) params.set('search', this.state.search);
+        if (this.state.is_active !== null) params.set('is_active', this.state.is_active);
+        if (this.state.is_admin !== null) params.set('is_admin', this.state.is_admin);
+        params.set('page', String(this.state.page));
+        params.set('page_size', String(this.state.page_size));
+        return params.toString();
+    },
+
+    syncFilterUI() {
+        const activeFilter = this.container.querySelector('#admin-filter-active');
+        const adminFilter = this.container.querySelector('#admin-filter-admin');
+        const searchInput = this.container.querySelector('#admin-search');
+        if (activeFilter) activeFilter.value = this.state.is_active !== null ? String(this.state.is_active) : '';
+        if (adminFilter) adminFilter.value = this.state.is_admin !== null ? String(this.state.is_admin) : '';
+        if (searchInput) searchInput.value = this.state.search;
+    },
+
+    async applySearch() {
+        const searchInput = this.container.querySelector('#admin-search');
+        this.state.search = searchInput ? searchInput.value.trim() : '';
+        this.state.page = 1;
+        await this.loadUsers();
+    },
+
+    async applyFilter(filter, value) {
+        if (filter === 'is_active') {
+            this.state.is_active = value === '' ? null : value === 'true';
+        } else if (filter === 'is_admin') {
+            this.state.is_admin = value === '' ? null : value === 'true';
+        }
+        this.state.page = 1;
+        await this.loadUsers();
+    },
+
+    resetFilters() {
+        this.state.search = '';
+        this.state.is_active = null;
+        this.state.is_admin = null;
+        this.state.page = 1;
+        this.syncFilterUI();
+        this.loadUsers();
+    },
+
+    prevPage() {
+        if (this.state.page > 1) {
+            this.state.page -= 1;
+            this.loadUsers();
+        }
+    },
+
+    nextPage() {
+        if (this.state.page < this.state.total_pages) {
+            this.state.page += 1;
+            this.loadUsers();
+        }
     },
 
     async loadStats() {
@@ -21,7 +137,7 @@ const Admin = {
             const statsEl = this.container.querySelector('#admin-stats');
             if (!statsEl) return;
             statsEl.innerHTML = `
-                <div class="grid grid-cols-2 gap-3 mb-6">
+                <div class="grid grid-cols-2 gap-3">
                     <div class="glass rounded-2xl p-4">
                         <p class="text-xs text-surface-500 dark:text-surface-400 font-medium uppercase tracking-wider">Всего пользователей</p>
                         <p class="text-2xl font-bold text-surface-900 dark:text-zinc-100 mt-1">${stats.total_users}</p>
@@ -44,6 +160,7 @@ const Admin = {
             `;
         } catch (error) {
             console.error('[Admin] Stats load error:', error);
+            this.container.querySelector('#admin-stats').innerHTML = Components.errorState('Ошибка загрузки статистики');
         }
     },
 
@@ -53,11 +170,21 @@ const Admin = {
         listEl.innerHTML = Components.loadingSpinner();
 
         try {
-            const data = await API.get('/admin/users?page=1&page_size=50', this.app.state.tokens.access);
-            if (data.items.length === 0) {
+            const query = this.buildUsersQuery();
+            const data = await API.get(`/admin/users${query ? `?${query}` : ''}`, this.app.state.tokens.access);
+
+            this.syncFilterUI();
+
+            this.state.total = data.total;
+            this.state.total_pages = Math.ceil(data.total / data.page_size) || 1;
+
+            if (!data.items || data.items.length === 0) {
                 listEl.innerHTML = `<p class="text-sm text-surface-500 dark:text-surface-400 text-center py-8">Пользователи не найдены</p>`;
+                this.renderPagination();
                 return;
             }
+
+            const isCurrentUser = (id) => this.app.state.user && id === this.app.state.user.id;
 
             listEl.innerHTML = `
                 <div class="glass rounded-2xl overflow-hidden">
@@ -70,38 +197,255 @@ const Admin = {
                                     <th class="text-left px-4 py-3 text-xs font-semibold text-surface-500 dark:text-surface-400">Имя</th>
                                     <th class="text-left px-4 py-3 text-xs font-semibold text-surface-500 dark:text-surface-400">Активен</th>
                                     <th class="text-left px-4 py-3 text-xs font-semibold text-surface-500 dark:text-surface-400">Админ</th>
+                                    <th class="text-left px-4 py-3 text-xs font-semibold text-surface-500 dark:text-surface-400">Квота</th>
+                                    <th class="text-left px-4 py-3 text-xs font-semibold text-surface-500 dark:text-surface-400">Создано</th>
                                     <th class="text-left px-4 py-3 text-xs font-semibold text-surface-500 dark:text-surface-400">Действия</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                ${data.items.map(u => `
+                                ${data.items.map(u => {
+                                    const self = isCurrentUser(u.id);
+                                    return `
                                     <tr class="border-b border-surface-100 dark:border-white/5 hover:bg-surface-50 dark:hover:bg-white/5">
                                         <td class="px-4 py-3 text-surface-700 dark:text-zinc-300">${u.id}</td>
                                         <td class="px-4 py-3 text-surface-700 dark:text-zinc-300 font-medium">${escapeHtml(u.email)}</td>
                                         <td class="px-4 py-3 text-surface-700 dark:text-zinc-300">${escapeHtml(u.full_name || '—')}</td>
                                         <td class="px-4 py-3">
-                                            <button data-action="toggle-active" data-user-id="${u.id}" data-active="${u.is_active}" class="px-2 py-1 rounded-lg text-xs font-semibold transition-all ${u.is_active ? 'bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}">${u.is_active ? 'Активен' : 'Заблокирован'}</button>
+                                            ${self
+                                                ? `<span class="px-2 py-1 rounded-lg text-xs font-semibold ${u.is_active ? 'bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}">${u.is_active ? 'Активен' : 'Заблокирован'}</span>`
+                                                : `<button data-action="toggle-active" data-user-id="${u.id}" data-active="${u.is_active}" class="px-2 py-1 rounded-lg text-xs font-semibold transition-all ${u.is_active ? 'bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}">${u.is_active ? 'Активен' : 'Заблокирован'}</button>`
+                                            }
                                         </td>
                                         <td class="px-4 py-3">
-                                            <button data-action="toggle-admin" data-user-id="${u.id}" data-admin="${u.is_admin}" class="px-2 py-1 rounded-lg text-xs font-semibold transition-all ${u.is_admin ? 'bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-400' : 'bg-surface-100 text-surface-600 dark:bg-white/5 dark:text-zinc-400'}">${u.is_admin ? 'Админ' : 'Пользователь'}</button>
+                                            ${self
+                                                ? `<span class="px-2 py-1 rounded-lg text-xs font-semibold ${u.is_admin ? 'bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-400' : 'bg-surface-100 text-surface-600 dark:bg-white/5 dark:text-zinc-400'}">${u.is_admin ? 'Админ' : 'Пользователь'}</span>`
+                                                : `<button data-action="toggle-admin" data-user-id="${u.id}" data-admin="${u.is_admin}" class="px-2 py-1 rounded-lg text-xs font-semibold transition-all ${u.is_admin ? 'bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-400' : 'bg-surface-100 text-surface-600 dark:bg-white/5 dark:text-zinc-400'}">${u.is_admin ? 'Админ' : 'Пользователь'}</button>`
+                                            }
                                         </td>
+                                        <td class="px-4 py-3 text-surface-700 dark:text-zinc-300">${u.meal_ai_daily_count}</td>
+                                        <td class="px-4 py-3 text-surface-700 dark:text-zinc-300">${u.created_workouts_count}</td>
                                         <td class="px-4 py-3">
-                                            <button data-action="reset-quota" data-user-id="${u.id}" class="text-xs font-medium text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 transition-colors">Сбросить квоту</button>
+                                            <div class="flex items-center gap-1">
+                                                <button data-action="view-user" data-user-id="${u.id}"
+                                                        class="p-1 rounded-lg text-surface-600 dark:text-zinc-300 hover:text-primary-600 dark:hover:text-zinc-100 hover:bg-surface-100 dark:hover:bg-white/5 transition-colors"
+                                                        title="Подробнее" aria-label="Подробнее">
+                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.25 11.25l.04.04M21 12c0 9-9 21-9 21S3 21 3 12a9 9 0 1118 0z"></path>
+                                                    </svg>
+                                                </button>
+                                                ${self ? '' : `<button data-action="reset-quota" data-user-id="${u.id}" class="text-xs font-medium text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 transition-colors">Сбросить квоту</button>`}
+                                            </div>
                                         </td>
                                     </tr>
-                                `).join('')}
+                                    `;
+                                }).join('')}
                             </tbody>
                         </table>
                     </div>
                     <div class="px-4 py-3 border-t border-surface-200 dark:border-white/10 flex items-center justify-between">
                         <span class="text-xs text-surface-500 dark:text-surface-400">Всего: ${data.total}</span>
-                        <span class="text-xs text-surface-500 dark:text-surface-400">Страница ${data.page}</span>
+                        <span class="text-xs text-surface-500 dark:text-surface-400">Страница ${data.page} из ${this.state.total_pages}</span>
                     </div>
                 </div>
             `;
+
+            this.renderPagination();
         } catch (error) {
+            console.error('[Admin] Users load error:', error);
             listEl.innerHTML = Components.errorState('Ошибка загрузки пользователей');
+            this.renderPagination();
         }
+    },
+
+    renderPagination() {
+        const el = this.container.querySelector('#admin-pagination');
+        if (!el) return;
+
+        const total = this.state.total;
+        const pageSize = this.state.page_size;
+        const currentPage = this.state.page;
+        const totalPages = Math.ceil(total / pageSize) || 1;
+        const hasPrev = currentPage > 1;
+        const hasNext = currentPage < totalPages;
+
+        el.innerHTML = `
+            <div class="flex items-center gap-2">
+                <button data-action="admin-prev-page"
+                        class="px-3 py-1.5 rounded-xl text-sm font-semibold flex items-center gap-1 transition-all
+                               ${hasPrev
+                                   ? 'glass text-surface-900 dark:text-zinc-100 hover:bg-surface-100 dark:hover:bg-white/10'
+                                   : 'text-surface-400 dark:text-zinc-500 cursor-not-allowed opacity-50'}
+                               " ${!hasPrev ? 'disabled' : ''}>
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+                    </svg>
+                </button>
+                <span class="text-xs text-surface-500 dark:text-surface-400">Стр. ${currentPage} / ${totalPages}</span>
+                <button data-action="admin-next-page"
+                        class="px-3 py-1.5 rounded-xl text-sm font-semibold flex items-center gap-1 transition-all
+                               ${hasNext
+                                   ? 'glass text-surface-900 dark:text-zinc-100 hover:bg-surface-100 dark:hover:bg-white/10'
+                                   : 'text-surface-400 dark:text-zinc-500 cursor-not-allowed opacity-50'}
+                               " ${!hasNext ? 'disabled' : ''}>
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                    </svg>
+                </button>
+            </div>
+        `;
+    },
+
+    async viewUser(userId) {
+        try {
+            const user = await API.get(`/admin/users/${userId}`, this.app.state.tokens.access);
+            this.showUserModal(user);
+        } catch (error) {
+            console.error('[Admin] User load error:', error);
+            this.app.showToast(error?.data?.detail || error?.message || 'Ошибка загрузки пользователя', 'error');
+        }
+    },
+
+    showUserModal(user) {
+        if (this.userModal) {
+            this.userModal.remove();
+        }
+
+        const isCurrentUser = this.app.state.user && user.id === this.app.state.user.id;
+        const host = document.getElementById('modals') || document.body;
+
+        const backdrop = document.createElement('div');
+        backdrop.className = 'fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 opacity-0 transition-opacity duration-200';
+
+        const panel = document.createElement('div');
+        panel.className = 'glass-strong rounded-2xl p-6 max-w-md w-full mx-4 transform transition-all duration-200 scale-95 opacity-0';
+
+        const avatarColor = user.is_admin
+            ? 'bg-lime-500/10 text-lime-400'
+            : 'bg-primary-600/10 text-primary-600 dark:text-zinc-200';
+
+        const fmtDate = (v) => v ? new Date(v).toLocaleDateString('ru-RU') : null;
+
+        panel.innerHTML = `
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl flex items-center justify-center ${avatarColor}">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-surface-900 dark:text-zinc-100">${escapeHtml(user.full_name || user.email)}</h3>
+                        <p class="text-sm text-surface-500 dark:text-surface-400">${escapeHtml(user.email)}</p>
+                    </div>
+                </div>
+                <button data-action="close-user-modal" class="w-7 h-7 rounded-lg flex items-center justify-center text-surface-500 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-white/5 transition-colors">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+
+            <div class="space-y-3 text-sm">
+                <div class="flex justify-between">
+                    <span class="text-surface-500 dark:text-surface-400">ID</span>
+                    <span class="text-surface-900 dark:text-zinc-100 font-medium">${user.id}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-surface-500 dark:text-surface-400">Роль</span>
+                    <span class="text-surface-900 dark:text-zinc-100 font-medium">${escapeHtml(user.role)}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-surface-500 dark:text-surface-400">Статус</span>
+                    <span class="text-surface-900 dark:text-zinc-100 font-medium">${user.is_active ? 'Активен' : 'Заблокирован'}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-surface-500 dark:text-surface-400">Премиум</span>
+                    <span class="text-surface-900 dark:text-zinc-100 font-medium">${user.is_premium ? 'Да' : 'Нет'}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-surface-500 dark:text-surface-400">Квота ИИ (сегодня)</span>
+                    <span class="text-surface-900 dark:text-zinc-100 font-medium">${user.meal_ai_daily_count}</span>
+                </div>
+                ${user.last_meal_ai_date ? `
+                <div class="flex justify-between">
+                    <span class="text-surface-500 dark:text-surface-400">Последний AI приём</span>
+                    <span class="text-surface-900 dark:text-zinc-100 font-medium">${fmtDate(user.last_meal_ai_date)}</span>
+                </div>` : ''}
+                ${user.last_workout_ai_analysis_at ? `
+                <div class="flex justify-between">
+                    <span class="text-surface-500 dark:text-surface-400">Последний AI тренировка</span>
+                    <span class="text-surface-900 dark:text-zinc-100 font-medium">${fmtDate(user.last_workout_ai_analysis_at)}</span>
+                </div>` : ''}
+                ${user.last_nutrition_ai_analysis_at ? `
+                <div class="flex justify-between">
+                    <span class="text-surface-500 dark:text-surface-400">Последний AI питание</span>
+                    <span class="text-surface-900 dark:text-zinc-100 font-medium">${fmtDate(user.last_nutrition_ai_analysis_at)}</span>
+                </div>` : ''}
+                <div class="flex justify-between">
+                    <span class="text-surface-500 dark:text-surface-400">Создано тренировок</span>
+                    <span class="text-surface-900 dark:text-zinc-100 font-medium">${user.created_workouts_count}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-surface-500 dark:text-surface-400">Создан</span>
+                    <span class="text-surface-900 dark:text-zinc-100 font-medium">${new Date(user.created_at).toLocaleString('ru-RU')}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-surface-500 dark:text-surface-400">Обновлён</span>
+                    <span class="text-surface-900 dark:text-zinc-100 font-medium">${new Date(user.updated_at).toLocaleString('ru-RU')}</span>
+                </div>
+            </div>
+
+            ${!isCurrentUser ? `
+            <div class="flex gap-2 mt-6 pt-4 border-t border-surface-200 dark:border-white/10">
+                <button data-action="modal-toggle-active" data-user-id="${user.id}" data-active="${user.is_active}"
+                        class="flex-1 px-3 py-2 rounded-xl text-sm font-semibold transition-all
+                               ${user.is_active
+                                   ? 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400 hover:bg-red-100'
+                                   : 'bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-400 hover:bg-lime-200'}">
+                    ${user.is_active ? 'Деактивировать' : 'Активировать'}
+                </button>
+                <button data-action="modal-toggle-admin" data-user-id="${user.id}" data-admin="${user.is_admin}"
+                        class="flex-1 px-3 py-2 rounded-xl text-sm font-semibold transition-all
+                               ${user.is_admin
+                                   ? 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400 hover:bg-red-100'
+                                   : 'bg-primary-600 text-white hover:bg-primary-700'}">
+                    ${user.is_admin ? 'Убрать админа' : 'Назначить админом'}
+                </button>
+                <button data-action="modal-reset-quota" data-user-id="${user.id}"
+                        class="px-3 py-2 rounded-xl text-sm font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors">
+                    Сбросить квоту
+                </button>
+            </div>` : ''}
+        `;
+
+        backdrop.appendChild(panel);
+        host.appendChild(backdrop);
+        this.userModal = backdrop;
+        this._userModalKeydown = (e) => {
+            if (e.key === 'Escape') Admin.closeUserModal();
+        };
+        document.addEventListener('keydown', this._userModalKeydown);
+
+        setTimeout(() => {
+            backdrop.classList.remove('opacity-0');
+            panel.classList.remove('scale-95', 'opacity-0');
+        }, 10);
+    },
+
+    closeUserModal() {
+        const backdrop = this.userModal;
+        if (!backdrop) return;
+        const panel = backdrop.firstElementChild;
+        backdrop.classList.add('opacity-0');
+        if (panel) panel.classList.add('scale-95', 'opacity-0');
+        setTimeout(() => {
+            if (this.userModal === backdrop) {
+                backdrop.remove();
+                this.userModal = null;
+            }
+            if (this._userModalKeydown) {
+                document.removeEventListener('keydown', this._userModalKeydown);
+                this._userModalKeydown = null;
+            }
+        }, 200);
     },
 
     async toggleActive(userId, isActive) {
@@ -110,7 +454,10 @@ const Admin = {
             this.app.showToast('Статус пользователя обновлён', 'success');
             await this.loadUsers();
         } catch (error) {
-            this.app.showToast(error?.data?.detail || error?.message || 'Ошибка обновления статуса', 'error');
+            console.error('[Admin] Toggle active error:', error);
+            if (error?.status !== 401 && error?.status !== 403) {
+                this.app.showToast(error?.data?.detail || error?.message || 'Ошибка обновления статуса', 'error');
+            }
         }
     },
 
@@ -120,7 +467,10 @@ const Admin = {
             this.app.showToast('Статус администратора обновлён', 'success');
             await this.loadUsers();
         } catch (error) {
-            this.app.showToast(error?.data?.detail || error?.message || 'Ошибка обновления роли', 'error');
+            console.error('[Admin] Toggle admin error:', error);
+            if (error?.status !== 401 && error?.status !== 403) {
+                this.app.showToast(error?.data?.detail || error?.message || 'Ошибка обновления роли', 'error');
+            }
         }
     },
 
@@ -136,10 +486,14 @@ const Admin = {
         try {
             await API.post(`/admin/users/${userId}/reset-ai-quota`, null, this.app.state.tokens.access);
             this.app.showToast('Квота ИИ сброшена', 'success');
+            await this.loadUsers();
         } catch (error) {
-            this.app.showToast(error?.data?.detail || error?.message || 'Ошибка сброса квоты', 'error');
+            console.error('[Admin] Reset quota error:', error);
+            if (error?.status !== 401 && error?.status !== 403) {
+                this.app.showToast(error?.data?.detail || error?.message || 'Ошибка сброса квоты', 'error');
+            }
         }
-    }
+    },
 };
 
 function escapeHtml(text) {
@@ -162,6 +516,54 @@ document.addEventListener('click', async (e) => {
     if (action === 'reset-quota') {
         const btn = e.target.closest('[data-action="reset-quota"]');
         Admin.resetQuota(parseInt(btn.dataset.userId));
+    }
+    if (action === 'view-user') {
+        e.preventDefault();
+        const btn = e.target.closest('[data-action="view-user"]');
+        Admin.viewUser(parseInt(btn.dataset.userId));
+    }
+    if (action === 'close-user-modal') {
+        Admin.closeUserModal();
+    }
+    if (action === 'modal-toggle-active') {
+        const btn = e.target.closest('[data-action="modal-toggle-active"]');
+        Admin.closeUserModal();
+        Admin.toggleActive(parseInt(btn.dataset.userId), btn.dataset.active === 'true');
+    }
+    if (action === 'modal-toggle-admin') {
+        const btn = e.target.closest('[data-action="modal-toggle-admin"]');
+        Admin.closeUserModal();
+        Admin.toggleAdmin(parseInt(btn.dataset.userId), btn.dataset.admin === 'true');
+    }
+    if (action === 'modal-reset-quota') {
+        const btn = e.target.closest('[data-action="modal-reset-quota"]');
+        Admin.closeUserModal();
+        Admin.resetQuota(parseInt(btn.dataset.userId));
+    }
+    if (action === 'admin-reset-filters') {
+        Admin.resetFilters();
+    }
+    if (action === 'admin-prev-page') {
+        const el = e.target.closest('[data-action="admin-prev-page"]');
+        if (!el.disabled) Admin.prevPage();
+    }
+    if (action === 'admin-next-page') {
+        const el = e.target.closest('[data-action="admin-next-page"]');
+        if (!el.disabled) Admin.nextPage();
+    }
+});
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.closest('#admin-search')) {
+        e.preventDefault();
+        Admin.applySearch();
+    }
+});
+
+document.addEventListener('change', (e) => {
+    const select = e.target.closest('[data-action="admin-filter"]');
+    if (select) {
+        Admin.applyFilter(select.dataset.filter, select.value);
     }
 });
 

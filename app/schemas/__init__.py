@@ -249,6 +249,25 @@ class AdminQuotaResetResponse(BaseModel):
     last_nutrition_ai_analysis_at: Optional[datetime] = None
 
 
+class AdminUserDetail(BaseModel):
+    id: int
+    email: EmailStr
+    full_name: Optional[str] = None
+    role: UserRole
+    is_active: bool
+    is_admin: bool
+    is_premium: bool
+    meal_ai_daily_count: int = 0
+    last_meal_ai_date: Optional[date] = None
+    last_workout_ai_analysis_at: Optional[datetime] = None
+    last_nutrition_ai_analysis_at: Optional[datetime] = None
+    created_workouts_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class AdminStats(BaseModel):
     total_users: int
     active_users: int
@@ -670,6 +689,7 @@ __all__ = [
     "AdminUserListResponse",
     "AdminStatusUpdate",
     "AdminQuotaResetResponse",
+    "AdminUserDetail",
     "AdminStats",
     "AnthropometricsUpdate",
     "MacroTargetsResponse",
