@@ -137,7 +137,7 @@ const Admin = {
             const statsEl = this.container.querySelector('#admin-stats');
             if (!statsEl) return;
             statsEl.innerHTML = `
-                <div class="grid grid-cols-2 gap-3">
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div class="glass rounded-2xl p-4">
                         <p class="text-xs text-surface-500 dark:text-surface-400 font-medium uppercase tracking-wider">Всего пользователей</p>
                         <p class="text-2xl font-bold text-surface-900 dark:text-zinc-100 mt-1">${stats.total_users}</p>
@@ -188,7 +188,7 @@ const Admin = {
 
             listEl.innerHTML = `
                 <div class="glass rounded-2xl overflow-hidden">
-                    <div class="overflow-x-auto">
+                    <div class="overflow-x-auto w-full -mx-4 px-4 sm:mx-0 sm:px-0">
                         <table class="w-full text-sm">
                             <thead>
                                 <tr class="border-b border-surface-200 dark:border-white/10">
@@ -317,7 +317,7 @@ const Admin = {
         backdrop.className = 'fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 opacity-0 transition-opacity duration-200';
 
         const panel = document.createElement('div');
-        panel.className = 'glass-strong rounded-2xl p-6 max-w-md w-full mx-4 transform transition-all duration-200 scale-95 opacity-0';
+        panel.className = 'glass-strong rounded-2xl p-4 sm:p-6 max-w-lg w-full mx-4 transform transition-all duration-200 scale-95 opacity-0';
 
         const avatarColor = user.is_admin
             ? 'bg-lime-500/10 text-lime-400'

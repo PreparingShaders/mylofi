@@ -304,8 +304,18 @@ async def update_workout_session(
     return await get_workout_session(db, session.id, user_id)
 
 
-async def complete_workout_session(db: AsyncSession, session_id: int, user_id: int) -> Optional[WorkoutSession]:
-    """Mark a workout session as completed"""
+async def complete_workout_session(
+    db: AsyncSession,
+    session_id: int,
+    user_id: int,
+    duration_seconds: Optional[int] = None,
+) -> Optional[WorkoutSession]:
+    """Mark a workout session as completed.
+
+    If the client provides `duration_seconds`, it is used directly. Otherwise
+    the duration is derived from the started_at / completed_at timestamps so
+    older clients and offline replays still get a sensible value.
+    """
     session = await get_workout_session(db, session_id, user_id)
     if not session:
         return None
@@ -313,7 +323,10 @@ async def complete_workout_session(db: AsyncSession, session_id: int, user_id: i
     session.status = WorkoutSessionStatus.COMPLETED
     completed_at = datetime.now(timezone.utc)
     session.completed_at = completed_at
-    session.duration_seconds = resolve_duration_seconds(session.started_at, completed_at)
+    if duration_seconds is not None:
+        session.duration_seconds = max(0, duration_seconds)
+    else:
+        session.duration_seconds = resolve_duration_seconds(session.started_at, completed_at)
     session.updated_at = datetime.now(timezone.utc)
 
     await db.commit()

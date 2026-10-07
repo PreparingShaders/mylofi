@@ -162,10 +162,13 @@ class WorkoutCompletionRequest(BaseModel):
     `with_ai_analysis` enqueues the retrospective verdict as a background task
     (HTTP 202) instead of requiring a separate call. `notes` carries user
     context for the model that cannot be read from the database alone.
+    `duration_seconds` is the client-measured workout duration, used when the
+    server timestamp delta would be skewed by timezone offset mismatches.
     """
 
     with_ai_analysis: bool = False
     notes: Optional[str] = Field(None, max_length=400)
+    duration_seconds: Optional[int] = Field(None, ge=0)
 
 
 __all__ = [

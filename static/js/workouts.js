@@ -1441,6 +1441,10 @@ export const Workouts = {
         // before the session closes.
         await app.flushPendingSetEdits();
 
+        const durationSeconds = this.sessionStartTimestamp
+            ? Math.max(0, Math.floor((Date.now() - this.sessionStartTimestamp) / 1000))
+            : null;
+
         // The verdict takes tens of seconds, so the button says what is actually
         // happening instead of looking already finished. Every path below
         // re-renders the screen, which is what puts the button back.
@@ -1455,7 +1459,11 @@ export const Workouts = {
         }
 
         try {
-            await API.post(`/workouts/sessions/${sessionId}/complete`, { with_ai_analysis: true }, app.state.tokens.access);
+            await API.post(
+                `/workouts/sessions/${sessionId}/complete`,
+                { with_ai_analysis: true, duration_seconds: durationSeconds },
+                app.state.tokens.access,
+            );
         } catch (err) {
             console.error('[Workouts] Complete with AI failed:', err);
             app.showToast(err?.offlineQueued ? OFFLINE_COMPLETE_MESSAGE : (err?.message || 'Ошибка завершения тренировки'), 'error');

@@ -418,7 +418,7 @@ export const Profile = {
                         <span class="text-surface-500">Имя:</span> ${user.full_name || '—'}
                     </p>
                     <p class="text-sm text-surface-600 dark:text-zinc-300">
-                        <span class="text-surface-500">Роль:</span> ${user.role}
+                        <span class="text-surface-500">Роль:</span> ${user.is_admin ? 'admin' : (user.role || 'user')}
                     </p>
                 </div>
 

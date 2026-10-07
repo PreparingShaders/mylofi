@@ -977,7 +977,12 @@ async def complete_workout_session_endpoint(
     is completed synchronously and the caller receives a `WorkoutCompletionResponse`.
     """
     data = request or WorkoutCompletionRequest()
-    session = await complete_workout_session(db, session_id, current_user.id)
+    session = await complete_workout_session(
+        db,
+        session_id,
+        current_user.id,
+        duration_seconds=data.duration_seconds,
+    )
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 

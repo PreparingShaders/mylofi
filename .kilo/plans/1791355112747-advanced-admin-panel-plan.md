@@ -1,70 +1,54 @@
-# Reassign User ID 21 to 1 & Admin Promotion Plan
+# Comprehensive Implementation Plan: Admin Responsive UI, Profile Role Display, and Workout Duration Fix
 
 ## Goal
-Update `reassign_user_id.py` to reassign the user from ID 21 (`classname1984@gmail.com`) to ID 1, safely remove any collision at ID 1, update foreign keys, reset PostgreSQL sequence `users_id_seq`, ensure robust error handling with a `finally` block restoring `session_replication_role = 'origin'`, and promote the user to `is_admin = True`, `is_active = True`.
+Implement three key improvements across the codebase:
+1. **Admin Dashboard Mobile Responsiveness (`static/js/admin.js`)**: Responsive grids, stacked filter bars, horizontal scrollable tables, and well-padded modals.
+2. **Profile Role Display (`static/js/profile.js`)**: Correctly display admin status / role (`admin` vs `user`).
+3. **Workout Duration Timer Fix (`static/js/workouts.js`, backend schemas & services)**: Pass accurate client-measured `duration_seconds` to the complete workout endpoint and persist it directly without timestamp offset conflicts.
 
-## Scope & Boundaries
-- **In Scope:**
-  - Plan implementation of `reassign_user_id.py` for ID 21 -> ID 1.
-  - Deletion of existing `id=1` dummy user and dependent rows.
-  - Temporary FK disable via `SET session_replication_role = 'replica';`.
-  - Updating `users` and all FK tables (`refresh_tokens`, `workout_sessions`, `workout_templates`, `meals`, `daily_summaries`, `exercise_catalog`).
-  - Sequence reset: `SELECT setval('users_id_seq', (SELECT MAX(id) FROM users));`.
-  - `finally` block ensuring `SET session_replication_role = 'origin';` always runs.
-- **Out of Scope (for Plan Mode):**
-  - Direct file modification or command execution (requires implementation agent).
+---
 
-## Implementation Design for `reassign_user_id.py`
+## Task Breakdown & Implementation Details
 
-```python
-import asyncio
-from sqlalchemy import text
-from app.db.session import async_session_maker
+### Task 1: Admin Dashboard Mobile Adaptation (`static/js/admin.js`)
+- **Stats Cards Grid:**
+  ```javascript
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+  ```
+- **Filters Bar:**
+  ```javascript
+  <div class="flex flex-col sm:flex-row gap-3 w-full mb-4">
+  ```
+- **Users Table Container:**
+  ```javascript
+  <div class="glass rounded-2xl overflow-hidden">
+      <div class="overflow-x-auto w-full -mx-4 px-4 sm:mx-0 sm:px-0">
+          <table class="w-full text-sm">...</table>
+      </div>
+  </div>
+  ```
+- **Modals:**
+  Ensure modal dialogs use `w-full max-w-lg mx-4 p-4 sm:p-6`.
 
-async def main():
-    async with async_session_maker() as session:
-        try:
-            # 1. Disable triggers/FK checks temporarily in PostgreSQL session
-            await session.execute(text("SET session_replication_role = 'replica';"))
-            
-            # 2. Delete existing user with id = 1 if present (and clean up related tables)
-            await session.execute(text("DELETE FROM refresh_tokens WHERE user_id = 1;"))
-            await session.execute(text("DELETE FROM workout_sessions WHERE user_id = 1;"))
-            await session.execute(text("DELETE FROM workout_templates WHERE user_id = 1;"))
-            await session.execute(text("DELETE FROM meals WHERE user_id = 1;"))
-            await session.execute(text("DELETE FROM daily_summaries WHERE user_id = 1;"))
-            await session.execute(text("DELETE FROM exercise_catalog WHERE user_id = 1;"))
-            await session.execute(text("DELETE FROM users WHERE id = 1;"))
+### Task 2: Profile Role Display Fix (`static/js/profile.js`)
+- In `render(container, app)`:
+  ```javascript
+  <p class="text-sm text-surface-600 dark:text-zinc-300">
+      <span class="text-surface-500">Роль:</span> ${user.is_admin ? 'admin' : (user.role || 'user')}
+  </p>
+  ```
 
-            # 3. Reassign user id = 21 to id = 1 and set admin privileges
-            await session.execute(text("UPDATE users SET id = 1, is_admin = true, is_active = true WHERE id = 21;"))
-            
-            # 4. Update foreign key references for user 21 -> 1
-            await session.execute(text("UPDATE refresh_tokens SET user_id = 1 WHERE user_id = 21;"))
-            await session.execute(text("UPDATE workout_sessions SET user_id = 1 WHERE user_id = 21;"))
-            await session.execute(text("UPDATE workout_templates SET user_id = 1 WHERE user_id = 21;"))
-            await session.execute(text("UPDATE meals SET user_id = 1 WHERE user_id = 21;"))
-            await session.execute(text("UPDATE daily_summaries SET user_id = 1 WHERE user_id = 21;"))
-            await session.execute(text("UPDATE exercise_catalog SET user_id = 1 WHERE user_id = 21;"))
+### Task 3: Workout Duration Timer Fix (`static/js/workouts.js`, `app/schemas/`, `app/services/workout.py`)
+1. **Frontend (`static/js/workouts.js`):**
+   - Track elapsed seconds (`timerSeconds` or active workout timer count).
+   - When calling finish/complete workout API (`POST /api/v1/workouts/sessions/{sessionId}/complete`), include `{ duration_seconds: timerSeconds }`.
+2. **Backend Schema (`app/schemas/workout.py` or routes):**
+   - Accept optional `duration_seconds: Optional[int] = None` in the completion request model / endpoint parameters.
+3. **Backend Service (`app/services/workout.py`):**
+   - In `complete_workout_session`, if `duration_seconds` is provided in the request payload, assign `session.duration_seconds = duration_seconds`. Otherwise fallback to timestamp difference calculation or 0.
 
-            # 5. Reset auto-increment sequence
-            await session.execute(text("SELECT setval('users_id_seq', (SELECT MAX(id) FROM users));"))
-            
-            await session.commit()
-            print("[SUCCESS] User id reassigned from 21 to 1, collision cleared, sequence reset, and granted Admin privileges!")
-        except Exception as e:
-            await session.rollback()
-            print(f"[ERROR] Reassignment failed: {e}")
-            raise
-        finally:
-            # Always restore session replication role
-            await session.execute(text("SET session_replication_role = 'origin';"))
-            await session.commit()
+---
 
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-## Validation & Execution Steps
-1. Switch to an implementation-capable agent to update and run `reassign_user_id.py`.
-2. Verify table state and sequence in PostgreSQL.
+## Validation & Testing
+1. Verify JavaScript syntax (`node --check static/js/admin.js static/js/profile.js static/js/workouts.js`).
+2. Run backend tests or FastAPI checks.

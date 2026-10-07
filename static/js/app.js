@@ -707,8 +707,16 @@ const App = {
         // Flush all active weight and rep inputs before completing
         await this.flushPendingSetEdits();
 
+        const durationSeconds = Workouts.sessionStartTimestamp
+            ? Math.max(0, Math.floor((Date.now() - Workouts.sessionStartTimestamp) / 1000))
+            : null;
+
         try {
-            await API.post(`/workouts/sessions/${sessionId}/complete`, null, this.state.tokens.access);
+            await API.post(
+                `/workouts/sessions/${sessionId}/complete`,
+                durationSeconds !== null ? { duration_seconds: durationSeconds } : null,
+                this.state.tokens.access,
+            );
             this.showToast('Тренировка завершена!', 'success');
         } catch (e) {
             if (e?.offlineQueued) {
