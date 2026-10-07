@@ -917,25 +917,40 @@ def resolve_tonnage_range(
     """Resolve the effective [start, end] window for a tonnage query.
 
     An explicit range always wins over the `period` preset so the bottom sheet
-    overrides can narrow or widen the window the inline tabs selected.
+    overrides can narrow or widen the window the inline tabs selected. When only
+    one bound is explicit the other is filled in from the preset, so a lone
+    end date keeps the week/month/all window it was paired with instead of
+    silently starting at the first of the current month.
     """
     now = datetime.now(timezone.utc)
     explicit_start = parse_iso_datetime(start_date)
     explicit_end = parse_iso_datetime(end_date)
 
-    if explicit_start or explicit_end:
-        start = explicit_start or month_start(now)
-        end = explicit_end or now
+    if explicit_start and explicit_end:
+        start, end = explicit_start, explicit_end
         if end <= start:
             end = start + timedelta(days=1)
         return start, end
 
-    days = TONNAGE_PERIOD_DAYS.get(period or "week", 7)
-    if days is None:
-        # `all` has no lower bound of its own: the caller narrows it to the
-        # earliest session once the data is known, so empty years never appear.
-        return datetime(1970, 1, 1, tzinfo=timezone.utc), now
-    return now - timedelta(days=days), now
+    if period == "month":
+        preset_start = month_start(now)
+    elif period == "all":
+        preset_start = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    else:
+        preset_start = now - timedelta(days=7)
+
+    if explicit_start:
+        start = explicit_start
+        end = explicit_end or now
+    elif explicit_end:
+        start = preset_start
+        end = explicit_end
+    else:
+        start, end = preset_start, now
+
+    if end <= start:
+        end = start + timedelta(days=1)
+    return start, end
 
 
 def build_tonnage_buckets(start: datetime, end: datetime, granularity: str) -> List[dict]:
@@ -1040,6 +1055,10 @@ async def get_filtered_tonnage(
 
     result = await db.execute(query)
 
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[Tonnage Debug] Query executed for user_id={user_id}, period={period}, start_date={start_date}, end_date={end_date}, muscle_group={muscle_group}, exercise_name={exercise_name}, template_id={template_id}")
+
     session_rows: List[dict] = []
     for tonnage_row in result.all():
         stamp = as_utc(tonnage_row.completed_at) or as_utc(tonnage_row.started_at)
@@ -1054,6 +1073,8 @@ async def get_filtered_tonnage(
                 "sets_count": int(tonnage_row.sets_count or 0),
             }
         )
+
+    logger.info(f"[Tonnage Debug] Found {len(session_rows)} completed sessions, total_tonnage will be calculated from these")
 
     # `all` starts at the epoch so no data is missed; pull it back to the
     # earliest session so the chart does not open with decades of empty bars.

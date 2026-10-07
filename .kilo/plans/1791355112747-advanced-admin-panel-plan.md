@@ -1,54 +1,39 @@
-# Comprehensive Implementation Plan: Admin Responsive UI, Profile Role Display, and Workout Duration Fix
+# Implementation Plan: Tonnage Aggregation, AI vs Manual Workout Flow, and On-Demand AI Analysis
 
 ## Goal
-Implement three key improvements across the codebase:
-1. **Admin Dashboard Mobile Responsiveness (`static/js/admin.js`)**: Responsive grids, stacked filter bars, horizontal scrollable tables, and well-padded modals.
-2. **Profile Role Display (`static/js/profile.js`)**: Correctly display admin status / role (`admin` vs `user`).
-3. **Workout Duration Timer Fix (`static/js/workouts.js`, backend schemas & services)**: Pass accurate client-measured `duration_seconds` to the complete workout endpoint and persist it directly without timestamp offset conflicts.
+1. **Fix Tonnage Calculation (`app/services/workout.py`)**: Ensure `get_filtered_tonnage()` includes all completed workouts regardless of AI analysis status, and correctly computes volume with robust date range filtering for today (`07.10.2026`) and selected periods.
+2. **Differentiate "Старт" vs "Старт + AI" (`static/js/workouts.js`)**:
+   - "Старт": Sets `use_ai = false`. Completes workout without automatic AI analysis API call.
+   - "Старт + AI": Sets `use_ai = true`. Automatically triggers AI analysis upon completion.
+3. **Disable Auto-AI & On-Demand History Actions**: Remove automatic background AI analysis requests on session load/open. Provide explicit buttons in workout history ("Раззобрать с ИИ" / "Пересчитать ИИ") so AI API requests occur strictly on user click.
 
 ---
 
 ## Task Breakdown & Implementation Details
 
-### Task 1: Admin Dashboard Mobile Adaptation (`static/js/admin.js`)
-- **Stats Cards Grid:**
-  ```javascript
-  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-  ```
-- **Filters Bar:**
-  ```javascript
-  <div class="flex flex-col sm:flex-row gap-3 w-full mb-4">
-  ```
-- **Users Table Container:**
-  ```javascript
-  <div class="glass rounded-2xl overflow-hidden">
-      <div class="overflow-x-auto w-full -mx-4 px-4 sm:mx-0 sm:px-0">
-          <table class="w-full text-sm">...</table>
-      </div>
-  </div>
-  ```
-- **Modals:**
-  Ensure modal dialogs use `w-full max-w-lg mx-4 p-4 sm:p-6`.
+### Task 1: Backend Tonnage Aggregation (`app/services/workout.py`)
+- Review SQL/ORM query in `get_filtered_tonnage()`.
+- Ensure status check `status == 'completed'` is inclusive of both AI and non-AI completed sessions.
+- Fix date range handling to correctly include today's sessions (`00:00:00` to `23:59:59` UTC/local).
 
-### Task 2: Profile Role Display Fix (`static/js/profile.js`)
-- In `render(container, app)`:
-  ```javascript
-  <p class="text-sm text-surface-600 dark:text-zinc-300">
-      <span class="text-surface-500">Роль:</span> ${user.is_admin ? 'admin' : (user.role || 'user')}
-  </p>
-  ```
+### Task 2: Frontend Workflow Split ("Старт" vs "Старт + AI")
+- **Manual Mode ("Старт"):**
+  - Payload sets `use_ai: false`.
+  - On finish, saves session and displays completion summary without invoking AI analysis endpoint.
+- **AI Mode ("Старт + AI"):**
+  - Payload sets `use_ai: true`.
+  - On finish, saves session and triggers `fetchAiWorkoutAnalysis()`.
 
-### Task 3: Workout Duration Timer Fix (`static/js/workouts.js`, `app/schemas/`, `app/services/workout.py`)
-1. **Frontend (`static/js/workouts.js`):**
-   - Track elapsed seconds (`timerSeconds` or active workout timer count).
-   - When calling finish/complete workout API (`POST /api/v1/workouts/sessions/{sessionId}/complete`), include `{ duration_seconds: timerSeconds }`.
-2. **Backend Schema (`app/schemas/workout.py` or routes):**
-   - Accept optional `duration_seconds: Optional[int] = None` in the completion request model / endpoint parameters.
-3. **Backend Service (`app/services/workout.py`):**
-   - In `complete_workout_session`, if `duration_seconds` is provided in the request payload, assign `session.duration_seconds = duration_seconds`. Otherwise fallback to timestamp difference calculation or 0.
+### Task 3: On-Demand AI Analysis in History
+- Remove any automatic AI analysis triggers on history detail render.
+- Render explicit action buttons:
+  - "Раззобрать с ИИ" (if unanalyzed).
+  - "Пересчитать ИИ" (if already analyzed).
+- Invoke AI analysis endpoint only when the user explicitly clicks the button.
 
 ---
 
 ## Validation & Testing
-1. Verify JavaScript syntax (`node --check static/js/admin.js static/js/profile.js static/js/workouts.js`).
-2. Run backend tests or FastAPI checks.
+1. Review code changes against existing architecture conventions.
+2. Verify that manual workouts complete instantly without network calls to AI endpoints.
+3. Verify tonnage stats correctly reflect all completed sessions.

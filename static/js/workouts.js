@@ -68,6 +68,11 @@ const AI_OFFLINE_MESSAGE = 'ИИ-тренер работает только с �
 // Shown when the plan is asked for and does not arrive. The workout continues
 // either way: a plan is an addition to a session, never a condition for it.
 const AI_PLAN_UNAVAILABLE_MESSAGE = 'ИИ-план недоступен, тренировка без него';
+// One verdict ask per workout per half minute. The weekly allowance is spent
+// by the server; this keeps a thumb held down on the trigger from asking
+// again while the answer may still be on its way.
+const AI_ANALYSIS_COOLDOWN_MS = 30000;
+const AI_COOLDOWN_MESSAGE = 'Подождите перед повторным запросом';
 // Icon-only split action next to "Начать тренировку": the label lives in the
 // title and the aria-label so the button is not a mystery on a phone.
 const AI_START_ICON = '\u{1F916}';
@@ -89,6 +94,10 @@ export const Workouts = {
     // itself while the cascade is running, so a second tap cannot spend the
     // weekly allowance twice.
     _aiAnalysisLoading: false,
+    // Timestamp of the last verdict ask, per session id: the client-side
+    // half of the anti-spam, so the trigger stays quiet for half a minute
+    // after a press no matter which surface asked.
+    _aiAnalysisCooldowns: new Map(),
     // Background rest chronometry: when the current session started (from the
     // server's started_at or the local clock) and when the last set of this
     // session was completed. The gap between them is the rest the user actually
@@ -134,6 +143,7 @@ export const Workouts = {
         const { period, filters } = this.getTonnageState();
         const now = new Date();
         const completed = (sessions || []).filter(s => s.status === 'completed' || !s.status);
+        console.log('[Tonnage Debug] computeLocalTonnage:', { period, filters, sessionsCount: sessions?.length, completedCount: completed.length });
         // `all` is unbounded on the server; bound it to the earliest known
         // session so the chart does not open with decades of empty buckets.
         const earliest = completed
@@ -188,11 +198,12 @@ export const Workouts = {
                 if (needle && !(ex.name || '').trim().toLowerCase().includes(needle)) return;
                 (ex.sets || []).forEach(set => {
                     if (!set.is_completed) return;
-                    sessionTonnage += (set.weight_kg || 0) * (set.reps || 0);
+                    if (set.weight_kg == null) return;
+                    if (set.reps == null) return;
+                    sessionTonnage += set.weight_kg * set.reps;
                     sessionSets += 1;
                 });
             });
-            if (sessionTonnage <= 0) return;
 
             total += sessionTonnage;
             sets += sessionSets;
@@ -383,6 +394,7 @@ export const Workouts = {
         if (!host) return;
         try {
             const data = await API.get(this.buildTonnageQuery(), app.state.tokens.access);
+            console.log('[Tonnage Debug]', data);
             this.tonnageData = data;
         } catch (error) {
             console.warn('[Workouts] Tonnage request failed, falling back to local history:', error);
@@ -913,12 +925,12 @@ export const Workouts = {
                             <div class="flex gap-1.5">
                                 <button data-action="start-template" data-template-id="${t.id}" ${hasActiveSession ? 'disabled' : ''}
                                         class="flex-1 min-w-0 py-1.5 flex items-center justify-center gap-1.5 ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'bg-primary-600 text-white'} rounded-xl text-[11px] font-semibold text-center shadow-sm">
-                                    ${hasActiveSession ? `${LOCK_ICON}<span>Активна тренировка</span>` : '<span>Начать тренировку →</span>'}
+                                    ${hasActiveSession ? `${LOCK_ICON}<span>Активна</span>` : '<span>Старт</span>'}
                                 </button>
                                 <button data-action="start-template-ai" data-template-id="${t.id}" ${hasActiveSession ? 'disabled' : ''}
-                                        title="Начать с ИИ-тренером" aria-label="Начать с ИИ-тренером"
-                                        class="flex-shrink-0 w-9 py-1.5 flex items-center justify-center rounded-xl text-[13px] ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'bg-surface-800 dark:bg-white dark:text-zinc-950'} shadow-sm">
-                                    ${AI_START_ICON}
+                                        title="Старт + AI" aria-label="Начать с ИИ-тренером"
+                                        class="flex-1 min-w-0 py-1.5 flex items-center justify-center gap-1.5 ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'px-3 py-2 rounded-xl bg-lime-500/10 hover:bg-lime-500/20 text-lime-700 dark:text-lime-300 border border-lime-500/30 text-xs font-semibold transition-all flex items-center gap-1.5'} rounded-xl text-[11px] font-semibold text-center shadow-sm">
+                                    ${hasActiveSession ? `${LOCK_ICON}<span>Активна</span>` : '<span>Старт + AI</span>'}
                                 </button>
                             </div>
                         </div>
@@ -968,19 +980,7 @@ export const Workouts = {
                 <div class="mb-6">
                     <h3 class="text-sm font-semibold text-surface-500 uppercase tracking-wider mb-3">Быстрый старт</h3>
                     <div class="flex overflow-x-auto snap-x snap-mandatory gap-2.5 pb-3 scrollbar-none -mx-4 px-4">
-                        <!-- Card 1: Build Custom -->
-                        <div class="min-w-[216px] max-w-[234px] snap-center glass border rounded-2xl p-3.5 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="show-build-workout">
-                            <div>
-                                <div class="w-9 h-9 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-2.5">
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                                </div>
-                                <h4 class="font-bold text-base mb-1">Собрать тренировку</h4>
-                                <p class="text-[11px] text-surface-500 dark:text-surface-400">Создать и сохранить свой шаблон из каталога (220+)</p>
-                            </div>
-                            <span class="mt-3 text-[11px] font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-2.5 py-1.5 rounded-xl text-center">Создать шаблон →</span>
-                        </div>
-
-                        <!-- Card 2: Quick Start -->
+                        <!-- Card 1: Quick Start -->
                         <div class="min-w-[216px] max-w-[234px] snap-center glass border ${hasActiveSession ? 'border-surface-200/70 dark:border-white/10' : ''} rounded-2xl p-3.5 flex flex-col justify-between shadow-sm ${hasActiveSession ? 'opacity-60' : 'cursor-pointer btn-press'}" data-action="${hasActiveSession ? '' : 'quick-start-workout'}">
                             <div>
                                 <div class="w-9 h-9 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-2.5">
@@ -994,7 +994,7 @@ export const Workouts = {
                                 : '<span class="mt-3 text-[11px] font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-2.5 py-1.5 rounded-xl text-center">Начать сразу →</span>'}
                         </div>
 
-                        <!-- Card 3: History -->
+                        <!-- Card 2: History -->
                         <div class="min-w-[216px] max-w-[234px] snap-center glass border rounded-2xl p-3.5 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="view-history">
                             <div>
                                 <div class="w-9 h-9 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-2.5">
@@ -1004,6 +1004,18 @@ export const Workouts = {
                                 <p class="text-[11px] text-surface-500 dark:text-surface-400">${recentSessions.length > 0 ? `Завершено ${recentSessions.length} тренировок, детальный разбор` : 'Хронология тренировок и разбор каждой'}</p>
                             </div>
                             <span class="mt-3 text-[11px] font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-2.5 py-1.5 rounded-xl text-center">Открыть историю →</span>
+                        </div>
+
+                        <!-- Card 3: Build Custom -->
+                        <div class="min-w-[216px] max-w-[234px] snap-center glass border rounded-2xl p-3.5 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="show-build-workout">
+                            <div>
+                                <div class="w-9 h-9 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-2.5">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                                </div>
+                                <h4 class="font-bold text-base mb-1">Собрать тренировку</h4>
+                                <p class="text-[11px] text-surface-500 dark:text-surface-400">Создать и сохранить свой шаблон из каталога (220+)</p>
+                            </div>
+                            <span class="mt-3 text-[11px] font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-2.5 py-1.5 rounded-xl text-center">Создать шаблон →</span>
                         </div>
 
                         <!-- Card 4: Personal Records -->
@@ -1333,13 +1345,15 @@ export const Workouts = {
     /**
      * Ask the model for the verdict on a finished session.
      *
-     * The trigger disables itself for the duration so a second tap cannot spend
-     * the weekly allowance twice, and the answer is never treated as an error:
-     * `available: false` carries the reason - a spent quota, a session without
-     * weighted sets, a model that failed - and the card shows that line instead.
+     * The trigger disables itself for the duration so a second tap cannot
+     * spend the weekly allowance twice, and a per-session cooldown refuses
+     * any ask that follows the last one within half a minute. The answer
+     * is never treated as an error: `available: false` carries the reason
+     * - a spent quota, a session without weighted sets, a model that
+     * failed - and the card shows that line instead.
      *
-     * `rerender` is called with the payload so the caller can swap the card in
-     * place rather than reloading the screen underneath the user.
+     * `rerender` is called with the payload so the caller can swap the card
+     * in place rather than reloading the screen underneath the user.
      */
     async analyzeWorkout(app, sessionId, { force = false, notes = null, rerender = null } = {}) {
         const id = parseInt(sessionId);
@@ -1350,7 +1364,16 @@ export const Workouts = {
             return null;
         }
 
+        const now = Date.now();
+        const lastAt = this._aiAnalysisCooldowns.get(id) || 0;
+        if (now - lastAt < AI_ANALYSIS_COOLDOWN_MS) {
+            const secondsLeft = Math.ceil((AI_ANALYSIS_COOLDOWN_MS - (now - lastAt)) / 1000);
+            app.showToast(`${AI_COOLDOWN_MESSAGE} (ещё ${secondsLeft} сек)`, 'info');
+            return null;
+        }
+
         this._aiAnalysisLoading = true;
+        this._aiAnalysisCooldowns.set(id, now);
         try {
             const payload = await API.postImmediate(
                 `/ai/workout-summary/${id}`,
@@ -2477,7 +2500,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                                     <span>${statusLabel(session.status)}</span>
                                     ${analyzable ? `<button type="button" data-action="history-analyze-ai" data-session-id="${session.id}"
                                             class="ml-auto flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold ${session.has_ai_analysis ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400' : 'bg-surface-100 dark:bg-white/5 text-surface-500 dark:text-surface-400'}">
-                                            <span>${AI_START_ICON}</span>
+                                            <span class="badge">ИИ</span>
                                             <span>${session.has_ai_analysis ? 'Пересчитать' : 'Разобрать'}</span>
                                         </button>` : ''}
                                 </div>
@@ -2675,30 +2698,40 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
     /**
      * Puts the coach's verdict of a session into the history detail screen.
      *
-     * A second analysis is a rewrite of the stored verdict (`force=true`), which is
-     * why the trigger reads "Пересчитать разбор" once there is one. The card is
-     * swapped in place when the answer arrives, so the session's metrics, trends
-     * and set list underneath are not re-rendered under the user's thumb.
+     * Opening the screen only reads: the card renders immediately, and a
+     * session without a verdict shows a manual trigger ("Сформировать
+     * ИИ-разбор") instead of a spinner that pretends one is forming -
+     * nothing is asked or polled until the user presses it. A second
+     * analysis is a rewrite of the stored verdict (`force=true`), which
+     * is why the trigger reads "Пересчитать ИИ" once there is one. The
+     * card is swapped in place when the answer arrives, so the session's
+     * metrics, trends and set list underneath are not re-rendered under
+     * the user's thumb.
      */
     async mountAiDetailCard(container, app, sessionId) {
         const host = container.querySelector('#ai-workout-detail');
         if (!host) return null;
 
-        const MAX_AI_POLL_ATTEMPTS = 5;
-        const AI_POLL_INTERVAL_MS = 1500;
-
-        let payload = await this.loadAiAnalysis(app, sessionId);
+        const payload = await this.loadAiAnalysis(app, sessionId);
         if (!payload) {
             host.remove();
             return null;
         }
 
         const draw = (current, busy = false) => {
-            host.innerHTML = Components.aiWorkoutCard(current, { allowAnalyze: true, busy });
+            host.innerHTML = Components.aiWorkoutCard(current, {
+                allowAnalyze: true,
+                analyzeLabel: 'Сформировать ИИ-разбор',
+                reanalyzeLabel: 'Пересчитать ИИ',
+                busy,
+            });
             const trigger = host.querySelector('[data-action="analyze-workout-ai"]');
             trigger?.addEventListener('click', async (e) => {
                 e.stopPropagation();
-                trigger.disabled = true;
+                // Locked and spun right away, so the press is answered by
+                // the button itself; analyzeWorkout holds the cooldown
+                // that refuses the next ask for half a minute.
+                draw(current, true);
                 const next = await this.analyzeWorkout(app, sessionId, {
                     force: current?.available === true,
                     rerender: (result) => draw(result),
@@ -2706,37 +2739,6 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 if (!next) draw(current);
             });
         };
-
-        if (!payload.available) {
-            host.innerHTML = `
-                <section class="ai-workout ai-workout--empty glass rounded-3xl" aria-label="РАЗБОР ОТ ИИ-ТРЕНЕРА">
-                    <div class="ai-workout__head">
-                        <span class="ai-workout__title">
-                            <svg class="ai-workout__icon" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>
-                            РАЗБОР ОТ ИИ-ТРЕНЕРА
-                        </span>
-                    </div>
-                    <div class="space-y-2 mt-3">
-                        <div class="animate-pulse bg-surface-200 dark:bg-white/10 rounded-xl h-4 w-3/4"></div>
-                        <div class="animate-pulse bg-surface-200 dark:bg-white/10 rounded-xl h-4 w-1/2"></div>
-                        <div class="animate-pulse bg-surface-200 dark:bg-white/10 rounded-xl h-4 w-2/3"></div>
-                        <div class="animate-pulse bg-surface-200 dark:bg-white/10 rounded-xl h-4 w-1/3"></div>
-                    </div>
-                    <p class="ai-workout__empty">ИИ-тренер формирует разбор...</p>
-                </section>
-            `;
-
-            for (let attempt = 1; attempt <= MAX_AI_POLL_ATTEMPTS; attempt++) {
-                await new Promise(resolve => setTimeout(resolve, AI_POLL_INTERVAL_MS));
-                payload = await this.loadAiAnalysis(app, sessionId);
-                if (payload?.available) break;
-            }
-
-            if (payload?.available) {
-                draw(payload);
-            }
-            return payload;
-        }
 
         draw(payload);
         return payload;
@@ -2768,9 +2770,9 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                                 <span class="text-surface-300 flex-shrink-0">→</span>
                             </button>
                             <button type="button" data-goal-ai="${goal.value}"
-                                    title="Начать с ИИ-тренером" aria-label="Начать ${goal.title} с ИИ-тренером"
-                                    class="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-2xl text-base bg-surface-800 dark:bg-white dark:text-zinc-950 btn-press">
-                                ${AI_START_ICON}
+                                    title="Старт + AI" aria-label="Начать ${goal.title} с ИИ-тренером"
+                                    class="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-2xl text-sm px-3 py-2 bg-lime-500/10 hover:bg-lime-500/20 text-lime-700 dark:text-lime-300 border border-lime-500/30 text-xs font-semibold transition-all flex items-center gap-1.5 btn-press">
+                                Старт + AI
                             </button>
                         </div>
                     `).join('')}
@@ -2899,14 +2901,14 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                                     <p class="text-xs text-surface-400">${t.exercises.length} упр.</p>
                                 </div>
                                 <div class="flex items-center gap-1.5 flex-shrink-0">
-                                    <button data-action="start-template-ai" data-template-id="${t.id}" ${hasActiveSession ? 'disabled' : ''}
-                                            title="Начать с ИИ-тренером" aria-label="Начать ${this.escapeHtml(t.name)} с ИИ-тренером"
-                                            class="w-8 h-8 flex items-center justify-center rounded-lg text-sm ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'bg-surface-800 dark:bg-white dark:text-zinc-950'}">
-                                        ${AI_START_ICON}
-                                    </button>
                                     <button data-action="start-template" data-template-id="${t.id}" ${hasActiveSession ? 'disabled' : ''}
-                                            class="px-3 py-1.5 flex items-center gap-1.5 ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'bg-primary-600 text-white'} rounded text-xs">
-                                        ${hasActiveSession ? `${LOCK_ICON}<span>Активна тренировка</span>` : '<span>Начать</span>'}
+                                            class="px-2.5 py-1.5 flex items-center gap-1 whitespace-nowrap ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'bg-primary-600 text-white'} rounded-lg text-[11px] font-semibold">
+                                        ${hasActiveSession ? `${LOCK_ICON}<span>Активна</span>` : '<span>Старт</span>'}
+                                    </button>
+<button data-action="start-template-ai" data-template-id="${t.id}" ${hasActiveSession ? 'disabled' : ''}
+                                            title="Старт + AI" aria-label="Начать ${this.escapeHtml(t.name)} с ИИ-тренером"
+                                            class="px-2.5 py-1.5 flex items-center gap-1 whitespace-nowrap ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'px-3 py-2 rounded-xl bg-lime-500/10 hover:bg-lime-500/20 text-lime-700 dark:text-lime-300 border border-lime-500/30 text-xs font-semibold transition-all flex items-center gap-1.5'} rounded-lg text-[11px] font-semibold">
+                                        ${hasActiveSession ? `${LOCK_ICON}<span>Активна</span>` : '<span>Старт + AI</span>'}
                                     </button>
                                 </div>
                             </div>
