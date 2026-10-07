@@ -184,8 +184,26 @@ async def get_current_user(
     return user
 
 
+async def get_current_admin_user(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """Dependency that gates every admin endpoint.
+
+    A non-admin reaches the panel routes and gets a 403 rather than an
+    unauthenticated redirect, so the frontend never treats "forbidden" as a
+    reason to drop the session.
+    """
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return current_user
+
+
 # Need to import select for the dependency
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 
 logger = logging.getLogger(__name__)
@@ -203,12 +221,19 @@ async def register(user_data: UserRegister, db: AsyncSession = Depends(get_db)):
             detail="Email already registered",
         )
 
+    # The very first user on the platform becomes an admin: there is no other
+    # way to reach the panel once it exists, and a bootstrap is cheaper than a
+    # manual flag in the database.
+    user_count_result = await db.execute(select(func.count()).select_from(User))
+    total_users = int(user_count_result.scalar() or 0)
+
     # Create user
     hashed_password = get_password_hash(user_data.password)
     user = User(
         email=user_data.email,
         hashed_password=hashed_password,
         full_name=user_data.full_name,
+        is_admin=(total_users == 0),
     )
     db.add(user)
     await db.commit()

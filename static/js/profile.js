@@ -399,6 +399,16 @@ export const Profile = {
 
                 ${renderThemeSwitcher()}
 
+                ${user.is_admin ? `
+                <div class="glass rounded-2xl p-4 mb-4">
+                    <h3 class="font-semibold mb-3">Панель управления</h3>
+                    <button type="button" data-action="show-admin"
+                            class="w-full py-3 rounded-xl bg-lime-500 hover:bg-lime-400 text-zinc-950 font-semibold text-sm transition-all btn-press">
+                        Админ-панель
+                    </button>
+                </div>
+                ` : ''}
+
                 <div class="glass rounded-2xl p-4 mb-4">
                     <h3 class="font-semibold mb-3">Данные пользователя</h3>
                     <p class="text-sm text-surface-600 dark:text-zinc-300 mb-1">

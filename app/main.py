@@ -13,6 +13,7 @@ from app.services.ai_summary import generate_pending_daily_summaries
 from app.services.nutrition import fail_stale_meals
 from app.services.workout import seed_exercise_catalog
 from app.api.v1.routes import router as api_router
+from app.api.v1.admin import router as admin_router
 
 settings = get_settings()
 
@@ -94,6 +95,7 @@ app.add_middleware(
 
 # API routes
 app.include_router(api_router, prefix="/api/v1")
+app.include_router(admin_router, prefix="/api/v1/admin")
 
 # Static files (for PWA frontend)
 app.mount("/static", StaticFiles(directory="static"), name="static")

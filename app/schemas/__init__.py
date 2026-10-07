@@ -165,6 +165,7 @@ class UserResponse(UserBase):
     id: int
     role: UserRole
     is_active: bool
+    is_admin: bool = False
     is_premium: bool = False
     # Plain strings, not the enum: a persona key that is no longer known must
     # still serialise instead of turning /users/me into a 500.
@@ -209,6 +210,52 @@ class UsageResponse(BaseModel):
 
 class UserMe(UserResponse):
     pass
+
+
+class AdminUserItem(BaseModel):
+    id: int
+    email: EmailStr
+    full_name: Optional[str] = None
+    role: UserRole
+    is_active: bool
+    is_admin: bool
+    is_premium: bool
+    meal_ai_daily_count: int = 0
+    created_workouts_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AdminUserListResponse(BaseModel):
+    items: List[AdminUserItem]
+    total: int
+    page: int
+    page_size: int
+
+
+class AdminStatusUpdate(BaseModel):
+    is_active: Optional[bool] = None
+    is_admin: Optional[bool] = None
+
+
+class AdminQuotaResetResponse(BaseModel):
+    id: int
+    email: EmailStr
+    meal_ai_daily_count: int = 0
+    last_meal_ai_date: Optional[date] = None
+    last_workout_ai_analysis_at: Optional[datetime] = None
+    last_nutrition_ai_analysis_at: Optional[datetime] = None
+
+
+class AdminStats(BaseModel):
+    total_users: int
+    active_users: int
+    total_workouts: int
+    active_today: int
+    total_meals: int
+    ai_error_rate: float
 
 
 class AnthropometricsResponse(BaseModel):
@@ -619,6 +666,11 @@ __all__ = [
     "UserUpdate",
     "UserResponse",
     "UserMe",
+    "AdminUserItem",
+    "AdminUserListResponse",
+    "AdminStatusUpdate",
+    "AdminQuotaResetResponse",
+    "AdminStats",
     "AnthropometricsUpdate",
     "MacroTargetsResponse",
     "AnthropometricsResponse",

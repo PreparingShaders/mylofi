@@ -11,6 +11,7 @@ import { NetworkBanner } from './network.js';
 import { Components } from './components.js';
 import { Utils } from './utils.js';
 import { Theme } from './theme.js';
+import { Admin } from './admin.js';
 
 const TOGGLE_BASE = 'flex-shrink-0 w-11 h-11 rounded-2xl text-xl font-bold transition-all flex items-center justify-center';
 const TOGGLE_COMPLETED = 'bg-lime-400 text-zinc-950 border-lime-400 shadow-[0_0_12px_rgba(163,230,53,0.4)]';
@@ -519,6 +520,7 @@ const App = {
             else if (pageName === 'history') await Workouts.renderHistory(container, this);
             else if (pageName === 'statistics') await Workouts.renderStatisticsScreen(container, this);
             else if (pageName === 'templates') await Workouts.renderTemplatesScreen(container, this);
+            else if (pageName === 'admin') await Admin.render(container, this);
         } catch (error) {
             console.error('[App] Render error:', error);
             container.innerHTML = Components.errorState('Ошибка загрузки');
@@ -617,6 +619,9 @@ const App = {
                 break;
             case 'toggle-pro':
                 await Profile.togglePro(this.elements.pageContent);
+                break;
+            case 'show-admin':
+                this.showPage('admin');
                 break;
             case 'edit-anthropometrics':
                 Profile.openAnthropometricsModal();

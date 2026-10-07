@@ -46,6 +46,7 @@ class User(Base):
     full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.USER, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", nullable=False)
 
     # Profile data
     height_cm: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
