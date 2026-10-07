@@ -1,10 +1,15 @@
-# Implementation Plan: AI Features Refinement, Styling Standardization, and Rate Limiting
+# Implementation Plan: Exact AI CSS Styling and Quick Start Modal Redesign
 
 ## Goal
 1. **Eliminate Auto-Triggering AI Analysis**: Remove automatic polling and background AI requests upon opening workout history details in `static/js/workouts.js`.
 2. **On-Demand Manual Trigger & Rate Limiting**: Implement explicit manual buttons with 30-second cooldown / button lock.
-3. **Unified AI Styling System**: Standardize all AI badges, scores, and buttons across the app using Tailwind classes (`bg-purple-950/60 text-purple-300 border border-purple-500/40 hover:bg-purple-900/80 transition-all font-medium`) with `✦ ИИ` / `✦ Старт + ИИ`.
-4. **Enhanced Quick Start AI Generation**: Pass user profile context (`weight`, `goal`, history) in Quick Start AI generation (`static/js/workouts.js` & Backend) to select 3-4 optimal exercises at 70-80% of last 1RM.
+3. **Exact AI CSS Styling**: Standardize all AI elements (`nutrition-ring__score`, "ВЕРДИКТ НУТРИЦИОЛОГА", workout AI score tags) using exact DevTools inspector classes:
+   - Text color: `text-purple-600 dark:text-purple-300`
+   - Background & border: `bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30`
+   - Prefix: `✦ ИИ`
+4. **Redesign "Быстрый старт" Modal Layout (`static/js/workouts.js`)**:
+   - Fix broken button sizing by removing restrictive `w-10 h-10` from `data-goal-ai`.
+   - Use clean, spacious card layout for each goal (Сила, Набор массы, Выносливость) with side-by-side "Старт" and "✦ Старт + ИИ" buttons (`px-3.5 py-2 text-xs font-semibold whitespace-nowrap rounded-xl`).
 
 ---
 
@@ -21,18 +26,17 @@
 ### Task 3: Backend Duplicate Request Guard (`app/services/ai_workout_service.py`)
 - Ensure `analyze_workout_session` returns cached analysis unless `force=true`.
 
-### Task 4: Unified AI Styling System (`static/js/nutrition.js` & `static/js/workouts.js`)
-- Meal Cards (`static/js/nutrition.js`): Update "ВЕРДИКТ НУТРИЦИОЛОГА" badge to use `✦ ИИ 5/10` formatting with unified purple AI badge classes.
-- Workout Template & Quick Start Modals (`static/js/workouts.js`): Replace "Старт + AI" buttons with `✦ Старт + ИИ` using the standardized Tailwind classes (`bg-purple-950/70 text-purple-200 border border-purple-500/40 hover:bg-purple-900/80 text-xs font-semibold flex items-center gap-1.5`).
+### Task 4: Exact AI CSS Style Match (`static/js/components.js` & `static/js/nutrition.js`)
+- Update `nutrition-ring__score`, nutrition verdict badge, and workout AI score tags with:
+  `bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300 font-medium` and `✦ ИИ` formatting.
 
-### Task 5: Enhance Quick Start AI Generation Payload (`static/js/workouts.js` & Backend)
-- In `startQuickWorkoutWithAi` / quick start modal handler, pass user profile context (`weight`, `goal`, recent performance/fatigue history).
-- Update backend quick-start prompt / service to instruct the AI to select 3-4 optimal exercises with personalized weights (70-80% of last 1RM).
+### Task 5: Quick Start Modal Layout Redesign (`static/js/workouts.js`)
+- Replace quick start goal cards and buttons with clean, flex-based spacious layout featuring separate "Старт" and "✦ Старт + ИИ" action buttons without fixed-size constraints.
 
 ---
 
 ## Validation & Testing
 1. Verify no auto-polling or loading skeletons on history detail open.
 2. Verify manual trigger fires correctly with 30s cooldown protection.
-3. Verify meal cards and workout template/quick start buttons use consistent `✦ ИИ` styling.
-4. Verify Quick Start with AI generates personalized exercises with appropriate weights.
+3. Verify all AI badges across nutrition and workouts match exact purple styling and `✦ ИИ` prefix.
+4. Verify Quick Start modal renders cleanly with correctly proportioned buttons.

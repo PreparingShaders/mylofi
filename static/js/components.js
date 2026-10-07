@@ -154,10 +154,11 @@ export const Components = {
      */
     qualityBadge(score) {
         const value = Utils.qualityScoreFromAI(score);
+        const baseClasses = "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300 font-medium";
         if (value === null) {
-            return `<span class="meal-card-quality inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-950/60 text-purple-300 border border-purple-500/40 hover:bg-purple-900/80 transition-all font-medium" aria-label="ИИ-качество не рассчитано">✦ ИИ —<span class="opacity-60">/10</span></span>`;
+            return `<span class="meal-card-quality ${baseClasses}" aria-label="ИИ-качество не рассчитано">✦ ИИ —<span class="opacity-60">/10</span></span>`;
         }
-        return `<span class="meal-card-quality inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-950/60 text-purple-300 border border-purple-500/40 hover:bg-purple-900/80 transition-all font-medium" aria-label="ИИ-качество ${value} из 10">✦ ИИ ${value}<span class="opacity-60">/10</span></span>`;
+        return `<span class="meal-card-quality ${baseClasses}" aria-label="ИИ-качество ${value} из 10">✦ ИИ ${value}<span class="opacity-60">/10</span></span>`;
     },
 
     /**
@@ -480,7 +481,7 @@ export const Components = {
                         ${macros.map(sector).join('')}
                     </svg>
                     <div class="nutrition-ring__center">
-                        <span class="nutrition-ring__score text-purple-600 dark:text-purple-300"><svg class="nutrition-ring__spark" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>ИИ ${scoreText}<span class="opacity-60">/10</span></span>
+                        <span class="nutrition-ring__score inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300 font-medium"><svg class="nutrition-ring__spark w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>✦ ИИ ${scoreText}<span class="opacity-60">/10</span></span>
                         <span class="nutrition-ring__calories tabular-nums ${calOver ? 'text-red-500 dark:text-red-400' : 'text-surface-900 dark:text-zinc-100'}">${formatNum(calories)}<span class="nutrition-ring__calories-target">/ ${formatNum(targetCalories)} ккал</span></span>
                     </div>
                 </div>
@@ -529,7 +530,7 @@ export const Components = {
                 </span>
                 ${dateLabel ? `<span class="daily-summary__date">${escapeHtml(dateLabel)}</span>` : ''}
                 ${available && scoreText
-                    ? `<span class="daily-summary__score inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-950/60 text-purple-300 border border-purple-500/40 hover:bg-purple-900/80 transition-all font-medium"><span class="opacity-60">✦ ИИ</span> ${scoreText}<span class="opacity-60">/10</span></span>`
+                    ? `<span class="daily-summary__score inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300 font-medium"><span class="opacity-60">✦ ИИ</span> ${scoreText}<span class="opacity-60">/10</span></span>`
                     : ''}
                 ${available
                     ? `<button type="button" data-action="regenerate-daily-summary" class="daily-summary__refresh btn-press"
@@ -613,7 +614,7 @@ export const Components = {
                     ${escapeHtml(title)}
                 </span>
                 ${available && scoreText
-                    ? `<span class="ai-workout__score inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-950/60 text-purple-300 border border-purple-500/40 hover:bg-purple-900/80 transition-all font-medium"><span class="opacity-60">✦ ИИ</span> ${scoreText}<span class="opacity-60">/10</span></span>`
+                    ? `<span class="ai-workout__score inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300 font-medium"><span class="opacity-60">✦ ИИ</span> ${scoreText}<span class="opacity-60">/10</span></span>`
                     : ''}
                 ${payload?.analyzed_at
                     ? `<span class="ai-workout__date">${escapeHtml(Utils.formatDate(payload.analyzed_at))}</span>`

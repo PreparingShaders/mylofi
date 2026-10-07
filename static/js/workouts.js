@@ -929,9 +929,9 @@ export const Workouts = {
                                 </button>
 <button data-action="start-template-ai" data-template-id="${t.id}" ${hasActiveSession ? 'disabled' : ''}
                                          title="Старт + ИИ" aria-label="Начать ${this.escapeHtml(t.name)} с ИИ-тренером"
-                                         class="flex-1 min-w-0 py-1.5 flex items-center justify-center gap-1.5 ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'px-3 py-2 rounded-xl bg-purple-950/70 hover:bg-purple-900/80 text-purple-200 border border-purple-500/40 text-xs font-semibold transition-all flex items-center gap-1.5'} rounded-xl text-[11px] font-semibold text-center shadow-sm">
-                                     ${hasActiveSession ? `${LOCK_ICON}<span>Активна</span>` : '<span>✦ Старт + ИИ</span>'}
-                                 </button>
+                                         class="flex-1 min-w-0 py-1.5 flex items-center justify-center gap-1.5 ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300 hover:bg-purple-500/20 dark:hover:bg-purple-500/30'} rounded-xl text-[11px] font-semibold text-center shadow-sm">
+                                      ${hasActiveSession ? `${LOCK_ICON}<span>Активна</span>` : '<span>✦ Старт + ИИ</span>'}
+                                  </button>
                             </div>
                         </div>
                     `).join('')}
@@ -2499,8 +2499,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                                     <span>·</span>
                                     <span>${statusLabel(session.status)}</span>
                                     ${analyzable ? `<button type="button" data-action="history-analyze-ai" data-session-id="${session.id}"
-                                            class="ml-auto flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold ${session.has_ai_analysis ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400' : 'bg-surface-100 dark:bg-white/5 text-surface-500 dark:text-surface-400'}">
-                                            <span class="badge">ИИ</span>
+                                            class="ml-auto flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold ${session.has_ai_analysis ? 'bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300' : 'bg-surface-100 dark:bg-white/5 text-surface-500 dark:text-surface-400'}">
+                                            <span class="badge">✦ ИИ</span>
                                             <span>${session.has_ai_analysis ? 'Пересчитать' : 'Разобрать'}</span>
                                         </button>` : ''}
                                 </div>
@@ -2744,7 +2744,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         return payload;
     },
 
-    showQuickStartModal(app) {
+showQuickStartModal(app) {
         this.app = app;
         const modal = document.createElement('div');
         modal.id = 'quick-start-modal';
@@ -2758,22 +2758,24 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 <p class="text-xs text-surface-500 dark:text-surface-400 mb-4">
                     Выберите цель — упражнения и подходы подставятся автоматически, веса берутся из прошлых тренировок.
                 </p>
-                <div class="space-y-2">
+                <div class="space-y-3">
                     ${QUICK_GOALS.map(goal => `
-                        <div class="glass rounded-2xl p-1.5 flex items-center gap-1.5">
-                            <button type="button" data-goal="${goal.value}"
-                                    class="flex-1 min-w-0 flex items-center justify-between gap-3 p-2 rounded-2xl text-left btn-press">
-                                <span class="min-w-0">
-                                    <span class="block font-semibold text-sm">${goal.title}</span>
-                                    <span class="block text-[11px] text-surface-500 dark:text-surface-400">${goal.subtitle}</span>
-                                </span>
-                                <span class="text-surface-300 flex-shrink-0">→</span>
-                            </button>
-<button type="button" data-goal-ai="${goal.value}"
-                                     title="Старт + ИИ" aria-label="Начать ${goal.title} с ИИ-тренером"
-                                     class="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-2xl text-sm px-3 py-2 bg-purple-950/70 hover:bg-purple-900/80 text-purple-200 border border-purple-500/40 text-xs font-semibold transition-all flex items-center gap-1.5 btn-press">
-                                 ✦ Старт + ИИ
-                             </button>
+                        <div class="glass rounded-2xl p-3">
+                            <div class="mb-2">
+                                <span class="block font-semibold text-sm">${goal.title}</span>
+                                <span class="block text-[11px] text-surface-500 dark:text-surface-400">${goal.subtitle}</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <button type="button" data-goal="${goal.value}"
+                                        class="flex-1 px-3.5 py-2 text-xs font-semibold whitespace-nowrap rounded-xl bg-primary-600 text-white hover:bg-primary-700 btn-press">
+                                    Старт
+                                </button>
+                                <button type="button" data-goal-ai="${goal.value}"
+                                         title="Старт + ИИ" aria-label="Начать ${goal.title} с ИИ-тренером"
+                                         class="flex-1 px-3.5 py-2 text-xs font-semibold whitespace-nowrap rounded-xl bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300 hover:bg-purple-500/20 dark:hover:bg-purple-500/30 btn-press">
+                                    ✦ Старт + ИИ
+                                </button>
+                            </div>
                         </div>
                     `).join('')}
                 </div>
