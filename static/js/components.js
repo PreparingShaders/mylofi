@@ -481,7 +481,7 @@ export const Components = {
                         ${macros.map(sector).join('')}
                     </svg>
                     <div class="nutrition-ring__center">
-                        <span class="nutrition-ring__score inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300 font-medium"><svg class="nutrition-ring__spark w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>✦ ИИ ${scoreText}<span class="opacity-60">/10</span></span>
+                        <span class="nutrition-ring__score"><svg class="nutrition-ring__spark" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>✦ ИИ ${scoreText}<span class="opacity-60">/10</span></span>
                         <span class="nutrition-ring__calories tabular-nums ${calOver ? 'text-red-500 dark:text-red-400' : 'text-surface-900 dark:text-zinc-100'}">${formatNum(calories)}<span class="nutrition-ring__calories-target">/ ${formatNum(targetCalories)} ккал</span></span>
                     </div>
                 </div>
