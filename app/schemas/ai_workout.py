@@ -49,6 +49,11 @@ class AIWorkoutPreviewRequest(BaseModel):
     service prefers the template and falls back to the names. `session_id` is set
     when a plan was already generated and stored for the session in progress: the
     preview endpoint then reads the cached plan instead of regenerating it.
+
+    `reduce` asks for the lighter half of the catalogue picks (the strength
+    variant), which keeps the compound lifts and drops the accessories. It is the
+    same selection the quick start makes, so the plan and the session agree on
+    what "shorter" means.
     """
 
     template_id: Optional[int] = None
@@ -56,6 +61,7 @@ class AIWorkoutPreviewRequest(BaseModel):
     goal: Optional[str] = Field(None, max_length=40)
     name: Optional[str] = Field(None, max_length=255)
     session_id: Optional[int] = None
+    reduce: bool = False
 
 
 class AIWorkoutPreviewResponse(BaseModel):

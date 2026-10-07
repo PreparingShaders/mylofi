@@ -614,6 +614,10 @@ class BuildWorkoutSessionRequest(BaseModel):
 class QuickStartWorkoutRequest(BaseModel):
     goal: WorkoutGoal = Field(default=WorkoutGoal.STRENGTH)
     with_ai_plan: bool = False
+    reduce: bool = Field(
+        default=False,
+        description="Ask for the lighter half of the catalogue picks (strength variant)",
+    )
 
 
 class TemplateStartRequest(BaseModel):

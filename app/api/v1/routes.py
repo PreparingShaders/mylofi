@@ -886,7 +886,9 @@ async def quick_start_session(
             detail="You already have an active workout session. Complete or cancel it first.",
         )
     try:
-        session = await quick_start_workout(db, current_user.id, request.goal.value)
+        session = await quick_start_workout(
+            db, current_user.id, request.goal.value, reduce=request.reduce
+        )
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1225,6 +1227,7 @@ async def ai_workout_preview(
         exercises=request.exercises,
         goal=request.goal,
         name=request.name,
+        reduce=request.reduce,
     )
 
 

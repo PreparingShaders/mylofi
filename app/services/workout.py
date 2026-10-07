@@ -612,12 +612,17 @@ async def build_workout_session(
     return await get_workout_session(db, session.id, user_id)
 
 
-async def select_quick_start_exercises(db: AsyncSession, goal: str) -> List[ExerciseCatalog]:
+async def select_quick_start_exercises(db: AsyncSession, goal: str, reduce: bool = False) -> List[ExerciseCatalog]:
     """The catalog picks a quick start is built from, for a goal.
 
     Shared with the AI preview: the plan has to talk about the movements the
     quick start will really create, not a guess at them, or the badges would
     describe a different workout than the one on screen.
+
+    `reduce` asks for the lighter half of the catalogue picks - the strength
+    variant, which keeps the compound lifts and drops the accessories. It is
+    the same selection the coach is asked to trim, so the plan and the session
+    agree on what "shorter" means.
     """
     selected: List[ExerciseCatalog] = []
     for group in MAJOR_MUSCLE_GROUPS:
@@ -634,7 +639,7 @@ async def select_quick_start_exercises(db: AsyncSession, goal: str) -> List[Exer
         if ex:
             selected.append(ex)
 
-    if goal in ("hypertrophy", "endurance"):
+    if not reduce and goal in ("hypertrophy", "endurance"):
         for group in ("biceps", "triceps", "abs"):
             result = await db.execute(
                 select(ExerciseCatalog)
@@ -656,6 +661,8 @@ async def quick_start_workout(
     db: AsyncSession,
     user_id: int,
     goal: str,
+    *,
+    reduce: bool = False,
 ) -> WorkoutSession:
     """Create a workout session from catalog exercises for a given goal.
 
@@ -663,10 +670,15 @@ async def quick_start_workout(
       - strength:   compound lifts, 1 per major muscle group, 3x5
       - hypertrophy: compound lifts + isolation accessories, 3x10
       - endurance:  compound lifts + abs, 2x15
+
+    `reduce` asks for the lighter half of the catalogue picks (the strength
+    variant), which keeps the compound lifts and drops the accessories. It is
+    the same selection the coach is asked to trim, so the plan and the session
+    agree on what "shorter" means.
     """
     settings = WORKOUT_GOAL_SETTINGS.get(goal, WORKOUT_GOAL_SETTINGS["hypertrophy"])
 
-    selected = await select_quick_start_exercises(db, goal)
+    selected = await select_quick_start_exercises(db, goal, reduce=reduce)
 
     if not selected:
         raise ValueError("Exercise catalog is empty")
@@ -677,7 +689,7 @@ async def quick_start_workout(
 
     session = WorkoutSession(
         user_id=user_id,
-        name=f"Quick-start: {goal.title()} Workout",
+        name=f"Quick-start: {goal.title()} Workout" + (" (reduced)" if reduce else ""),
         started_at=datetime.now(timezone.utc),
         status=WorkoutSessionStatus.ACTIVE,
     )

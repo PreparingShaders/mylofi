@@ -927,11 +927,11 @@ export const Workouts = {
                                         class="flex-1 min-w-0 py-1.5 flex items-center justify-center gap-1.5 ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'bg-primary-600 text-white'} rounded-xl text-[11px] font-semibold text-center shadow-sm">
                                     ${hasActiveSession ? `${LOCK_ICON}<span>Активна</span>` : '<span>Старт</span>'}
                                 </button>
-                                <button data-action="start-template-ai" data-template-id="${t.id}" ${hasActiveSession ? 'disabled' : ''}
-                                        title="Старт + AI" aria-label="Начать с ИИ-тренером"
-                                        class="flex-1 min-w-0 py-1.5 flex items-center justify-center gap-1.5 ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'px-3 py-2 rounded-xl bg-lime-500/10 hover:bg-lime-500/20 text-lime-700 dark:text-lime-300 border border-lime-500/30 text-xs font-semibold transition-all flex items-center gap-1.5'} rounded-xl text-[11px] font-semibold text-center shadow-sm">
-                                    ${hasActiveSession ? `${LOCK_ICON}<span>Активна</span>` : '<span>Старт + AI</span>'}
-                                </button>
+<button data-action="start-template-ai" data-template-id="${t.id}" ${hasActiveSession ? 'disabled' : ''}
+                                         title="Старт + ИИ" aria-label="Начать ${this.escapeHtml(t.name)} с ИИ-тренером"
+                                         class="flex-1 min-w-0 py-1.5 flex items-center justify-center gap-1.5 ${hasActiveSession ? 'bg-surface-200 dark:bg-white/10 text-surface-500 dark:text-surface-400 cursor-not-allowed' : 'px-3 py-2 rounded-xl bg-purple-950/70 hover:bg-purple-900/80 text-purple-200 border border-purple-500/40 text-xs font-semibold transition-all flex items-center gap-1.5'} rounded-xl text-[11px] font-semibold text-center shadow-sm">
+                                     ${hasActiveSession ? `${LOCK_ICON}<span>Активна</span>` : '<span>✦ Старт + ИИ</span>'}
+                                 </button>
                             </div>
                         </div>
                     `).join('')}
@@ -1304,12 +1304,12 @@ export const Workouts = {
         try {
             const { session_id: sessionId } = await API.post(
                 '/workouts/sessions/quick-start',
-                { goal, with_ai_plan: true },
+                { goal, with_ai_plan: true, reduce: true },
                 token,
             );
             // Read the stored plan; the preview endpoint generates it on demand
             // if the background task has not stored it yet.
-            const plan = await this.loadAiPlan(app, { goal, name: `Быстрый старт: ${goalLabel}`, session_id: sessionId });
+            const plan = await this.loadAiPlan(app, { goal, name: `Быстрый старт: ${goalLabel}`, session_id: sessionId, reduce: true });
             this.aiPlan = plan ? { ...plan, sessionId } : null;
             await this.renderWorkoutScreen(app.elements.pageContent, app, sessionId);
         } catch (err) {
@@ -2769,11 +2769,11 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                                 </span>
                                 <span class="text-surface-300 flex-shrink-0">→</span>
                             </button>
-                            <button type="button" data-goal-ai="${goal.value}"
-                                    title="Старт + AI" aria-label="Начать ${goal.title} с ИИ-тренером"
-                                    class="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-2xl text-sm px-3 py-2 bg-lime-500/10 hover:bg-lime-500/20 text-lime-700 dark:text-lime-300 border border-lime-500/30 text-xs font-semibold transition-all flex items-center gap-1.5 btn-press">
-                                Старт + AI
-                            </button>
+<button type="button" data-goal-ai="${goal.value}"
+                                     title="Старт + ИИ" aria-label="Начать ${goal.title} с ИИ-тренером"
+                                     class="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-2xl text-sm px-3 py-2 bg-purple-950/70 hover:bg-purple-900/80 text-purple-200 border border-purple-500/40 text-xs font-semibold transition-all flex items-center gap-1.5 btn-press">
+                                 ✦ Старт + ИИ
+                             </button>
                         </div>
                     `).join('')}
                 </div>

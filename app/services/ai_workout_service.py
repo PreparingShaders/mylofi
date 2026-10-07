@@ -758,6 +758,7 @@ def build_workout_preview_prompt(
     performance_lines: Sequence[str] = (),
     persona: Optional[str] = None,
     persona_custom_text: Optional[str] = None,
+    reduce: bool = False,
 ) -> str:
     """Prompt for the plan of the session that is about to start.
 
@@ -788,6 +789,13 @@ def build_workout_preview_prompt(
         f"Что пользователь уже показывает по этим упражнениям (точные цифры из базы):\n{history_block}\n"
         if history_block
         else "История по этим упражнениям пуста: ни одного завершённого подхода с весом ещё нет. "
+    )
+
+    reduce_line = (
+        "Это СОКРАЩЁННЫЙ вариант тренировки: убери вспомогательные/изоляционные упражнения, "
+        "оставь только базовые движения и не добавляй новых. "
+        if reduce
+        else ""
     )
 
     return f"""Ты — тренер по силовым тренировкам. Ты уже знаешь, какие упражнения выбраны, и верни СТРОГО валидный JSON с полями:
@@ -823,10 +831,10 @@ def build_workout_preview_prompt(
 {_persona_line(persona, persona_custom_text, "focus, motivation и рекомендаций")}
 
 Контекст:
-{goal_line}{name_line}{athlete_line}
-Упражнения тренировки (в этом порядке):
-{listed}
-{history_text}"""
+    {goal_line}{name_line}{athlete_line}
+    {reduce_line}Упражнения тренировки (в этом порядке):
+    {listed}
+    {history_text}"""
 
 
 def _preview_validator(requested: Sequence[str]) -> Any:
@@ -903,6 +911,7 @@ async def generate_workout_preview_payload(
     goal: Optional[str] = None,
     user: User,
     performance: Optional[Dict[str, Dict[str, Any]]] = None,
+    reduce: bool = False,
 ) -> Dict[str, Any]:
     """Ask the cascade for one session plan, bounded as a whole."""
     performance = performance or {}
@@ -922,6 +931,7 @@ async def generate_workout_preview_payload(
         performance_lines=performance_lines,
         persona=user.ai_persona,
         persona_custom_text=user.ai_persona_custom_text,
+        reduce=reduce,
     )
     return await asyncio.wait_for(
         run_text_cascade(prompt, _preview_validator(names), "[AI Workout Preview]"),
@@ -963,6 +973,7 @@ async def build_workout_preview(
     exercises: Optional[Sequence[str]] = None,
     goal: Optional[str] = None,
     name: Optional[str] = None,
+    reduce: bool = False,
 ) -> Dict[str, Any]:
     """The plan for the session about to start, or the reason there is none.
 
@@ -974,6 +985,10 @@ async def build_workout_preview(
     the retrospective analysis, which is the expensive half and the one the limits
     table names; a plan for a workout that is about to happen stays available so
     the user is not met with a paywall between two presses of the same button.
+
+    `reduce` asks the coach for a shorter plan: the session it describes is the
+    strength variant, which keeps the compound lifts and drops the accessories,
+    so the plan has to talk about the same movements the user will actually do.
     """
     limit = can_run_workout_ai(user)
 
@@ -1015,7 +1030,7 @@ async def build_workout_preview(
                     "reps": settings["default_reps"],
                     "rest_seconds": settings["default_rest_seconds"],
                 }
-                for ex in await select_quick_start_exercises(db, goal)
+                for ex in await select_quick_start_exercises(db, goal, reduce=reduce)
             ]
 
     if len(planned) > MAX_EXERCISES_IN_PROMPT:

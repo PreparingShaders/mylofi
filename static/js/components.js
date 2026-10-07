@@ -155,9 +155,9 @@ export const Components = {
     qualityBadge(score) {
         const value = Utils.qualityScoreFromAI(score);
         if (value === null) {
-            return `<span class="meal-card-quality" aria-label="ИИ-качество не рассчитано">—<span class="opacity-60">/10</span></span>`;
+            return `<span class="meal-card-quality inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-950/60 text-purple-300 border border-purple-500/40 hover:bg-purple-900/80 transition-all font-medium" aria-label="ИИ-качество не рассчитано">✦ ИИ —<span class="opacity-60">/10</span></span>`;
         }
-        return `<span class="meal-card-quality" aria-label="ИИ-качество ${value} из 10">${value}<span class="opacity-60">/10</span></span>`;
+        return `<span class="meal-card-quality inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-950/60 text-purple-300 border border-purple-500/40 hover:bg-purple-900/80 transition-all font-medium" aria-label="ИИ-качество ${value} из 10">✦ ИИ ${value}<span class="opacity-60">/10</span></span>`;
     },
 
     /**
@@ -529,7 +529,7 @@ export const Components = {
                 </span>
                 ${dateLabel ? `<span class="daily-summary__date">${escapeHtml(dateLabel)}</span>` : ''}
                 ${available && scoreText
-                    ? `<span class="daily-summary__score"><span class="opacity-60">ИИ</span> ${scoreText}<span class="opacity-60">/10</span></span>`
+                    ? `<span class="daily-summary__score inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-950/60 text-purple-300 border border-purple-500/40 hover:bg-purple-900/80 transition-all font-medium"><span class="opacity-60">✦ ИИ</span> ${scoreText}<span class="opacity-60">/10</span></span>`
                     : ''}
                 ${available
                     ? `<button type="button" data-action="regenerate-daily-summary" class="daily-summary__refresh btn-press"
@@ -613,7 +613,7 @@ export const Components = {
                     ${escapeHtml(title)}
                 </span>
                 ${available && scoreText
-                    ? `<span class="ai-workout__score"><span class="opacity-60">ИИ</span> ${scoreText}<span class="opacity-60">/10</span></span>`
+                    ? `<span class="ai-workout__score inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-950/60 text-purple-300 border border-purple-500/40 hover:bg-purple-900/80 transition-all font-medium"><span class="opacity-60">✦ ИИ</span> ${scoreText}<span class="opacity-60">/10</span></span>`
                     : ''}
                 ${payload?.analyzed_at
                     ? `<span class="ai-workout__date">${escapeHtml(Utils.formatDate(payload.analyzed_at))}</span>`
