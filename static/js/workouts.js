@@ -1463,14 +1463,10 @@ export const Workouts = {
             return;
         }
 
-        // The verdict is generated in the background. Poll the summary endpoint
-        // until the verdict lands; the same card is rendered inline in history.
-        const payload = await this.pollForAiAnalysis(app, sessionId);
-        await app.renderPage('workouts');
-
-        if (payload) {
-            this.showAiSummaryModal(app, payload);
-        }
+        app.showToast('Тренировка завершена! ИИ-тренер формирует разбор в истории.', 'success');
+        app.state.currentPage = 'history';
+        app.elements.navItems.forEach(item => item.classList.toggle('active', item.dataset.page === 'history'));
+        await this.renderHistoryDetail(app.elements.pageContent, app, sessionId);
     },
 
     /**
@@ -2533,6 +2529,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
     // session, generated summary and per-exercise tonnage / e1RM trend lines.
     async renderHistoryDetail(container, app, sessionId) {
         this.app = app;
+        this.stopWorkoutTimer();
         container.innerHTML = Components.loadingSpinner();
 
         let detail;
@@ -2679,7 +2676,10 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         const host = container.querySelector('#ai-workout-detail');
         if (!host) return null;
 
-        const payload = await this.loadAiAnalysis(app, sessionId);
+        const MAX_AI_POLL_ATTEMPTS = 5;
+        const AI_POLL_INTERVAL_MS = 1500;
+
+        let payload = await this.loadAiAnalysis(app, sessionId);
         if (!payload) {
             host.remove();
             return null;
@@ -2695,10 +2695,40 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     force: current?.available === true,
                     rerender: (result) => draw(result),
                 });
-                // A failed run leaves the card exactly as it was, trigger included.
                 if (!next) draw(current);
             });
         };
+
+        if (!payload.available) {
+            host.innerHTML = `
+                <section class="ai-workout ai-workout--empty glass rounded-3xl" aria-label="РАЗБОР ОТ ИИ-ТРЕНЕРА">
+                    <div class="ai-workout__head">
+                        <span class="ai-workout__title">
+                            <svg class="ai-workout__icon" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>
+                            РАЗБОР ОТ ИИ-ТРЕНЕРА
+                        </span>
+                    </div>
+                    <div class="space-y-2 mt-3">
+                        <div class="animate-pulse bg-surface-200 dark:bg-white/10 rounded-xl h-4 w-3/4"></div>
+                        <div class="animate-pulse bg-surface-200 dark:bg-white/10 rounded-xl h-4 w-1/2"></div>
+                        <div class="animate-pulse bg-surface-200 dark:bg-white/10 rounded-xl h-4 w-2/3"></div>
+                        <div class="animate-pulse bg-surface-200 dark:bg-white/10 rounded-xl h-4 w-1/3"></div>
+                    </div>
+                    <p class="ai-workout__empty">ИИ-тренер формирует разбор...</p>
+                </section>
+            `;
+
+            for (let attempt = 1; attempt <= MAX_AI_POLL_ATTEMPTS; attempt++) {
+                await new Promise(resolve => setTimeout(resolve, AI_POLL_INTERVAL_MS));
+                payload = await this.loadAiAnalysis(app, sessionId);
+                if (payload?.available) break;
+            }
+
+            if (payload?.available) {
+                draw(payload);
+            }
+            return payload;
+        }
 
         draw(payload);
         return payload;

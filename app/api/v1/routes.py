@@ -126,6 +126,7 @@ from app.services.ai_summary import get_or_create_daily_summary
 from app.services.ai_workout_service import (
     AI_PLAN_STATUS_PENDING,
     analyze_workout_session,
+    analyze_workout_session_task,
     build_workout_preview,
     build_workout_preview_and_store,
     get_workout_analysis,
@@ -957,10 +958,9 @@ async def complete_workout_session_endpoint(
 
     if data.with_ai_analysis:
         background_tasks.add_task(
-            analyze_workout_session,
-            db,
-            current_user,
-            session,
+            analyze_workout_session_task,
+            session.id,
+            current_user.id,
             notes=data.notes,
             force=False,
         )

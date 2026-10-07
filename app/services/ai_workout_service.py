@@ -31,8 +31,10 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import case, func, literal, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
+
+from app.db.session import async_session_maker
 
 from app.models import (
     ExerciseCatalog,
@@ -41,6 +43,7 @@ from app.models import (
     WorkoutSessionExercise,
     WorkoutSessionStatus,
     WorkoutSet,
+    WorkoutTemplate,
 )
 from app.services.ai_vision import (
     clamp_sentences,
@@ -1065,7 +1068,7 @@ async def build_workout_preview_and_store(
         select(WorkoutSession)
         .where(WorkoutSession.id == session_id)
         .options(
-            selectinload(WorkoutSession.template),
+            selectinload(WorkoutSession.template).selectinload(WorkoutTemplate.exercises),
             selectinload(WorkoutSession.exercises),
         )
     )
@@ -1488,6 +1491,41 @@ async def get_workout_analysis(
     )
 
 
+async def analyze_workout_session_task(
+    session_id: int,
+    user_id: int,
+    notes: Optional[str] = None,
+    force: bool = False,
+) -> None:
+    """Background runner for `analyze_workout_session` with an isolated DB session.
+
+    The request-scoped `db` is closed when the HTTP endpoint returns, so the
+    background task must open its own session rather than reusing one that may
+    already be orphaned.
+    """
+    async with async_session_maker() as db:
+        try:
+            result = await db.execute(
+                select(WorkoutSession)
+                .where(WorkoutSession.id == session_id)
+                .options(selectinload(WorkoutSession.exercises))
+            )
+            session = result.scalar_one_or_none()
+            if session is None:
+                logger.warning(f"[AI Workout Summary] Session {session_id} not found for background task")
+                return
+
+            user = await db.get(User, user_id)
+            if user is None:
+                logger.warning(f"[AI Workout Summary] User {user_id} not found for background task")
+                return
+
+            await analyze_workout_session(db, user, session, notes=notes, force=force)
+        except Exception as e:
+            logger.exception(f"[AI Workout Summary] Background task failed for session {session_id}: {e}")
+            await db.rollback()
+
+
 async def analyze_workout_session(
     db: AsyncSession,
     user: User,
@@ -1612,6 +1650,7 @@ __all__ = [
     "COACH_PERSONA_PROMPTS",
     "WORKOUT_GOAL_LABELS",
     "analyze_workout_session",
+    "analyze_workout_session_task",
     "build_summary_payload",
     "build_workout_preview",
     "build_workout_preview_and_store",
