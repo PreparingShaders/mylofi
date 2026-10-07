@@ -79,7 +79,7 @@ html.dark,
    dots, and a token that only existed on one of those cards would have to be
    redeclared for the others. Light theme = the defaults, dark theme = one
    override. The palette is deliberately saturated - the three pills have to be
-   told apart at a glance on a 120px dial, so they are orange, cyan and a neutral
+    told apart at a glance on a 140px dial, so they are orange, cyan and a neutral
    rather than three shades of the same grey.
 
    Protein wears two accents. Until the day's protein target is reached it is the
@@ -235,9 +235,9 @@ html.dark,
     display: inline-flex;
     align-items: center;
     gap: 2px;
-    padding: 1px 6px;
+    padding: 2px 6px;
     border-radius: 9999px;
-    font-size: clamp(7px, 2vw, 8.5px);
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.02em;
     white-space: nowrap;
@@ -249,7 +249,7 @@ html.dark,
     box-shadow: 0 0 12px rgba(192, 132, 252, 0.42), inset 0 0 10px rgba(192, 132, 252, 0.26);
 }
 /* Sparkle next to the score. It breathes rather than spins: a spinning sparkle on
-   a 120px dial reads as motion noise, and the score itself must stay readable.
+    a 140px dial reads as motion noise, and the score itself must stay readable.
    Reduced motion drops the animation and leaves a static sparkle. */
 .nutrition-ring__spark {
     width: 8px;
@@ -267,22 +267,30 @@ html.dark,
     .nutrition-ring__spark { animation: none; }
 }
 .nutrition-ring__calories {
-    font-size: clamp(14px, 4vw, 18px);
-    font-weight: 800;
+    font-size: 20px;
+    font-weight: 700;
     letter-spacing: -0.03em;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 100%;
 }
+@media (min-width: 640px) {
+    .nutrition-ring__calories {
+        font-size: 24px;
+    }
+}
 .nutrition-ring__calories-target {
     display: block;
     margin-top: 1px;
-    font-size: clamp(7px, 2vw, 9px);
+    font-size: 12px;
     font-weight: 600;
     letter-spacing: 0;
-    opacity: 0.62;
+    color: #a1a1aa;
     white-space: nowrap;
+}
+.dark .nutrition-ring__calories-target {
+    color: #71717a;
 }
 
 /* Meal photo card */

@@ -338,7 +338,7 @@ export const Components = {
      * follows the pill it sits on, or it would vanish into the near-white protein
      * arc on the dark theme.
      */
-    mercedesComboRing(summary = {}, targets = {}, qualityScore = null, size = 120, strokeWidth = 19, sectorGapDeg = 14) {
+    mercedesComboRing(summary = {}, targets = {}, qualityScore = null, size = 140, strokeWidth = 20, sectorGapDeg = 14) {
         const safeNum = (val) => (Number.isFinite(Number(val)) ? Number(val) : 0);
         const formatNum = (val) => Math.round(val).toLocaleString('ru-RU');
         const clamp01 = (val) => Math.max(0, Math.min(1, val));
