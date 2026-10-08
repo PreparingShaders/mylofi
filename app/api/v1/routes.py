@@ -669,6 +669,24 @@ async def get_nutrition_range(
     )
 
 
+@router.get("/nutrition/meals/{meal_id}", response_model=MealResponse)
+async def get_meal_endpoint(
+    meal_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get a single meal by id.
+
+    The frontend polls this while a photo analysis runs in the
+    background: `status` - plus the macros and verdict once they land -
+    is what tells the loading overlay the analysis is finished.
+    """
+    meal = await get_meal(db, meal_id, current_user.id)
+    if not meal:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meal not found")
+    return meal_to_response(meal)
+
+
 @router.patch("/nutrition/meals/{meal_id}", response_model=MealResponse)
 async def update_meal_endpoint(
     meal_id: int,

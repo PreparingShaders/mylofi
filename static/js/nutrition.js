@@ -1376,6 +1376,10 @@ export const Nutrition = {
             return;
         }
 
+        // Show the blurred loading overlay synchronously before compression to
+        // eliminate UI jumping and lock the modal during the upload.
+        const overlayState = Camera.showLoadingOverlay(modalEl);
+
         const notesInput = modalEl.querySelector('#new-meal-notes');
         const notes = notesInput ? notesInput.value.trim() || null : null;
         const token = this.app.state.tokens.access;
@@ -1413,18 +1417,20 @@ export const Nutrition = {
         // before the request leaves; the id it scrolls to is only known once
         // the server (or the local queue) has answered.
         let newMealId = null;
+        let uploadedOnline = false;
         this.showAnalyzingSkeleton();
 
         try {
             const response = await API.post('/nutrition/photos', formData, token, true);
             newMealId = response?.meal_id ?? null;
+            uploadedOnline = Boolean(newMealId);
             this.app.showToast('Фото загружено, идёт анализ', 'success');
-            this.closeNewMealModal();
+            // The sheet and its overlay stay up: the 201 only means the
+            // background analysis started, not that it finished.
         } catch (error) {
             if (error?.isNetworkError || error?.offlineQueued) {
                 newMealId = await Camera.queueOfflineMeal(compressedBlob, notes, state.selectedMealType);
                 this.app.showToast('Нет связи. Фото сохранено локально и будет загружено при появлении связи', 'info');
-                this.closeNewMealModal();
             } else {
                 console.error('[Nutrition] Upload error:', error);
                 this.app.showToast(error.data?.detail || 'Ошибка загрузки', 'error');
@@ -1437,6 +1443,24 @@ export const Nutrition = {
                 <span class="text-sm font-semibold">Отправить / Анализировать</span>
             `;
         }
+
+        // The overlay stays up through the whole analysis: the meal status
+        // is polled until the background task lands a terminal status (or
+        // the polling budget runs out), and only then does the checkmark
+        // appear. An offline-queued meal has nothing to poll yet - it
+        // syncs later - and a failed upload leaves nothing to wait for.
+        if (uploadedOnline) {
+            const outcome = await Camera.pollMealAnalysisStatus(newMealId, token);
+            if (outcome === 'completed') {
+                Camera.markLoadingComplete(overlayState.overlay);
+                await new Promise((resolve) => setTimeout(resolve, 500));
+            } else {
+                Camera.reportAnalysisOutcome(outcome, this.app);
+            }
+        }
+
+        Camera.hideLoadingOverlay(overlayState);
+        this.closeNewMealModal();
 
         // The reload brings the real card (pending, then analysed); the carousel only
         // knows its id once the render that produced it is done, so the target

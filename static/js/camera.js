@@ -43,7 +43,7 @@ export const Camera = {
     showLoadingOverlay(container) {
         const overlay = document.createElement('div');
         overlay.id = 'camera-loading-overlay';
-        overlay.className = 'absolute inset-0 z-50 backdrop-blur-md bg-black/60 flex flex-col items-center justify-center text-white p-6 rounded-3xl pointer-events-auto';
+        overlay.className = 'absolute inset-0 z-[9999] backdrop-blur-md bg-black/60 flex flex-col items-center justify-center text-white p-6 rounded-3xl pointer-events-auto';
         overlay.innerHTML = `
             <div class="flex flex-col items-center gap-5">
                 <div class="relative w-20 h-20">
@@ -69,8 +69,13 @@ export const Camera = {
             });
         }
 
-        container.style.position = container.style.position || 'relative';
+        const computedPos = getComputedStyle(container).position;
+        if (computedPos === 'static') {
+            container.classList.add('relative');
+            container.style.position = 'relative';
+        }
         container.appendChild(overlay);
+        console.log('[Camera] showLoadingOverlay created and appended', overlay);
 
         const startedAt = Date.now();
         const hints = this.loadingHints;
@@ -118,6 +123,66 @@ export const Camera = {
         clearInterval(hintId);
         if (overlay) overlay.remove();
         if (onDone) onDone();
+    },
+
+    /**
+     * Poll a meal's analysis status until it reaches a terminal state.
+     *
+     * The POST /nutrition/photos answer only means the background task
+     * started, so the caller keeps its loading overlay up and polls here
+     * every 800ms until the meal is `completed` or `failed`. A hard
+     * deadline bounds the wait, and a dropped connection is retried on
+     * the next tick; only a persistent failure ends the loop early.
+     *
+     * Returns 'completed' | 'failed' | 'timeout' | 'error'.
+     */
+    async pollMealAnalysisStatus(mealId, accessToken) {
+        const POLL_INTERVAL_MS = 800;
+        const POLL_TIMEOUT_MS = 45000;
+        const MAX_CONSECUTIVE_ERRORS = 3;
+        const deadline = Date.now() + POLL_TIMEOUT_MS;
+        let consecutiveErrors = 0;
+
+        while (Date.now() < deadline) {
+            let meal = null;
+            try {
+                meal = await API.get(`/nutrition/meals/${mealId}`, accessToken);
+            } catch (error) {
+                consecutiveErrors += 1;
+                console.warn('[Camera] Meal status poll failed:', error?.message);
+                if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+                    return 'error';
+                }
+            }
+
+            if (meal) {
+                consecutiveErrors = 0;
+                if (meal.status === 'completed') return 'completed';
+                if (meal.status === 'failed') return 'failed';
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+        }
+
+        return 'timeout';
+    },
+
+    /**
+     * Toast for a poll outcome that did not reach `completed`.
+     * A timeout is informational: the backend task may still be
+     * running, and the nutrition page keeps watching the card.
+     * `app` is passed in because the camera page may never have
+     * been rendered (the nutrition sheet calls this too).
+     */
+    reportAnalysisOutcome(outcome, app) {
+        if (!app) return;
+        if (outcome === 'failed') {
+            app.showToast('Анализ фото не завершился. Попробуйте ещё раз', 'error');
+        } else if (outcome === 'timeout') {
+            app.showToast('Анализ ещё не завершился. Следите за карточкой блюда', 'info');
+        } else if (outcome === 'error') {
+            app.showToast('Не удалось получить результат анализа', 'error');
+        }
     },
 
     async handleSyncedMeal(item, response, { failed = false } = {}) {
@@ -191,6 +256,10 @@ export const Camera = {
             uploadBtn.disabled = true;
             uploadBtn.textContent = 'Сжатие...';
 
+            // Show the overlay synchronously before compression to eliminate
+            // UI jumping and layout shift on click.
+            const overlayState = this.showLoadingOverlay(container);
+
             let compressedBlob = null;
             try {
                 compressedBlob = await Utils.compressImage(selectedFile);
@@ -206,10 +275,10 @@ export const Camera = {
 
             if (navigator.onLine) {
                 uploadBtn.textContent = 'Загрузка...';
-                // The overlay takes over the form while the upload and analysis run,
-                // so the user sees a live timer and rotating hints instead of a
-                // frozen button. It is torn down once the server answers.
-                const overlayState = this.showLoadingOverlay(container);
+                // The overlay takes over the form while the upload and analysis
+                // run, so the user sees a live timer and rotating hints instead
+                // of a frozen button. It is torn down only once the analysis
+                // reaches a terminal status, not when the upload answers.
                 try {
                     const formData = new FormData();
                     formData.append('file', compressedBlob, 'photo.webp');
@@ -218,16 +287,28 @@ export const Camera = {
                         formData.append(key, value);
                     }
 
-                    await API.post('/nutrition/photos', formData, token, true);
+                    const response = await API.post('/nutrition/photos', formData, token, true);
+                    const mealId = response?.meal_id ?? null;
 
-                    this.markLoadingComplete(overlayState.overlay);
                     this.app.showToast('Фото загружено, идёт анализ', 'success');
                     input.value = '';
                     selectedFile = null;
                     uploadBtn.disabled = false;
                     uploadBtn.textContent = 'Готово — загрузить';
 
-                    await new Promise((resolve) => setTimeout(resolve, 500));
+                    // The 201 only means the background analysis started: keep
+                    // the overlay up and poll the meal until it is completed
+                    // (or failed), so the checkmark marks the finished analysis.
+                    if (mealId) {
+                        const outcome = await this.pollMealAnalysisStatus(mealId, token);
+                        if (outcome === 'completed') {
+                            this.markLoadingComplete(overlayState.overlay);
+                            await new Promise((resolve) => setTimeout(resolve, 500));
+                        } else {
+                            this.reportAnalysisOutcome(outcome, this.app);
+                        }
+                    }
+
                     this.hideLoadingOverlay(overlayState);
 
                     if (window.App && window.App.showPage) {
@@ -250,6 +331,7 @@ export const Camera = {
                     }
                 }
             } else {
+                this.hideLoadingOverlay(overlayState);
                 await this.queueOfflineMeal(compressedBlob, notes);
                 this.app.showToast('Оффлайн режим — фото сохранено локально и будет загружено при появлении связи', 'info');
                 input.value = '';
