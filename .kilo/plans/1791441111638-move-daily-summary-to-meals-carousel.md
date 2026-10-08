@@ -1,32 +1,43 @@
-# Plan: Move Daily Summary Card to Meals Carousel & Workout AI Loading Overlay
+# Plan: Move Daily Summary to Carousel, Workout AI Loading Overlay, & AI Analysis Refinements
 
 ## Goal
 1. Move the "Daily Summary" card into the horizontal meals carousel as its first item, with proper styling, initial focus on the "Add Meal" card, and rate-limited regeneration protection.
-2. Adapt the workout AI start loading overlay when clicking "+ Старт + ИИ" in `static/js/workouts.js` by reusing `Camera.showLoadingOverlay`, `Camera.markLoadingComplete`, and `Camera.hideLoadingOverlay`, replacing the fixed 3-second timer with dynamic async/await waiting until the API and AI plan generation complete.
+2. Adapt the workout AI start loading overlay when clicking "+ Старт + ИИ" in `static/js/workouts.js` using `Camera.showLoadingOverlay`, `Camera.markLoadingComplete`, and `Camera.hideLoadingOverlay`, replacing the fixed 3-second timer with dynamic async/await waiting until session creation and AI plan loading complete.
+3. Fix 3 issues in completed workout AI analysis:
+   - Block/hide the "Recalculate AI" button if the analysis is already completed (`available: true`), showing toast `"Анализ тренировки уже сохранён."`.
+   - Protect workout AI generation on backend (`app/api/v1/routes.py`) by checking `user.is_premium` (returning `403 Forbidden` if false), and on frontend checking user tier before calling AI analysis.
+   - Add specialized fitness loading hints (`workoutHints`) in `Camera` and use them for the workout AI loading overlay.
 
 ---
 
 ## Architecture & Changes
 
-### 1. Daily Summary Card & Carousel (Already Implemented)
+### 1. Daily Summary Card & Carousel (Implemented)
 - **Files:** `static/js/nutrition.js`, `static/js/components.js`, `static/css/styles.css`
-- **Summary of changes:** Removed separate vertical summary block, embedded summary card in day view carousel as first item, set initial scroll focus on `.meal-action-slot` (`instant`), and added rate-limit cooldown check on refresh click.
+- **Summary:** Summary card in day view carousel, initial focus on `.meal-action-slot`, rate-limited refresh protection.
 
-### 2. Workout AI Start Loading Overlay (`static/js/workouts.js`)
-- **File:** `static/js/workouts.js`
-- **Import:** Import `Camera` from `./camera.js`.
-- **Changes in `startTemplateWithAi` & `startQuickWorkoutWithAi`:**
-  - Replace `this.renderCountdown(...)` with `const overlayState = Camera.showLoadingOverlay(document.body);`.
-  - Update loading hint text element `#camera-loading-hint` to `"ИИ подбирает веса и подходы..."`.
-  - Await API session creation and AI plan loading (`loadAiPlan`).
-  - Upon successful completion:
-    1. Call `Camera.markLoadingComplete(overlayState)`.
-    2. Await 500ms delay (`new Promise(r => setTimeout(r, 500))`).
-    3. Call `Camera.hideLoadingOverlay(overlayState)`.
-    4. Transition to active workout screen (`renderWorkoutScreen`).
-  - In `catch` block:
-    - Ensure `Camera.hideLoadingOverlay(overlayState)` is called.
-    - Display error toast and re-render workouts screen.
+### 2. Workout AI Start Loading Overlay (`static/js/workouts.js`, `static/js/camera.js`)
+- **Files:** `static/js/camera.js`, `static/js/workouts.js`
+- **Changes:**
+  - Add `workoutHints` array to `Camera` in `camera.js`:
+    ```javascript
+    workoutHints: [
+        'Считаем суммарный тоннаж и рабочий объём...',
+        'Оцениваем время отдыха между подходами...',
+        'Анализируем прогресс в базовых упражнениях...',
+        'Формируем рекомендации по восстановлению мышц...',
+    ]
+    ```
+  - Update `Camera.showLoadingOverlay(container, hints = this.loadingHints)` to support custom hints.
+  - In `startTemplateWithAi` & `startQuickWorkoutWithAi` (`workouts.js`), replace countdown with `Camera.showLoadingOverlay(document.body, Camera.workoutHints)`, set hint to `"ИИ подбирает веса и подходы..."`, await API post and `loadAiPlan`, then complete with green checkmark (`markLoadingComplete`), pause 500ms, hide overlay, and transition to active session.
+
+### 3. Workout AI Analysis Refinements (Backend & Frontend)
+- **Backend (`app/api/v1/routes.py`):**
+  - In `@router.post("/ai/workout-summary/{workout_id}")`, check `if not current_user.is_premium:` -> raise `HTTPException(status_code=403, detail="Анализ тренировок ИИ доступен только по подписке Premium")`.
+- **Frontend (`static/js/workouts.js`):**
+  - In `mountAiDetailCard` / `aiWorkoutCard` handling:
+    - If `payload?.available === true` (analysis already completed), hide or disable the "Пересчитать ИИ" button, or when clicked, show Toast `"Анализ тренировки уже сохранён."` without making an API request.
+  - Check `app.state.user?.is_premium` before invoking `analyzeWorkout()` or starting AI workouts, showing Toast / subscription notice if Free tier.
 
 ---
 
@@ -34,7 +45,9 @@
 1. **Automated Checks:**
    - Run linter/type checks (`ruff check .`, pytest) to ensure no regressions.
 2. **Visual & Functional Verification:**
-   - Verify day view: Daily summary card in carousel, initial focus on "Add Meal" card.
-   - Verify workout "+ Старт + ИИ": Shows loading overlay with spinner and hint "ИИ подбирает веса и подходы...", waits dynamically for server/AI response, shows green checkmark on completion, pauses 500ms, hides overlay, and transitions to active workout screen.
+   - Verify workout AI start overlay shows fitness hints and waits dynamically for AI plan generation.
+   - Verify completed workout AI analysis blocks recalculation/re-analysis and shows `"Анализ тренировки уже сохранён."`.
+   - Verify backend enforces `is_premium` check with 403 for Free tier users.
+
 
 

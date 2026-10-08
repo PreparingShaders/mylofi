@@ -19,6 +19,16 @@ export const Camera = {
     ],
 
     /**
+     * Specialized hint messages for workout AI plan generation.
+     */
+    workoutHints: [
+        'Считаем суммарный тоннаж и рабочий объём...',
+        'Оцениваем время отдыха между подходами...',
+        'Анализируем прогресс в базовых упражнениях...',
+        'Формируем рекомендации по восстановлению мышц...',
+    ],
+
+    /**
      * Time fields that travel with a photo upload.
      *
      * `eaten_at` is the instant the photo was taken, in UTC, so the server stores
@@ -40,7 +50,7 @@ export const Camera = {
      * while the upload and analysis run. Returns the overlay element plus the
      * timer handle the caller must stop and remove.
      */
-    showLoadingOverlay(container) {
+    showLoadingOverlay(container, hints = this.loadingHints) {
         const overlay = document.createElement('div');
         overlay.id = 'camera-loading-overlay';
         overlay.className = 'absolute inset-0 z-[9999] backdrop-blur-md bg-black/60 flex flex-col items-center justify-center text-white p-6 rounded-3xl pointer-events-auto';
@@ -55,7 +65,7 @@ export const Camera = {
                 </div>
                 <div class="text-center">
                     <p id="camera-loading-timer" class="text-2xl font-bold tabular-nums">00:00</p>
-                    <p id="camera-loading-hint" class="text-sm text-white/80 mt-1 min-h-[1.25rem]">Определяем продукты...</p>
+                    <p id="camera-loading-hint" class="text-sm text-white/80 mt-1 min-h-[1.25rem]">${hints[0]}</p>
                 </div>
             </div>
         `;
@@ -78,7 +88,6 @@ export const Camera = {
         console.log('[Camera] showLoadingOverlay created and appended', overlay);
 
         const startedAt = Date.now();
-        const hints = this.loadingHints;
         let hintIndex = 0;
         const timerId = setInterval(() => {
             const elapsed = Math.floor((Date.now() - startedAt) / 1000);

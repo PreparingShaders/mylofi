@@ -77,6 +77,8 @@ const AI_COOLDOWN_MESSAGE = 'Подождите перед повторным з
 // Icon-only split action next to "Начать тренировку": the label lives in the
 // title and the aria-label so the button is not a mystery on a phone.
 const AI_START_ICON = '\u{1F916}';
+// Shown when a Free-tier user tries to use AI workout features.
+const AI_PREMIUM_REQUIRED_MESSAGE = 'ИИ-разбор тренировок доступен только по подписке Premium';
 
 export const Workouts = {
     app: null,
@@ -1269,12 +1271,14 @@ export const Workouts = {
      */
     async startTemplateWithAi(container, app, templateId) {
         if (isNaN(templateId) || templateId == null) return;
+        if (!app.state.user?.is_premium) {
+            app.showToast(AI_PREMIUM_REQUIRED_MESSAGE, 'info');
+            return;
+        }
         const token = app.state.tokens.access;
         const startEndpoint = `/workouts/templates/${templateId}/start`;
 
-        const overlayState = Camera.showLoadingOverlay(document.body);
-        const hintEl = document.getElementById('camera-loading-hint');
-        if (hintEl) hintEl.textContent = 'ИИ подбирает веса и подходы...';
+        const overlayState = Camera.showLoadingOverlay(document.body, Camera.workoutHints);
 
         const sessionPromise = API.post(startEndpoint, { with_ai_plan: true }, token);
 
@@ -1303,12 +1307,14 @@ export const Workouts = {
             app.showToast(AI_OFFLINE_MESSAGE, 'info');
             return;
         }
+        if (!app.state.user?.is_premium) {
+            app.showToast(AI_PREMIUM_REQUIRED_MESSAGE, 'info');
+            return;
+        }
         const token = app.state.tokens.access;
         const goalLabel = (QUICK_GOALS.find(g => g.value === goal) || {}).title;
 
-        const overlayState = Camera.showLoadingOverlay(document.body);
-        const hintEl = document.getElementById('camera-loading-hint');
-        if (hintEl) hintEl.textContent = 'ИИ подбирает веса и подходы...';
+        const overlayState = Camera.showLoadingOverlay(document.body, Camera.workoutHints);
 
         try {
             const { session_id: sessionId } = await API.post(
@@ -1374,6 +1380,10 @@ export const Workouts = {
         if (this._aiAnalysisLoading) return null;
         if (navigator.onLine === false) {
             app.showToast(AI_OFFLINE_MESSAGE, 'info');
+            return null;
+        }
+        if (!app.state.user?.is_premium) {
+            app.showToast(AI_PREMIUM_REQUIRED_MESSAGE, 'info');
             return null;
         }
 
@@ -1461,6 +1471,11 @@ export const Workouts = {
         }
         if (navigator.onLine === false) {
             app.showToast(AI_OFFLINE_MESSAGE, 'info');
+            await app.handleCompleteWorkout(event);
+            return;
+        }
+        if (!app.state.user?.is_premium) {
+            app.showToast(AI_PREMIUM_REQUIRED_MESSAGE, 'info');
             await app.handleCompleteWorkout(event);
             return;
         }
@@ -2550,7 +2565,13 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 // sibling action, so the click must not travel up to it.
                 e.stopPropagation();
                 const sessionId = parseInt(e.currentTarget.dataset.sessionId);
-                if (!isNaN(sessionId)) this.analyzeWorkout(app, sessionId);
+                if (!isNaN(sessionId)) {
+                    if (!app.state.user?.is_premium) {
+                        app.showToast(AI_PREMIUM_REQUIRED_MESSAGE, 'info');
+                        return;
+                    }
+                    this.analyzeWorkout(app, sessionId);
+                }
             });
         });
 
@@ -2744,6 +2765,10 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 // Locked and spun right away, so the press is answered by
                 // the button itself; analyzeWorkout holds the cooldown
                 // that refuses the next ask for half a minute.
+                if (current?.available === true) {
+                    app.showToast('Анализ тренировки уже сохранён.', 'info');
+                    return;
+                }
                 draw(current, true);
                 const next = await this.analyzeWorkout(app, sessionId, {
                     force: current?.available === true,

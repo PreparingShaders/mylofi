@@ -1272,6 +1272,12 @@ async def ai_workout_summary(
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
+    if not current_user.is_premium:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Анализ тренировок ИИ доступен только по подписке Premium",
+        )
+
     return await analyze_workout_session(
         db,
         current_user,

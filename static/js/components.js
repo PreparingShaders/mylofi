@@ -636,7 +636,7 @@ export const Components = {
         `;
 
         const trigger = allowAnalyze
-            ? `<button type="button" data-action="analyze-workout-ai" class="ai-workout__analyze btn-press"${busy ? ' disabled' : ''}>
+            ? `<button type="button" data-action="analyze-workout-ai" class="ai-workout__analyze btn-press"${busy ? ' disabled' : ''}${available ? ' disabled' : ''}>
                   <svg class="ai-workout__analyze-icon${busy ? ' animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v14M5 12h14"/></svg>
                   <span>${escapeHtml(busy ? 'Разбираем...' : (available ? reanalyzeLabel : analyzeLabel))}</span>
               </button>`
