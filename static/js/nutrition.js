@@ -59,6 +59,7 @@ export const Nutrition = {
     // and handed back to the card instead of snapping to the two-line
     // preview each time.
     _dailySummaryExpanded: false,
+    _currentDailySummary: null,
 
     /**
      * Today's date as YYYY-MM-DD, in the user's own calendar. Every date in this
@@ -344,9 +345,12 @@ export const Nutrition = {
         const endpoint = `/nutrition/daily-summary?date=${encodeURIComponent(this.recapDate())}`;
         try {
             const data = await API.get(this.withTimezone(endpoint), token);
-            return (data && typeof data === 'object') ? data : null;
+            const summary = (data && typeof data === 'object') ? data : null;
+            this._currentDailySummary = summary;
+            return summary;
         } catch (error) {
             console.warn('[Nutrition] Daily summary unavailable:', error?.message);
+            this._currentDailySummary = null;
             return null;
         }
     },
@@ -362,11 +366,16 @@ export const Nutrition = {
      * Never throws: a failed generation toasts and leaves the card as it
      * was, exactly like the read path it rides on.
      */
-    async generateDailySummary() {
+    async generateDailySummary(isRegeneration = false) {
         if (this._dailySummaryLoading) return;
         const container = this.app.elements.pageContent;
         const section = container.querySelector('.daily-summary');
         if (!section) return;
+
+        if (isRegeneration && this._currentDailySummary && this._currentDailySummary.available === true) {
+            this.app.showToast('Анализ за сегодня уже готов! Повторный перерасчет будет доступен завтра.', 'info');
+            return;
+        }
 
         this._dailySummaryLoading = true;
         this.setDailySummaryBusy(section, true);
@@ -376,6 +385,7 @@ export const Nutrition = {
         try {
             const data = await API.get(this.withTimezone(endpoint), token);
             const payload = (data && typeof data === 'object') ? data : null;
+            this._currentDailySummary = payload;
             // A forced run rewrites the stored row, so the cached answer
             // for this day - which may still say "no recap" - is stale.
             API.invalidateReadCache('/nutrition/daily-summary');
@@ -448,10 +458,17 @@ export const Nutrition = {
     /** Both recap triggers on the card ask for the same regeneration. */
     bindDailySummary() {
         const container = this.app.elements.pageContent;
-        container.querySelectorAll(
-            '[data-action="generate-daily-summary"], [data-action="regenerate-daily-summary"]'
-        ).forEach((btn) => {
-            btn.onclick = () => this.generateDailySummary();
+        container.querySelectorAll('[data-action="generate-daily-summary"]').forEach((btn) => {
+            btn.onclick = () => this.generateDailySummary(false);
+        });
+        container.querySelectorAll('[data-action="regenerate-daily-summary"]').forEach((btn) => {
+            btn.onclick = () => {
+                if (this._currentDailySummary && this._currentDailySummary.available === true) {
+                    this.app.showToast('Анализ за сегодня уже готов! Повторный перерасчет будет доступен завтра.', 'info');
+                    return;
+                }
+                this.generateDailySummary(true);
+            };
         });
         container.querySelectorAll('[data-action="toggle-daily-summary"]').forEach((btn) => {
             btn.onclick = () => this.toggleDailySummary(btn);
@@ -1502,7 +1519,7 @@ export const Nutrition = {
     },
 
     /** Centre a carousel slot without disturbing the rest of the layout. */
-    scrollCarouselToSlot(slot) {
+    scrollCarouselToSlot(slot, behavior = 'smooth') {
         const carousel = slot?.closest('.meal-carousel');
         if (!slot || !carousel) return;
 
@@ -1517,7 +1534,7 @@ export const Nutrition = {
         const target = Math.max(0, Math.min(centered, max));
 
         if (typeof carousel.scrollTo === 'function') {
-            carousel.scrollTo({ left: target, behavior: 'smooth' });
+            carousel.scrollTo({ left: target, behavior });
         } else {
             carousel.scrollLeft = target;
         }
@@ -1542,6 +1559,14 @@ export const Nutrition = {
             const slot = carousel.querySelector(`.meal-card-slot[data-meal-id="${targetId}"]`);
             if (slot) {
                 this.scrollCarouselToSlot(slot);
+                return;
+            }
+        }
+
+        if (previousLeft === null || previousLeft === undefined || previousLeft === 0) {
+            const addSlot = carousel.querySelector('.meal-action-slot');
+            if (addSlot) {
+                this.scrollCarouselToSlot(addSlot, 'instant');
                 return;
             }
         }

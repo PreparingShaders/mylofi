@@ -1,7 +1,7 @@
 # Plan: Move Daily Summary Card to Meals Carousel
 
 ## Goal
-Move the "Daily Summary" card (nutritionist daily verdict) from its separate vertical block beneath the KBJU dashboard ring into the horizontal meals carousel (`#meal-carousel`) as its first item, ensuring proper styling, snap-scroll behavior, internal scrolling for long verdicts, and action button functionality.
+Move the "Daily Summary" card (nutritionist daily verdict) from its separate vertical block beneath the KBJU dashboard ring into the horizontal meals carousel (`#meal-carousel`) as its first item, ensuring proper styling, snap-scroll behavior, internal scrolling for long verdicts, correct initial focus on the "Add Meal" card, and rate-limited regeneration protection.
 
 ---
 
@@ -25,11 +25,17 @@ Move the "Daily Summary" card (nutritionist daily verdict) from its separate ver
   - Center content: full text of nutritionist verdict with clean internal scroll (`overflow-y-auto max-h-[300px]`) for long texts.
   - Bottom: "+ Сформировать итог" button if summary is not yet formed.
 
-### 4. Scroll & Event Handling
+### 4. Carousel Focus on Load
 - **File:** `static/js/nutrition.js`
-- **Changes:**
-  - Ensure carousel scroll settlement (`settleCarouselScroll`) and event binding (`bindDailySummary`, `syncDailySummaryToggles`) correctly target the new carousel placement.
-  - Users can swipe left from the daily summary card to reach the "Add Meal" card and logged meals.
+- **Change:** After initial render / construction of the carousel, ensure the starting scroll position focuses on the "Add Meal" card (`.meal-action-slot`) rather than the first item (`.daily-summary-slot`).
+- **Implementation:** Invoke `scrollToSlot(carousel.querySelector('.meal-action-slot'), { behavior: 'instant' })` (or equivalent method) during initial render settlement so the add action is immediately in view while daily summary is accessible by swiping left.
+
+### 5. Rate-Limit / Cooldown Protection for Refresh
+- **File:** `static/js/nutrition.js`
+- **Change:** In `generateDailySummary()` / regeneration logic:
+  - When the user taps the refresh icon `🔄` on an already completed daily summary (`available: true`), prevent sending redundant network requests.
+  - Show a toast notification: `"Анализ за сегодня уже готов! Повторный перерасчет будет доступен завтра."`.
+  - Allow regeneration (`force=true`) only when explicitly requested via initial generation or when meal count/composition changed (or error state).
 
 ---
 
@@ -39,4 +45,6 @@ Move the "Daily Summary" card (nutritionist daily verdict) from its separate ver
 2. **Visual & Functional Verification:**
    - Verify day view: Daily summary card appears as the first item in the horizontal meals carousel.
    - Verify non-day views (week/month): Daily summary card is omitted from the carousel.
-   - Verify regeneration and generation actions function correctly in-place without page reload.
+   - Verify carousel focus starts on the "Add Meal" card (`.meal-action-slot`), with daily summary swipeable to the left.
+   - Verify tapping refresh on a completed summary shows the rate-limit toast without triggering network calls.
+
