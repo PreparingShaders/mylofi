@@ -1200,6 +1200,32 @@ html.dark,
     overflow: hidden;
 }
 
+/* ============ Camera upload / analysis loading overlay ============ */
+/* The pulsing ring behind the spinner: it breathes rather than spins, so the
+   rotating arc carries the motion and the ring reads as a soft glow. */
+@keyframes camera-loading-pulse {
+    0%, 100% { opacity: 0.5; transform: scale(0.85); }
+    50% { opacity: 1; transform: scale(1.15); }
+}
+.camera-loading-pulse {
+    animation: camera-loading-pulse 1.6s ease-in-out infinite;
+}
+/* Green checkmark pops in once the server answers 200 OK. */
+@keyframes camera-check-pop {
+    0% { transform: scale(0); opacity: 0; }
+    60% { transform: scale(1.15); opacity: 1; }
+    100% { transform: scale(1); }
+}
+.camera-loading-check-pop {
+    animation: camera-check-pop 0.4s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+    .camera-loading-pulse,
+    .camera-loading-check-pop {
+        animation: none;
+    }
+}
+
 /* Workout timer */
 .timer-display {
     font-variant-numeric: tabular-nums;
@@ -1348,16 +1374,17 @@ input, select, textarea:focus {
 }
 
 /* ============ Daily AI recap ============ */
-/* One card under the dashboard: the title and the date on the first line, the AI
-   score on the right of that same line, the recap underneath as plain prose. The
-   score badge wears the same neon disc as the ring's centre score, so the two AI
-   readouts on the screen are recognisably the same voice. */
+/* One card under the dashboard: the title and the date on the first
+   line, the AI score on the right of that same line, the recap
+   underneath as a collapsible banner (two lines, a tap to expand). The
+   score badge wears the same neon disc as the ring's centre score, so
+   the two AI readouts on the screen are recognisably the same voice. */
 .daily-summary {
     display: flex;
     flex-direction: column;
     gap: 6px;
     margin-top: 8px;
-    padding: 12px 14px;
+    padding: 12px;
 }
 .daily-summary__head {
     display: flex;
@@ -1401,6 +1428,7 @@ input, select, textarea:focus {
     align-items: center;
     gap: 3px;
     margin-left: auto;
+    flex-shrink: 0;
     padding: 2px 8px;
     border-radius: 9999px;
     font-size: 11px;
@@ -1416,13 +1444,44 @@ input, select, textarea:focus {
     background: rgba(192, 132, 252, 0.16);
     box-shadow: 0 0 12px rgba(192, 132, 252, 0.38);
 }
+/* Verdict prose: two clamped lines by default, the full paragraph
+   once expanded. The clamp carries the ellipsis; max-height is what
+   actually animates, so the reveal is a smooth height transition
+   rather than a jump. 20em is far past the longest recap the model
+   is asked to write (3-6 sentences), so the expanded state never
+   clips. */
 .daily-summary__text {
     font-size: 13px;
     line-height: 1.45;
     color: #3f3f46;
+    overflow: hidden;
+    max-height: 20em;
+    transition: max-height 0.28s ease;
+}
+.daily-summary__text.is-collapsed {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    max-height: 2.9em; /* two lines at the 1.45 line-height */
 }
 .dark .daily-summary__text {
     color: #d4d4d8;
+}
+/* Collapsible banner: the prose wrapper and the expand/collapse link
+   under it. The wrapper is plain; the clamp and its animation live
+   on the text itself. */
+.daily-summary__content {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+/* The toggle's colours, size and press feedback come from the utility
+   classes on the button (text-purple-400 et al.); the one rule needed
+   here makes the `hidden` attribute win over those utilities when a
+   short verdict has nothing to expand. */
+.daily-summary__toggle[hidden] {
+    display: none;
 }
 /* Empty state: same card, one quiet line. It keeps the slot so the meal carousel
    below does not jump once a recap arrives. */

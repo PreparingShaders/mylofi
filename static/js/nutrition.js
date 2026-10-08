@@ -54,6 +54,11 @@ export const Nutrition = {
     // render (the poll loop included), so the open state is remembered here
     // instead of being lost each time the carousel is rebuilt.
     _expandedCompositions: new Set(),
+    // Whether the daily recap prose is expanded. The recap card is rebuilt
+    // by every render (the poll loop included), so the choice is kept here
+    // and handed back to the card instead of snapping to the two-line
+    // preview each time.
+    _dailySummaryExpanded: false,
 
     /**
      * Today's date as YYYY-MM-DD, in the user's own calendar. Every date in this
@@ -300,19 +305,22 @@ export const Nutrition = {
 
     /**
      * Everything the recap card is rendered with, shared by the page render and
-     * the in-place swap after a regeneration: the date it names, whether its day
-     * is finished enough to generate, and the wording of that trigger. One place,
-     * so the card can never claim a different day than the request it rode on.
+     * the in-place swap after a regeneration: the date it names (concise -
+     * "Итог • 7 окт" for the day standing in behind a "Сегодня" header),
+     * whether its day is finished enough to generate, the wording of that
+     * trigger, and whether the verdict prose is expanded. One place, so the
+     * card can never claim a different day than the request it rode on.
      */
     recapCardOptions() {
         const date = this.recapDate();
         const isYesterday = this.recapIsYesterday();
         return {
             dateLabel: isYesterday
-                ? `Итог за вчера, ${this.formatDayMonthISO(date)}`
+                ? `Итог • ${this.formatDayMonthISO(date)}`
                 : this.formatDayMonthISO(date),
             allowGenerate: Boolean(date) && date < this.todayISO(),
             generateLabel: isYesterday ? 'Сформировать итог за вчера' : 'Сформировать итог дня',
+            expanded: this._dailySummaryExpanded,
         };
     },
 
@@ -406,6 +414,7 @@ export const Nutrition = {
         if (fresh) {
             section.replaceWith(fresh);
             this.bindDailySummary();
+            this.syncDailySummaryToggles();
         }
     },
 
@@ -443,6 +452,47 @@ export const Nutrition = {
             '[data-action="generate-daily-summary"], [data-action="regenerate-daily-summary"]'
         ).forEach((btn) => {
             btn.onclick = () => this.generateDailySummary();
+        });
+        container.querySelectorAll('[data-action="toggle-daily-summary"]').forEach((btn) => {
+            btn.onclick = () => this.toggleDailySummary(btn);
+        });
+    },
+
+    /**
+     * Expand or collapse the verdict prose in place: only the clamp and the
+     * toggle label change, so the card keeps its slot and its handlers. The
+     * choice is remembered, so a regeneration or a poll re-render restores
+     * it instead of snapping back to the two-line preview.
+     */
+    toggleDailySummary(button) {
+        const section = button.closest('.daily-summary');
+        const text = section?.querySelector('.daily-summary__text');
+        if (!section || !text) return;
+
+        const collapsed = text.classList.toggle('is-collapsed');
+        this._dailySummaryExpanded = !collapsed;
+        button.setAttribute('aria-expanded', String(!collapsed));
+        button.textContent = collapsed ? 'Развернуть ▾' : 'Свернуть ▴';
+    },
+
+    /**
+     * A verdict that already fits the two-line preview has nothing to
+     * expand, so its toggle stays hidden rather than opening to the same
+     * text. Runs after every render of the card, regeneration included.
+     */
+    syncDailySummaryToggles() {
+        const container = this.app.elements.pageContent;
+        container.querySelectorAll('.daily-summary').forEach((section) => {
+            const text = section.querySelector('.daily-summary__text');
+            const toggle = section.querySelector('.daily-summary__toggle');
+            if (!text || !toggle) return;
+            if (text.classList.contains('is-collapsed')) {
+                // The clamped box is exactly two lines tall, so a taller
+                // scroll height means the prose continues past the preview.
+                toggle.hidden = text.scrollHeight <= text.clientHeight + 1;
+            } else {
+                toggle.hidden = false;
+            }
         });
     },
 
@@ -961,6 +1011,7 @@ export const Nutrition = {
             this.bindMealActions();
             this.bindFailedItems();
             this.bindDailySummary();
+            this.syncDailySummaryToggles();
 
             // Every poll tick rebuilds the carousel too, so the position is put
             // back here instead of snapping to the add tile every 3 seconds.

@@ -504,15 +504,23 @@ export const Components = {
      * refresh glyph that re-reads the day (`force=true`). A day still being
      * eaten never offers either.
      *
-     * `payload` is the /nutrition/daily-summary response. The three options are
+     * `payload` is the /nutrition/daily-summary response. The options are
      * the controller's own words for the day the card is about, so the card can
      * never name a different date than the one it was asked for: `dateLabel`
-     * (which is "Итог за вчера, 3 окт" while the header says "Сегодня"),
-     * `allowGenerate` - the controller's verdict that the day is finished - and
+     * (which is "Итог • 3 окт" while the header says "Сегодня"),
+     * `allowGenerate` - the controller's verdict that the day is finished -
      * `generateLabel` for the trigger, so the button reads "Сформировать итог за
-     * вчера" when that is the day it writes.
+     * вчера" when that is the day it writes - and `expanded`, the caller's
+     * memory of whether the verdict prose is open (the card is rebuilt by
+     * every render, so the state has to come from outside it).
+     *
+     * The verdict prose is a collapsible banner: two lines with an ellipsis
+     * by default, a "Развернуть ▾" link under them, and the full paragraph
+     * once expanded ("Свернуть ▴"). The clamp and its animation live in
+     * CSS (.daily-summary__text.is-collapsed); this markup only carries
+     * the initial state and the toggle the controller binds.
      */
-    dailySummaryCard(payload = {}, { dateLabel = '', allowGenerate = false, generateLabel = 'Сформировать итог дня' } = {}) {
+    dailySummaryCard(payload = {}, { dateLabel = '', allowGenerate = false, generateLabel = 'Сформировать итог дня', expanded = false } = {}) {
         const available = payload?.available === true;
         const text = typeof payload.summary_text === 'string' ? payload.summary_text.trim() : '';
         const score = Number(payload.overall_score);
@@ -523,12 +531,12 @@ export const Components = {
         const scoreText = hasScore ? score.toFixed(1) : null;
 
         const head = `
-            <div class="daily-summary__head">
-                <span class="daily-summary__title">
+            <div class="daily-summary__head flex items-center justify-between gap-2 min-w-0">
+                <span class="daily-summary__title min-w-0 truncate">
                     <svg class="daily-summary__icon" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>
                     Итог дня
                 </span>
-                ${dateLabel ? `<span class="daily-summary__date">${escapeHtml(dateLabel)}</span>` : ''}
+                ${dateLabel ? `<span class="daily-summary__date min-w-0 truncate">${escapeHtml(dateLabel)}</span>` : ''}
                 ${available && scoreText
                     ? `<span class="daily-summary__score inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300 font-medium"><span class="opacity-60">✦ ИИ</span> ${scoreText}<span class="opacity-60">/10</span></span>`
                     : ''}
@@ -562,7 +570,12 @@ export const Components = {
         return `
             <section class="daily-summary glass rounded-3xl" aria-label="Итог дня">
                 ${head}
-                <p class="daily-summary__text">${escapeHtml(text)}</p>
+                <div class="daily-summary__content">
+                    <p class="daily-summary__text${expanded ? '' : ' is-collapsed'}">${escapeHtml(text)}</p>
+                    <button type="button" data-action="toggle-daily-summary"
+                            class="daily-summary__toggle text-xs text-purple-400 hover:text-purple-600 dark:hover:text-purple-300 font-medium cursor-pointer pt-1 inline-flex items-center gap-1 transition-colors btn-press"
+                            aria-expanded="${expanded}">${expanded ? 'Свернуть ▴' : 'Развернуть ▾'}</button>
+                </div>
             </section>
         `;
     },

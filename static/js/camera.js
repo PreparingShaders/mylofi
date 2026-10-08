@@ -8,6 +8,17 @@ export const Camera = {
     app: null,
 
     /**
+     * Hint messages cycled through while the upload and analysis run. Each one
+     * names a stage of the work the server is doing, so the wait reads as
+     * progress rather than a frozen spinner.
+     */
+    loadingHints: [
+        'Определяем продукты...',
+        'Оцениваем размер порции...',
+        'Считаем КБЖУ...',
+    ],
+
+    /**
      * Time fields that travel with a photo upload.
      *
      * `eaten_at` is the instant the photo was taken, in UTC, so the server stores
@@ -21,6 +32,92 @@ export const Camera = {
         if (offsetMinutes !== null) fields.tz_offset = String(offsetMinutes);
         if (timeZone) fields.tz = timeZone;
         return fields;
+    },
+
+    /**
+     * Render the blurred loading overlay on top of the upload form. It locks the
+     * underlying controls, starts the stopwatch and rotates the hint messages
+     * while the upload and analysis run. Returns the overlay element plus the
+     * timer handle the caller must stop and remove.
+     */
+    showLoadingOverlay(container) {
+        const overlay = document.createElement('div');
+        overlay.id = 'camera-loading-overlay';
+        overlay.className = 'absolute inset-0 z-50 backdrop-blur-md bg-black/60 flex flex-col items-center justify-center text-white p-6 rounded-3xl pointer-events-auto';
+        overlay.innerHTML = `
+            <div class="flex flex-col items-center gap-5">
+                <div class="relative w-20 h-20">
+                    <div class="absolute inset-0 rounded-full border-2 border-white/20"></div>
+                    <div class="absolute inset-0 rounded-full border-2 border-t-transparent border-r-emerald-400 border-b-emerald-400 border-l-emerald-400 animate-spin"></div>
+                    <div class="absolute inset-0 flex items-center justify-center">
+                        <svg class="w-8 h-8 text-emerald-400 camera-loading-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                    </div>
+                </div>
+                <div class="text-center">
+                    <p id="camera-loading-timer" class="text-2xl font-bold tabular-nums">00:00</p>
+                    <p id="camera-loading-hint" class="text-sm text-white/80 mt-1 min-h-[1.25rem]">Определяем продукты...</p>
+                </div>
+            </div>
+        `;
+
+        // Lock the underlying form so taps land on the overlay instead.
+        const formRoot = container.querySelector('.p-4');
+        if (formRoot) {
+            formRoot.querySelectorAll('input, textarea, button').forEach((el) => {
+                el.disabled = true;
+                el.classList.add('pointer-events-none');
+            });
+        }
+
+        container.style.position = container.style.position || 'relative';
+        container.appendChild(overlay);
+
+        const startedAt = Date.now();
+        const hints = this.loadingHints;
+        let hintIndex = 0;
+        const timerId = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+            const minutes = String(Math.floor(elapsed / 60)).padStart(2, '0');
+            const seconds = String(elapsed % 60).padStart(2, '0');
+            const timerEl = overlay.querySelector('#camera-loading-timer');
+            if (timerEl) timerEl.textContent = `${minutes}:${seconds}`;
+        }, 1000);
+        const hintId = setInterval(() => {
+            hintIndex = (hintIndex + 1) % hints.length;
+            const hintEl = overlay.querySelector('#camera-loading-hint');
+            if (hintEl) hintEl.textContent = hints[hintIndex];
+        }, 2500);
+
+        return { overlay, timerId, hintId };
+    },
+
+    /**
+     * Mark the overlay as finished: swap the spinner for a green checkmark and
+     * the hint for the completion message. The caller is still responsible for
+     * removing the overlay after the pause.
+     */
+    markLoadingComplete(overlay) {
+        const iconWrap = overlay.querySelector('.relative.w-20.h-20 > div:last-child');
+        const icon = overlay.querySelector('.camera-loading-pulse');
+        if (icon) {
+            icon.outerHTML = `<svg class="w-8 h-8 text-emerald-400 camera-loading-check-pop" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>`;
+        }
+        const hintEl = overlay.querySelector('#camera-loading-hint');
+        if (hintEl) hintEl.textContent = 'Анализ завершен!';
+    },
+
+    /**
+     * Stop the ticking timers and tear the overlay down, restoring the form
+     * controls underneath. The optional `onDone` callback runs after the DOM
+     * node is gone so the caller can close the modal or redirect.
+     */
+    hideLoadingOverlay(state, onDone = null) {
+        if (!state) return;
+        const { overlay, timerId, hintId } = state;
+        clearInterval(timerId);
+        clearInterval(hintId);
+        if (overlay) overlay.remove();
+        if (onDone) onDone();
     },
 
     async handleSyncedMeal(item, response, { failed = false } = {}) {
@@ -109,6 +206,10 @@ export const Camera = {
 
             if (navigator.onLine) {
                 uploadBtn.textContent = 'Загрузка...';
+                // The overlay takes over the form while the upload and analysis run,
+                // so the user sees a live timer and rotating hints instead of a
+                // frozen button. It is torn down once the server answers.
+                const overlayState = this.showLoadingOverlay(container);
                 try {
                     const formData = new FormData();
                     formData.append('file', compressedBlob, 'photo.webp');
@@ -119,16 +220,21 @@ export const Camera = {
 
                     await API.post('/nutrition/photos', formData, token, true);
 
+                    this.markLoadingComplete(overlayState.overlay);
                     this.app.showToast('Фото загружено, идёт анализ', 'success');
                     input.value = '';
                     selectedFile = null;
                     uploadBtn.disabled = false;
                     uploadBtn.textContent = 'Готово — загрузить';
 
+                    await new Promise((resolve) => setTimeout(resolve, 500));
+                    this.hideLoadingOverlay(overlayState);
+
                     if (window.App && window.App.showPage) {
                         window.App.showPage('nutrition');
                     }
                 } catch (error) {
+                    this.hideLoadingOverlay(overlayState);
                     if (error?.isNetworkError || error?.offlineQueued) {
                         await this.queueOfflineMeal(compressedBlob, notes);
                         this.app.showToast('Нет связи. Фото сохранено локально и будет загружено при появлении связи', 'info');
