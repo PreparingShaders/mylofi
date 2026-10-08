@@ -1,5 +1,5 @@
-from datetime import datetime, timezone, timedelta, date
-from typing import Optional, List, Dict, Any
+from datetime import datetime, timezone, timedelta
+from typing import Optional, List, Dict
 from sqlalchemy import select, func, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -13,15 +13,12 @@ from app.models import (
     WorkoutSessionStatus,
     ExerciseCatalog,
 )
-from app.services.exercise_data import EXERCISE_SEED, MUSCLE_GROUPS, EQUIPMENT
+from app.services.exercise_data import EXERCISE_SEED
 from app.schemas import (
     WorkoutTemplateCreate,
     WorkoutTemplateUpdate,
-    WorkoutTemplateExerciseCreate,
     WorkoutSessionCreate,
     WorkoutSessionUpdate,
-    WorkoutSessionExerciseCreate,
-    WorkoutSetCreate,
     ExerciseCatalogCreate,
     ExerciseCatalogUpdate,
     BuildWorkoutSessionRequest,

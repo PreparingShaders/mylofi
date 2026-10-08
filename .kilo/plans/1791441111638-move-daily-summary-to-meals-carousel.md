@@ -1,12 +1,11 @@
-# Plan: Move Daily Summary to Carousel, Workout AI Loading Overlay, & AI Analysis Refinements
+# Plan: Move Daily Summary to Carousel, Workout AI Loading Overlay, AI Analysis Refinements, FOUC Fix, & E2E Tests
 
 ## Goal
-1. Move the "Daily Summary" card into the horizontal meals carousel as its first item, with proper styling, initial focus on the "Add Meal" card, and rate-limited regeneration protection.
-2. Adapt the workout AI start loading overlay when clicking "+ Старт + ИИ" in `static/js/workouts.js` using `Camera.showLoadingOverlay`, `Camera.markLoadingComplete`, and `Camera.hideLoadingOverlay`, replacing the fixed 3-second timer with dynamic async/await waiting until session creation and AI plan loading complete.
-3. Fix 3 issues in completed workout AI analysis:
-   - Block/hide the "Recalculate AI" button if the analysis is already completed (`available: true`), showing toast `"Анализ тренировки уже сохранён."`.
-   - Protect workout AI generation on backend (`app/api/v1/routes.py`) by checking `user.is_premium` (returning `403 Forbidden` if false), and on frontend checking user tier before calling AI analysis.
-   - Add specialized fitness loading hints (`workoutHints`) in `Camera` and use them for the workout AI loading overlay.
+1. Move the "Daily Summary" card into the horizontal meals carousel as its first item.
+2. Adapt the workout AI start loading overlay to use `Camera.showLoadingOverlay` with fitness hints and dynamic waiting.
+3. Fix AI analysis refinements (block/hide "Recalculate AI" when completed, enforce backend `is_premium` check with 403).
+4. **Fix FOUC (Flash of Unauthenticated Content):** Add an initial splash screen during app initialization so logged-in users don't see a flash of landing/auth before main app render.
+5. **Create Test Users Seed & E2E Tests:** Implement `app/db/seed_test_users.py` and `tests/e2e/test_auth_and_navigation.py` using Playwright/pytest.
 
 ---
 
@@ -14,40 +13,46 @@
 
 ### 1. Daily Summary Card & Carousel (Implemented)
 - **Files:** `static/js/nutrition.js`, `static/js/components.js`, `static/css/styles.css`
-- **Summary:** Summary card in day view carousel, initial focus on `.meal-action-slot`, rate-limited refresh protection.
 
-### 2. Workout AI Start Loading Overlay (`static/js/workouts.js`, `static/js/camera.js`)
+### 2. Workout AI Start Loading Overlay (Implemented/Planned)
 - **Files:** `static/js/camera.js`, `static/js/workouts.js`
-- **Changes:**
-  - Add `workoutHints` array to `Camera` in `camera.js`:
-    ```javascript
-    workoutHints: [
-        'Считаем суммарный тоннаж и рабочий объём...',
-        'Оцениваем время отдыха между подходами...',
-        'Анализируем прогресс в базовых упражнениях...',
-        'Формируем рекомендации по восстановлению мышц...',
-    ]
-    ```
-  - Update `Camera.showLoadingOverlay(container, hints = this.loadingHints)` to support custom hints.
-  - In `startTemplateWithAi` & `startQuickWorkoutWithAi` (`workouts.js`), replace countdown with `Camera.showLoadingOverlay(document.body, Camera.workoutHints)`, set hint to `"ИИ подбирает веса и подходы..."`, await API post and `loadAiPlan`, then complete with green checkmark (`markLoadingComplete`), pause 500ms, hide overlay, and transition to active session.
 
-### 3. Workout AI Analysis Refinements (Backend & Frontend)
-- **Backend (`app/api/v1/routes.py`):**
-  - In `@router.post("/ai/workout-summary/{workout_id}")`, check `if not current_user.is_premium:` -> raise `HTTPException(status_code=403, detail="Анализ тренировок ИИ доступен только по подписке Premium")`.
-- **Frontend (`static/js/workouts.js`):**
-  - In `mountAiDetailCard` / `aiWorkoutCard` handling:
-    - If `payload?.available === true` (analysis already completed), hide or disable the "Пересчитать ИИ" button, or when clicked, show Toast `"Анализ тренировки уже сохранён."` without making an API request.
-  - Check `app.state.user?.is_premium` before invoking `analyzeWorkout()` or starting AI workouts, showing Toast / subscription notice if Free tier.
+### 3. Workout AI Analysis Refinements (Implemented/Planned)
+- **Files:** `app/api/v1/routes.py`, `static/js/workouts.js`
+
+### 4. FOUC Fix (Auth Flash Prevention)
+- **File:** `static/index.html`
+  - Add `#app-splash` element inside `#app` with a clean splash/spinner background covering the screen on initial paint.
+- **File:** `static/js/app.js`
+  - In `init()`:
+    - Keep splash visible while validating tokens (`validateToken()`).
+    - Once initialization and auth check complete successfully (or fallback to landing/auth on failure), hide/remove `#app-splash` and reveal the correct screen (`main` or `landing`).
+
+### 5. Test Users Seed Script (`app/db/seed_test_users.py`)
+- **File:** `app/db/seed_test_users.py`
+- **Logic:**
+  - Connect to DB asynchronously using app session maker.
+  - Check if `free_user@mylofi.test` and `premium_user@mylofi.test` exist.
+  - Create them with password hash (`Password123!`), setting `is_premium = False` for free user and `is_premium = True` for premium user.
+
+### 6. E2E Test Suite (`tests/e2e/test_auth_and_navigation.py`)
+- **File:** `tests/e2e/test_auth_and_navigation.py`
+- **Framework:** Playwright (pytest-playwright)
+- **Scenarios:**
+  1. Test registration flow for a new user.
+  2. Test login flow for `free_user@mylofi.test` and `premium_user@mylofi.test`.
+  3. Verify no auth flash occurs on page reload when access token is stored in localStorage.
+  4. Verify navigation between tabs ("Питание", "Тренировки", "Профиль").
 
 ---
 
 ## Validation Plan
 1. **Automated Checks:**
    - Run linter/type checks (`ruff check .`, pytest) to ensure no regressions.
+   - Run seed script (`python app/db/seed_test_users.py`).
+   - Run E2E tests (`pytest tests/e2e/test_auth_and_navigation.py`).
 2. **Visual & Functional Verification:**
-   - Verify workout AI start overlay shows fitness hints and waits dynamically for AI plan generation.
-   - Verify completed workout AI analysis blocks recalculation/re-analysis and shows `"Анализ тренировки уже сохранён."`.
-   - Verify backend enforces `is_premium` check with 403 for Free tier users.
+   - Hard reload with valid token shows instant main app via splash screen without landing/auth flash.
 
 
 

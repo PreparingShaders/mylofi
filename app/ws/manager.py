@@ -1,5 +1,3 @@
-import json
-import asyncio
 from typing import Dict, Set, Optional
 from fastapi import WebSocket
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -83,7 +81,7 @@ async def get_websocket_user(
     token: str
 ) -> Optional[int]:
     """Extract and validate user from WebSocket token query param"""
-    from app.services.auth import decode_token, validate_refresh_token
+    from app.services.auth import decode_token
     from app.models import User
     from sqlalchemy import select
 

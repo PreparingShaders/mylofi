@@ -72,6 +72,9 @@ const App = {
 
         await this.flushOfflineQueue();
 
+        // Hide splash screen after auth determination
+        this.hideSplash();
+
         console.log('[App] Initialized');
     },
 
@@ -157,6 +160,7 @@ const App = {
             navItems: document.querySelectorAll('.nav-item'),
             toastContainer: document.getElementById('toast-container'),
             modals: document.getElementById('modals'),
+            splash: document.getElementById('app-splash'),
         };
         console.log('[App] Cache elements:', this.elements);
     },
@@ -498,6 +502,15 @@ const App = {
         
         if (this.elements.bottomNav) {
             this.elements.bottomNav.style.display = (screenName === 'main') ? 'block' : 'none';
+        }
+    },
+
+    hideSplash() {
+        const splash = this.elements.splash;
+        if (splash) {
+            splash.style.opacity = '0';
+            splash.style.pointerEvents = 'none';
+            setTimeout(() => splash.remove(), 200);
         }
     },
     

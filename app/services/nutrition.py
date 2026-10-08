@@ -11,9 +11,8 @@ import time
 from datetime import datetime, date, timedelta, timezone
 from typing import Any, Optional, List
 from PIL import Image, UnidentifiedImageError
-from sqlalchemy import select, func, and_, update
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy.orm import selectinload
+from sqlalchemy import select, func, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Meal, MealStatus, User
 from app.schemas import MealCreate, MealUpdate, MealResponse, MealListResponse

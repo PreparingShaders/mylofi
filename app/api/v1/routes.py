@@ -8,8 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.schemas import (
     UserRegister,
-    UserLogin,
-    UserResponse,
     UserMe,
     UserUpdate,
     AiPersona,
@@ -24,7 +22,6 @@ from app.schemas import (
     MealListResponse,
     PhotoUploadResponse,
     DailySummaryResponse,
-    MealStatus,
     WorkoutTemplateCreate,
     WorkoutTemplateUpdate,
     WorkoutTemplateResponse,
@@ -33,12 +30,6 @@ from app.schemas import (
     WorkoutSessionResponse,
     WorkoutHistoryResponse,
     WorkoutSessionExerciseCreate,
-    WorkoutSessionStatus,
-    WorkoutSessionStatus,
-     WorkoutSessionStatus,
-    WSMessageType,
-    WSMessage,
-    WSMealUpdatePayload,
     ExerciseCatalogResponse,
     ExerciseCatalogCreate,
     ExerciseCatalogUpdate,
@@ -58,11 +49,8 @@ from app.schemas import (
 from app.services.auth import (
     verify_password,
     get_password_hash,
-    create_access_token,
-    create_refresh_token,
     decode_token,
     create_user_tokens,
-    validate_refresh_token,
     rotate_refresh_token,
     revoke_all_user_refresh_tokens,
 )
@@ -74,8 +62,6 @@ from app.services.nutrition import (
     get_meals_for_date,
     get_meals_for_range,
     save_uploaded_photo,
-    update_meal_analysis_result,
-    mark_meal_failed,
     get_daily_nutrition_summary,
     get_period_nutrition_summary,
     process_meal_photo_task,
@@ -132,7 +118,7 @@ from app.services.ai_workout_service import (
     get_workout_analysis,
     load_stored_ai_plan,
 )
-from app.models import User, Meal
+from app.models import User
 from app.ws.manager import manager, get_websocket_user
 
 router = APIRouter()
