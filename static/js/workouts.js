@@ -3,6 +3,7 @@ import { API } from './api.js';
 import { Components } from './components.js';
 import { Utils } from './utils.js';
 import { DB } from './db.js';
+import { Camera } from './camera.js';
 
 const TOGGLE_BASE = 'flex-shrink-0 w-11 h-11 rounded-2xl text-xl font-bold transition-all flex items-center justify-center';
 const TOGGLE_COMPLETED = 'bg-lime-400 text-zinc-950 border-lime-400 shadow-[0_0_12px_rgba(163,230,53,0.4)]';
@@ -1271,7 +1272,9 @@ export const Workouts = {
         const token = app.state.tokens.access;
         const startEndpoint = `/workouts/templates/${templateId}/start`;
 
-        this.renderCountdown(container, () => {});
+        const overlayState = Camera.showLoadingOverlay(document.body);
+        const hintEl = document.getElementById('camera-loading-hint');
+        if (hintEl) hintEl.textContent = 'ИИ подбирает веса и подходы...';
 
         const sessionPromise = API.post(startEndpoint, { with_ai_plan: true }, token);
 
@@ -1282,9 +1285,13 @@ export const Workouts = {
             // it yet, the preview endpoint falls back to generating it on the fly.
             const plan = await this.loadAiPlan(app, { session_id: sessionId, template_id: templateId, name: session.name });
             this.aiPlan = plan ? { ...plan, sessionId } : null;
+            Camera.markLoadingComplete(overlayState.overlay);
+            await new Promise(r => setTimeout(r, 500));
+            Camera.hideLoadingOverlay(overlayState);
             await this.renderWorkoutScreen(container, app, sessionId);
         } catch (err) {
             console.error('[Workouts] Start with AI error:', err);
+            Camera.hideLoadingOverlay(overlayState);
             app.showToast(err?.message || 'Ошибка запуска', 'error');
             await this.render(container, app);
         }
@@ -1299,7 +1306,9 @@ export const Workouts = {
         const token = app.state.tokens.access;
         const goalLabel = (QUICK_GOALS.find(g => g.value === goal) || {}).title;
 
-        this.renderCountdown(app.elements.pageContent, () => {});
+        const overlayState = Camera.showLoadingOverlay(document.body);
+        const hintEl = document.getElementById('camera-loading-hint');
+        if (hintEl) hintEl.textContent = 'ИИ подбирает веса и подходы...';
 
         try {
             const { session_id: sessionId } = await API.post(
@@ -1311,9 +1320,13 @@ export const Workouts = {
             // if the background task has not stored it yet.
             const plan = await this.loadAiPlan(app, { goal, name: `Быстрый старт: ${goalLabel}`, session_id: sessionId, reduce: true });
             this.aiPlan = plan ? { ...plan, sessionId } : null;
+            Camera.markLoadingComplete(overlayState.overlay);
+            await new Promise(r => setTimeout(r, 500));
+            Camera.hideLoadingOverlay(overlayState);
             await this.renderWorkoutScreen(app.elements.pageContent, app, sessionId);
         } catch (err) {
             console.error('[Workouts] Quick start with AI error:', err);
+            Camera.hideLoadingOverlay(overlayState);
             app.showToast(err?.message || 'Ошибка быстрого старта', 'error');
             await this.render(app.elements.pageContent, app);
         }
