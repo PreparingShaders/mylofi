@@ -355,7 +355,8 @@ html.dark,
 .meal-carousel,
 .meal-card-slot,
 .meal-action-slot,
-.meal-empty-slot {
+.meal-empty-slot,
+.daily-summary-slot {
     touch-action: pan-x pan-y !important;
     -webkit-overflow-scrolling: touch;
 }
@@ -1045,17 +1046,20 @@ html.dark,
    next to a meal card instead of short stubs. */
 .meal-card-slot,
 .meal-action-slot,
-.meal-empty-slot {
+.meal-empty-slot,
+.daily-summary-slot {
     width: min(85vw, 340px);
 }
 .meal-action-slot,
-.meal-empty-slot {
+.meal-empty-slot,
+.daily-summary-slot {
     min-height: 360px;
 }
 @media (min-width: 640px) {
     .meal-card-slot,
     .meal-action-slot,
-    .meal-empty-slot {
+    .meal-empty-slot,
+    .daily-summary-slot {
         width: 380px;
     }
 }
@@ -1374,17 +1378,21 @@ input, select, textarea:focus {
 }
 
 /* ============ Daily AI recap ============ */
-/* One card under the dashboard: the title and the date on the first
-   line, the AI score on the right of that same line, the recap
-   underneath as a collapsible banner (two lines, a tap to expand). The
-   score badge wears the same neon disc as the ring's centre score, so
-   the two AI readouts on the screen are recognisably the same voice. */
+/* First snap slot of the meal carousel in the day view: the title and the
+   date on the first line, the AI score on the right of that same line, the
+   recap underneath as a collapsible banner (two lines, a tap to expand). The
+   score badge wears the same neon disc as the ring's centre score, so the
+   two AI readouts on the screen are recognisably the same voice. */
 .daily-summary {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    margin-top: 8px;
     padding: 12px;
+}
+/* In the carousel slot the recap no longer follows the dashboard ring, so
+   the top margin that used to separate the two is dropped. */
+.daily-summary-slot .daily-summary {
+    margin-top: 0;
 }
 .daily-summary__head {
     display: flex;
@@ -1447,15 +1455,15 @@ input, select, textarea:focus {
 /* Verdict prose: two clamped lines by default, the full paragraph
    once expanded. The clamp carries the ellipsis; max-height is what
    actually animates, so the reveal is a smooth height transition
-   rather than a jump. 20em is far past the longest recap the model
-   is asked to write (3-6 sentences), so the expanded state never
-   clips. */
+   rather than a jump. The expanded state scrolls internally
+   (overflow-y-auto) within a 300px cap so a long recap does not
+   stretch the carousel slot past the other cards. */
 .daily-summary__text {
     font-size: 13px;
     line-height: 1.45;
     color: #3f3f46;
-    overflow: hidden;
-    max-height: 20em;
+    overflow-y: auto;
+    max-height: 300px;
     transition: max-height 0.28s ease;
 }
 .daily-summary__text.is-collapsed {
@@ -1464,6 +1472,7 @@ input, select, textarea:focus {
     -webkit-line-clamp: 2;
     line-clamp: 2;
     max-height: 2.9em; /* two lines at the 1.45 line-height */
+    overflow: hidden;
 }
 .dark .daily-summary__text {
     color: #d4d4d8;

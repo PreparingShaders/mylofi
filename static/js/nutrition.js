@@ -936,14 +936,14 @@ export const Nutrition = {
                 body: this.renderNutritionSlide(ringSummary, ringTargets, qualityScore, this.periodCaption(periodData)),
             });
 
-            // The recap sits directly under the dashboard, inside the header, so
-            // the meal carousel starts below both without a second wrapper. Its chip
-            // names the concrete day rather than reusing the header label: the recap
-            // is a stored record of that date, and the header says only "Сегодня".
-            // A finished day also earns the manual generation trigger; a day still
-            // being eaten never does.
-            const dailySummaryBlock = dailySummary
-                ? Components.dailySummaryCard(dailySummary, this.recapCardOptions())
+            // The recap card lives inside the carousel as its first snap slot in
+            // the day view. Its chip names the concrete day rather than reusing the
+            // header label: the recap is a stored record of that date, and the
+            // header says only "Сегодня". A finished day also earns the manual
+            // generation trigger; a day still being eaten never does. Wider periods
+            // have no single day to recap, so the card is left out of the carousel.
+            const dailySummarySlot = (this.selectedPeriod === 'day' && dailySummary)
+                ? `<div class="daily-summary-slot snap-center shrink-0">${Components.dailySummaryCard(dailySummary, this.recapCardOptions())}</div>`
                 : '';
 
             let html = `
@@ -954,7 +954,6 @@ export const Nutrition = {
 
                         <!-- Period dashboard: day, 7 days, month or custom range -->
                         <div class="mt-2">${dashboard}</div>
-                        ${dailySummaryBlock}
                     </div>
 
                     <!-- PENDING SYNC BANNER -->
@@ -972,8 +971,9 @@ export const Nutrition = {
                     <!-- STUCK ANALYSIS BANNER (polling budget spent) -->
                     ${this._pollingTimedOut ? this.renderAnalysisTimeoutBanner() : ''}
 
-                    <!-- SNAP CAROUSEL: action tile first, then pending meals, then logged meals (LIFO) -->
+                    <!-- SNAP CAROUSEL: daily summary first (day only), then action tile, then pending meals, then logged meals (LIFO) -->
                     <div class="meal-carousel" id="meal-carousel">
+                        ${dailySummarySlot}
                         ${Components.addMealActionCard()}
                         ${pendingSorted.map((meal) => Components.mealCardPhoto(meal, cardOptions)).join('')}
                         ${sortedMeals.map((meal) => Components.mealCardPhoto(meal, cardOptions)).join('')}
@@ -1483,8 +1483,12 @@ export const Nutrition = {
         const slot = holder.firstElementChild;
         if (!slot) return;
 
-        // The add tile stays first; the new meal lands right after it.
-        carousel.insertBefore(slot, carousel.children[1] || null);
+        // The add-meal action tile is always the first real slot (or the second
+        // in the day view, right after the daily-summary slot); the new meal lands
+        // immediately after it so it never appears between the recap and the
+        // action card.
+        const actionTile = carousel.querySelector('.meal-action-slot');
+        carousel.insertBefore(slot, actionTile ? actionTile.nextElementSibling : (carousel.firstElementChild || null));
         this.scrollCarouselToSlot(slot);
     },
 
