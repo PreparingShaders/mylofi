@@ -52,7 +52,15 @@ export const Utils = {
         };
     },
 
-    compressImage(file, maxWidth = 1024, maxHeight = 1024, quality = 0.78) {
+    compressImage(file, maxWidth = 1024, maxHeight = 1024, quality = 0.8) {
+        // A photo already under the upload budget gains nothing from a
+        // canvas round-trip: re-encoding it can only cost quality, so it
+        // travels as the browser captured it. The server-side fallback
+        // still normalizes whatever arrives to WebP.
+        if (file.size && file.size < 150 * 1024) {
+            return Promise.resolve(file);
+        }
+
         return new Promise((resolve, reject) => {
             if (!file || !(file instanceof Blob)) {
                 reject(new Error('compressImage: expected a Blob/File'));

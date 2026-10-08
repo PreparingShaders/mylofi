@@ -150,37 +150,58 @@ async def ensure_upload_dir() -> str:
 
 
 def generate_photo_filename(original_filename: str) -> str:
-    """Generate a unique filename for uploaded photo"""
-    ext = os.path.splitext(original_filename)[1].lower()
-    if ext not in [".jpg", ".jpeg", ".png", ".webp"]:
-        ext = ".jpg"
-    return f"{uuid.uuid4().hex}{ext}"
+    """Generate a unique filename for uploaded photo.
+
+    The extension is forced to `.webp` regardless of what the client
+    sent: `save_uploaded_photo` normalizes every upload to WebP, and
+    the `/uploads` static mount names the content type from the
+    extension, so the two must agree.
+    """
+    return f"{uuid.uuid4().hex}.webp"
 
 
 async def save_uploaded_photo(
     file_content: bytes,
     original_filename: str
 ) -> tuple[str, str]:
-    """Save uploaded photo and return (photo_path, thumbnail_path)"""
+    """Save uploaded photo and return (photo_path, thumbnail_path).
+
+    The client already compresses to WebP before uploading; this is the
+    server-side fallback that normalizes whatever arrives. Every stored
+    photo is resized to at most 1024x1024 and saved as WebP, so the
+    analysis task and the `/uploads` static mount always see one format
+    at a bounded size.
+    """
     upload_dir = await ensure_upload_dir()
     filename = generate_photo_filename(original_filename)
     photo_path = os.path.join(upload_dir, filename)
     thumbnail_path = os.path.join(upload_dir, "thumbnails", filename)
 
-    # Save original
-    with open(photo_path, "wb") as f:
-        f.write(file_content)
-
-    # Create thumbnail (using Pillow)
+    # Normalize the upload: proportional resize to max 1024x1024,
+    # transparency/palette flattened to RGB, saved as optimized WebP.
+    # A payload Pillow cannot decode falls back to the raw bytes so the
+    # meal record is still created and the analysis task reports a
+    # proper failure instead of the upload vanishing.
     try:
-        from PIL import Image
+        with Image.open(io.BytesIO(file_content)) as img:
+            img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+            if img.mode in ("RGBA", "LA", "P"):
+                img = img.convert("RGB")
+            img.save(photo_path, "WEBP", quality=80, optimize=True)
+    except Exception:
+        with open(photo_path, "wb") as f:
+            f.write(file_content)
+
+    # Create thumbnail (using Pillow). Saved as WebP to match the
+    # `.webp` extension the static mount derives the content type from.
+    try:
         with Image.open(photo_path) as img:
             img.thumbnail((400, 400), Image.Resampling.LANCZOS)
             if img.mode in ("RGBA", "LA", "P"):
                 img = img.convert("RGB")
-            img.save(thumbnail_path, "JPEG", quality=80, optimize=True)
+            img.save(thumbnail_path, "WEBP", quality=80, optimize=True)
     except Exception:
-        # If thumbnail creation fails, use original
+        # If thumbnail creation fails, use the normalized photo
         shutil.copy2(photo_path, thumbnail_path)
 
     return photo_path, thumbnail_path
