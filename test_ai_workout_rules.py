@@ -58,7 +58,7 @@ from app.services.workout import resolve_duration_seconds, update_set_completion
 
 # Four days ago, i.e. inside the 7-day window: a Free user who ran the coach then
 # is blocked until the cooldown is out.
-RECENT = datetime(2026, 10, 1, 10, tzinfo=timezone.utc)
+RECENT = datetime.now(timezone.utc) - timedelta(days=3)
 
 METRICS = {
     "tonnage_kg": 1605.0,

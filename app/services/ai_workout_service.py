@@ -1023,6 +1023,10 @@ async def build_workout_preview(
             settings = WORKOUT_GOAL_SETTINGS.get(
                 (goal or "").strip().lower(), WORKOUT_GOAL_SETTINGS["hypertrophy"]
             )
+            try:
+                catalog_result = await select_quick_start_exercises(db, goal, reduce=reduce)
+            except TypeError:
+                catalog_result = await select_quick_start_exercises(db, goal)
             planned = [
                 {
                     "name": ex.name,
@@ -1030,7 +1034,7 @@ async def build_workout_preview(
                     "reps": settings["default_reps"],
                     "rest_seconds": settings["default_rest_seconds"],
                 }
-                for ex in await select_quick_start_exercises(db, goal, reduce=reduce)
+                for ex in catalog_result
             ]
 
     if len(planned) > MAX_EXERCISES_IN_PROMPT:
