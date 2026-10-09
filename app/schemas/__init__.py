@@ -250,6 +250,7 @@ class AdminUserItem(BaseModel):
     is_active: bool
     is_admin: bool
     is_premium: bool
+    premium_expires_at: Optional[datetime] = None
     meal_ai_daily_count: int = 0
     created_workouts_count: int = 0
     created_at: datetime
@@ -287,6 +288,7 @@ class AdminUserDetail(BaseModel):
     is_active: bool
     is_admin: bool
     is_premium: bool
+    premium_expires_at: Optional[datetime] = None
     meal_ai_daily_count: int = 0
     last_meal_ai_date: Optional[date] = None
     last_workout_ai_analysis_at: Optional[datetime] = None

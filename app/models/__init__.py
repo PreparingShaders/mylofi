@@ -75,6 +75,7 @@ class User(Base):
 
     # Subscription
     is_premium: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="0")
+    premium_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Usage counters
     meal_ai_daily_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")

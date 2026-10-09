@@ -268,20 +268,17 @@ const Admin = {
                                         <span class="text-sm font-semibold">${initials}</span>
                                     </div>
                                     <div class="flex-1 min-w-0">
-                                        <p class="text-sm font-medium text-surface-900 dark:text-zinc-100 truncate">${escapeHtml(u.full_name || u.email)}</p>
+                                        <p class="text-sm font-semibold truncate text-surface-900 dark:text-zinc-100">${escapeHtml(u.full_name || u.email)}</p>
                                         <p class="text-xs text-surface-500 dark:text-surface-400 truncate">${escapeHtml(u.email)}</p>
                                     </div>
-                                    <div class="flex items-center gap-1.5 shrink-0">
-                                        <span class="px-2 py-0.5 rounded-lg text-xs font-semibold ${u.is_active ? 'bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}">
-                                            ${u.is_active ? 'Активен' : 'Заблокирован'}
+                                    <div class="flex items-center gap-2 shrink-0">
+                                        <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${u.is_active ? 'bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}">
+                                            ${u.is_active ? 'Активен' : 'Блок'}
                                         </span>
-                                        <span class="px-2 py-0.5 rounded-lg text-xs font-semibold ${u.is_admin ? 'bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-400' : 'bg-surface-100 text-surface-600 dark:bg-white/5 dark:text-zinc-400'}">
-                                            ${u.is_admin ? 'Админ' : 'Пользователь'}
-                                        </span>
+                                        <svg class="w-4 h-4 text-surface-400 dark:text-surface-500 group-hover:text-primary-600 dark:group-hover:text-zinc-200 transition-colors shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                                        </svg>
                                     </div>
-                                    <svg class="w-4 h-4 text-surface-400 dark:text-surface-500 group-hover:text-primary-600 dark:group-hover:text-zinc-200 transition-colors shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
-                                    </svg>
                                 </div>
                             </button>
                             `;
@@ -406,7 +403,11 @@ const Admin = {
                 </div>
                 <div class="flex justify-between">
                     <span class="text-surface-500 dark:text-surface-400">Премиум</span>
-                    <span class="text-surface-900 dark:text-zinc-100 font-medium">${user.is_premium ? 'Да' : 'Нет'}</span>
+                    <span class="text-surface-900 dark:text-zinc-100 font-medium">${user.is_premium
+                        ? (user.premium_expires_at
+                            ? `Активен (до ${fmtDate(user.premium_expires_at)})`
+                            : 'Бессрочно')
+                        : 'Нет'}</span>
                 </div>
                 <div class="flex justify-between">
                     <span class="text-surface-500 dark:text-surface-400">Квота ИИ (сегодня)</span>
