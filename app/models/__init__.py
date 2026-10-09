@@ -84,6 +84,10 @@ class User(Base):
     last_nutrition_ai_analysis_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_workouts_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
 
+    # Activity tracking
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    total_ai_requests: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False

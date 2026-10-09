@@ -1429,6 +1429,7 @@ async def store_workout_analysis(
     # even if the profile changes later - the same reason meals carry theirs.
     session.ai_persona = normalize_persona(user.ai_persona)
     user.last_workout_ai_analysis_at = session.analyzed_at
+    user.total_ai_requests = (getattr(user, "total_ai_requests", 0) or 0) + 1
     user.updated_at = utcnow()
     await db.commit()
 

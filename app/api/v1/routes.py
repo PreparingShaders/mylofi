@@ -253,6 +253,7 @@ async def login(
             detail="Inactive user",
         )
 
+    user.last_seen_at = datetime.now(timezone.utc)
     access_token, refresh_token = await create_user_tokens(db, user)
     return Token(access_token=access_token, refresh_token=refresh_token)
 

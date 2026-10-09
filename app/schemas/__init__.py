@@ -253,6 +253,10 @@ class AdminUserItem(BaseModel):
     premium_expires_at: Optional[datetime] = None
     meal_ai_daily_count: int = 0
     created_workouts_count: int = 0
+    last_seen_at: Optional[datetime] = None
+    total_meals_count: int = 0
+    completed_workouts_count: int = 0
+    total_ai_requests: int = 0
     created_at: datetime
     updated_at: datetime
 
@@ -269,6 +273,14 @@ class AdminUserListResponse(BaseModel):
 class AdminStatusUpdate(BaseModel):
     is_active: Optional[bool] = None
     is_admin: Optional[bool] = None
+
+
+class AdminPremiumUpdate(BaseModel):
+    """Premium management action: "grant_7", "grant_30", "revoke",
+    or an explicit duration via `days`."""
+
+    action: str
+    days: Optional[int] = None
 
 
 class AdminQuotaResetResponse(BaseModel):
@@ -294,6 +306,10 @@ class AdminUserDetail(BaseModel):
     last_workout_ai_analysis_at: Optional[datetime] = None
     last_nutrition_ai_analysis_at: Optional[datetime] = None
     created_workouts_count: int = 0
+    last_seen_at: Optional[datetime] = None
+    total_meals_count: int = 0
+    completed_workouts_count: int = 0
+    total_ai_requests: int = 0
     created_at: datetime
     updated_at: datetime
 
@@ -724,6 +740,7 @@ __all__ = [
     "AdminUserItem",
     "AdminUserListResponse",
     "AdminStatusUpdate",
+    "AdminPremiumUpdate",
     "AdminQuotaResetResponse",
     "AdminUserDetail",
     "AdminStats",

@@ -130,6 +130,7 @@ def consume_meal_ai(user: User, today: Optional[date] = None) -> None:
     """Record one meal photo analysis against the daily quota."""
     reset_daily_meal_counter(user, today)
     user.meal_ai_daily_count = (user.meal_ai_daily_count or 0) + 1
+    user.total_ai_requests = (getattr(user, "total_ai_requests", 0) or 0) + 1
 
 
 def can_create_workout_template(user: User, current_templates: int) -> LimitDecision:

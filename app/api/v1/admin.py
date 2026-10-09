@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,12 +7,13 @@ from sqlalchemy import select, func, or_
 from sqlalchemy import Date
 
 from app.db.session import get_db
-from app.models import User, Meal, WorkoutSession
+from app.models import User, Meal, WorkoutSession, WorkoutSessionStatus
 from app.schemas import (
     AdminUserItem,
     AdminUserDetail,
     AdminUserListResponse,
     AdminStatusUpdate,
+    AdminPremiumUpdate,
     AdminQuotaResetResponse,
     AdminStats,
 )
@@ -23,7 +24,26 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-def _build_user_item(u: User) -> AdminUserItem:
+async def _user_counts(db: AsyncSession, user_id: int) -> tuple[int, int]:
+    """Total logged meals and completed workout sessions for a user."""
+    meals_result = await db.execute(
+        select(func.count(Meal.id)).where(Meal.user_id == user_id)
+    )
+    total_meals = int(meals_result.scalar() or 0)
+
+    workouts_result = await db.execute(
+        select(func.count(WorkoutSession.id)).where(
+            WorkoutSession.user_id == user_id,
+            WorkoutSession.status == WorkoutSessionStatus.COMPLETED,
+        )
+    )
+    completed_workouts = int(workouts_result.scalar() or 0)
+
+    return total_meals, completed_workouts
+
+
+async def _build_user_item(db: AsyncSession, u: User) -> AdminUserItem:
+    total_meals, completed_workouts = await _user_counts(db, u.id)
     return AdminUserItem(
         id=u.id,
         email=u.email,
@@ -35,12 +55,17 @@ def _build_user_item(u: User) -> AdminUserItem:
         premium_expires_at=u.premium_expires_at,
         meal_ai_daily_count=u.meal_ai_daily_count,
         created_workouts_count=u.created_workouts_count,
+        last_seen_at=u.last_seen_at,
+        total_meals_count=total_meals,
+        completed_workouts_count=completed_workouts,
+        total_ai_requests=u.total_ai_requests or 0,
         created_at=u.created_at,
         updated_at=u.updated_at,
     )
 
 
-def _build_user_detail(u: User) -> AdminUserDetail:
+async def _build_user_detail(db: AsyncSession, u: User) -> AdminUserDetail:
+    total_meals, completed_workouts = await _user_counts(db, u.id)
     return AdminUserDetail(
         id=u.id,
         email=u.email,
@@ -55,6 +80,10 @@ def _build_user_detail(u: User) -> AdminUserDetail:
         last_workout_ai_analysis_at=u.last_workout_ai_analysis_at,
         last_nutrition_ai_analysis_at=u.last_nutrition_ai_analysis_at,
         created_workouts_count=u.created_workouts_count,
+        last_seen_at=u.last_seen_at,
+        total_meals_count=total_meals,
+        completed_workouts_count=completed_workouts,
+        total_ai_requests=u.total_ai_requests or 0,
         created_at=u.created_at,
         updated_at=u.updated_at,
     )
@@ -74,7 +103,7 @@ async def get_user(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         )
 
-    return _build_user_detail(user)
+    return await _build_user_detail(db, user)
 
 
 @router.get("/users", response_model=AdminUserListResponse)
@@ -114,7 +143,7 @@ async def list_users(
     users = result.scalars().all()
 
     return AdminUserListResponse(
-        items=[_build_user_item(u) for u in users],
+        items=[await _build_user_item(db, u) for u in users],
         total=total,
         page=page,
         page_size=page_size,
@@ -150,7 +179,62 @@ async def update_user_status(
     await db.commit()
     await db.refresh(user)
 
-    return _build_user_item(user)
+    return await _build_user_item(db, user)
+
+
+@router.patch("/users/{user_id}/premium", response_model=AdminUserDetail)
+async def update_user_premium(
+    user_id: int,
+    payload: AdminPremiumUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Grant or revoke premium subscription for a user.
+
+    Granting extends the subscription from ``max(now, existing_expiry)``
+    when the user already has an active (or future-dated) subscription,
+    so granted days never overwrite time the user has already paid for.
+    """
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+        )
+
+    action = (payload.action or "").strip().lower()
+    now = datetime.now(timezone.utc)
+
+    if action == "revoke":
+        user.is_premium = False
+        user.premium_expires_at = None
+    else:
+        days = payload.days
+        if action == "grant_7":
+            days = 7
+        elif action == "grant_30":
+            days = 30
+        if days is None or days <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid premium duration",
+            )
+
+        base = now
+        if user.premium_expires_at is not None:
+            existing = user.premium_expires_at
+            if existing.tzinfo is None:
+                existing = existing.replace(tzinfo=timezone.utc)
+            base = max(now, existing)
+
+        user.is_premium = True
+        user.premium_expires_at = base + timedelta(days=days)
+
+    user.updated_at = now
+    await db.commit()
+    await db.refresh(user)
+
+    return await _build_user_detail(db, user)
 
 
 @router.post("/users/{user_id}/reset-ai-quota", response_model=AdminQuotaResetResponse)

@@ -243,16 +243,28 @@ class TestNoAuthFlash:
 
     async def test_splash_screen_shows_during_init(self, page: Page):
         """Verify splash screen is shown during app initialization."""
+        import asyncio
+
+        # On a fast local server the app module removes the splash before
+        # the browser can observe it. Hold the module back (module scripts
+        # block DOMContentLoaded, so init cannot start) to make the splash
+        # deterministically visible during init, then let it load and finish.
+        async def hold_app_js(route):
+            await asyncio.sleep(2)
+            await route.continue_()
+
+        await page.route("**/static/js/app.js*", hold_app_js)
+
         await page.goto(BASE_URL)
 
         # Splash screen should be visible initially
         splash_visible = await page.locator('#app-splash').is_visible()
         print(f"Splash visible: {splash_visible}")
-        
+
         # Also check landing screen
         landing_hidden = await page.locator('#screen-landing').get_attribute('class')
         print(f"Landing class: {landing_hidden}")
-        
+
         assert splash_visible, "Splash screen should be visible on initial load"
 
         # Wait for app init to complete - splash should be detached

@@ -424,6 +424,7 @@ async def write_daily_summary(
         persona=user.ai_persona,
         persona_custom_text=user.ai_persona_custom_text,
     )
+    user.total_ai_requests = (getattr(user, "total_ai_requests", 0) or 0) + 1
     logger.info(
         f"[AI Summary] Day {target_date} summarised for user {user.id} "
         f"from {len(meals)} meal(s), score {payload['overall_score']}"

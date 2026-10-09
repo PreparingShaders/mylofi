@@ -433,6 +433,22 @@ const Admin = {
                     <span class="text-surface-900 dark:text-zinc-100 font-medium">${user.created_workouts_count}</span>
                 </div>
                 <div class="flex justify-between">
+                    <span class="text-surface-500 dark:text-surface-400">Последняя активность</span>
+                    <span class="text-surface-900 dark:text-zinc-100 font-medium">${user.last_seen_at ? new Date(user.last_seen_at).toLocaleString('ru-RU') : '—'}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-surface-500 dark:text-surface-400">Приёмов пищи всего</span>
+                    <span class="text-surface-900 dark:text-zinc-100 font-medium">${user.total_meals_count || 0}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-surface-500 dark:text-surface-400">Завершено тренировок</span>
+                    <span class="text-surface-900 dark:text-zinc-100 font-medium">${user.completed_workouts_count || 0}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-surface-500 dark:text-surface-400">AI запросов всего</span>
+                    <span class="text-surface-900 dark:text-zinc-100 font-medium">${user.total_ai_requests || 0}</span>
+                </div>
+                <div class="flex justify-between">
                     <span class="text-surface-500 dark:text-surface-400">Создан</span>
                     <span class="text-surface-900 dark:text-zinc-100 font-medium">${new Date(user.created_at).toLocaleString('ru-RU')}</span>
                 </div>
@@ -462,6 +478,23 @@ const Admin = {
                         class="w-full px-3 py-2 rounded-xl text-sm font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors">
                     Сбросить квоту
                 </button>
+                <div class="pt-2">
+                    <p class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider mb-2">Подписка PRO</p>
+                    <div class="grid grid-cols-3 gap-2">
+                        <button data-action="modal-premium-grant" data-user-id="${user.id}" data-days="7"
+                                class="px-2 py-2 rounded-xl text-xs font-semibold bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-400 hover:bg-lime-200 dark:hover:bg-lime-900/50 transition-colors">
+                            Выдать на 7 дней
+                        </button>
+                        <button data-action="modal-premium-grant" data-user-id="${user.id}" data-days="30"
+                                class="px-2 py-2 rounded-xl text-xs font-semibold bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-400 hover:bg-lime-200 dark:hover:bg-lime-900/50 transition-colors">
+                            Выдать на 30 дней
+                        </button>
+                        <button data-action="modal-premium-revoke" data-user-id="${user.id}"
+                                class="px-2 py-2 rounded-xl text-xs font-semibold bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors">
+                            Отозвать премиум
+                        </button>
+                    </div>
+                </div>
             </div>` : ''}
         `;
 
@@ -561,6 +594,20 @@ const Admin = {
             }
         }
     },
+
+    async updatePremium(userId, action, days) {
+        const labels = { grant_7: 'Премиум выдан на 7 дней', grant_30: 'Премиум выдан на 30 дней', revoke: 'Премиум отозван' };
+        try {
+            await API.patch(`/admin/users/${userId}/premium`, { action, days: days ?? null }, this.app.state.tokens.access);
+            this.app.showToast(labels[action] || 'Подписка обновлена', 'success');
+            await this.loadUsers();
+        } catch (error) {
+            console.error('[Admin] Premium update error:', error);
+            if (error?.status !== 401 && error?.status !== 403) {
+                this.app.showToast(error?.data?.detail || error?.message || 'Ошибка обновления подписки', 'error');
+            }
+        }
+    },
 };
 
 function escapeHtml(text) {
@@ -606,6 +653,17 @@ document.addEventListener('click', async (e) => {
         const btn = e.target.closest('[data-action="modal-reset-quota"]');
         Admin.closeUserModal();
         Admin.resetQuota(parseInt(btn.dataset.userId));
+    }
+    if (action === 'modal-premium-grant') {
+        const btn = e.target.closest('[data-action="modal-premium-grant"]');
+        const days = parseInt(btn.dataset.days);
+        Admin.closeUserModal();
+        Admin.updatePremium(parseInt(btn.dataset.userId), `grant_${days}`, days);
+    }
+    if (action === 'modal-premium-revoke') {
+        const btn = e.target.closest('[data-action="modal-premium-revoke"]');
+        Admin.closeUserModal();
+        Admin.updatePremium(parseInt(btn.dataset.userId), 'revoke');
     }
     if (action === 'admin-reset-filters') {
         Admin.resetFilters();
