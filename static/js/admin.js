@@ -186,9 +186,20 @@ const Admin = {
 
             const isCurrentUser = (id) => this.app.state.user && id === this.app.state.user.id;
 
+            const getInitials = (name) => {
+                if (!name) return '?';
+                const parts = name.trim().split(/\s+/);
+                if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+                return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+            };
+
+            const avatarColorClass = (user) => user.is_admin
+                ? 'bg-lime-500/10 text-lime-600 dark:text-lime-400'
+                : 'bg-primary-600/10 text-primary-600 dark:text-zinc-200';
+
             listEl.innerHTML = `
                 <div class="glass rounded-2xl overflow-hidden">
-                    <div class="w-full overflow-x-auto scrollbar-thin">
+                    <div class="w-full overflow-x-auto scrollbar-thin hidden md:block">
                         <table class="w-full text-sm">
                             <thead>
                                 <tr class="border-b border-surface-200 dark:border-white/10">
@@ -242,6 +253,41 @@ const Admin = {
                             </tbody>
                         </table>
                     </div>
+
+                    <div class="block md:hidden space-y-2 p-4">
+                        ${data.items.map(u => {
+                            const self = isCurrentUser(u.id);
+                            const initials = getInitials(u.full_name);
+                            const colorClass = avatarColorClass(u);
+                            return `
+                            <button data-action="view-user" data-user-id="${u.id}"
+                                    class="w-full text-left p-3 rounded-xl hover:bg-surface-100 dark:hover:bg-white/5 transition-colors group"
+                                    aria-label="Подробнее о ${escapeHtml(u.full_name || u.email)}">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 rounded-xl flex items-center justify-center ${colorClass} shrink-0">
+                                        <span class="text-sm font-semibold">${initials}</span>
+                                    </div>
+                                    <div class="flex-1 min-w-0">
+                                        <p class="text-sm font-medium text-surface-900 dark:text-zinc-100 truncate">${escapeHtml(u.full_name || u.email)}</p>
+                                        <p class="text-xs text-surface-500 dark:text-surface-400 truncate">${escapeHtml(u.email)}</p>
+                                    </div>
+                                    <div class="flex items-center gap-1.5 shrink-0">
+                                        <span class="px-2 py-0.5 rounded-lg text-xs font-semibold ${u.is_active ? 'bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}">
+                                            ${u.is_active ? 'Активен' : 'Заблокирован'}
+                                        </span>
+                                        <span class="px-2 py-0.5 rounded-lg text-xs font-semibold ${u.is_admin ? 'bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-400' : 'bg-surface-100 text-surface-600 dark:bg-white/5 dark:text-zinc-400'}">
+                                            ${u.is_admin ? 'Админ' : 'Пользователь'}
+                                        </span>
+                                    </div>
+                                    <svg class="w-4 h-4 text-surface-400 dark:text-surface-500 group-hover:text-primary-600 dark:group-hover:text-zinc-200 transition-colors shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                                    </svg>
+                                </div>
+                            </button>
+                            `;
+                        }).join('')}
+                    </div>
+
                     <div class="px-4 py-3 border-t border-surface-200 dark:border-white/10 flex items-center justify-between">
                         <span class="text-xs text-surface-500 dark:text-surface-400">Всего: ${data.total}</span>
                         <span class="text-xs text-surface-500 dark:text-surface-400">Страница ${data.page} из ${this.state.total_pages}</span>
@@ -314,10 +360,10 @@ const Admin = {
         const host = document.getElementById('modals') || document.body;
 
         const backdrop = document.createElement('div');
-        backdrop.className = 'fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 opacity-0 transition-opacity duration-200';
+        backdrop.className = 'fixed inset-0 z-50 bg-black/40 backdrop-blur-sm opacity-0 transition-opacity duration-200';
 
         const panel = document.createElement('div');
-        panel.className = 'glass-strong rounded-2xl p-4 sm:p-6 max-w-lg w-full mx-4 transform transition-all duration-200 scale-95 opacity-0';
+        panel.className = 'fixed inset-x-0 bottom-0 z-50 glass-strong rounded-t-2xl max-h-[85vh] overflow-y-auto transform transition-transform duration-200 translate-y-full';
 
         const avatarColor = user.is_admin
             ? 'bg-lime-500/10 text-lime-400'
@@ -326,7 +372,9 @@ const Admin = {
         const fmtDate = (v) => v ? new Date(v).toLocaleDateString('ru-RU') : null;
 
         panel.innerHTML = `
-            <div class="flex items-center justify-between mb-4">
+            <div class="w-12 h-1.5 bg-zinc-700 rounded-full mx-auto my-3"></div>
+
+            <div class="flex items-center justify-between mb-4 px-4">
                 <div class="flex items-center gap-3">
                     <div class="w-10 h-10 rounded-xl flex items-center justify-center ${avatarColor}">
                         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -343,7 +391,7 @@ const Admin = {
                 </button>
             </div>
 
-            <div class="space-y-3 text-sm">
+            <div class="space-y-3 text-sm px-4">
                 <div class="flex justify-between">
                     <span class="text-surface-500 dark:text-surface-400">ID</span>
                     <span class="text-surface-900 dark:text-zinc-100 font-medium">${user.id}</span>
@@ -394,23 +442,23 @@ const Admin = {
             </div>
 
             ${!isCurrentUser ? `
-            <div class="flex gap-2 mt-6 pt-4 border-t border-surface-200 dark:border-white/10">
+            <div class="flex flex-col gap-2 mt-6 pt-4 border-t border-surface-200 dark:border-white/10 px-4 pb-6">
                 <button data-action="modal-toggle-active" data-user-id="${user.id}" data-active="${user.is_active}"
-                        class="flex-1 px-3 py-2 rounded-xl text-sm font-semibold transition-all
+                        class="w-full px-3 py-2 rounded-xl text-sm font-semibold transition-all
                                ${user.is_active
                                    ? 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400 hover:bg-red-100'
                                    : 'bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-400 hover:bg-lime-200'}">
                     ${user.is_active ? 'Деактивировать' : 'Активировать'}
                 </button>
                 <button data-action="modal-toggle-admin" data-user-id="${user.id}" data-admin="${user.is_admin}"
-                        class="flex-1 px-3 py-2 rounded-xl text-sm font-semibold transition-all
+                        class="w-full px-3 py-2 rounded-xl text-sm font-semibold transition-all
                                ${user.is_admin
                                    ? 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400 hover:bg-red-100'
                                    : 'bg-primary-600 text-white hover:bg-primary-700'}">
                     ${user.is_admin ? 'Убрать админа' : 'Назначить админом'}
                 </button>
                 <button data-action="modal-reset-quota" data-user-id="${user.id}"
-                        class="px-3 py-2 rounded-xl text-sm font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors">
+                        class="w-full px-3 py-2 rounded-xl text-sm font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors">
                     Сбросить квоту
                 </button>
             </div>` : ''}
@@ -419,6 +467,15 @@ const Admin = {
         backdrop.appendChild(panel);
         host.appendChild(backdrop);
         this.userModal = backdrop;
+
+        // Backdrop click to close (click outside panel)
+        this._userModalBackdropClick = (e) => {
+            if (e.target === backdrop) {
+                Admin.closeUserModal();
+            }
+        };
+        backdrop.addEventListener('click', this._userModalBackdropClick);
+
         this._userModalKeydown = (e) => {
             if (e.key === 'Escape') Admin.closeUserModal();
         };
@@ -426,7 +483,7 @@ const Admin = {
 
         setTimeout(() => {
             backdrop.classList.remove('opacity-0');
-            panel.classList.remove('scale-95', 'opacity-0');
+            panel.classList.remove('translate-y-full');
         }, 10);
     },
 
@@ -435,7 +492,7 @@ const Admin = {
         if (!backdrop) return;
         const panel = backdrop.firstElementChild;
         backdrop.classList.add('opacity-0');
-        if (panel) panel.classList.add('scale-95', 'opacity-0');
+        if (panel) panel.classList.add('translate-y-full');
         setTimeout(() => {
             if (this.userModal === backdrop) {
                 backdrop.remove();
@@ -444,6 +501,10 @@ const Admin = {
             if (this._userModalKeydown) {
                 document.removeEventListener('keydown', this._userModalKeydown);
                 this._userModalKeydown = null;
+            }
+            if (this._userModalBackdropClick) {
+                backdrop.removeEventListener('click', this._userModalBackdropClick);
+                this._userModalBackdropClick = null;
             }
         }, 200);
     },

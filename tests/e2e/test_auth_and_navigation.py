@@ -7,23 +7,8 @@ Run with: pytest tests/e2e/test_auth_and_navigation.py -v
 import pytest
 import pytest_asyncio
 from playwright.async_api import BrowserContext, Page, async_playwright
-from sqlalchemy import delete
-
-from app.db.session import async_session_maker
-from app.models import User
 
 BASE_URL = "http://localhost:8000"
-
-
-@pytest_asyncio.fixture(scope="session", autouse=True)
-async def cleanup_test_users():
-    """Session-level teardown to clean up test users after all tests complete."""
-    yield
-    # Teardown: delete test users matching patterns
-    async with async_session_maker() as db:
-        await db.execute(delete(User).where(User.email.like('test_%@example.com')))
-        await db.execute(delete(User).where(User.email.like('test_%@%.com')))
-        await db.commit()
 
 
 @pytest_asyncio.fixture(scope="session")
