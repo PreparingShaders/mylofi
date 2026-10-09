@@ -1,44 +1,50 @@
-# Plan: Test Suite Audit and Fixes for 100% Passing & Zero Warnings
+# Plan: Test Suite Fixes and Admin Bottom Sheet (User Modal) Z-Index & Clickability Fix
 
 ## Goal
-Conduct a complete audit of the test suite configuration and test files, resolve all test failures, deprecation warnings, and miscollected diagnostic scripts, ensuring `pytest` runs cleanly with 100% PASSED and no warnings.
+1. Fix test suite configuration and imports (`pytest.ini`, `tests/conftest.py`, `test_AI_model.py`) to achieve 100% passing tests with zero warnings.
+2. Fix the Admin User Modal (Bottom Sheet) z-index, pointer-events, background scroll locking, and close button clickability in `static/js/admin.js`.
 
-## Audit Findings & Analysis
+---
+
+## Part 1: Test Suite Audit & Fixes
 
 1. **`tests/conftest.py`**:
-   - **Issue**: Missing `import pytest_asyncio` causing `NameError: name 'pytest_asyncio' is not defined` on `@pytest_asyncio.fixture`.
-   - **Fix**: Add `import pytest_asyncio` to the top of `tests/conftest.py`.
-
+   - Add `import pytest_asyncio` at the top of the file to fix `NameError: name 'pytest_asyncio' is not defined`.
 2. **`pytest.ini`**:
-   - **Issue**: Missing explicit asyncio default fixture loop scope and pythonpath settings, causing `PytestDeprecationWarning` regarding event loop scope and module path resolution.
-   - **Fix**: Update `pytest.ini` to include:
-     ```ini
-     [pytest]
-     asyncio_mode = auto
-     asyncio_default_fixture_loop_scope = session
-     pythonpath = .
-     ```
+   - Add `asyncio_default_fixture_loop_scope = session` and `pythonpath = .` to eliminate deprecation warnings and ensure proper module resolution.
+3. **`test_AI_model.py`**:
+   - Relocate from root directory (`test_AI_model.py`) to `scripts/test_AI_model.py` so pytest does not miscollect helper functions as test cases.
 
-3. **`test_AI_model.py` (Root Directory)**:
-   - **Issue**: Named `test_AI_model.py` at the root, which causes Pytest to collect helper functions (such as `test_model`) as actual test functions, leading to `TypeError` (missing required arguments).
-   - **Fix**: Move `test_AI_model.py` out of root test discovery (e.g., to `scripts/test_AI_model.py` or `tools/test_AI_model.py`) or exclude it in `pytest.ini` (`norecursedirs` or `python_files`).
+---
 
-4. **`test_ai_workout_rules.py`**:
-   - **Analysis**: Pure unit tests with mocks for AI workout rules, weekly limits (`can_run_workout_ai`), and exercise catalog mapping. Relies on correct async fixture configuration and event loop scope. No code changes needed in test logic once `pytest_asyncio` and `pytest.ini` are correctly configured.
+## Part 2: Admin User Modal (Bottom Sheet) Fixes (`static/js/admin.js`)
+
+1. **Pointer Events & Z-Index Hierarchy**:
+   - Since modals are mounted inside `#modals` (which has `pointer-events-none`), add `pointer-events-auto` to the modal `backdrop`.
+   - Ensure clear z-index separation: backdrop at `z-50`, panel at `z-[60]` (or ensure panel sits cleanly above backdrop and catches touches/clicks).
+2. **Background Scroll Lock**:
+   - When `showUserModal()` opens, add `document.body.classList.add('overflow-hidden')`.
+   - When `closeUserModal()` runs, remove `document.body.classList.remove('overflow-hidden')`.
+3. **Close Button (`×`) Tap Area & Clickability**:
+   - Expand the close button tap target (e.g., add `p-2.5` or `min-w-[44px] min-h-[44px]`, or ensure it has proper flex alignment and `pointer-events-auto`).
+   - Ensure event listeners for closing (`data-action="close-user-modal"`) correctly intercept clicks/touches without propagating to the background.
+
+---
 
 ## Implementation Steps
 
-1. **Update `pytest.ini`**:
-   - Add `asyncio_default_fixture_loop_scope = session` and `pythonpath = .`.
-   - Add test file discovery filters or ignore rules if needed.
-
-2. **Update `tests/conftest.py`**:
-   - Insert `import pytest_asyncio` right below `import pytest`.
-
-3. **Relocate Diagnostic Script (`test_AI_model.py`)**:
-   - Move `C:\PyProj\mylofi\test_AI_model.py` to `C:\PyProj\mylofi\scripts\test_AI_model.py` so pytest does not collect it as a test module.
+1. Update `pytest.ini` with asyncio loop scope and pythonpath.
+2. Update `tests/conftest.py` with `import pytest_asyncio`.
+3. Move `test_AI_model.py` to `scripts/test_AI_model.py`.
+4. Update `static/js/admin.js` in `showUserModal` and `closeUserModal`:
+   - Add `pointer-events-auto` to backdrop.
+   - Adjust z-index of panel (`z-[60]`) relative to backdrop (`z-50`).
+   - Add/remove `overflow-hidden` on `document.body`.
+   - Improve close button size and touch target (`p-2.5`, `min-w-[44px] min-h-[44px]`).
 
 ## Validation Plan
-- Run python `-m pytest -v` using the virtual environment interpreter (`.venv\Scripts\pytest.exe`).
-- Verify zero failures, zero errors, and zero deprecation warnings.
-- Confirm all unit and E2E tests pass (including `test_ai_workout_rules.py`, `test_auth.py`, `tests/e2e/test_auth_and_navigation.py`, etc.).
+- Run `pytest` via `.venv\Scripts\pytest.exe` to verify all tests pass with zero warnings.
+- Manually test the Admin User Modal in browser:
+  - Verify background scrolling is locked when modal is open.
+  - Verify clicks outside the sheet (on backdrop) close the modal.
+  - Verify buttons and close button (`×`) inside the bottom sheet respond immediately to taps/clicks.

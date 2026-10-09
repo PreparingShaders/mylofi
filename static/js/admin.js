@@ -357,10 +357,10 @@ const Admin = {
         const host = document.getElementById('modals') || document.body;
 
         const backdrop = document.createElement('div');
-        backdrop.className = 'fixed inset-0 z-50 bg-black/40 backdrop-blur-sm opacity-0 transition-opacity duration-200';
+        backdrop.className = 'fixed inset-0 z-50 bg-black/40 backdrop-blur-sm opacity-0 transition-opacity duration-200 pointer-events-auto';
 
         const panel = document.createElement('div');
-        panel.className = 'fixed inset-x-0 bottom-0 z-50 glass-strong rounded-t-2xl max-h-[85vh] overflow-y-auto transform transition-transform duration-200 translate-y-full';
+        panel.className = 'fixed inset-x-0 bottom-0 z-[60] glass-strong rounded-t-2xl max-h-[85vh] overflow-y-auto transform transition-transform duration-200 translate-y-full pointer-events-auto';
 
         const avatarColor = user.is_admin
             ? 'bg-lime-500/10 text-lime-400'
@@ -383,7 +383,7 @@ const Admin = {
                         <p class="text-sm text-surface-500 dark:text-surface-400">${escapeHtml(user.email)}</p>
                     </div>
                 </div>
-                <button data-action="close-user-modal" class="w-7 h-7 rounded-lg flex items-center justify-center text-surface-500 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-white/5 transition-colors">
+                <button data-action="close-user-modal" class="min-w-[44px] min-h-[44px] p-2.5 rounded-lg flex items-center justify-center text-surface-500 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-white/5 transition-colors">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                 </button>
             </div>
@@ -469,6 +469,9 @@ const Admin = {
         host.appendChild(backdrop);
         this.userModal = backdrop;
 
+        // Lock background scroll
+        document.body.classList.add('overflow-hidden');
+
         // Backdrop click to close (click outside panel)
         this._userModalBackdropClick = (e) => {
             if (e.target === backdrop) {
@@ -499,6 +502,8 @@ const Admin = {
                 backdrop.remove();
                 this.userModal = null;
             }
+            // Restore background scroll
+            document.body.classList.remove('overflow-hidden');
             if (this._userModalKeydown) {
                 document.removeEventListener('keydown', this._userModalKeydown);
                 this._userModalKeydown = null;
