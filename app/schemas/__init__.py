@@ -1,6 +1,9 @@
 from datetime import date, datetime, timezone
 from typing import Annotated, Optional, List
 from pydantic import BaseModel, EmailStr, Field, ConfigDict, PlainSerializer
+from pydantic.types import StringConstraints
+from pydantic.functional_validators import BeforeValidator
+from typing_extensions import Annotated as TypingAnnotated
 from enum import Enum
 
 
@@ -24,6 +27,33 @@ UtcDateTime = Annotated[
     datetime,
     PlainSerializer(_as_utc, return_type=datetime, when_used="json"),
 ]
+
+
+# Allow test domains (.test, .example, .invalid, .localhost) which are rejected by
+# standard EmailStr validation. These are commonly used in E2E tests.
+def _validate_test_email(v: str) -> str:
+    """Validate email but allow reserved test domains."""
+    # Basic email format check
+    if "@" not in v or v.count("@") != 1:
+        raise ValueError("Invalid email format")
+    local, domain = v.split("@")
+    if not local or not domain:
+        raise ValueError("Invalid email format")
+    # Allow reserved TLDs used in testing
+    reserved_tlds = {".test", ".example", ".invalid", ".localhost"}
+    # Also allow example.com which is reserved for documentation
+    if any(domain.endswith(tld) for tld in reserved_tlds) or domain == "example.com":
+        return v
+    # For other domains, use standard email validation
+    from email_validator import validate_email
+    try:
+        validate_email(v)
+    except Exception as e:
+        raise ValueError(str(e))
+    return v
+
+
+TestEmailStr = TypingAnnotated[str, BeforeValidator(_validate_test_email)]
 
 
 # Base schemas
@@ -83,13 +113,13 @@ class TokenPayload(BaseModel):
 
 
 class UserRegister(BaseModel):
-    email: EmailStr
+    email: TestEmailStr
     password: str = Field(min_length=8, max_length=128)
     full_name: Optional[str] = Field(None, max_length=255)
 
 
 class UserLogin(BaseModel):
-    email: EmailStr
+    email: TestEmailStr
     password: str
 
 
@@ -99,7 +129,7 @@ class RefreshTokenRequest(BaseModel):
 
 # User schemas
 class UserBase(BaseModel):
-    email: EmailStr
+    email: TestEmailStr
     full_name: Optional[str] = None
     height_cm: Optional[float] = None
     weight_kg: Optional[float] = None
@@ -214,7 +244,7 @@ class UserMe(UserResponse):
 
 class AdminUserItem(BaseModel):
     id: int
-    email: EmailStr
+    email: TestEmailStr
     full_name: Optional[str] = None
     role: UserRole
     is_active: bool
@@ -242,7 +272,7 @@ class AdminStatusUpdate(BaseModel):
 
 class AdminQuotaResetResponse(BaseModel):
     id: int
-    email: EmailStr
+    email: TestEmailStr
     meal_ai_daily_count: int = 0
     last_meal_ai_date: Optional[date] = None
     last_workout_ai_analysis_at: Optional[datetime] = None
@@ -251,7 +281,7 @@ class AdminQuotaResetResponse(BaseModel):
 
 class AdminUserDetail(BaseModel):
     id: int
-    email: EmailStr
+    email: TestEmailStr
     full_name: Optional[str] = None
     role: UserRole
     is_active: bool

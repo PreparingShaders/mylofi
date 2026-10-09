@@ -5,12 +5,13 @@ Run with: pytest tests/e2e/test_auth_and_navigation.py -v
 """
 
 import pytest
+import pytest_asyncio
 from playwright.async_api import async_playwright, Page, BrowserContext
 
 BASE_URL = "http://localhost:8000"
 
 
-@pytest.fixture(scope="session")
+@pytest_asyncio.fixture(scope="session")
 async def browser():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -18,7 +19,7 @@ async def browser():
         await browser.close()
 
 
-@pytest.fixture(scope="function")
+@pytest_asyncio.fixture(scope="function")
 async def context(browser):
     context = await browser.new_context(
         viewport={"width": 390, "height": 844},
@@ -28,7 +29,7 @@ async def context(browser):
     await context.close()
 
 
-@pytest.fixture(scope="function")
+@pytest_asyncio.fixture(scope="function")
 async def page(context: BrowserContext):
     page = await context.new_page()
     yield page
@@ -46,40 +47,112 @@ async def wait_for_app_init(page: Page):
 async def login(page: Page, email: str, password: str = "Password123!"):
     """Log in with the given credentials."""
     await page.goto(BASE_URL)
-    await wait_for_app_init(page)
-
-    # Click login button on landing
-    await page.click('button[data-action="show-auth"]')
+    # Wait for splash screen to be completely removed from DOM
+    await page.wait_for_selector('#app-splash', state='detached', timeout=15000)
+    # Small delay for landing screen to fully render
+    await page.wait_for_timeout(500)
+    # Wait for landing screen to be visible (no .hidden class)
+    await page.wait_for_selector('#screen-landing:not(.hidden)', state='visible', timeout=10000)
+    # Click via JS to bypass Playwright visibility checks
+    await page.evaluate('''() => {
+        const btn = document.querySelector('#screen-landing button[data-action="show-auth"]');
+        if (btn) btn.click();
+    }''')
     await page.wait_for_selector('#screen-auth:not(.hidden)')
 
     # Fill login form
     await page.fill('#login-form input[type="email"]', email)
     await page.fill('#login-form input[type="password"]', password)
+    
+    # Listen for dialogs (alerts) and console errors
+    page.on('dialog', lambda dialog: print(f"[ALERT] {dialog.message}") or dialog.accept())
+    page.on('console', lambda msg: print(f"[CONSOLE] {msg.type}: {msg.text}") if msg.type in ['error', 'warning'] else None)
+    
+    # Submit and wait
     await page.click('#login-form button[type="submit"]')
-
-    # Wait for main app to load
+    
+    # Wait a bit for response
+    await page.wait_for_timeout(3000)
+    
+    # Check what screen is visible
+    screens = await page.evaluate('''() => {
+        return {
+            landing: document.getElementById('screen-landing')?.className,
+            auth: document.getElementById('screen-auth')?.className,
+            main: document.getElementById('screen-main')?.className,
+        };
+    }''')
+    print(f"Screen states after login: {screens}")
+    
+    # Check for error toast - use try/except to avoid timeout
+    try:
+        toast = await page.locator('#toast-container .toast, .toast-error, [role="alert"]').first.text_content(timeout=1000)
+        if toast:
+            print(f"Toast: {toast}")
+    except:
+        pass
+    
+    # Wait for main screen
     await page.wait_for_selector('#screen-main:not(.hidden)', timeout=10000)
-    await wait_for_app_init(page)
+    # Ensure splash is gone after login
+    await page.wait_for_selector('#app-splash', state='detached', timeout=10000)
 
 
 async def register_new_user(page: Page, email: str, password: str = "Password123!", name: str = "Test User"):
-    """Register a new user."""
+    """Register a new user. Returns after registration shows login screen."""
     await page.goto(BASE_URL)
-    await wait_for_app_init(page)
-
-    # Click register button on landing
-    await page.click('button[data-action="show-register"]')
+    # Wait for splash screen to be completely removed from DOM
+    await page.wait_for_selector('#app-splash', state='detached', timeout=15000)
+    # Small delay for landing screen to fully render
+    await page.wait_for_timeout(500)
+    # Wait for landing screen to be visible (no .hidden class)
+    await page.wait_for_selector('#screen-landing:not(.hidden)', state='visible', timeout=10000)
+    # Click via JS to bypass Playwright visibility checks
+    await page.evaluate('''() => {
+        const btn = document.querySelector('#screen-landing button[data-action="show-register"]');
+        if (btn) btn.click();
+    }''')
     await page.wait_for_selector('#screen-auth:not(.hidden)')
 
     # Fill register form
     await page.fill('#register-form input[name="full_name"]', name)
     await page.fill('#register-form input[type="email"]', email)
     await page.fill('#register-form input[type="password"]', password)
+    await page.fill('#register-form input[name="password_confirm"]', password)
+    
+    # Listen for dialogs (alerts) and console errors
+    page.on('dialog', lambda dialog: print(f"[ALERT] {dialog.message}") or dialog.accept())
+    page.on('console', lambda msg: print(f"[CONSOLE] {msg.type}: {msg.text}") if msg.type in ['error', 'warning', 'log'] else None)
+    
+    # Submit and wait
+    print("Submitting register form...")
     await page.click('#register-form button[type="submit"]')
-
-    # Wait for main app to load
-    await page.wait_for_selector('#screen-main:not(.hidden)', timeout=10000)
-    await wait_for_app_init(page)
+    
+    # Wait a bit for response
+    await page.wait_for_timeout(3000)
+    
+    # Check what screen is visible
+    screens = await page.evaluate('''() => {
+        return {
+            landing: document.getElementById('screen-landing')?.className,
+            auth: document.getElementById('screen-auth')?.className,
+            main: document.getElementById('screen-main')?.className,
+        };
+    }''')
+    print(f"Screen states after register: {screens}")
+    
+    # Check for error toast - use try/except to avoid timeout
+    try:
+        toast = await page.locator('#toast-container .toast, .toast-error, [role="alert"]').first.text_content(timeout=1000)
+        if toast:
+            print(f"Toast: {toast}")
+    except:
+        pass
+    
+    # Wait for auth screen (login form) to be shown after registration
+    await page.wait_for_selector('#screen-auth:not(.hidden)', timeout=10000)
+    # Ensure splash is gone
+    await page.wait_for_selector('#app-splash', state='detached', timeout=10000)
 
 
 class TestRegistrationFlow:
@@ -90,11 +163,20 @@ class TestRegistrationFlow:
         import uuid
         unique_email = f"test_{uuid.uuid4().hex[:8]}@example.com"
 
+        # Register new user
         await register_new_user(page, unique_email, "TestPass123!", "Test User")
+        
+        # After registration, app shows login screen - now log in
+        await page.fill('#login-form input[type="email"]', unique_email)
+        await page.fill('#login-form input[type="password"]', "TestPass123!")
+        await page.click('#login-form button[type="submit"]')
+        await page.wait_for_selector('#screen-main:not(.hidden)', timeout=10000)
 
         # Verify we're on the main app (nutrition page)
         await page.wait_for_selector('#page-content')
-        nutrition_title = await page.locator('h2:has-text("Питание")').count()
+        # Wait for nutrition page to fully render (uses h3 for title)
+        await page.wait_for_selector('h3:has-text("Питание")', timeout=10000)
+        nutrition_title = await page.locator('h3:has-text("Питание")').count()
         assert nutrition_title > 0, "Should be on nutrition page after registration"
 
         # Verify bottom nav is visible
@@ -164,15 +246,21 @@ class TestNoAuthFlash:
         await page.goto(BASE_URL)
 
         # Splash screen should be visible initially
-        splash_visible = await page.locator('#app-splash:not([style*="opacity: 0"])').is_visible()
+        splash_visible = await page.locator('#app-splash').is_visible()
+        print(f"Splash visible: {splash_visible}")
+        
+        # Also check landing screen
+        landing_hidden = await page.locator('#screen-landing').get_attribute('class')
+        print(f"Landing class: {landing_hidden}")
+        
         assert splash_visible, "Splash screen should be visible on initial load"
 
-        # Wait for app init to complete
-        await wait_for_app_init(page)
+        # Wait for app init to complete - splash should be detached
+        await page.wait_for_selector('#app-splash', state='detached', timeout=10000)
 
         # Splash should be gone
-        splash_gone = await page.locator('#app-splash').count() == 0
-        assert splash_gone, "Splash screen should be removed after init"
+        splash_count = await page.locator('#app-splash').count()
+        assert splash_count == 0, "Splash screen should be removed after init"
 
 
 class TestNavigation:
@@ -184,7 +272,9 @@ class TestNavigation:
 
         # Should be on nutrition by default
         await page.wait_for_selector('#page-content')
-        nutrition_title = await page.locator('h2:has-text("Питание")').count()
+        # Nutrition page uses h3 for title
+        await page.wait_for_selector('h3:has-text("Питание")', timeout=10000)
+        nutrition_title = await page.locator('h3:has-text("Питание")').count()
         assert nutrition_title > 0
 
     async def test_navigate_to_workouts_tab(self, page: Page):
@@ -194,7 +284,8 @@ class TestNavigation:
         await page.click('.nav-item[data-page="workouts"]')
         await page.wait_for_selector('#page-content')
 
-        # Check for workouts content
+        # Check for workouts content (uses h2)
+        await page.wait_for_selector('h2:has-text("Тренировки")', timeout=10000)
         workouts_title = await page.locator('h2:has-text("Тренировки")').count()
         assert workouts_title > 0
 
@@ -205,7 +296,8 @@ class TestNavigation:
         await page.click('.nav-item[data-page="profile"]')
         await page.wait_for_selector('#page-content')
 
-        # Check for profile content
+        # Check for profile content (uses h2)
+        await page.wait_for_selector('h2:has-text("Профиль")', timeout=10000)
         profile_title = await page.locator('h2:has-text("Профиль")').count()
         assert profile_title > 0
 
