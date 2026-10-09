@@ -36,7 +36,7 @@ const Admin = {
             <div class="admin-panel space-y-6">
                 <div id="admin-stats" class="space-y-4"></div>
 
-                <div class="flex flex-col sm:flex-row gap-3">
+                <div class="flex flex-col sm:flex-row gap-2">
                     <div class="relative flex-1">
                         <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-400 dark:text-surface-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
@@ -137,7 +137,7 @@ const Admin = {
             const statsEl = this.container.querySelector('#admin-stats');
             if (!statsEl) return;
             statsEl.innerHTML = `
-                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
                     <div class="glass rounded-2xl p-4">
                         <p class="text-xs text-surface-500 dark:text-surface-400 font-medium uppercase tracking-wider">Всего пользователей</p>
                         <p class="text-2xl font-bold text-surface-900 dark:text-zinc-100 mt-1">${stats.total_users}</p>
@@ -188,7 +188,7 @@ const Admin = {
 
             listEl.innerHTML = `
                 <div class="glass rounded-2xl overflow-hidden">
-                    <div class="overflow-x-auto w-full -mx-4 px-4 sm:mx-0 sm:px-0">
+                    <div class="w-full overflow-x-auto scrollbar-thin">
                         <table class="w-full text-sm">
                             <thead>
                                 <tr class="border-b border-surface-200 dark:border-white/10">

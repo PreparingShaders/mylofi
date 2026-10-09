@@ -6,9 +6,24 @@ Run with: pytest tests/e2e/test_auth_and_navigation.py -v
 
 import pytest
 import pytest_asyncio
-from playwright.async_api import async_playwright, Page, BrowserContext
+from playwright.async_api import BrowserContext, Page, async_playwright
+from sqlalchemy import delete
+
+from app.db.session import async_session_maker
+from app.models import User
 
 BASE_URL = "http://localhost:8000"
+
+
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def cleanup_test_users():
+    """Session-level teardown to clean up test users after all tests complete."""
+    yield
+    # Teardown: delete test users matching patterns
+    async with async_session_maker() as db:
+        await db.execute(delete(User).where(User.email.like('test_%@example.com')))
+        await db.execute(delete(User).where(User.email.like('test_%@%.com')))
+        await db.commit()
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -89,7 +104,7 @@ async def login(page: Page, email: str, password: str = "Password123!"):
         toast = await page.locator('#toast-container .toast, .toast-error, [role="alert"]').first.text_content(timeout=1000)
         if toast:
             print(f"Toast: {toast}")
-    except:
+    except Exception:
         pass
     
     # Wait for main screen
@@ -146,7 +161,7 @@ async def register_new_user(page: Page, email: str, password: str = "Password123
         toast = await page.locator('#toast-container .toast, .toast-error, [role="alert"]').first.text_content(timeout=1000)
         if toast:
             print(f"Toast: {toast}")
-    except:
+    except Exception:
         pass
     
     # Wait for auth screen (login form) to be shown after registration
