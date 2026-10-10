@@ -107,6 +107,9 @@ class User(Base):
     daily_summaries: Mapped[list["DailySummary"]] = relationship(
         "DailySummary", back_populates="user", cascade="all, delete-orphan"
     )
+    period_summaries: Mapped[list["PeriodSummary"]] = relationship(
+        "PeriodSummary", back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class RefreshToken(Base):
@@ -201,6 +204,53 @@ class DailySummary(Base):
     user: Mapped["User"] = relationship("User", back_populates="daily_summaries")
 
     __table_args__ = (UniqueConstraint("user_id", "date", name="uq_daily_summaries_user_date"),)
+
+
+class PeriodSummary(Base):
+    """One AI-written recap of a week or a month of nutrition.
+
+    One row per (user, period_type, range): the endpoint regenerates in place
+    rather than appending, so a period never collects several takes of the same
+    recap and a re-read of the card can never pick up a stale one. A week and a
+    month that happen to share the same start date are distinct rows, because
+    they cover different spans and answer different questions.
+    """
+
+    __tablename__ = "period_summaries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    # "week" or "month" - the period presets the recap was written for. Kept as a
+    # plain string rather than an Enum so a retired preset never breaks a read.
+    period_type: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    # The user's local calendar day the range starts and ends on. Stored as plain
+    # dates so the recap survives the client that asked for it going away.
+    start_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    summary_text: Mapped[str] = mapped_column(Text, nullable=False)
+    overall_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Persona the recap was written in. Copied from the profile at generation
+    # time, for the same reason meals and daily recaps carry theirs: switching
+    # persona must not relabel text that was written in another voice.
+    ai_persona: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    user: Mapped["User"] = relationship("User", back_populates="period_summaries")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "period_type",
+            "start_date",
+            "end_date",
+            name="uq_period_summaries_user_range",
+        ),
+        Index("ix_period_summaries_user_range", "user_id", "period_type", "start_date", "end_date"),
+    )
 
 
 class WorkoutTemplate(Base):
@@ -366,6 +416,7 @@ __all__ = [
     "Meal",
     "MealStatus",
     "DailySummary",
+    "PeriodSummary",
     "WorkoutTemplate",
     "WorkoutTemplateExercise",
     "WorkoutSession",

@@ -236,15 +236,118 @@ const App = {
     
     renderLanding() {
         console.log('[App] Rendering landing...');
-        const card = (icon, title, text, extra = '') => `
-            <article class="landing-glass-strong rounded-2xl p-6 shadow-sm">
-                <div class="w-12 h-12 rounded-xl bg-lime-500/10 text-lime-400 flex items-center justify-center mb-4">
-                    ${icon}
+
+        /* ============ Apple-style sticky scroll showcase data ============ */
+
+        const showcaseChapters = [
+            {
+                id: 'landing-nutrition',
+                index: 0,
+                tag: 'Питание и рацион',
+                title: 'Устал записывать приемы пищи и считать каждый грамм?',
+                text: 'Есть решение — ИИ-анализ. Тебе просто нужно отправить фото, а наш умный ИИ-агент проанализирует еду, составит план и поможет следовать ему. Плюс продвинутые недельные и месячные отчеты для контроля динамики без суеты.',
+                points: [
+                    'Фото приёма пищи — и КБЖУ уже в дневнике',
+                    'План рациона, который помогает его держать',
+                    'Недельные и месячные отчёты для контроля динамики',
+                ],
+            },
+            {
+                id: 'landing-workouts',
+                index: 1,
+                tag: 'Тренировки и сила',
+                title: 'Забываешь вес, с которым сделал упражнение?',
+                text: 'Наш ИИ-агент подскажет, проанализирует тренировку, даст мотивацию и поможет добиться поставленных задач. Удобные графики динамики роста силы и персональные рекомендации по смене рабочего веса.',
+                points: [
+                    'Рабочие веса и повторы всегда под рукой',
+                    'Разбор тренировки и мотивация от ИИ-агента',
+                    'Графики силы и персональная прогрессия нагрузки',
+                ],
+            },
+            {
+                id: 'landing-synergy',
+                index: 2,
+                tag: 'ИИ-синергия',
+                title: 'Годами занимаешься, а спортивного тела нет?',
+                text: 'Спортивное тело — это совокупность факторов. Мы предлагаем уникальный комплексный анализ питания и тренировок. Синергия ИИ даст тебе точное понимание, где твои слабые, а где сильные стороны для прорыва.',
+                points: [
+                    'Рацион и нагрузка анализируются вместе',
+                    'Точная карта слабых и сильных сторон',
+                    'Понимание, что именно мешает прорыву',
+                ],
+            },
+        ];
+
+        // Screenshot assets — one per chapter (loaded as <img> inside the phone frame)
+        const showcaseImages = [
+            { src: '/static/images/image_24.png', alt: 'Питание' },
+            { src: '/static/images/image_25.png', alt: 'Тренировки' },
+            { src: '/static/images/image_26.png', alt: 'ИИ-Синергия' },
+        ];
+
+        // One screenshot for the mobile stack: shown statically under its chapter.
+        const mobilePhoneScreen = (index) => `
+            <img id="showcase-img-mobile-${index}" src="${showcaseImages[index].src}" alt="${showcaseImages[index].alt}"
+                 class="absolute inset-0 w-full h-full object-contain" />
+        `;
+
+        // Three stacked screenshots for the desktop sticky phone, cross-faded by
+        // the IntersectionObserver below via the opacity classes.
+        const stickyPhoneScreens = showcaseImages.map((image, i) => `
+            <img id="showcase-img-${i}" data-screen-index="${i}" src="${image.src}" alt="${image.alt}"
+                 class="landing-showcase-screen absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ease-in-out ${i === 0 ? 'opacity-100' : 'opacity-0'}"
+                 ${i === 0 ? '' : 'aria-hidden="true"'} />
+        `).join('');
+
+        // Device shell shared by the mobile stack and the desktop sticky column
+        const phoneFrame = (screenMarkup) => `
+            <div class="landing-phone-frame mx-auto w-[240px] sm:w-[264px]">
+                <div class="relative w-full aspect-[9/18.5] rounded-[33px] bg-zinc-950 overflow-hidden border border-black/60">
+                    ${screenMarkup}
                 </div>
-                <h3 class="text-base sm:text-lg font-semibold text-zinc-100 mb-2">${title}</h3>
-                <p class="text-sm text-zinc-400 leading-relaxed">${text}</p>
-                ${extra}
-            </article>
+            </div>
+        `;
+
+        // Chapter copy. Below md the matching phone screen is stacked right
+        // under the text; from md up only the sticky column shows the phone.
+        const chapterBlock = (chapter) => `
+            <div id="${chapter.id}" data-chapter-index="${chapter.index}"
+                 class="landing-chapter scroll-mt-24 flex flex-col justify-center py-14 md:min-h-[70vh] md:py-20">
+                <span class="mb-4 inline-flex items-center gap-1.5 self-start rounded-full border border-lime-500/20 bg-lime-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-lime-400">
+                    <span class="h-1.5 w-1.5 rounded-full bg-lime-400"></span>
+                    ${chapter.tag}
+                </span>
+                <h3 class="mb-4 max-w-xl text-2xl font-bold leading-tight tracking-tight text-zinc-100 sm:text-3xl">
+                    ${chapter.title}
+                </h3>
+                <p class="mb-6 max-w-xl text-sm leading-relaxed text-zinc-400 sm:text-base">
+                    ${chapter.text}
+                </p>
+                <ul class="max-w-xl space-y-2.5">
+                    ${chapter.points.map(point => `
+                        <li class="flex items-start gap-2.5 text-sm text-zinc-300">
+                            <svg class="mt-0.5 h-4 w-4 flex-shrink-0 text-lime-400" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path></svg>
+                            <span>${point}</span>
+                        </li>
+                    `).join('')}
+                </ul>
+                <div class="mt-8 flex justify-center md:hidden">
+                    ${phoneFrame(mobilePhoneScreen(chapter.index))}
+                </div>
+            </div>
+        `;
+
+        // Sticky phone on desktop: three stacked screenshots that cross-fade
+        const stickyPhone = () => `
+            <div class="hidden md:block">
+                <div class="sticky top-24">
+                    ${phoneFrame(`
+                        <div class="absolute inset-0">
+                            ${stickyPhoneScreens}
+                        </div>
+                    `)}
+                </div>
+            </div>
         `;
 
         this.elements.screens.landing.innerHTML = `
@@ -351,98 +454,25 @@ const App = {
                             </div>
                         </section>
 
-                        <!-- Section 1: Питание -->
-                        <section id="landing-nutrition" class="scroll-mt-20 max-w-5xl mx-auto w-full px-6 py-16 sm:py-20">
-                            <p class="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">Питание и рацион</p>
-                            <h2 class="text-2xl sm:text-3xl font-bold text-zinc-100 tracking-tight mb-3 max-w-2xl">
-                                Глубокая ИИ-оценка качества еды, а не просто цифры
-                            </h2>
-                            <p class="text-sm sm:text-base text-zinc-400 leading-relaxed max-w-2xl mb-10">
-                                Одно фото — и в дневнике появляется не только расклад по КБЖУ, но и полный разбор того, что ты ешь.
-                            </p>
-
-                            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                ${card(`
-                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0019.07 7H20a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path>
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 13a3 3 0 100-6 3 3 0 000 6z"></path>
-                                    </svg>`,
-                                    'КБЖУ из фото',
-                                    'Сфотографируй блюдо — ИИ распознает состав и сразу добавит калории, белки, жиры и углеводы в дневник.')}
-                                ${card(`
-                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                                    </svg>`,
-                                    'Оценка качества еды',
-                                    'Разбор жирнокислотного состава, чистоты ингредиентов и нутриентной плотности каждого приёма пищи.')}
-                                ${card(`
-                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
-                                    </svg>`,
-                                    'Итоговый балл 0–100',
-                                    'Оценка влияния рациона на здоровье: насколько блюдо насыщает, а насколько перегружает организм.')}
+                        <!-- Apple-style sticky scroll showcase -->
+                        <section class="relative max-w-6xl mx-auto w-full px-6 py-16 sm:py-24">
+                            <div class="text-center mb-12 sm:mb-16">
+                                <span class="mb-4 inline-block rounded-full border border-lime-500/20 bg-lime-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-lime-400">
+                                    Как это работает
+                                </span>
+                                <h2 class="mx-auto max-w-2xl text-2xl font-bold leading-tight tracking-tight text-zinc-100 sm:text-3xl lg:text-4xl">
+                                    Три шага, которые убирают рутину
+                                </h2>
+                                <p class="mx-auto mt-4 max-w-xl text-sm leading-relaxed text-zinc-400 sm:text-base">
+                                    Листайте вниз — экран приложения меняется вместе с историей.
+                                </p>
                             </div>
-                        </section>
 
-                        <!-- Section 2: Тренировки -->
-                        <section id="landing-workouts" class="scroll-mt-20 max-w-5xl mx-auto w-full px-6 py-16 sm:py-20">
-                            <p class="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">Тренировки и объём</p>
-                            <h2 class="text-2xl sm:text-3xl font-bold text-zinc-100 tracking-tight mb-3 max-w-2xl">
-                                Прогрессивная нагрузка под контролем
-                            </h2>
-                            <p class="text-sm sm:text-base text-zinc-400 leading-relaxed max-w-2xl mb-10">
-                                Собери свою программу, фиксируй каждую рабочую сессию и видишь, как растёт объём от недели к неделе.
-                            </p>
-
-                            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                ${card(`
-                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7.5 12a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"></path>
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.5 12a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"></path>
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v6M2.5 12h19"></path>
-                                    </svg>`,
-                                    'Конструктор и журнал',
-                                    'Собери собственную программу тренировок и фиксируй подходы, повторы и рабочий вес в пару касаний.')}
-                                ${card(`
-                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V5m0 14a2 2 0 100 4 2 2 0 000-4zm0-14a2 2 0 100-4 2 2 0 000 4zm6 0v14m0 0a2 2 0 100 4 2 2 0 000-4zm0-18a2 2 0 100-4 2 2 0 000 4z"></path>
-                                    </svg>`,
-                                    'Тоннаж и прогрессия',
-                                    'Общий объём, количество подходов и серия недель подряд — динамика нагрузки без ручных расчётов.')}
-                                ${card(`
-                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                                    </svg>`,
-                                    'Разбор и восстановление',
-                                    'Автоматический анализ выполненной тренировки и персональные рекомендации по восстановлению.',
-                                    '<span class="inline-flex items-center mt-4 text-[10px] font-semibold uppercase tracking-wider text-lime-400 bg-lime-500/10 border border-lime-500/20 px-2.5 py-1 rounded-full">Скоро</span>')}
-                            </div>
-                        </section>
-
-                        <!-- Section 3: Синергия -->
-                        <section id="landing-synergy" class="scroll-mt-20 max-w-5xl mx-auto w-full px-6 py-16 sm:py-20">
-                            <p class="text-xs font-semibold text-lime-400 uppercase tracking-wider mb-2">Уникальная синергия</p>
-                            <h2 class="text-2xl sm:text-3xl font-bold text-zinc-100 tracking-tight mb-3 max-w-2xl">
-                                Связка питания и тренировок в одном ИИ-ядре
-                            </h2>
-                            <p class="text-sm sm:text-base text-zinc-400 leading-relaxed max-w-2xl mb-10">
-                                MyLofi анализирует не два журнала по отдельности, а их взаимосвязь — то, что не умеет ни одно изолированное приложение.
-                            </p>
-
-                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                ${card(`
-                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 010 5.656l-3 3a4 4 0 01-5.656-5.656l1.5-1.5"></path>
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.172 13.828a4 4 0 010-5.656l3-3a4 4 0 015.656 5.656l-1.5 1.5"></path>
-                                    </svg>`,
-                                    'Сквозной анализ данных',
-                                    'ИИ сопоставляет твой рацион с фактической нагрузкой и видит картину целиком, а не два разрыва журнала.')}
-                                ${card(`
-                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
-                                    </svg>`,
-                                    'Точечные корректировки',
-                                    'Находит узкие места и слабые звенья восстановления, подсказывая, сколько калорий или объёма добавить именно тебе.')}
+                            <div class="md:grid md:grid-cols-2 md:gap-12 lg:gap-16 md:items-start">
+                                <div>
+                                    ${showcaseChapters.map(chapterBlock).join('')}
+                                </div>
+                                ${stickyPhone()}
                             </div>
                         </section>
 
@@ -469,6 +499,53 @@ const App = {
                 </div>
             </div>
         `;
+
+        this.initLandingShowcase();
+    },
+
+    /**
+     * Apple-style sticky scroll showcase: cross-fade the three app screenshots
+     * while the matching chapter crosses the middle of the viewport, and light
+     * up the active chapter. Re-inits cleanly whenever the landing markup is
+     * re-rendered (logout, failed token validation) by dropping the old observer.
+     */
+    initLandingShowcase() {
+        if (this._showcaseObserver) {
+            this._showcaseObserver.disconnect();
+            this._showcaseObserver = null;
+        }
+
+        const root = this.elements.screens.landing;
+        if (!root || !('IntersectionObserver' in window)) return;
+
+        const chapters = Array.from(root.querySelectorAll('[data-chapter-index]'));
+        const screens = Array.from(root.querySelectorAll('[data-screen-index]'));
+        if (!chapters.length || !screens.length) return;
+
+        const setActiveChapter = (index) => {
+            screens.forEach(screen => {
+                const active = Number(screen.dataset.screenIndex) === index;
+                screen.classList.toggle('opacity-100', active);
+                screen.classList.toggle('opacity-0', !active);
+                screen.classList.toggle('pointer-events-none', !active);
+                if (active) screen.removeAttribute('aria-hidden');
+                else screen.setAttribute('aria-hidden', 'true');
+            });
+            chapters.forEach(chapter => {
+                chapter.classList.toggle('is-chapter-active', Number(chapter.dataset.chapterIndex) === index);
+            });
+        };
+
+        setActiveChapter(0);
+
+        this._showcaseObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (!entry.isIntersecting) return;
+                setActiveChapter(Number(entry.target.dataset.chapterIndex));
+            });
+        }, { rootMargin: '-30% 0px -30% 0px', threshold: 0 });
+
+        chapters.forEach(chapter => this._showcaseObserver.observe(chapter));
     },
 
     toggleLandingMenu(force) {

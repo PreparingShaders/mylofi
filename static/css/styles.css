@@ -2377,6 +2377,53 @@ input[data-field="reps"] {
     box-shadow: 0 0 20px rgba(132, 204, 22, 0.25);
 }
 
+/* ============ Landing: Apple-style Sticky Scroll Showcase ============ */
+
+/* Realistic phone shell: graphite bezel, deep drop shadow, faint lime rim light */
+.landing-phone-frame {
+    position: relative;
+    overflow: hidden;
+    border-radius: 42px;
+    padding: 9px;
+    background: linear-gradient(155deg, #52525b 0%, #27272a 32%, #09090b 72%, #000000 100%);
+    box-shadow:
+        0 0 0 1px rgba(82, 82, 91, 0.55),
+        0 30px 60px -25px rgba(0, 0, 0, 0.95),
+        0 0 70px -18px rgba(132, 204, 22, 0.18);
+}
+
+/* Screenshots fill the rounded screen and never bleed past the bezel */
+.landing-phone-frame img {
+    display: block;
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+}
+
+/* Cross-fade between the three in-app screens inside the phone mockup */
+.landing-showcase-screen {
+    transition: opacity 0.5s ease-in-out;
+}
+
+/* Desktop only: the chapter currently driving the phone is fully lit, the
+   others stay dimmed so the eye stays on the active one. Mobile shows the
+   plain vertical stack, so no dimming there. */
+@media (min-width: 768px) {
+    .landing-chapter {
+        opacity: 0.4;
+        transition: opacity 0.45s ease;
+    }
+    .landing-chapter.is-chapter-active {
+        opacity: 1;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .landing-showcase-screen,
+    .landing-chapter {
+        transition: none;
+    }
+}
+
 /* ============ Landing Mobile Menu ============ */
 
 .landing-menu-backdrop,
