@@ -27,6 +27,8 @@ const App = {
         pendingPhotos: [],
         activeWorkout: null,
         currentSessionId: null,
+        landingCarouselState: {},
+        _showcaseImages: null,
     },
     
     elements: {},
@@ -42,38 +44,42 @@ const App = {
             return;
         }
 
-        // Render landing immediately so user sees something
-        this.showScreen('landing');
-        this.renderLanding();
-        this.setupEventListeners();
-        this.setupOfflineSync();
-        this.loadTokens();
-        this.setupNetworkBanner();
-
-        // DB init is non-critical
         try {
-            await DB.init();
-            await this.initSyncEngine();
-        } catch (e) {
-            console.warn('[App] DB/Sync init failed:', e);
-        }
+            // Render landing immediately so user sees something
+            this.showScreen('landing');
+            this.renderLanding();
+            this.setupEventListeners();
+            this.setupOfflineSync();
+            this.loadTokens();
+            this.setupNetworkBanner();
 
-        if (this.state.tokens.access) {
-            console.log('[App] Token found, validating...');
+            // DB init is non-critical
             try {
-                await this.validateToken();
+                await DB.init();
                 await this.initSyncEngine();
             } catch (e) {
-                console.error('[App] Token validation failed:', e);
-                this.showScreen('landing');
-                this.renderLanding();
+                console.warn('[App] DB/Sync init failed:', e);
             }
+
+            if (this.state.tokens.access) {
+                console.log('[App] Token found, validating...');
+                try {
+                    await this.validateToken();
+                    await this.initSyncEngine();
+                } catch (e) {
+                    console.error('[App] Token validation failed:', e);
+                    this.showScreen('landing');
+                    this.renderLanding();
+                }
+            }
+
+            await this.flushOfflineQueue();
+        } finally {
+            // Hide splash screen after auth determination — always, even if
+            // rendering or auth check threw an error. Otherwise a UI exception
+            // leaves the spinner visible forever.
+            this.hideSplash();
         }
-
-        await this.flushOfflineQueue();
-
-        // Hide splash screen after auth determination
-        this.hideSplash();
 
         console.log('[App] Initialized');
     },
@@ -239,6 +245,9 @@ const App = {
 
         /* ============ Apple-style sticky scroll showcase data ============ */
 
+        // Three chapters: nutrition, workouts, and the upcoming AI Synergy module.
+        // The 3rd chapter carries a "Скоро" badge and a placeholder slide inside
+        // the phone carousel; its screenshot (image_26.png) is already staged.
         const showcaseChapters = [
             {
                 id: 'landing-nutrition',
@@ -265,44 +274,107 @@ const App = {
                 ],
             },
             {
-                id: 'landing-synergy',
+                id: 'landing-ai-synergy',
                 index: 2,
-                tag: 'ИИ-синергия',
+                tag: 'ИИ-СИНЕРГИЯ · СКОРО',
                 title: 'Годами занимаешься, а спортивного тела нет?',
-                text: 'Спортивное тело — это совокупность факторов. Мы предлагаем уникальный комплексный анализ питания и тренировок. Синергия ИИ даст тебе точное понимание, где твои слабые, а где сильные стороны для прорыва.',
+                text: 'Уникальный комплексный анализ питания и тренировок. Синергия ИИ даст точное понимание сильных и слабых сторон.',
                 points: [
-                    'Рацион и нагрузка анализируются вместе',
-                    'Точная карта слабых и сильных сторон',
-                    'Понимание, что именно мешает прорыву',
+                    'Комплексный анализ питания и тренировок вместе',
+                    'ИИ находит сильные и слабые стороны',
+                    'Модуль в разработке',
+                ],
+                comingSoon: true,
+            },
+        ];
+
+        // Screenshot assets — one primary slide per chapter, plus optional extra
+        // slides for the chapters that already have several screenshots on disk.
+        // The phone carousel cross-fades between the slides of the active chapter.
+        const showcaseImages = [
+            {
+                src: '/static/images/image_24.png',
+                alt: 'Питание',
+                slides: [
+                    { src: '/static/images/image_24.png', alt: 'Питание' },
+                    { src: '/static/images/nutrituon/Screenshot iPhone 17 Pro Max 10.10.2026 at 22.05.43.png', alt: 'Питание' },
+                    { src: '/static/images/nutrituon/Screenshot iPhone 17 Pro Max 10.10.2026 at 22.08.32.png', alt: 'Питание' },
+                    { src: '/static/images/nutrituon/Screenshot iPhone 17 Pro Max 10.10.2026 at 22.12.41.png', alt: 'Питание' },
+                ],
+            },
+            {
+                src: '/static/images/image_25.png',
+                alt: 'Тренировки',
+                slides: [
+                    { src: '/static/images/image_25.png', alt: 'Тренировки' },
+                    { src: '/static/images/workout/Screenshot iPhone 17 Pro Max 10.10.2026 at 22.13.25.png', alt: 'Тренировки' },
+                    { src: '/static/images/workout/Screenshot iPhone 17 Pro Max 10.10.2026 at 22.14.02.png', alt: 'Тренировки' },
+                    { src: '/static/images/workout/Screenshot iPhone 17 Pro Max 10.10.2026 at 22.14.38.png', alt: 'Тренировки' },
+                    { src: '/static/images/workout/Screenshot iPhone 17 Pro Max 10.10.2026 at 22.16.41.png', alt: 'Тренировки' },
+                ],
+            },
+            {
+                src: '/static/images/image_26.png',
+                alt: 'ИИ-Синергия',
+                comingSoon: true,
+                slides: [
+                    { src: '/static/images/image_26.png', alt: 'ИИ-Синергия' },
                 ],
             },
         ];
 
-        // Screenshot assets — one per chapter (loaded as <img> inside the phone frame)
-        const showcaseImages = [
-            { src: '/static/images/image_24.png', alt: 'Питание' },
-            { src: '/static/images/image_25.png', alt: 'Тренировки' },
-            { src: '/static/images/image_26.png', alt: 'ИИ-Синергия' },
-        ];
-
         // One screenshot for the mobile stack: shown statically under its chapter.
-        const mobilePhoneScreen = (index) => `
+        // The mobile layout keeps the simple single-image view; the carousel is
+        // desktop-only. The "coming soon" chapter shows the placeholder panel
+        // instead of a live screenshot.
+        const mobilePhoneScreen = (index) => {
+            if (showcaseImages[index].comingSoon) {
+                return comingSoonSlide(index);
+            }
+            return `
             <img id="showcase-img-mobile-${index}" src="${showcaseImages[index].src}" alt="${showcaseImages[index].alt}"
                  class="absolute inset-0 w-full h-full object-contain" />
         `;
+        };
 
         // Three stacked screenshots for the desktop sticky phone, cross-faded by
-        // the IntersectionObserver below via the opacity classes.
-        const stickyPhoneScreens = showcaseImages.map((image, i) => `
-            <img id="showcase-img-${i}" data-screen-index="${i}" src="${image.src}" alt="${image.alt}"
-                 class="landing-showcase-screen absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ease-in-out ${i === 0 ? 'opacity-100' : 'opacity-0'}"
-                 ${i === 0 ? '' : 'aria-hidden="true"'} />
-        `).join('');
+        // the IntersectionObserver below via the opacity classes. Each chapter
+        // contributes one of these stacks; only the active chapter's stack is
+        // visible at any moment.
+        const stickyPhoneScreens = (chapterIndex) => {
+            const slides = showcaseImages[chapterIndex].slides;
+            return slides.map((slide, i) => `
+                <img id="showcase-img-${chapterIndex}-${i}" data-screen-index="${chapterIndex}" data-slide="${i}" src="${slide.src}" alt="${slide.alt}"
+                     class="landing-showcase-screen absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ease-in-out ${i === 0 ? 'opacity-100' : 'opacity-0'}"
+                     ${i === 0 ? '' : 'aria-hidden="true"'} />
+            `).join('');
+        };
 
-        // Device shell shared by the mobile stack and the desktop sticky column
+        // Placeholder slide for the "coming soon" AI Synergy chapter: a tinted
+        // panel with a badge instead of a live screenshot.
+        const comingSoonSlide = (chapterIndex) => `
+            <div id="showcase-img-${chapterIndex}-placeholder" data-screen-index="${chapterIndex}" data-slide="0"
+                 class="landing-showcase-screen absolute inset-0 w-full h-full flex flex-col items-center justify-center text-center px-8 bg-gradient-to-b from-zinc-950 to-zinc-900">
+                <span class="inline-flex items-center gap-1.5 rounded-full border border-lime-500/30 bg-lime-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-lime-400 mb-6">
+                    <span class="h-1.5 w-1.5 rounded-full bg-lime-400 animate-pulse"></span>
+                    Скоро
+                </span>
+                <div class="w-14 h-14 rounded-2xl bg-lime-500/10 border border-lime-500/20 flex items-center justify-center mb-5 shadow-[0_0_24px_rgba(132,204,22,0.18)]">
+                    <svg class="w-7 h-7 text-lime-400" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 3l1.5 5.5L19 9.5l-4 4 1.5 5.5L12 17l-4.5 2.5L9 13.5 5 9l5.5-1.5z"></path>
+                    </svg>
+                </div>
+                <p class="text-sm font-medium text-zinc-300">ИИ-Синергия</p>
+                <p class="mt-1 text-xs text-zinc-500">Модуль в разработке</p>
+            </div>
+        `;
+
+        // Device shell shared by the mobile stack and the desktop sticky column.
+        // aspect-[9/19.5] matches the iPhone 17 Pro Max screen proportions
+        // (780x1695 screenshots) so the mockup stays undistorted.
         const phoneFrame = (screenMarkup) => `
             <div class="landing-phone-frame mx-auto w-[240px] sm:w-[264px]">
-                <div class="relative w-full aspect-[9/18.5] rounded-[33px] bg-zinc-950 overflow-hidden border border-black/60">
+                <div class="relative w-full aspect-[9/19.5] rounded-[33px] bg-zinc-950 overflow-hidden border border-black/60">
                     ${screenMarkup}
                 </div>
             </div>
@@ -337,18 +409,57 @@ const App = {
             </div>
         `;
 
-        // Sticky phone on desktop: three stacked screenshots that cross-fade
-        const stickyPhone = () => `
+        // Sticky phone on desktop: every chapter's slide stack is rendered inside the
+        // frame, but only the active chapter's stack is visible. The Intersection
+        // Observer swaps the visible stack as the user scrolls. Arrow buttons and
+        // pagination dots let the user flip slides within the active chapter.
+        // The container is `flex items-center justify-center` so the phone frame
+        // sits dead centre in the right column instead of hugging the top.
+        const stickyPhone = () => {
+            const stacks = showcaseImages.map((chapter, ci) => {
+                const slides = chapter.comingSoon
+                    ? comingSoonSlide(ci)
+                    : stickyPhoneScreens(ci);
+                return `<div class="landing-chapter-stack absolute inset-0" data-chapter-index="${ci}">${slides}</div>`;
+            }).join('');
+
+            const dots = showcaseImages.map((chapter, ci) => {
+                const count = chapter.comingSoon ? 1 : chapter.slides.length;
+                const markers = Array.from({ length: count }, (_, i) => `
+                    <button data-action="landing-carousel-dot" data-chapter="${ci}" data-slide="${i}"
+                            class="landing-carousel-dot h-1.5 w-1.5 rounded-full bg-zinc-600/70 transition-all duration-200 hover:bg-lime-400/80 ${i === 0 ? 'opacity-100' : 'opacity-60'}"
+                            aria-label="Скриншот ${i + 1} из ${count}"></button>
+                `).join('');
+                return `<div class="landing-carousel-dots flex items-center justify-center gap-1.5" data-chapter-index="${ci}">${markers}</div>`;
+            }).join('');
+
+            return `
             <div class="hidden md:block">
-                <div class="sticky top-24">
-                    ${phoneFrame(`
-                        <div class="absolute inset-0">
-                            ${stickyPhoneScreens}
+                <div class="sticky top-24 flex items-center justify-center">
+                    <div class="relative">
+                        ${phoneFrame(`
+                            <div class="absolute inset-0">
+                                ${stacks}
+                            </div>
+                        `)}
+                        <!-- Navigation arrows, overlaid on the phone frame -->
+                        <button data-action="landing-carousel-prev" aria-label="Предыдущий скриншот"
+                                class="landing-carousel-arrow landing-carousel-prev absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"></path></svg>
+                        </button>
+                        <button data-action="landing-carousel-next" aria-label="Следующий скриншот"
+                                class="landing-carousel-arrow landing-carousel-next absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path></svg>
+                        </button>
+                        <!-- Pagination dots, below the phone frame -->
+                        <div class="landing-carousel-dots-wrap absolute -bottom-3 left-0 right-0 flex justify-center pointer-events-none">
+                            ${dots}
                         </div>
-                    `)}
+                    </div>
                 </div>
             </div>
         `;
+        };
 
         this.elements.screens.landing.innerHTML = `
             <div class="landing-page h-full w-full overflow-y-auto overflow-x-hidden">
@@ -377,7 +488,7 @@ const App = {
                                     <nav class="flex items-center gap-1 mr-2">
                                         <a href="#landing-nutrition" class="px-3 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors">Питание</a>
                                         <a href="#landing-workouts" class="px-3 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors">Тренировки</a>
-                                        <a href="#landing-synergy" class="px-3 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors">ИИ-Синергия</a>
+                                        <a href="#landing-ai-synergy" class="px-3 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors">ИИ-Синергия</a>
                                     </nav>
                                     <button data-action="show-auth" class="px-5 py-2.5 rounded-xl border border-zinc-800 text-sm font-medium text-zinc-300 hover:text-zinc-100 hover:border-zinc-700 hover:bg-zinc-900 transition-all">
                                         Войти
@@ -415,7 +526,7 @@ const App = {
                             <nav class="px-6 pb-6 flex flex-col gap-1">
                                 <a data-action="close-landing-menu" href="#landing-nutrition" class="px-4 py-3 rounded-xl text-sm font-medium text-zinc-300 hover:text-zinc-100 hover:bg-zinc-900 transition-colors">Питание</a>
                                 <a data-action="close-landing-menu" href="#landing-workouts" class="px-4 py-3 rounded-xl text-sm font-medium text-zinc-300 hover:text-zinc-100 hover:bg-zinc-900 transition-colors">Тренировки</a>
-                                <a data-action="close-landing-menu" href="#landing-synergy" class="px-4 py-3 rounded-xl text-sm font-medium text-zinc-300 hover:text-zinc-100 hover:bg-zinc-900 transition-colors">ИИ-Синергия</a>
+                                <a data-action="close-landing-menu" href="#landing-ai-synergy" class="px-4 py-3 rounded-xl text-sm font-medium text-zinc-300 hover:text-zinc-100 hover:bg-zinc-900 transition-colors">ИИ-Синергия</a>
                                 <div class="h-px bg-zinc-800 my-3"></div>
                                 <button data-action="show-auth" class="w-full px-4 py-3 rounded-xl border border-zinc-800 text-sm font-medium text-zinc-300 hover:text-zinc-100 hover:bg-zinc-900 transition-colors">
                                     Войти
@@ -461,7 +572,7 @@ const App = {
                                     Как это работает
                                 </span>
                                 <h2 class="mx-auto max-w-2xl text-2xl font-bold leading-tight tracking-tight text-zinc-100 sm:text-3xl lg:text-4xl">
-                                    Три шага, которые убирают рутину
+                                    Два шага, которые убирают рутину
                                 </h2>
                                 <p class="mx-auto mt-4 max-w-xl text-sm leading-relaxed text-zinc-400 sm:text-base">
                                     Листайте вниз — экран приложения меняется вместе с историей.
@@ -504,10 +615,13 @@ const App = {
     },
 
     /**
-     * Apple-style sticky scroll showcase: cross-fade the three app screenshots
-     * while the matching chapter crosses the middle of the viewport, and light
-     * up the active chapter. Re-inits cleanly whenever the landing markup is
-     * re-rendered (logout, failed token validation) by dropping the old observer.
+     * Apple-style sticky scroll showcase: cross-fade the chapter stacks inside
+     * the phone while the matching chapter crosses the middle of the viewport,
+     * and light up the active chapter. Within the active chapter the user can
+     * also flip slides with the arrow buttons and the pagination dots.
+     *
+     * Re-inits cleanly whenever the landing markup is re-rendered (logout,
+     * failed token validation) by dropping the old observer.
      */
     initLandingShowcase() {
         if (this._showcaseObserver) {
@@ -519,33 +633,132 @@ const App = {
         if (!root || !('IntersectionObserver' in window)) return;
 
         const chapters = Array.from(root.querySelectorAll('[data-chapter-index]'));
-        const screens = Array.from(root.querySelectorAll('[data-screen-index]'));
-        if (!chapters.length || !screens.length) return;
+        const stacks = Array.from(root.querySelectorAll('.landing-chapter-stack'));
+        if (!chapters.length || !stacks.length) return;
+
+        // Per-chapter slide index, persisted across re-renders so a manual flip
+        // survives the IntersectionObserver swapping stacks back to slide 0.
+        if (!this.state.landingCarouselState) this.state.landingCarouselState = {};
+
+        const getSlideCount = (index) => {
+            const stack = stacks.find(s => Number(s.dataset.chapterIndex) === index);
+            if (!stack) return 1;
+            return stack.querySelectorAll('[data-slide]').length || 1;
+        };
 
         const setActiveChapter = (index) => {
-            screens.forEach(screen => {
-                const active = Number(screen.dataset.screenIndex) === index;
-                screen.classList.toggle('opacity-100', active);
-                screen.classList.toggle('opacity-0', !active);
-                screen.classList.toggle('pointer-events-none', !active);
-                if (active) screen.removeAttribute('aria-hidden');
-                else screen.setAttribute('aria-hidden', 'true');
+            stacks.forEach(stack => {
+                const active = Number(stack.dataset.chapterIndex) === index;
+                stack.classList.toggle('is-active', active);
+                stack.setAttribute('aria-hidden', String(!active));
             });
+
             chapters.forEach(chapter => {
                 chapter.classList.toggle('is-chapter-active', Number(chapter.dataset.chapterIndex) === index);
             });
+
+            // Reset the active chapter's slide to its first slide whenever the
+            // chapter itself becomes active through scrolling.
+            this.state.landingCarouselState[index] = 0;
+            this.updateCarouselSlide(index, 0);
         };
 
-        setActiveChapter(0);
+        const updateCarouselSlide = (chapterIndex, slideIndex) => {
+            const stack = stacks.find(s => Number(s.dataset.chapterIndex) === chapterIndex);
+            if (!stack) return;
+
+            const slides = Array.from(stack.querySelectorAll('[data-slide]'));
+            if (!slides.length) return;
+
+            slides.forEach(slide => {
+                const active = Number(slide.dataset.slide) === slideIndex;
+                slide.classList.toggle('opacity-100', active);
+                slide.classList.toggle('opacity-0', !active);
+                slide.classList.toggle('pointer-events-none', !active);
+                slide.classList.toggle('is-active', active);
+                if (active) slide.removeAttribute('aria-hidden');
+                else slide.setAttribute('aria-hidden', 'true');
+            });
+
+            // Sync the pagination dots for this chapter.
+            const dotsWrap = root.querySelector(`.landing-carousel-dots-wrap [data-chapter-index="${chapterIndex}"]`);
+            if (dotsWrap) {
+                const dots = Array.from(dotsWrap.querySelectorAll('.landing-carousel-dot'));
+                dots.forEach((dot, i) => {
+                    const active = i === slideIndex;
+                    dot.classList.toggle('is-active-dot', active);
+                    dot.setAttribute('aria-pressed', String(active));
+                });
+            }
+
+            // Enable/disable the arrows based on whether there is more than one
+            // slide in this chapter.
+            const prevBtn = root.querySelector('.landing-carousel-prev');
+            const nextBtn = root.querySelector('.landing-carousel-next');
+            const hasMultiple = slides.length > 1;
+            if (prevBtn) prevBtn.disabled = !hasMultiple || slideIndex === 0;
+            if (nextBtn) nextBtn.disabled = !hasMultiple || slideIndex === slides.length - 1;
+        };
+
+        const handlePrev = () => {
+            const active = this._activeChapterIndex;
+            if (active == null) return;
+            const current = this.state.landingCarouselState[active] || 0;
+            if (current > 0) {
+                this.state.landingCarouselState[active] = current - 1;
+                this.updateCarouselSlide(active, current - 1);
+            }
+        };
+
+        const handleNext = () => {
+            const active = this._activeChapterIndex;
+            if (active == null) return;
+            const count = getSlideCount(active);
+            const current = this.state.landingCarouselState[active] || 0;
+            if (current < count - 1) {
+                this.state.landingCarouselState[active] = current + 1;
+                this.updateCarouselSlide(active, current + 1);
+            }
+        };
+
+        const handleDot = (chapterIndex, slideIndex) => {
+            this.state.landingCarouselState[chapterIndex] = slideIndex;
+            this.updateCarouselSlide(chapterIndex, slideIndex);
+        };
+
+        // Store the active chapter index so the arrow/dot handlers can read it.
+        let activeChapterIndex = 0;
+        this._activeChapterIndex = activeChapterIndex;
 
         this._showcaseObserver = new IntersectionObserver((entries) => {
             entries.forEach(entry => {
                 if (!entry.isIntersecting) return;
-                setActiveChapter(Number(entry.target.dataset.chapterIndex));
+                const index = Number(entry.target.dataset.chapterIndex);
+                activeChapterIndex = index;
+                this._activeChapterIndex = index;
+                setActiveChapter(index);
             });
         }, { rootMargin: '-30% 0px -30% 0px', threshold: 0 });
 
         chapters.forEach(chapter => this._showcaseObserver.observe(chapter));
+
+        // Wire up the carousel controls. Use event delegation on the landing
+        // root so dynamically injected arrows/dots keep working across
+        // re-renders without re-binding.
+        root.addEventListener('click', (e) => {
+            const prevBtn = e.target.closest('[data-action="landing-carousel-prev"]');
+            const nextBtn = e.target.closest('[data-action="landing-carousel-next"]');
+            const dotBtn = e.target.closest('[data-action="landing-carousel-dot"]');
+            if (prevBtn) { e.preventDefault(); handlePrev(); }
+            else if (nextBtn) { e.preventDefault(); handleNext(); }
+            else if (dotBtn) {
+                e.preventDefault();
+                handleDot(Number(dotBtn.dataset.chapter), Number(dotBtn.dataset.slide));
+            }
+        });
+
+        // Initialise the first chapter's active state and slide 0.
+        setActiveChapter(0);
     },
 
     toggleLandingMenu(force) {

@@ -1270,6 +1270,67 @@ input, select, textarea:focus {
     background: rgba(9, 9, 11, 0.4);
 }
 
+/* ============ Landing showcase carousel (desktop sticky phone) ============ */
+/* Each chapter owns a stack of slides inside the phone frame; only the active
+   chapter's stack is visible. The stacks are absolutely positioned so the
+   cross-fade is a pure opacity toggle with no layout shift. */
+.landing-chapter-stack {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.4s ease-in-out;
+}
+.landing-chapter-stack.is-active {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* Individual slides inside a stack: the first is visible, the rest are stacked
+   underneath and cross-fade on demand when the user flips them manually. */
+.landing-showcase-screen {
+    background: #09090b;
+}
+
+/* Glassmorphism arrows overlaid on the phone frame. They sit outside the
+   rounded screen but inside the relative wrapper so they hug the bezel. */
+.landing-carousel-arrow {
+    background: rgba(24, 24, 27, 0.55);
+    backdrop-filter: blur(8px) saturate(140%);
+    -webkit-backdrop-filter: blur(8px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+    transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+}
+.landing-carousel-arrow:hover:not(:disabled) {
+    background: rgba(24, 24, 27, 0.8);
+    color: #a3e635;
+    border-color: rgba(163, 230, 53, 0.35);
+}
+.landing-carousel-arrow:disabled {
+    cursor: not-allowed;
+}
+
+/* Pagination dots below the phone frame. The wrapper is pointer-events-none so
+   the dots themselves opt back in, keeping them clickable without stealing
+   scroll from the page. */
+.landing-carousel-dots-wrap {
+    z-index: 5;
+}
+.landing-carousel-dot {
+    pointer-events: auto;
+    background: rgba(24, 24, 27, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    transition: all 0.2s ease;
+}
+.landing-carousel-dot:hover {
+    transform: scale(1.25);
+}
+.landing-carousel-dot.is-active-dot {
+    opacity: 1;
+    background: rgba(163, 230, 53, 0.9);
+    border-color: rgba(163, 230, 53, 0.5);
+    box-shadow: 0 0 10px rgba(163, 230, 53, 0.4);
+}
+
 /* ============ Compact Nutrition Dashboard ============ */
 /* The ring is centred in a full-width box that reserves room under it, so the
    carbs label can hang below the circle without pushing the card taller.
@@ -2399,10 +2460,10 @@ input[data-field="reps"] {
     backface-visibility: hidden;
 }
 
-/* Cross-fade between the three in-app screens inside the phone mockup */
-.landing-showcase-screen {
-    transition: opacity 0.5s ease-in-out;
-}
+/* Cross-fade between the in-app screens inside the phone mockup */
+        .landing-showcase-screen {
+            transition: opacity 0.5s ease-in-out;
+        }
 
 /* Desktop only: the chapter currently driving the phone is fully lit, the
    others stay dimmed so the eye stays on the active one. Mobile shows the
