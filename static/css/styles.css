@@ -1270,45 +1270,17 @@ input, select, textarea:focus {
     background: rgba(9, 9, 11, 0.4);
 }
 
-/* ============ Landing showcase carousel (desktop sticky phone) ============ */
-/* Each chapter owns a stack of slides inside the phone frame; only the active
-   chapter's stack is visible. The stacks are absolutely positioned so the
-   cross-fade is a pure opacity toggle with no layout shift. Inactive stacks are
-   taken out of the paint tree entirely (display: none) so the heavy phone-frame
-   shadows and borders of background chapters never composite on top of the
-   active one - opacity:0 alone still paints the box-shadow, which is what used
-   to leave a ghost phone frame under the visible one. */
-.landing-chapter-stack {
-    display: none;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.4s ease-in-out;
-}
-.landing-chapter-stack.is-active {
-    display: block;
-    opacity: 1;
-    pointer-events: auto;
-}
-
-/* Hide the desktop dots for every chapter except the active one. Only the
-   active chapter's pagination row is visible; the rest are suppressed so the
-   dots always describe the slides the user is looking at. Mobile dots live in
-   their own per-chapter container and are shown independently. */
-.landing-carousel-dots-wrap .landing-carousel-dots {
-    display: none;
-}
-.landing-carousel-dots-wrap .landing-carousel-dots.is-active-dots {
-    display: flex;
-}
-
-/* Individual slides inside a stack: the first is visible, the rest are stacked
-   underneath and cross-fade on demand when the user flips them manually. */
+/* ============ Landing showcase carousel (per-chapter phone) ============ */
+/* Each chapter renders its own autonomous phone: the slides are stacked inside
+   the frame and cross-faded with a pure opacity toggle. Arrows sit outside the
+   phone frame (-left-12 / -right-12) so they never overlap the screen. */
 .landing-showcase-screen {
     background: #09090b;
 }
 
-/* Glassmorphism arrows overlaid on the phone frame. They sit outside the
-   rounded screen but inside the relative wrapper so they hug the bezel. */
+/* Glassmorphism arrows overlaid on the phone frame. Positioned absolutely by
+   the markup at -left-12 / -right-12 relative to the phone wrapper so they sit
+   strictly outside the bezel on every breakpoint. */
 .landing-carousel-arrow {
     background: rgba(24, 24, 27, 0.55);
     backdrop-filter: blur(8px) saturate(140%);
@@ -1326,10 +1298,9 @@ input, select, textarea:focus {
     cursor: not-allowed;
 }
 
-/* Pagination dots below the phone frame. The wrapper is pointer-events-none so
-   the dots themselves opt back in, keeping them clickable without stealing
-   scroll from the page. */
-.landing-carousel-dots-wrap {
+/* The per-chapter dots wrapper is pointer-events-none so the dots opt back in,
+   keeping them clickable without stealing scroll from the page. */
+.landing-carousel-dots {
     z-index: 5;
 }
 .landing-carousel-dot {
@@ -2478,26 +2449,13 @@ input[data-field="reps"] {
 }
 
 /* Cross-fade between the in-app screens inside the phone mockup */
-        .landing-showcase-screen {
-            transition: opacity 0.5s ease-in-out;
-        }
-
-/* Desktop only: the chapter currently driving the phone is fully lit, the
-   others stay dimmed so the eye stays on the active one. Mobile shows the
-   plain vertical stack, so no dimming there. */
-@media (min-width: 768px) {
-    .landing-chapter {
-        opacity: 0.4;
-        transition: opacity 0.45s ease;
-    }
-    .landing-chapter.is-chapter-active {
-        opacity: 1;
-    }
+.landing-showcase-screen {
+    transition: opacity 0.5s ease-in-out;
 }
 
+/* No desktop-only dimming: every chapter is always fully lit. */
 @media (prefers-reduced-motion: reduce) {
-    .landing-showcase-screen,
-    .landing-chapter {
+    .landing-showcase-screen {
         transition: none;
     }
 }

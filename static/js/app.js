@@ -243,7 +243,7 @@ const App = {
     renderLanding() {
         console.log('[App] Rendering landing...');
 
-        /* ============ Apple-style sticky scroll showcase data ============ */
+        /* ============ Landing showcase data (per-chapter phones) ============ */
 
         // Three chapters: nutrition, workouts, and the upcoming AI Synergy module.
         // The 3rd chapter carries a "Скоро" badge and a placeholder slide inside
@@ -323,75 +323,10 @@ const App = {
             },
         ];
 
-        // Mobile carousel: a full interactive phone per chapter with its own
-        // slide stack, prev/next arrows and pagination dots. Each instance is
-        // scoped by `data-context="mobile"` + `data-chapter-index` so the
-        // carousel handlers can flip slides within the correct chapter. The
-        // "coming soon" chapter shows the placeholder panel instead, with the
-        // arrows and dots omitted because there is only one state to display.
-        const mobilePhoneCarousel = (chapterIndex) => {
-            const chapter = showcaseImages[chapterIndex];
-            const slides = chapter.slides || [{ src: chapter.src, alt: chapter.alt }];
-            const slideMarkup = slides.map((slide, i) => `
-                <img id="showcase-img-mobile-${chapterIndex}-${i}" data-context="mobile" data-chapter-index="${chapterIndex}" data-slide="${i}" src="${slide.src}" alt="${slide.alt}"
-                     class="landing-showcase-screen absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ease-in-out ${i === 0 ? 'opacity-100' : 'opacity-0'}"
-                     ${i === 0 ? '' : 'aria-hidden="true"'} />
-            `).join('');
-
-            if (chapter.comingSoon) {
-                const placeholderMarkup = comingSoonSlide(chapterIndex);
-                return phoneFrame(placeholderMarkup);
-            }
-
-            const dots = Array.from({ length: slides.length }, (_, i) => `
-                <button data-action="mobile-carousel-dot" data-context="mobile" data-chapter="${chapterIndex}" data-slide="${i}"
-                        class="landing-carousel-dot h-1.5 w-1.5 rounded-full bg-zinc-600/70 transition-all duration-200 hover:bg-lime-400/80 ${i === 0 ? 'opacity-100' : 'opacity-60'}"
-                        aria-label="Скриншот ${i + 1} из ${slides.length}"></button>
-            `).join('');
-
-            return `
-            <div class="mobile-carousel-wrapper relative">
-                <div class="relative w-full aspect-[9/19.5] rounded-[33px] bg-zinc-950 overflow-hidden border border-black/60 mobile-carousel-frame">
-                    <!-- Dynamic Island cutout -->
-                    <div class="absolute top-2 left-1/2 -translate-x-1/2 w-24 h-5 bg-zinc-950 rounded-full z-30 pointer-events-none border border-black/60"></div>
-                    ${slideMarkup}
-                </div>
-                ${slides.length > 1 ? `
-                <div class="mobile-carousel-controls absolute -bottom-2 left-0 right-0 flex justify-between mt-3">
-                    <button data-action="mobile-carousel-prev" data-context="mobile" data-chapter="${chapterIndex}"
-                            class="mobile-carousel-arrow landing-carousel-arrow h-8 w-8 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"></path></svg>
-                    </button>
-                    <div class="mobile-carousel-dots flex items-center justify-center gap-1.5">
-                        ${dots}
-                    </div>
-                    <button data-action="mobile-carousel-next" data-context="mobile" data-chapter="${chapterIndex}"
-                            class="mobile-carousel-arrow landing-carousel-arrow h-8 w-8 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path></svg>
-                    </button>
-                </div>
-                ` : ''}
-            </div>
-            `;
-        };
-
-        // Three stacked screenshots for the desktop sticky phone, cross-faded by
-        // the IntersectionObserver below via the opacity classes. Each chapter
-        // contributes one of these stacks; only the active chapter's stack is
-        // visible at any moment.
-        const stickyPhoneScreens = (chapterIndex) => {
-            const slides = showcaseImages[chapterIndex].slides;
-            return slides.map((slide, i) => `
-                <img id="showcase-img-${chapterIndex}-${i}" data-context="desktop" data-chapter-index="${chapterIndex}" data-slide="${i}" src="${slide.src}" alt="${slide.alt}"
-                     class="landing-showcase-screen absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ease-in-out ${i === 0 ? 'opacity-100' : 'opacity-0'}"
-                     ${i === 0 ? '' : 'aria-hidden="true"'} />
-            `).join('');
-        };
-
         // Placeholder slide for the "coming soon" AI Synergy chapter: a tinted
         // panel with a badge instead of a live screenshot.
         const comingSoonSlide = (chapterIndex) => `
-            <div id="showcase-img-${chapterIndex}-placeholder" data-context="desktop" data-chapter-index="${chapterIndex}" data-slide="0"
+            <div data-chapter="${chapterIndex}" data-slide="0"
                  class="landing-showcase-screen absolute inset-0 w-full h-full flex flex-col items-center justify-center text-center px-8 bg-gradient-to-b from-zinc-950 to-zinc-900">
                 <span class="inline-flex items-center gap-1.5 rounded-full border border-lime-500/30 bg-lime-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-lime-400 mb-6">
                     <span class="h-1.5 w-1.5 rounded-full bg-lime-400 animate-pulse"></span>
@@ -407,10 +342,11 @@ const App = {
             </div>
         `;
 
-// Device shell shared by the mobile stack and the desktop sticky column.
-// aspect-[9/19.5] matches the iPhone 17 Pro Max screen proportions
-// (780x1695 screenshots) so the mockup stays undistorted.
-const phoneFrame = (screenMarkup) => `
+        // Device shell wrapping each chapter's slide stack. aspect-[9/19.5]
+        // matches the iPhone 17 Pro Max screen proportions (780x1695 screenshots)
+        // so the mockup stays undistorted. Arrows are positioned outside this
+        // frame by the chapter markup.
+        const phoneFrame = (screenMarkup) => `
     <div class="landing-phone-frame mx-auto w-[260px] sm:w-[272px]">
         <div class="relative w-full aspect-[9/19.5] rounded-[33px] bg-zinc-950 overflow-hidden border border-black/60">
             <!-- Dynamic Island cutout -->
@@ -420,88 +356,90 @@ const phoneFrame = (screenMarkup) => `
     </div>
 `;
 
-        // Chapter copy. Below md the matching phone screen is stacked right
-        // under the text; from md up only the sticky column shows the phone.
-        const chapterBlock = (chapter) => `
-            <div id="${chapter.id}" data-chapter-index="${chapter.index}"
-                 class="landing-chapter scroll-mt-24 flex flex-col justify-center min-h-[60vh] py-16 md:py-24">
-                <span class="mb-4 inline-flex items-center gap-1.5 self-start rounded-full border border-lime-500/20 bg-lime-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-lime-400">
-                    <span class="h-1.5 w-1.5 rounded-full bg-lime-400"></span>
-                    ${chapter.tag}
-                </span>
-                <h3 class="mb-4 max-w-xl text-2xl font-bold leading-tight tracking-tight text-zinc-100 sm:text-3xl">
-                    ${chapter.title}
-                </h3>
-                <p class="mb-6 max-w-xl text-sm leading-relaxed text-zinc-400 sm:text-base">
-                    ${chapter.text}
-                </p>
-                <ul class="max-w-xl space-y-2.5">
-                    ${chapter.points.map(point => `
-                        <li class="flex items-start gap-2.5 text-sm text-zinc-300">
-                            <svg class="mt-0.5 h-4 w-4 flex-shrink-0 text-lime-400" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path></svg>
-                            <span>${point}</span>
-                        </li>
-                    `).join('')}
-                </ul>
-                <div class="mt-8 flex justify-center md:hidden">
-                    ${phoneFrame(mobilePhoneCarousel(chapter.index))}
-                </div>
-            </div>
-        `;
+        // Chapter copy. Each chapter renders its own independent phone block
+        // with a carousel (or a placeholder for the AI Synergy chapter) directly
+        // below the text, in a single vertical column that is identical on
+        // desktop and mobile. Arrows sit outside the phone frame so they never
+        // overlap the screen.
+        const chapterBlock = (chapter) => {
+            const slides = chapter.comingSoon
+                ? comingSoonSlide(chapter.index)
+                : showcaseSlides(chapter.index);
 
-        // Sticky phone on desktop: every chapter's slide stack is rendered inside the
-        // frame, but only the active chapter's stack is visible. The Intersection
-        // Observer swaps the visible stack as the user scrolls. Arrow buttons and
-        // pagination dots let the user flip slides within the active chapter.
-        // The container is `flex items-center justify-center` so the phone frame
-        // sits dead centre in the right column instead of hugging the top.
-        const stickyPhone = () => {
-            const stacks = showcaseImages.map((chapter, ci) => {
-                const slides = chapter.comingSoon
-                    ? comingSoonSlide(ci)
-                    : stickyPhoneScreens(ci);
-                return `<div class="landing-chapter-stack absolute inset-0" data-chapter-index="${ci}">${slides}</div>`;
-            }).join('');
+            const hasMultiple = !chapter.comingSoon && showcaseImages[chapter.index].slides.length > 1;
 
-            const dots = showcaseImages.map((chapter, ci) => {
-                if (chapter.comingSoon) {
-                    return `<div class="landing-carousel-dots flex items-center justify-center gap-1.5" data-chapter-index="${ci}"></div>`;
-                }
-                const count = chapter.slides.length;
-                const markers = Array.from({ length: count }, (_, i) => `
-                    <button data-action="landing-carousel-dot" data-chapter="${ci}" data-slide="${i}"
+            const dots = hasMultiple
+                ? Array.from({ length: showcaseImages[chapter.index].slides.length }, (_, i) => `
+                    <button data-action="chapter-carousel-dot" data-chapter="${chapter.index}" data-slide="${i}"
                             class="landing-carousel-dot h-1.5 w-1.5 rounded-full bg-zinc-600/70 transition-all duration-200 hover:bg-lime-400/80 ${i === 0 ? 'opacity-100' : 'opacity-60'}"
-                            aria-label="Скриншот ${i + 1} из ${count}"></button>
-                `).join('');
-                return `<div class="landing-carousel-dots flex items-center justify-center gap-1.5" data-chapter-index="${ci}">${markers}</div>`;
-            }).join('');
+                            aria-label="Скриншот ${i + 1} из ${showcaseImages[chapter.index].slides.length}"></button>
+                `).join('')
+                : '';
 
             return `
-            <div class="hidden md:block">
-                <div class="sticky top-24 h-[calc(100vh-6rem)] flex items-center justify-center">
-                    <div class="relative">
+            <div id="${chapter.id}" data-chapter-index="${chapter.index}"
+                 class="landing-chapter scroll-mt-24 flex flex-col items-center py-16 sm:py-20">
+                <div class="max-w-xl w-full">
+                    <span class="mb-4 inline-flex items-center gap-1.5 self-start rounded-full border border-lime-500/20 bg-lime-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-lime-400">
+                        <span class="h-1.5 w-1.5 rounded-full bg-lime-400"></span>
+                        ${chapter.tag}
+                    </span>
+                    <h3 class="mb-4 text-2xl font-bold leading-tight tracking-tight text-zinc-100 sm:text-3xl">
+                        ${chapter.title}
+                    </h3>
+                    <p class="mb-6 text-sm leading-relaxed text-zinc-400 sm:text-base">
+                        ${chapter.text}
+                    </p>
+                    <ul class="space-y-2.5">
+                        ${chapter.points.map(point => `
+                            <li class="flex items-start gap-2.5 text-sm text-zinc-300">
+                                <svg class="mt-0.5 h-4 w-4 flex-shrink-0 text-lime-400" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path></svg>
+                                <span>${point}</span>
+                            </li>
+                        `).join('')}
+                    </ul>
+                </div>
+
+                <div class="mt-10 w-full flex justify-center">
+                    <div class="relative inline-block">
                         ${phoneFrame(`
-                            <div class="absolute inset-0">
-                                ${stacks}
+                            <div class="absolute inset-0" data-chapter-slides="${chapter.index}">
+                                ${slides}
                             </div>
                         `)}
-                        <!-- Navigation arrows, positioned at sides of phone frame -->
-                        <button data-action="landing-carousel-prev" aria-label="Предыдущий скриншот"
-                                class="landing-carousel-arrow landing-carousel-prev absolute -left-6 sm:-left-10 top-1/2 -translate-y-1/2 z-30 w-9 h-9 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+                        ${hasMultiple ? `
+                        <!-- Navigation arrows, positioned strictly outside the phone frame -->
+                        <button data-action="chapter-carousel-prev" data-chapter="${chapter.index}" aria-label="Предыдущий скриншот"
+                                class="landing-carousel-arrow chapter-carousel-prev absolute -left-12 top-1/2 -translate-y-1/2 z-30 w-9 h-9 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"></path></svg>
                         </button>
-                        <button data-action="landing-carousel-next" aria-label="Следующий скриншот"
-                                class="landing-carousel-arrow landing-carousel-next absolute -right-6 sm:-right-10 top-1/2 -translate-y-1/2 z-30 w-9 h-9 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+                        <button data-action="chapter-carousel-next" data-chapter="${chapter.index}" aria-label="Следующий скриншот"
+                                class="landing-carousel-arrow chapter-carousel-next absolute -right-12 top-1/2 -translate-y-1/2 z-30 w-9 h-9 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path></svg>
                         </button>
                         <!-- Pagination dots, below the phone frame -->
-                        <div class="landing-carousel-dots-wrap absolute -bottom-3 left-0 right-0 flex justify-center pointer-events-none">
-                            ${dots}
+                        <div class="landing-carousel-dots absolute -bottom-3 left-0 right-0 flex justify-center pointer-events-none">
+                            <div class="flex items-center justify-center gap-1.5">
+                                ${dots}
+                            </div>
                         </div>
+                        ` : ''}
                     </div>
                 </div>
             </div>
-        `;
+            `;
+        };
+
+        // Renders the slide stack for a chapter's phone frame. Each slide is
+        // absolutely positioned so the cross-fade is a pure opacity toggle.
+        const showcaseSlides = (chapterIndex) => {
+            const chapter = showcaseImages[chapterIndex];
+            const slides = chapter.slides || [{ src: chapter.src, alt: chapter.alt }];
+            return slides.map((slide, i) => `
+                <img data-chapter="${chapterIndex}" data-slide="${i}" src="${slide.src}" alt="${slide.alt}"
+                     class="landing-showcase-screen absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ease-in-out ${i === 0 ? 'opacity-100' : 'opacity-0 pointer-events-none'}"
+                     ${i === 0 ? '' : 'aria-hidden="true"'} />
+            `).join('');
         };
 
         this.elements.screens.landing.innerHTML = `
@@ -608,8 +546,8 @@ const phoneFrame = (screenMarkup) => `
                             </div>
                         </section>
 
-                        <!-- Apple-style sticky scroll showcase -->
-                        <section class="relative max-w-7xl mx-auto w-full px-6 py-20">
+                        <!-- Single vertical flow: each chapter carries its own phone -->
+                        <section class="relative max-w-3xl mx-auto w-full px-6 py-20">
                             <div class="text-center mb-12 sm:mb-16">
                                 <span class="mb-4 inline-block rounded-full border border-lime-500/20 bg-lime-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-lime-400">
                                     Как это работает
@@ -618,15 +556,12 @@ const phoneFrame = (screenMarkup) => `
                                     Два шага, которые убирают рутину
                                 </h2>
                                 <p class="mx-auto mt-4 max-w-xl text-sm leading-relaxed text-zinc-400 sm:text-base">
-                                    Листайте вниз — экран приложения меняется вместе с историей.
+                                    Листайте вниз — каждый раздел показывает своё приложение.
                                 </p>
                             </div>
 
-                            <div class="md:grid md:grid-cols-2 md:gap-16 md:items-start">
-                                <div>
-                                    ${showcaseChapters.map(chapterBlock).join('')}
-                                </div>
-                                ${stickyPhone()}
+                            <div class="flex flex-col gap-20 sm:gap-28">
+                                ${showcaseChapters.map(chapterBlock).join('')}
                             </div>
                         </section>
 
@@ -658,90 +593,33 @@ const phoneFrame = (screenMarkup) => `
     },
 
     /**
-     * Apple-style sticky scroll showcase: cross-fade the chapter stacks inside
-     * the phone while the matching chapter crosses the middle of the viewport,
-     * and light up the active chapter. Within the active chapter the user can
-     * also flip slides with the arrow buttons and the pagination dots.
-     *
-     * Re-inits cleanly whenever the landing markup is re-rendered (logout,
-     * failed token validation) by dropping the old observer.
+     * Landing showcase: every chapter owns an independent phone with its own
+     * slide carousel (prev/next arrows and pagination dots). Each chapter's
+     * controls are scoped via `data-chapter` so flipping slides in one chapter
+     * never affects another. A single delegated listener on the landing root
+     * keeps the handlers working across re-renders without re-binding.
      */
     initLandingShowcase() {
-        if (this._showcaseObserver) {
-            this._showcaseObserver.disconnect();
-            this._showcaseObserver = null;
-        }
-
         if (this._landingCarouselListener && this.elements.screens.landing) {
             this.elements.screens.landing.removeEventListener('click', this._landingCarouselListener);
             this._landingCarouselListener = null;
         }
 
         const root = this.elements.screens.landing;
-        if (!root || !('IntersectionObserver' in window)) return;
-
-        const chapters = Array.from(root.querySelectorAll('[data-chapter-index]'));
-        const stacks = Array.from(root.querySelectorAll('.landing-chapter-stack'));
-        if (!chapters.length || !stacks.length) return;
+        if (!root) return;
 
         // Per-chapter slide index, persisted across re-renders so a manual flip
-        // survives the IntersectionObserver swapping stacks back to slide 0.
+        // survives a re-render.
         if (!this.state.landingCarouselState) this.state.landingCarouselState = {};
 
-        const getSlideCount = (context, chapterIndex) => {
-            const selector = context === 'mobile'
-                ? `[data-context="mobile"][data-chapter-index="${chapterIndex}"][data-slide]`
-                : `[data-context="desktop"][data-chapter-index="${chapterIndex}"][data-slide]`;
-            return root.querySelectorAll(selector).length || 1;
-        };
+        const getSlidesFor = (chapterIndex) =>
+            Array.from(root.querySelectorAll(`[data-chapter="${chapterIndex}"][data-slide]`));
 
-        const getSlidesFor = (context, chapterIndex) => {
-            const selector = context === 'mobile'
-                ? `[data-context="mobile"][data-chapter-index="${chapterIndex}"][data-slide]`
-                : `[data-context="desktop"][data-chapter-index="${chapterIndex}"][data-slide]`;
-            return Array.from(root.querySelectorAll(selector));
-        };
-
-        const getActiveChapterIndex = () => {
-            const activeStack = root.querySelector('.landing-chapter-stack.is-active');
-            if (activeStack) {
-                const idx = Number(activeStack.dataset.chapterIndex);
-                if (!isNaN(idx)) return idx;
-            }
-            return this._activeChapterIndex;
-        };
-
-        const setActiveChapter = (index) => {
-            stacks.forEach(stack => {
-                const active = Number(stack.dataset.chapterIndex) === index;
-                stack.classList.toggle('is-active', active);
-                stack.classList.toggle('hidden', !active);
-                stack.classList.toggle('block', active);
-                stack.setAttribute('aria-hidden', String(!active));
-            });
-
-            chapters.forEach(chapter => {
-                chapter.classList.toggle('is-chapter-active', Number(chapter.dataset.chapterIndex) === index);
-            });
-
-            // Toggle the desktop dots row: only the active chapter's dots are visible.
-            root.querySelectorAll('.landing-carousel-dots-wrap .landing-carousel-dots').forEach(dots => {
-                const active = Number(dots.dataset.chapterIndex) === index;
-                dots.classList.toggle('is-active-dots', active);
-            });
-
-            // Reset both desktop and mobile carousels for this chapter to slide 0
-            // whenever the chapter itself becomes active through scrolling.
-            this.state.landingCarouselState[index] = this.state.landingCarouselState[index] || {};
-            this.state.landingCarouselState[index].desktop = 0;
-            this.state.landingCarouselState[index].mobile = 0;
-            updateCarouselSlide('desktop', index, 0);
-            updateCarouselSlide('mobile', index, 0);
-        };
-
-        const updateCarouselSlide = (context, chapterIndex, slideIndex) => {
-            const slides = getSlidesFor(context, chapterIndex);
+        const updateCarouselSlide = (chapterIndex, slideIndex) => {
+            const slides = getSlidesFor(chapterIndex);
             if (!slides.length) return;
+
+            this.state.landingCarouselState[chapterIndex] = slideIndex;
 
             slides.forEach(slide => {
                 const active = Number(slide.dataset.slide) === slideIndex;
@@ -753,123 +631,54 @@ const phoneFrame = (screenMarkup) => `
                 else slide.setAttribute('aria-hidden', 'true');
             });
 
-            if (context === 'desktop') {
-                // Sync the desktop pagination dots for this chapter.
-                const dotsWrap = root.querySelector(`.landing-carousel-dots-wrap [data-chapter-index="${chapterIndex}"]`);
-                if (dotsWrap) {
-                    const dots = Array.from(dotsWrap.querySelectorAll('.landing-carousel-dot'));
-                    dots.forEach((dot, i) => {
-                        const active = i === slideIndex;
-                        dot.classList.toggle('is-active-dot', active);
-                        dot.setAttribute('aria-pressed', String(active));
-                    });
-                }
-
-                // Enable/disable the desktop arrows.
-                const prevBtn = root.querySelector('.landing-carousel-prev');
-                const nextBtn = root.querySelector('.landing-carousel-next');
-                const hasMultiple = slides.length > 1;
-                if (prevBtn) prevBtn.disabled = !hasMultiple || slideIndex === 0;
-                if (nextBtn) nextBtn.disabled = !hasMultiple || slideIndex === slides.length - 1;
-            } else if (context === 'mobile') {
-                // Sync the mobile pagination dots and arrows scoped to this chapter.
-                const dotsWrap = root.querySelector(`.mobile-carousel-dots[data-chapter="${chapterIndex}"]`);
-                if (dotsWrap) {
-                    const dots = Array.from(dotsWrap.querySelectorAll('.landing-carousel-dot'));
-                    dots.forEach((dot, i) => {
-                        const active = i === slideIndex;
-                        dot.classList.toggle('is-active-dot', active);
-                        dot.setAttribute('aria-pressed', String(active));
-                    });
-                }
-
-                const prevBtn = root.querySelector(`.mobile-carousel-arrow[data-action="mobile-carousel-prev"][data-chapter="${chapterIndex}"]`);
-                const nextBtn = root.querySelector(`.mobile-carousel-arrow[data-action="mobile-carousel-next"][data-chapter="${chapterIndex}"]`);
-                const hasMultiple = slides.length > 1;
-                if (prevBtn) prevBtn.disabled = !hasMultiple || slideIndex === 0;
-                if (nextBtn) nextBtn.disabled = !hasMultiple || slideIndex === slides.length - 1;
-            }
-        };
-
-        const handlePrev = (context) => {
-            const active = getActiveChapterIndex();
-            if (active == null) return;
-            const key = context === 'mobile' ? 'mobile' : 'desktop';
-            const current = (this.state.landingCarouselState[active] && this.state.landingCarouselState[active][key]) || 0;
-            if (current > 0) {
-                if (!this.state.landingCarouselState[active]) this.state.landingCarouselState[active] = {};
-                this.state.landingCarouselState[active][key] = current - 1;
-                updateCarouselSlide(context, active, current - 1);
-            }
-        };
-
-        const handleNext = (context) => {
-            const active = getActiveChapterIndex();
-            if (active == null) return;
-            const count = getSlideCount(context, active);
-            const key = context === 'mobile' ? 'mobile' : 'desktop';
-            const current = (this.state.landingCarouselState[active] && this.state.landingCarouselState[active][key]) || 0;
-            if (current < count - 1) {
-                if (!this.state.landingCarouselState[active]) this.state.landingCarouselState[active] = {};
-                this.state.landingCarouselState[active][key] = current + 1;
-                updateCarouselSlide(context, active, current + 1);
-            }
-        };
-
-        const handleDot = (context, chapterIndex, slideIndex) => {
-            const key = context === 'mobile' ? 'mobile' : 'desktop';
-            if (!this.state.landingCarouselState[chapterIndex]) this.state.landingCarouselState[chapterIndex] = {};
-            this.state.landingCarouselState[chapterIndex][key] = slideIndex;
-            updateCarouselSlide(context, chapterIndex, slideIndex);
-        };
-
-        // Store the active chapter index so the arrow/dot handlers can read it.
-        let activeChapterIndex = 0;
-        this._activeChapterIndex = activeChapterIndex;
-
-        this._showcaseObserver = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (!entry.isIntersecting) return;
-                const index = Number(entry.target.dataset.chapterIndex);
-                activeChapterIndex = index;
-                this._activeChapterIndex = index;
-                setActiveChapter(index);
+            const dots = Array.from(root.querySelectorAll(`.landing-carousel-dot[data-chapter="${chapterIndex}"]`));
+            dots.forEach((dot, i) => {
+                const active = i === slideIndex;
+                dot.classList.toggle('is-active-dot', active);
+                dot.setAttribute('aria-pressed', String(active));
             });
-        }, { rootMargin: '-30% 0px -30% 0px', threshold: 0 });
 
-        chapters.forEach(chapter => this._showcaseObserver.observe(chapter));
+            const prevBtn = root.querySelector(`.landing-carousel-arrow[data-action="chapter-carousel-prev"][data-chapter="${chapterIndex}"]`);
+            const nextBtn = root.querySelector(`.landing-carousel-arrow[data-action="chapter-carousel-next"][data-chapter="${chapterIndex}"]`);
+            const hasMultiple = slides.length > 1;
+            if (prevBtn) prevBtn.disabled = !hasMultiple || slideIndex === 0;
+            if (nextBtn) nextBtn.disabled = !hasMultiple || slideIndex === slides.length - 1;
+        };
 
-        // Wire up the carousel controls. Use event delegation on the landing
-        // root so dynamically injected arrows/dots keep working across
-        // re-renders without re-binding.
         const carouselListener = (e) => {
-            const prevBtn = e.target.closest('[data-action="landing-carousel-prev"]');
-            const nextBtn = e.target.closest('[data-action="landing-carousel-next"]');
-            const dotBtn = e.target.closest('[data-action="landing-carousel-dot"]');
-            if (prevBtn) { e.preventDefault(); handlePrev('desktop'); }
-            else if (nextBtn) { e.preventDefault(); handleNext('desktop'); }
-            else if (dotBtn) {
+            const prevBtn = e.target.closest('[data-action="chapter-carousel-prev"]');
+            const nextBtn = e.target.closest('[data-action="chapter-carousel-next"]');
+            const dotBtn = e.target.closest('[data-action="chapter-carousel-dot"]');
+            if (prevBtn) {
                 e.preventDefault();
-                handleDot('desktop', Number(dotBtn.dataset.chapter), Number(dotBtn.dataset.slide));
-            }
-
-            // Mobile carousel controls: scoped per chapter via data-chapter.
-            const mobilePrev = e.target.closest('[data-action="mobile-carousel-prev"]');
-            const mobileNext = e.target.closest('[data-action="mobile-carousel-next"]');
-            const mobileDot = e.target.closest('[data-action="mobile-carousel-dot"]');
-            if (mobilePrev) { e.preventDefault(); handlePrev('mobile'); }
-            else if (mobileNext) { e.preventDefault(); handleNext('mobile'); }
-            else if (mobileDot) {
+                const ci = Number(prevBtn.dataset.chapter);
+                const current = this.state.landingCarouselState[ci] || 0;
+                if (current > 0) updateCarouselSlide(ci, current - 1);
+            } else if (nextBtn) {
                 e.preventDefault();
-                handleDot('mobile', Number(mobileDot.dataset.chapter), Number(mobileDot.dataset.slide));
+                const ci = Number(nextBtn.dataset.chapter);
+                const count = getSlidesFor(ci).length;
+                const current = this.state.landingCarouselState[ci] || 0;
+                if (current < count - 1) updateCarouselSlide(ci, current + 1);
+            } else if (dotBtn) {
+                e.preventDefault();
+                const ci = Number(dotBtn.dataset.chapter);
+                const si = Number(dotBtn.dataset.slide);
+                updateCarouselSlide(ci, si);
             }
         };
 
         root.addEventListener('click', carouselListener);
         this._landingCarouselListener = carouselListener;
 
-        // Initialise the first chapter's active state and slide 0.
-        setActiveChapter(0);
+        // Initialise every chapter's carousel at slide 0 (skip coming-soon).
+        Array.from(root.querySelectorAll('[data-chapter-index]')).forEach(chapterEl => {
+            const ci = Number(chapterEl.dataset.chapterIndex);
+            if (root.querySelector(`.landing-carousel-arrow[data-chapter="${ci}"]`)) {
+                this.state.landingCarouselState[ci] = 0;
+                updateCarouselSlide(ci, 0);
+            }
+        });
     },
 
     toggleLandingMenu(force) {
