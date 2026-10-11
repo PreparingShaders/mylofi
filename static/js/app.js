@@ -38,13 +38,13 @@ const App = {
         Theme.init();
         this.cacheElements();
 
-        // Проверка элементов перед продолжением
-        if (!this.elements.screens.landing) {
-            console.error('[App] Critical error: Landing screen element not found!');
-            return;
-        }
-
         try {
+            // Проверка элементов перед продолжением
+            if (!this.elements.screens.landing) {
+                console.error('[App] Critical error: Landing screen element not found!');
+                return;
+            }
+
             // Render landing immediately so user sees something
             this.showScreen('landing');
             this.renderLanding();
@@ -384,7 +384,7 @@ const App = {
         // under the text; from md up only the sticky column shows the phone.
         const chapterBlock = (chapter) => `
             <div id="${chapter.id}" data-chapter-index="${chapter.index}"
-                 class="landing-chapter scroll-mt-24 flex flex-col justify-center py-14 md:min-h-[70vh] md:py-20">
+                 class="landing-chapter scroll-mt-24 flex flex-col justify-center min-h-[60vh] py-16 md:py-24">
                 <span class="mb-4 inline-flex items-center gap-1.5 self-start rounded-full border border-lime-500/20 bg-lime-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-lime-400">
                     <span class="h-1.5 w-1.5 rounded-full bg-lime-400"></span>
                     ${chapter.tag}
@@ -435,7 +435,7 @@ const App = {
 
             return `
             <div class="hidden md:block">
-                <div class="sticky top-24 flex items-center justify-center">
+                <div class="sticky top-24 h-[calc(100vh-6rem)] flex items-center justify-center">
                     <div class="relative">
                         ${phoneFrame(`
                             <div class="absolute inset-0">
@@ -629,6 +629,11 @@ const App = {
             this._showcaseObserver = null;
         }
 
+        if (this._landingCarouselListener && this.elements.screens.landing) {
+            this.elements.screens.landing.removeEventListener('click', this._landingCarouselListener);
+            this._landingCarouselListener = null;
+        }
+
         const root = this.elements.screens.landing;
         if (!root || !('IntersectionObserver' in window)) return;
 
@@ -646,6 +651,15 @@ const App = {
             return stack.querySelectorAll('[data-slide]').length || 1;
         };
 
+        const getActiveChapterIndex = () => {
+            const activeStack = root.querySelector('.landing-chapter-stack.is-active');
+            if (activeStack) {
+                const idx = Number(activeStack.dataset.chapterIndex);
+                if (!isNaN(idx)) return idx;
+            }
+            return this._activeChapterIndex;
+        };
+
         const setActiveChapter = (index) => {
             stacks.forEach(stack => {
                 const active = Number(stack.dataset.chapterIndex) === index;
@@ -660,11 +674,11 @@ const App = {
             // Reset the active chapter's slide to its first slide whenever the
             // chapter itself becomes active through scrolling.
             this.state.landingCarouselState[index] = 0;
-            this.updateCarouselSlide(index, 0);
+            updateCarouselSlide(index, 0);
         };
 
         const updateCarouselSlide = (chapterIndex, slideIndex) => {
-            const stack = stacks.find(s => Number(s.dataset.chapterIndex) === chapterIndex);
+            const stack = root.querySelector(`.landing-chapter-stack[data-chapter-index="${chapterIndex}"]`);
             if (!stack) return;
 
             const slides = Array.from(stack.querySelectorAll('[data-slide]'));
@@ -701,29 +715,29 @@ const App = {
         };
 
         const handlePrev = () => {
-            const active = this._activeChapterIndex;
+            const active = getActiveChapterIndex();
             if (active == null) return;
             const current = this.state.landingCarouselState[active] || 0;
             if (current > 0) {
                 this.state.landingCarouselState[active] = current - 1;
-                this.updateCarouselSlide(active, current - 1);
+                updateCarouselSlide(active, current - 1);
             }
         };
 
         const handleNext = () => {
-            const active = this._activeChapterIndex;
+            const active = getActiveChapterIndex();
             if (active == null) return;
             const count = getSlideCount(active);
             const current = this.state.landingCarouselState[active] || 0;
             if (current < count - 1) {
                 this.state.landingCarouselState[active] = current + 1;
-                this.updateCarouselSlide(active, current + 1);
+                updateCarouselSlide(active, current + 1);
             }
         };
 
         const handleDot = (chapterIndex, slideIndex) => {
             this.state.landingCarouselState[chapterIndex] = slideIndex;
-            this.updateCarouselSlide(chapterIndex, slideIndex);
+            updateCarouselSlide(chapterIndex, slideIndex);
         };
 
         // Store the active chapter index so the arrow/dot handlers can read it.
@@ -745,7 +759,7 @@ const App = {
         // Wire up the carousel controls. Use event delegation on the landing
         // root so dynamically injected arrows/dots keep working across
         // re-renders without re-binding.
-        root.addEventListener('click', (e) => {
+        const carouselListener = (e) => {
             const prevBtn = e.target.closest('[data-action="landing-carousel-prev"]');
             const nextBtn = e.target.closest('[data-action="landing-carousel-next"]');
             const dotBtn = e.target.closest('[data-action="landing-carousel-dot"]');
@@ -755,7 +769,10 @@ const App = {
                 e.preventDefault();
                 handleDot(Number(dotBtn.dataset.chapter), Number(dotBtn.dataset.slide));
             }
-        });
+        };
+
+        root.addEventListener('click', carouselListener);
+        this._landingCarouselListener = carouselListener;
 
         // Initialise the first chapter's active state and slide 0.
         setActiveChapter(0);
