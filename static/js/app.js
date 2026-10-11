@@ -352,6 +352,8 @@ const App = {
             return `
             <div class="mobile-carousel-wrapper relative">
                 <div class="relative w-full aspect-[9/19.5] rounded-[33px] bg-zinc-950 overflow-hidden border border-black/60 mobile-carousel-frame">
+                    <!-- Dynamic Island cutout -->
+                    <div class="absolute top-2 left-1/2 -translate-x-1/2 w-24 h-5 bg-zinc-950 rounded-full z-30 pointer-events-none border border-black/60"></div>
                     ${slideMarkup}
                 </div>
                 ${slides.length > 1 ? `
@@ -405,16 +407,18 @@ const App = {
             </div>
         `;
 
-        // Device shell shared by the mobile stack and the desktop sticky column.
-        // aspect-[9/19.5] matches the iPhone 17 Pro Max screen proportions
-        // (780x1695 screenshots) so the mockup stays undistorted.
-        const phoneFrame = (screenMarkup) => `
-            <div class="landing-phone-frame mx-auto w-[240px] sm:w-[264px]">
-                <div class="relative w-full aspect-[9/19.5] rounded-[33px] bg-zinc-950 overflow-hidden border border-black/60">
-                    ${screenMarkup}
-                </div>
-            </div>
-        `;
+// Device shell shared by the mobile stack and the desktop sticky column.
+// aspect-[9/19.5] matches the iPhone 17 Pro Max screen proportions
+// (780x1695 screenshots) so the mockup stays undistorted.
+const phoneFrame = (screenMarkup) => `
+    <div class="landing-phone-frame mx-auto w-[260px] sm:w-[272px]">
+        <div class="relative w-full aspect-[9/19.5] rounded-[33px] bg-zinc-950 overflow-hidden border border-black/60">
+            <!-- Dynamic Island cutout -->
+            <div class="absolute top-2 left-1/2 -translate-x-1/2 w-24 h-5 bg-zinc-950 rounded-full z-30 pointer-events-none border border-black/60"></div>
+            ${screenMarkup}
+        </div>
+    </div>
+`;
 
         // Chapter copy. Below md the matching phone screen is stacked right
         // under the text; from md up only the sticky column shows the phone.
@@ -460,7 +464,10 @@ const App = {
             }).join('');
 
             const dots = showcaseImages.map((chapter, ci) => {
-                const count = chapter.comingSoon ? 1 : chapter.slides.length;
+                if (chapter.comingSoon) {
+                    return `<div class="landing-carousel-dots flex items-center justify-center gap-1.5" data-chapter-index="${ci}"></div>`;
+                }
+                const count = chapter.slides.length;
                 const markers = Array.from({ length: count }, (_, i) => `
                     <button data-action="landing-carousel-dot" data-chapter="${ci}" data-slide="${i}"
                             class="landing-carousel-dot h-1.5 w-1.5 rounded-full bg-zinc-600/70 transition-all duration-200 hover:bg-lime-400/80 ${i === 0 ? 'opacity-100' : 'opacity-60'}"
@@ -478,13 +485,13 @@ const App = {
                                 ${stacks}
                             </div>
                         `)}
-                        <!-- Navigation arrows, overlaid on the phone frame -->
+                        <!-- Navigation arrows, positioned at sides of phone frame -->
                         <button data-action="landing-carousel-prev" aria-label="Предыдущий скриншот"
-                                class="landing-carousel-arrow landing-carousel-prev absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+                                class="landing-carousel-arrow landing-carousel-prev absolute -left-6 sm:-left-7 top-1/2 -translate-y-1/2 z-30 w-9 h-9 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"></path></svg>
                         </button>
                         <button data-action="landing-carousel-next" aria-label="Следующий скриншот"
-                                class="landing-carousel-arrow landing-carousel-next absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+                                class="landing-carousel-arrow landing-carousel-next absolute -right-6 sm:-right-7 top-1/2 -translate-y-1/2 z-30 w-9 h-9 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path></svg>
                         </button>
                         <!-- Pagination dots, below the phone frame -->
@@ -602,7 +609,7 @@ const App = {
                         </section>
 
                         <!-- Apple-style sticky scroll showcase -->
-                        <section class="relative max-w-6xl mx-auto w-full px-6 py-16 sm:py-24">
+                        <section class="relative max-w-7xl mx-auto w-full px-6 py-20">
                             <div class="text-center mb-12 sm:mb-16">
                                 <span class="mb-4 inline-block rounded-full border border-lime-500/20 bg-lime-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-lime-400">
                                     Как это работает
@@ -615,7 +622,7 @@ const App = {
                                 </p>
                             </div>
 
-                            <div class="md:grid md:grid-cols-2 md:gap-12 lg:gap-16 md:items-start">
+                            <div class="md:grid md:grid-cols-2 md:gap-16 md:items-start">
                                 <div>
                                     ${showcaseChapters.map(chapterBlock).join('')}
                                 </div>
@@ -708,6 +715,8 @@ const App = {
             stacks.forEach(stack => {
                 const active = Number(stack.dataset.chapterIndex) === index;
                 stack.classList.toggle('is-active', active);
+                stack.classList.toggle('hidden', !active);
+                stack.classList.toggle('block', active);
                 stack.setAttribute('aria-hidden', String(!active));
             });
 

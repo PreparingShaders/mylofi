@@ -1273,13 +1273,19 @@ input, select, textarea:focus {
 /* ============ Landing showcase carousel (desktop sticky phone) ============ */
 /* Each chapter owns a stack of slides inside the phone frame; only the active
    chapter's stack is visible. The stacks are absolutely positioned so the
-   cross-fade is a pure opacity toggle with no layout shift. */
+   cross-fade is a pure opacity toggle with no layout shift. Inactive stacks are
+   taken out of the paint tree entirely (display: none) so the heavy phone-frame
+   shadows and borders of background chapters never composite on top of the
+   active one - opacity:0 alone still paints the box-shadow, which is what used
+   to leave a ghost phone frame under the visible one. */
 .landing-chapter-stack {
+    display: none;
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.4s ease-in-out;
 }
 .landing-chapter-stack.is-active {
+    display: block;
     opacity: 1;
     pointer-events: auto;
 }
