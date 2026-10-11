@@ -347,7 +347,7 @@ const App = {
         // so the mockup stays undistorted. Arrows are positioned outside this
         // frame by the chapter markup.
         const phoneFrame = (screenMarkup) => `
-    <div class="landing-phone-frame mx-auto w-[260px] sm:w-[272px]">
+    <div class="landing-phone-frame mx-auto w-[280px] sm:w-[300px]">
         <div class="relative w-full aspect-[9/19.5] rounded-[33px] bg-zinc-950 overflow-hidden border border-black/60">
             <!-- Dynamic Island cutout -->
             <div class="absolute top-2 left-1/2 -translate-x-1/2 w-24 h-5 bg-zinc-950 rounded-full z-30 pointer-events-none border border-black/60"></div>
@@ -357,10 +357,12 @@ const App = {
 `;
 
         // Chapter copy. Each chapter renders its own independent phone block
-        // with a carousel (or a placeholder for the AI Synergy chapter) directly
-        // below the text, in a single vertical column that is identical on
-        // desktop and mobile. Arrows sit outside the phone frame so they never
-        // overlap the screen.
+        // alongside the text in a two-column flex layout: the text and the
+        // phone sit side by side on desktop (md:flex-row) and stack vertically
+        // on mobile (flex-col). Odd-indexed chapters mirror the order on
+        // desktop via md:order-last so the phone leads left on those blocks,
+        // creating the Zig-Zag pattern. Arrows sit outside the phone frame so
+        // they never overlap the screen.
         const chapterBlock = (chapter) => {
             const slides = chapter.comingSoon
                 ? comingSoonSlide(chapter.index)
@@ -376,10 +378,12 @@ const App = {
                 `).join('')
                 : '';
 
+            const isMirrored = chapter.index % 2 === 1;
+
             return `
-            <div id="${chapter.id}" data-chapter-index="${chapter.index}"
-                 class="landing-chapter scroll-mt-24 flex flex-col items-center py-16 sm:py-20">
-                <div class="max-w-xl w-full">
+        <div id="${chapter.id}" data-chapter-index="${chapter.index}"
+             class="landing-chapter scroll-mt-24 flex flex-col md:flex-row items-center gap-12 lg:gap-20 py-16 md:py-24">
+            <div class="${isMirrored ? 'md:order-last ' : ''}max-w-xl w-full text-left">
                     <span class="mb-4 inline-flex items-center gap-1.5 self-start rounded-full border border-lime-500/20 bg-lime-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-lime-400">
                         <span class="h-1.5 w-1.5 rounded-full bg-lime-400"></span>
                         ${chapter.tag}
@@ -400,7 +404,7 @@ const App = {
                     </ul>
                 </div>
 
-                <div class="mt-10 w-full flex justify-center">
+                <div class="w-full flex justify-center">
                     <div class="relative inline-block">
                         ${phoneFrame(`
                             <div class="absolute inset-0" data-chapter-slides="${chapter.index}">
@@ -410,11 +414,11 @@ const App = {
                         ${hasMultiple ? `
                         <!-- Navigation arrows, positioned strictly outside the phone frame -->
                         <button data-action="chapter-carousel-prev" data-chapter="${chapter.index}" aria-label="Предыдущий скриншот"
-                                class="landing-carousel-arrow chapter-carousel-prev absolute -left-12 top-1/2 -translate-y-1/2 z-30 w-9 h-9 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+                                class="landing-carousel-arrow chapter-carousel-prev absolute -left-10 sm:-left-12 top-1/2 -translate-y-1/2 z-30 w-9 h-9 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"></path></svg>
                         </button>
                         <button data-action="chapter-carousel-next" data-chapter="${chapter.index}" aria-label="Следующий скриншот"
-                                class="landing-carousel-arrow chapter-carousel-next absolute -right-12 top-1/2 -translate-y-1/2 z-30 w-9 h-9 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+                                class="landing-carousel-arrow chapter-carousel-next absolute -right-10 sm:-right-12 top-1/2 -translate-y-1/2 z-30 w-9 h-9 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path></svg>
                         </button>
                         <!-- Pagination dots, below the phone frame -->
@@ -546,24 +550,22 @@ const App = {
                             </div>
                         </section>
 
-                        <!-- Single vertical flow: each chapter carries its own phone -->
-                        <section class="relative max-w-3xl mx-auto w-full px-6 py-20">
-                            <div class="text-center mb-12 sm:mb-16">
-                                <span class="mb-4 inline-block rounded-full border border-lime-500/20 bg-lime-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-lime-400">
-                                    Как это работает
-                                </span>
-                                <h2 class="mx-auto max-w-2xl text-2xl font-bold leading-tight tracking-tight text-zinc-100 sm:text-3xl lg:text-4xl">
-                                    Два шага, которые убирают рутину
-                                </h2>
-                                <p class="mx-auto mt-4 max-w-xl text-sm leading-relaxed text-zinc-400 sm:text-base">
-                                    Листайте вниз — каждый раздел показывает своё приложение.
-                                </p>
-                            </div>
+                         <!-- Zig-Zag two-column showcase: text and phone alternate per chapter -->
+                         <section class="relative max-w-6xl mx-auto w-full px-6 space-y-24 md:space-y-36">
+                             <div class="text-center mb-12 sm:mb-16">
+                                 <span class="mb-4 inline-block rounded-full border border-lime-500/20 bg-lime-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-lime-400">
+                                     Как это работает
+                                 </span>
+                                 <h2 class="mx-auto max-w-2xl text-2xl font-bold leading-tight tracking-tight text-zinc-100 sm:text-3xl lg:text-4xl">
+                                     Два шага, которые убирают рутину
+                                 </h2>
+                                 <p class="mx-auto mt-4 max-w-xl text-sm leading-relaxed text-zinc-400 sm:text-base">
+                                     Листайте вниз — каждый раздел показывает своё приложение.
+                                 </p>
+                             </div>
 
-                            <div class="flex flex-col gap-20 sm:gap-28">
-                                ${showcaseChapters.map(chapterBlock).join('')}
-                            </div>
-                        </section>
+                             ${showcaseChapters.map(chapterBlock).join('')}
+                         </section>
 
                         <!-- Final CTA -->
                         <section class="max-w-5xl mx-auto w-full px-6 py-16 sm:py-20">
