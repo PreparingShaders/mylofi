@@ -1275,6 +1275,9 @@ input, select, textarea:focus {
    the frame and cross-faded with a pure opacity toggle. Arrows sit outside the
    phone frame (-left-12 / -right-12) so they never overlap the screen. */
 .landing-showcase-screen {
+    background: #fafafa;
+}
+.dark .landing-showcase-screen {
     background: #09090b;
 }
 
@@ -1282,17 +1285,27 @@ input, select, textarea:focus {
    the markup at -left-12 / -right-12 relative to the phone wrapper so they sit
    strictly outside the bezel on every breakpoint. */
 .landing-carousel-arrow {
+    background: rgba(24, 24, 27, 0.06);
+    backdrop-filter: blur(8px) saturate(150%);
+    -webkit-backdrop-filter: blur(8px) saturate(150%);
+    border: 1px solid rgba(24, 24, 27, 0.12);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
+    transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+}
+.dark .landing-carousel-arrow {
     background: rgba(24, 24, 27, 0.55);
     backdrop-filter: blur(8px) saturate(140%);
     -webkit-backdrop-filter: blur(8px) saturate(140%);
     border: 1px solid rgba(255, 255, 255, 0.08);
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
-    transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
 }
 .landing-carousel-arrow:hover:not(:disabled) {
-    background: rgba(24, 24, 27, 0.8);
+    background: rgba(24, 24, 27, 0.12);
     color: #a3e635;
     border-color: rgba(163, 230, 53, 0.35);
+}
+.dark .landing-carousel-arrow:hover:not(:disabled) {
+    background: rgba(24, 24, 27, 0.8);
 }
 .landing-carousel-arrow:disabled {
     cursor: not-allowed;
@@ -1305,9 +1318,13 @@ input, select, textarea:focus {
 }
 .landing-carousel-dot {
     pointer-events: auto;
+    background: rgba(24, 24, 27, 0.08);
+    border: 1px solid rgba(24, 24, 27, 0.12);
+    transition: all 0.2s ease;
+}
+.dark .landing-carousel-dot {
     background: rgba(24, 24, 27, 0.7);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    transition: all 0.2s ease;
 }
 .landing-carousel-dot:hover {
     transform: scale(1.25);
@@ -2374,10 +2391,13 @@ input[data-field="reps"] {
 
 /* Matte dark graphite canvas (zinc-950) and smooth in-page anchor scrolling */
 .landing-page {
-    background: #09090b;
+    background: #fafafa;
     scroll-behavior: smooth;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior-y: contain;
+}
+.dark .landing-page {
+    background: #09090b;
 }
 
 /* Safe top padding (notebook/phone notch) on the landing mobile sheet */
@@ -2405,19 +2425,28 @@ input[data-field="reps"] {
     animation: pulse-lime 2s ease-in-out infinite;
 }
 
-/* Graphite surface for feature cards (zinc-900 at 90%) */
+/* Graphite surface for feature cards (zinc-900 at 90%). Light theme uses a
+   white glass surface so cards read as clean surfaces over the light grey page. */
 .landing-glass-strong {
+    background: rgba(255, 255, 255, 0.9);
+    -webkit-backdrop-filter: blur(8px) saturate(150%);
+    backdrop-filter: blur(8px) saturate(150%);
+    border: 1px solid rgba(228, 228, 231, 0.8);
+}
+.dark .landing-glass-strong {
     background: rgba(24, 24, 27, 0.9);
-    -webkit-backdrop-filter: blur(8px) saturate(140%);
-    backdrop-filter: blur(8px) saturate(140%);
     border: 1px solid rgba(39, 39, 42, 1);
 }
 
 /* Slightly deeper graphite surface for banners and the final CTA block */
 .landing-glass {
-    background: rgba(24, 24, 27, 0.6);
+    background: rgba(255, 255, 255, 0.7);
     -webkit-backdrop-filter: blur(12px) saturate(150%);
     backdrop-filter: blur(12px) saturate(150%);
+    border: 1px solid rgba(228, 228, 231, 0.8);
+}
+.dark .landing-glass {
+    background: rgba(24, 24, 27, 0.6);
     border: 1px solid rgba(39, 39, 42, 1);
 }
 
@@ -2428,12 +2457,19 @@ input[data-field="reps"] {
 
 /* ============ Landing: Apple-style Sticky Scroll Showcase ============ */
 
-/* Realistic phone shell: graphite bezel, deep drop shadow, faint lime rim light */
+/* Realistic phone shell: light slate bezel in light mode, deep graphite in dark. */
 .landing-phone-frame {
     position: relative;
     overflow: hidden;
     border-radius: 42px;
     padding: 9px;
+    background: linear-gradient(155deg, #cbd5e6 0%, #e4e4e7 32%, #f4f4f5 72%, #fafafa 100%);
+    box-shadow:
+        0 0 0 1px rgba(148, 163, 184, 0.35),
+        0 30px 60px -25px rgba(0, 0, 0, 0.08),
+        0 0 70px -18px rgba(132, 204, 22, 0.14);
+}
+.dark .landing-phone-frame {
     background: linear-gradient(155deg, #52525b 0%, #27272a 32%, #09090b 72%, #000000 100%);
     box-shadow:
         0 0 0 1px rgba(82, 82, 91, 0.55),

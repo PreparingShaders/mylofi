@@ -327,8 +327,8 @@ const App = {
         // panel with a badge instead of a live screenshot.
         const comingSoonSlide = (chapterIndex) => `
             <div data-chapter="${chapterIndex}" data-slide="0"
-                 class="landing-showcase-screen absolute inset-0 w-full h-full flex flex-col items-center justify-center text-center px-8 bg-gradient-to-b from-zinc-950 to-zinc-900">
-                <span class="inline-flex items-center gap-1.5 rounded-full border border-lime-500/30 bg-lime-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-lime-400 mb-6">
+                 class="landing-showcase-screen absolute inset-0 w-full h-full flex flex-col items-center justify-center text-center px-8 bg-gradient-to-b from-surface-50 to-surface-100 dark:from-zinc-950 dark:to-zinc-900">
+                <span class="inline-flex items-center gap-1.5 rounded-full border border-lime-500/30 bg-lime-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-lime-700 dark:text-lime-400 mb-6">
                     <span class="h-1.5 w-1.5 rounded-full bg-lime-400 animate-pulse"></span>
                     Скоро
                 </span>
@@ -337,8 +337,8 @@ const App = {
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 3l1.5 5.5L19 9.5l-4 4 1.5 5.5L12 17l-4.5 2.5L9 13.5 5 9l5.5-1.5z"></path>
                     </svg>
                 </div>
-                <p class="text-sm font-medium text-zinc-300">ИИ-Синергия</p>
-                <p class="mt-1 text-xs text-zinc-500">Модуль в разработке</p>
+                <p class="text-sm font-medium text-surface-500 dark:text-zinc-300">ИИ-Синергия</p>
+                <p class="mt-1 text-xs text-surface-600 dark:text-zinc-500">Модуль в разработке</p>
             </div>
         `;
 
@@ -348,9 +348,9 @@ const App = {
         // frame by the chapter markup.
         const phoneFrame = (screenMarkup) => `
     <div class="landing-phone-frame mx-auto w-[280px] sm:w-[300px]">
-        <div class="relative w-full aspect-[9/19.5] rounded-[33px] bg-zinc-950 overflow-hidden border border-black/60">
+        <div class="relative w-full aspect-[9/19.5] rounded-[33px] bg-surface-50 dark:bg-zinc-950 overflow-hidden border border-surface-200 dark:border-black/60">
             <!-- Dynamic Island cutout -->
-            <div class="absolute top-2 left-1/2 -translate-x-1/2 w-24 h-5 bg-zinc-950 rounded-full z-30 pointer-events-none border border-black/60"></div>
+            <div class="absolute top-2 left-1/2 -translate-x-1/2 w-24 h-5 bg-surface-50 dark:bg-zinc-950 rounded-full z-30 pointer-events-none border border-surface-200 dark:border-black/60"></div>
             ${screenMarkup}
         </div>
     </div>
@@ -373,7 +373,7 @@ const App = {
             const dots = hasMultiple
                 ? Array.from({ length: showcaseImages[chapter.index].slides.length }, (_, i) => `
                     <button data-action="chapter-carousel-dot" data-chapter="${chapter.index}" data-slide="${i}"
-                            class="landing-carousel-dot h-1.5 w-1.5 rounded-full bg-zinc-600/70 transition-all duration-200 hover:bg-lime-400/80 ${i === 0 ? 'opacity-100' : 'opacity-60'}"
+                            class="landing-carousel-dot h-1.5 w-1.5 rounded-full bg-surface-400/70 dark:bg-zinc-600/70 transition-all duration-200 hover:bg-lime-400/80 ${i === 0 ? 'opacity-100' : 'opacity-60'}"
                             aria-label="Скриншот ${i + 1} из ${showcaseImages[chapter.index].slides.length}"></button>
                 `).join('')
                 : '';
@@ -384,19 +384,19 @@ const App = {
         <div id="${chapter.id}" data-chapter-index="${chapter.index}"
              class="landing-chapter scroll-mt-20 flex flex-col md:flex-row items-center gap-12 lg:gap-20 py-8 md:py-12">
             <div class="${isMirrored ? 'md:order-last ' : ''}max-w-xl w-full text-left">
-                    <span class="mb-4 inline-flex items-center gap-1.5 self-start rounded-full border border-lime-500/20 bg-lime-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-lime-400">
+                     <span class="mb-4 inline-flex items-center gap-1.5 self-start rounded-full border border-lime-500/20 bg-lime-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-lime-700 dark:text-lime-400">
                         <span class="h-1.5 w-1.5 rounded-full bg-lime-400"></span>
                         ${chapter.tag}
                     </span>
-                    <h3 class="mb-4 text-2xl font-bold leading-tight tracking-tight text-zinc-100 sm:text-3xl">
+                    <h3 class="mb-4 text-2xl font-bold leading-tight tracking-tight text-surface-900 dark:text-zinc-100 sm:text-3xl">
                         ${chapter.title}
                     </h3>
-                    <p class="mb-6 text-sm leading-relaxed text-zinc-400 sm:text-base">
+                    <p class="mb-6 text-sm leading-relaxed text-surface-600 dark:text-zinc-400 sm:text-base">
                         ${chapter.text}
                     </p>
                     <ul class="space-y-2.5">
                         ${chapter.points.map(point => `
-                            <li class="flex items-start gap-2.5 text-sm text-zinc-300">
+                            <li class="flex items-start gap-2.5 text-sm text-surface-500 dark:text-zinc-300">
                                 <svg class="mt-0.5 h-4 w-4 flex-shrink-0 text-lime-400" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path></svg>
                                 <span>${point}</span>
                             </li>
@@ -414,11 +414,11 @@ const App = {
                         ${hasMultiple ? `
                         <!-- Navigation arrows, positioned strictly outside the phone frame -->
                         <button data-action="chapter-carousel-prev" data-chapter="${chapter.index}" aria-label="Предыдущий скриншот"
-                                class="landing-carousel-arrow chapter-carousel-prev absolute -left-10 sm:-left-12 top-1/2 -translate-y-1/2 z-30 w-9 h-9 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+                                class="landing-carousel-arrow chapter-carousel-prev absolute -left-10 sm:-left-12 top-1/2 -translate-y-1/2 z-30 w-9 h-9 rounded-full flex items-center justify-center text-surface-900/90 dark:text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"></path></svg>
                         </button>
                         <button data-action="chapter-carousel-next" data-chapter="${chapter.index}" aria-label="Следующий скриншот"
-                                class="landing-carousel-arrow chapter-carousel-next absolute -right-10 sm:-right-12 top-1/2 -translate-y-1/2 z-30 w-9 h-9 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+                                class="landing-carousel-arrow chapter-carousel-next absolute -right-10 sm:-right-12 top-1/2 -translate-y-1/2 z-30 w-9 h-9 rounded-full flex items-center justify-center text-surface-900/90 dark:text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path></svg>
                         </button>
                         <!-- Pagination dots, below the phone frame -->
@@ -448,13 +448,13 @@ const App = {
 
         this.elements.screens.landing.innerHTML = `
             <div class="landing-page h-full w-full overflow-y-auto overflow-x-hidden">
-                <div class="relative min-h-full flex flex-col text-zinc-100 font-sans">
+                <div class="relative min-h-full flex flex-col text-surface-900 dark:text-zinc-100 font-sans">
                     <!-- Ambient glow blobs -->
-                    <div class="absolute -top-20 -left-24 w-80 h-80 bg-gradient-to-br from-lime-500 to-emerald-600 opacity-[0.08] landing-glow rounded-full pointer-events-none"></div>
-                    <div class="absolute -bottom-20 -right-24 w-80 h-80 bg-gradient-to-tl from-lime-400 to-emerald-600 opacity-[0.06] landing-glow rounded-full pointer-events-none"></div>
+                    <div class="absolute -top-20 -left-24 w-80 h-80 bg-gradient-to-br from-lime-500 to-emerald-600 opacity-[0.04] dark:opacity-[0.08] landing-glow rounded-full pointer-events-none"></div>
+                    <div class="absolute -bottom-20 -right-24 w-80 h-80 bg-gradient-to-tl from-lime-400 to-emerald-600 opacity-[0.04] dark:opacity-[0.06] landing-glow rounded-full pointer-events-none"></div>
 
                     <!-- Sticky header -->
-                    <header class="sticky top-0 z-40 border-b border-zinc-800/60 bg-zinc-950/80 backdrop-blur-md">
+                    <header class="sticky top-0 z-40 border-b border-surface-200 dark:border-zinc-800/60 bg-white/80 dark:bg-zinc-950/80 backdrop-blur-md">
                         <div class="max-w-5xl mx-auto w-full px-6">
                             <div class="flex items-center justify-between h-16">
                                 <div class="flex items-center gap-3">
@@ -465,17 +465,17 @@ const App = {
                                         </svg>
                                         <div class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-lime-500 animate-pulse-lime shadow-lg shadow-lime-500/50"></div>
                                     </div>
-                                    <span class="text-lg sm:text-xl font-bold text-zinc-100">MyLofi.live</span>
+                                    <span class="text-lg sm:text-xl font-bold text-surface-900 dark:text-zinc-100">MyLofi.live</span>
                                 </div>
 
                                 <!-- Desktop navigation -->
                                 <div class="hidden md:flex items-center gap-3">
                                     <nav class="flex items-center gap-1 mr-2">
-                                        <a href="#landing-nutrition" class="px-3 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors">Питание</a>
-                                        <a href="#landing-workouts" class="px-3 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors">Тренировки</a>
-                                        <a href="#landing-ai-synergy" class="px-3 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors">ИИ-Синергия</a>
+                                        <a href="#landing-nutrition" class="px-3 py-2 text-sm font-medium text-surface-600 dark:text-zinc-400 hover:text-surface-900 dark:hover:text-zinc-100 transition-colors">Питание</a>
+                                        <a href="#landing-workouts" class="px-3 py-2 text-sm font-medium text-surface-600 dark:text-zinc-400 hover:text-surface-900 dark:hover:text-zinc-100 transition-colors">Тренировки</a>
+                                        <a href="#landing-ai-synergy" class="px-3 py-2 text-sm font-medium text-surface-600 dark:text-zinc-400 hover:text-surface-900 dark:hover:text-zinc-100 transition-colors">ИИ-Синергия</a>
                                     </nav>
-                                    <button data-action="show-auth" class="px-5 py-2.5 rounded-xl border border-zinc-800 text-sm font-medium text-zinc-300 hover:text-zinc-100 hover:border-zinc-700 hover:bg-zinc-900 transition-all">
+                                    <button data-action="show-auth" class="px-5 py-2.5 rounded-xl border border-surface-200 dark:border-zinc-800 text-sm font-medium text-surface-500 dark:text-zinc-300 hover:text-surface-900 dark:hover:text-zinc-100 hover:border-surface-300 dark:hover:border-zinc-700 hover:bg-surface-100 dark:hover:bg-zinc-900 transition-all">
                                         Войти
                                     </button>
                                     <button data-action="show-register" class="px-5 py-2.5 rounded-xl bg-lime-500 text-zinc-950 text-sm font-semibold shadow-[0_0_20px_rgba(132,204,22,0.25)] hover:bg-lime-400 transition-all btn-press">
@@ -484,7 +484,7 @@ const App = {
                                 </div>
 
                                 <!-- Mobile hamburger -->
-                                <button data-action="toggle-landing-menu" aria-label="Открыть меню" aria-expanded="false" class="md:hidden w-10 h-10 flex items-center justify-center rounded-xl border border-zinc-800 text-zinc-300 hover:text-lime-400 hover:border-zinc-700 transition-colors">
+                                <button data-action="toggle-landing-menu" aria-label="Открыть меню" aria-expanded="false" class="md:hidden w-10 h-10 flex items-center justify-center rounded-xl border border-surface-200 dark:border-zinc-800 text-surface-500 dark:text-zinc-300 hover:text-lime-400 hover:border-surface-300 dark:hover:border-zinc-700 transition-colors">
                                     <svg class="landing-menu-icon-bars w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16"></path>
                                     </svg>
@@ -498,22 +498,22 @@ const App = {
 
                     <!-- Mobile menu overlay -->
                     <div data-landing-menu class="md:hidden">
-                        <div data-landing-menu-backdrop data-action="close-landing-menu" class="landing-menu-backdrop fixed inset-0 z-40 bg-zinc-950/70 backdrop-blur-sm"></div>
-                        <div data-landing-menu-panel class="landing-menu fixed left-0 right-0 top-0 z-50 pt-safe-top bg-zinc-950/95 backdrop-blur-xl border-b border-zinc-800 shadow-[0_20px_40px_-20px_rgba(0,0,0,0.9)]">
+                        <div data-landing-menu-backdrop data-action="close-landing-menu" class="landing-menu-backdrop fixed inset-0 z-40 bg-surface-50/70 dark:bg-zinc-950/70 backdrop-blur-sm"></div>
+                        <div data-landing-menu-panel class="landing-menu fixed left-0 right-0 top-0 z-50 pt-safe-top bg-white/95 dark:bg-zinc-950/95 backdrop-blur-xl border-b border-surface-200 dark:border-zinc-800 shadow-xl dark:shadow-[0_20px_40px_-20px_rgba(0,0,0,0.9)]">
                             <div class="flex items-center justify-between h-16 px-6">
-                                <span class="text-lg font-bold text-zinc-100">MyLofi.live</span>
-                                <button data-action="close-landing-menu" aria-label="Закрыть меню" class="w-10 h-10 flex items-center justify-center rounded-xl border border-zinc-800 text-zinc-300 hover:text-lime-400 hover:border-zinc-700 transition-colors">
+                                <span class="text-lg font-bold text-surface-900 dark:text-zinc-100">MyLofi.live</span>
+                                <button data-action="close-landing-menu" aria-label="Закрыть меню" class="w-10 h-10 flex items-center justify-center rounded-xl border border-surface-200 dark:border-zinc-800 text-surface-500 dark:text-zinc-300 hover:text-lime-400 hover:border-surface-300 dark:hover:border-zinc-700 transition-colors">
                                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6l12 12M18 6L6 18"></path>
                                     </svg>
                                 </button>
                             </div>
                             <nav class="px-6 pb-6 flex flex-col gap-1">
-                                <a data-action="close-landing-menu" href="#landing-nutrition" class="px-4 py-3 rounded-xl text-sm font-medium text-zinc-300 hover:text-zinc-100 hover:bg-zinc-900 transition-colors">Питание</a>
-                                <a data-action="close-landing-menu" href="#landing-workouts" class="px-4 py-3 rounded-xl text-sm font-medium text-zinc-300 hover:text-zinc-100 hover:bg-zinc-900 transition-colors">Тренировки</a>
-                                <a data-action="close-landing-menu" href="#landing-ai-synergy" class="px-4 py-3 rounded-xl text-sm font-medium text-zinc-300 hover:text-zinc-100 hover:bg-zinc-900 transition-colors">ИИ-Синергия</a>
-                                <div class="h-px bg-zinc-800 my-3"></div>
-                                <button data-action="show-auth" class="w-full px-4 py-3 rounded-xl border border-zinc-800 text-sm font-medium text-zinc-300 hover:text-zinc-100 hover:bg-zinc-900 transition-colors">
+                                <a data-action="close-landing-menu" href="#landing-nutrition" class="px-4 py-3 rounded-xl text-sm font-medium text-surface-500 dark:text-zinc-300 hover:text-surface-900 dark:hover:text-zinc-100 hover:bg-surface-100 dark:hover:bg-zinc-900 transition-colors">Питание</a>
+                                <a data-action="close-landing-menu" href="#landing-workouts" class="px-4 py-3 rounded-xl text-sm font-medium text-surface-500 dark:text-zinc-300 hover:text-surface-900 dark:hover:text-zinc-100 hover:bg-surface-100 dark:hover:bg-zinc-900 transition-colors">Тренировки</a>
+                                <a data-action="close-landing-menu" href="#landing-ai-synergy" class="px-4 py-3 rounded-xl text-sm font-medium text-surface-500 dark:text-zinc-300 hover:text-surface-900 dark:hover:text-zinc-100 hover:bg-surface-100 dark:hover:bg-zinc-900 transition-colors">ИИ-Синергия</a>
+                                <div class="h-px bg-surface-200 dark:bg-zinc-800 my-3"></div>
+                                <button data-action="show-auth" class="w-full px-4 py-3 rounded-xl border border-surface-200 dark:border-zinc-800 text-sm font-medium text-surface-500 dark:text-zinc-300 hover:text-surface-900 dark:hover:text-zinc-100 hover:bg-surface-100 dark:hover:bg-zinc-900 transition-colors">
                                     Войти
                                 </button>
                                 <button data-action="show-register" class="w-full px-4 py-3 rounded-xl bg-lime-500 text-zinc-950 text-sm font-semibold shadow-[0_0_20px_rgba(132,204,22,0.25)] hover:bg-lime-400 transition-all btn-press">
@@ -528,15 +528,15 @@ const App = {
 
                         <!-- Hero -->
                         <section class="max-w-5xl mx-auto w-full px-6 pt-16 pb-20 sm:pt-24 sm:pb-24 flex flex-col items-center text-center">
-                            <span class="text-xs font-semibold text-lime-400 uppercase tracking-wider bg-lime-500/10 border border-lime-500/20 px-3 py-1 rounded-full mb-8">
+                            <span class="text-xs font-semibold text-lime-700 dark:text-lime-400 uppercase tracking-wider bg-lime-500/10 border border-lime-500/20 px-3 py-1 rounded-full mb-8">
                                 ИИ-нутрициолог и журнал тренировок
                             </span>
 
-                            <h1 class="text-3xl sm:text-4xl lg:text-5xl font-bold text-zinc-100 tracking-tight leading-tight mb-6 max-w-3xl">
+                            <h1 class="text-3xl sm:text-4xl lg:text-5xl font-bold text-surface-900 dark:text-zinc-100 tracking-tight leading-tight mb-6 max-w-3xl">
                                 Твой умный нутрициолог и журнал тренировок
                             </h1>
 
-                            <p class="text-sm sm:text-base text-zinc-400 leading-relaxed max-w-2xl mb-10">
+                            <p class="text-sm sm:text-base text-surface-600 dark:text-zinc-400 leading-relaxed max-w-2xl mb-10">
                                 Контролируй КБЖУ, фиксируй рабочий вес и следи за прогрессом без суеты в лаконичном тёмном интерфейсе
                             </p>
 
@@ -544,7 +544,7 @@ const App = {
                                 <button data-action="show-register" class="px-6 sm:px-8 py-3.5 rounded-xl bg-lime-500 text-zinc-950 font-semibold shadow-[0_0_20px_rgba(132,204,22,0.25)] hover:bg-lime-400 transition-all btn-press">
                                     Начать использовать
                                 </button>
-                                <button data-action="show-auth" class="px-6 sm:px-8 py-3.5 rounded-xl border border-zinc-800 text-zinc-200 font-medium hover:bg-zinc-900 hover:border-zinc-700 transition-all btn-press">
+                                <button data-action="show-auth" class="px-6 sm:px-8 py-3.5 rounded-xl border border-surface-200 dark:border-zinc-800 text-surface-300 dark:text-zinc-200 font-medium hover:bg-surface-100 dark:bg-zinc-900 hover:border-surface-300 dark:hover:border-zinc-700 transition-all btn-press">
                                     Уже есть аккаунт
                                 </button>
                             </div>
@@ -553,15 +553,15 @@ const App = {
                          <!-- Zig-Zag two-column showcase: text and phone alternate per chapter -->
                          <section class="relative max-w-6xl mx-auto w-full px-6 space-y-12 md:space-y-16">
                              <div class="text-center mb-12 sm:mb-16">
-                                 <span class="mb-4 inline-block rounded-full border border-lime-500/20 bg-lime-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-lime-400">
-                                     Как это работает
-                                 </span>
-                                 <h2 class="mx-auto max-w-2xl text-2xl font-bold leading-tight tracking-tight text-zinc-100 sm:text-3xl lg:text-4xl">
-                                     Два шага, которые убирают рутину
-                                 </h2>
-                                 <p class="mx-auto mt-4 max-w-xl text-sm leading-relaxed text-zinc-400 sm:text-base">
-                                     Листайте вниз — каждый раздел показывает своё приложение.
-                                 </p>
+                                  <span class="mb-4 inline-block rounded-full border border-lime-500/20 bg-lime-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-lime-700 dark:text-lime-400">
+                                      Как это работает
+                                  </span>
+                                  <h2 class="mx-auto max-w-2xl text-2xl font-bold leading-tight tracking-tight text-surface-900 dark:text-zinc-100 sm:text-3xl lg:text-4xl">
+                                      Два шага, которые убирают рутину
+                                  </h2>
+                                  <p class="mx-auto mt-4 max-w-xl text-sm leading-relaxed text-surface-600 dark:text-zinc-400 sm:text-base">
+                                      Листайте вниз — каждый раздел показывает своё приложение.
+                                  </p>
                              </div>
 
                              ${showcaseChapters.map(chapterBlock).join('')}
@@ -569,11 +569,11 @@ const App = {
 
                         <!-- Final CTA -->
                         <section class="max-w-5xl mx-auto w-full px-6 py-16 sm:py-20">
-                            <div class="landing-glass rounded-3xl p-8 sm:p-12 text-center shadow-sm">
-                                <h2 class="text-2xl sm:text-3xl font-bold text-zinc-100 tracking-tight mb-3 max-w-2xl mx-auto">
+                            <div class="landing-glass rounded-3xl p-8 sm:p-12 text-center shadow-sm dark:shadow-none">
+                                <h2 class="text-2xl sm:text-3xl font-bold text-surface-900 dark:text-zinc-100 tracking-tight mb-3 max-w-2xl mx-auto">
                                     Начни свой путь к осознанному фитнесу
                                 </h2>
-                                <p class="text-sm sm:text-base text-zinc-400 leading-relaxed max-w-xl mx-auto mb-8">
+                                <p class="text-sm sm:text-base text-surface-600 dark:text-zinc-400 leading-relaxed max-w-xl mx-auto mb-8">
                                     Один аккаунт — дневник питания, журнал тренировок и ИИ-анализ, работающие вместе.
                                 </p>
                                 <button data-action="show-register" class="px-6 sm:px-8 py-3.5 rounded-xl bg-lime-500 text-zinc-950 font-semibold shadow-[0_0_20px_rgba(132,204,22,0.25)] hover:bg-lime-400 transition-all btn-press">
@@ -584,7 +584,7 @@ const App = {
                     </div>
 
                     <!-- Footer -->
-                    <footer class="relative z-10 text-center py-6 px-6 text-xs text-zinc-500">
+                    <footer class="relative z-10 text-center py-6 px-6 text-xs text-surface-600 dark:text-zinc-500">
                         © mylofi.live
                     </footer>
                 </div>
