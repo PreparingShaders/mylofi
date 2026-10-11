@@ -323,18 +323,54 @@ const App = {
             },
         ];
 
-        // One screenshot for the mobile stack: shown statically under its chapter.
-        // The mobile layout keeps the simple single-image view; the carousel is
-        // desktop-only. The "coming soon" chapter shows the placeholder panel
-        // instead of a live screenshot.
-        const mobilePhoneScreen = (index) => {
-            if (showcaseImages[index].comingSoon) {
-                return comingSoonSlide(index);
+        // Mobile carousel: a full interactive phone per chapter with its own
+        // slide stack, prev/next arrows and pagination dots. Each instance is
+        // scoped by `data-context="mobile"` + `data-chapter-index` so the
+        // carousel handlers can flip slides within the correct chapter. The
+        // "coming soon" chapter shows the placeholder panel instead, with the
+        // arrows and dots omitted because there is only one state to display.
+        const mobilePhoneCarousel = (chapterIndex) => {
+            const chapter = showcaseImages[chapterIndex];
+            const slides = chapter.slides || [{ src: chapter.src, alt: chapter.alt }];
+            const slideMarkup = slides.map((slide, i) => `
+                <img id="showcase-img-mobile-${chapterIndex}-${i}" data-context="mobile" data-chapter-index="${chapterIndex}" data-slide="${i}" src="${slide.src}" alt="${slide.alt}"
+                     class="landing-showcase-screen absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ease-in-out ${i === 0 ? 'opacity-100' : 'opacity-0'}"
+                     ${i === 0 ? '' : 'aria-hidden="true"'} />
+            `).join('');
+
+            if (chapter.comingSoon) {
+                const placeholderMarkup = comingSoonSlide(chapterIndex);
+                return phoneFrame(placeholderMarkup);
             }
+
+            const dots = Array.from({ length: slides.length }, (_, i) => `
+                <button data-action="mobile-carousel-dot" data-context="mobile" data-chapter="${chapterIndex}" data-slide="${i}"
+                        class="landing-carousel-dot h-1.5 w-1.5 rounded-full bg-zinc-600/70 transition-all duration-200 hover:bg-lime-400/80 ${i === 0 ? 'opacity-100' : 'opacity-60'}"
+                        aria-label="Скриншот ${i + 1} из ${slides.length}"></button>
+            `).join('');
+
             return `
-            <img id="showcase-img-mobile-${index}" src="${showcaseImages[index].src}" alt="${showcaseImages[index].alt}"
-                 class="absolute inset-0 w-full h-full object-contain" />
-        `;
+            <div class="mobile-carousel-wrapper relative">
+                <div class="relative w-full aspect-[9/19.5] rounded-[33px] bg-zinc-950 overflow-hidden border border-black/60 mobile-carousel-frame">
+                    ${slideMarkup}
+                </div>
+                ${slides.length > 1 ? `
+                <div class="mobile-carousel-controls absolute -bottom-2 left-0 right-0 flex justify-between mt-3">
+                    <button data-action="mobile-carousel-prev" data-context="mobile" data-chapter="${chapterIndex}"
+                            class="mobile-carousel-arrow landing-carousel-arrow h-8 w-8 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"></path></svg>
+                    </button>
+                    <div class="mobile-carousel-dots flex items-center justify-center gap-1.5">
+                        ${dots}
+                    </div>
+                    <button data-action="mobile-carousel-next" data-context="mobile" data-chapter="${chapterIndex}"
+                            class="mobile-carousel-arrow landing-carousel-arrow h-8 w-8 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path></svg>
+                    </button>
+                </div>
+                ` : ''}
+            </div>
+            `;
         };
 
         // Three stacked screenshots for the desktop sticky phone, cross-faded by
@@ -344,7 +380,7 @@ const App = {
         const stickyPhoneScreens = (chapterIndex) => {
             const slides = showcaseImages[chapterIndex].slides;
             return slides.map((slide, i) => `
-                <img id="showcase-img-${chapterIndex}-${i}" data-screen-index="${chapterIndex}" data-slide="${i}" src="${slide.src}" alt="${slide.alt}"
+                <img id="showcase-img-${chapterIndex}-${i}" data-context="desktop" data-chapter-index="${chapterIndex}" data-slide="${i}" src="${slide.src}" alt="${slide.alt}"
                      class="landing-showcase-screen absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ease-in-out ${i === 0 ? 'opacity-100' : 'opacity-0'}"
                      ${i === 0 ? '' : 'aria-hidden="true"'} />
             `).join('');
@@ -353,7 +389,7 @@ const App = {
         // Placeholder slide for the "coming soon" AI Synergy chapter: a tinted
         // panel with a badge instead of a live screenshot.
         const comingSoonSlide = (chapterIndex) => `
-            <div id="showcase-img-${chapterIndex}-placeholder" data-screen-index="${chapterIndex}" data-slide="0"
+            <div id="showcase-img-${chapterIndex}-placeholder" data-context="desktop" data-chapter-index="${chapterIndex}" data-slide="0"
                  class="landing-showcase-screen absolute inset-0 w-full h-full flex flex-col items-center justify-center text-center px-8 bg-gradient-to-b from-zinc-950 to-zinc-900">
                 <span class="inline-flex items-center gap-1.5 rounded-full border border-lime-500/30 bg-lime-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-lime-400 mb-6">
                     <span class="h-1.5 w-1.5 rounded-full bg-lime-400 animate-pulse"></span>
@@ -404,7 +440,7 @@ const App = {
                     `).join('')}
                 </ul>
                 <div class="mt-8 flex justify-center md:hidden">
-                    ${phoneFrame(mobilePhoneScreen(chapter.index))}
+                    ${phoneFrame(mobilePhoneCarousel(chapter.index))}
                 </div>
             </div>
         `;
@@ -645,10 +681,18 @@ const App = {
         // survives the IntersectionObserver swapping stacks back to slide 0.
         if (!this.state.landingCarouselState) this.state.landingCarouselState = {};
 
-        const getSlideCount = (index) => {
-            const stack = stacks.find(s => Number(s.dataset.chapterIndex) === index);
-            if (!stack) return 1;
-            return stack.querySelectorAll('[data-slide]').length || 1;
+        const getSlideCount = (context, chapterIndex) => {
+            const selector = context === 'mobile'
+                ? `[data-context="mobile"][data-chapter-index="${chapterIndex}"][data-slide]`
+                : `[data-context="desktop"][data-chapter-index="${chapterIndex}"][data-slide]`;
+            return root.querySelectorAll(selector).length || 1;
+        };
+
+        const getSlidesFor = (context, chapterIndex) => {
+            const selector = context === 'mobile'
+                ? `[data-context="mobile"][data-chapter-index="${chapterIndex}"][data-slide]`
+                : `[data-context="desktop"][data-chapter-index="${chapterIndex}"][data-slide]`;
+            return Array.from(root.querySelectorAll(selector));
         };
 
         const getActiveChapterIndex = () => {
@@ -671,17 +715,23 @@ const App = {
                 chapter.classList.toggle('is-chapter-active', Number(chapter.dataset.chapterIndex) === index);
             });
 
-            // Reset the active chapter's slide to its first slide whenever the
-            // chapter itself becomes active through scrolling.
-            this.state.landingCarouselState[index] = 0;
-            updateCarouselSlide(index, 0);
+            // Toggle the desktop dots row: only the active chapter's dots are visible.
+            root.querySelectorAll('.landing-carousel-dots-wrap .landing-carousel-dots').forEach(dots => {
+                const active = Number(dots.dataset.chapterIndex) === index;
+                dots.classList.toggle('is-active-dots', active);
+            });
+
+            // Reset both desktop and mobile carousels for this chapter to slide 0
+            // whenever the chapter itself becomes active through scrolling.
+            this.state.landingCarouselState[index] = this.state.landingCarouselState[index] || {};
+            this.state.landingCarouselState[index].desktop = 0;
+            this.state.landingCarouselState[index].mobile = 0;
+            updateCarouselSlide('desktop', index, 0);
+            updateCarouselSlide('mobile', index, 0);
         };
 
-        const updateCarouselSlide = (chapterIndex, slideIndex) => {
-            const stack = root.querySelector(`.landing-chapter-stack[data-chapter-index="${chapterIndex}"]`);
-            if (!stack) return;
-
-            const slides = Array.from(stack.querySelectorAll('[data-slide]'));
+        const updateCarouselSlide = (context, chapterIndex, slideIndex) => {
+            const slides = getSlidesFor(context, chapterIndex);
             if (!slides.length) return;
 
             slides.forEach(slide => {
@@ -694,50 +744,74 @@ const App = {
                 else slide.setAttribute('aria-hidden', 'true');
             });
 
-            // Sync the pagination dots for this chapter.
-            const dotsWrap = root.querySelector(`.landing-carousel-dots-wrap [data-chapter-index="${chapterIndex}"]`);
-            if (dotsWrap) {
-                const dots = Array.from(dotsWrap.querySelectorAll('.landing-carousel-dot'));
-                dots.forEach((dot, i) => {
-                    const active = i === slideIndex;
-                    dot.classList.toggle('is-active-dot', active);
-                    dot.setAttribute('aria-pressed', String(active));
-                });
-            }
+            if (context === 'desktop') {
+                // Sync the desktop pagination dots for this chapter.
+                const dotsWrap = root.querySelector(`.landing-carousel-dots-wrap [data-chapter-index="${chapterIndex}"]`);
+                if (dotsWrap) {
+                    const dots = Array.from(dotsWrap.querySelectorAll('.landing-carousel-dot'));
+                    dots.forEach((dot, i) => {
+                        const active = i === slideIndex;
+                        dot.classList.toggle('is-active-dot', active);
+                        dot.setAttribute('aria-pressed', String(active));
+                    });
+                }
 
-            // Enable/disable the arrows based on whether there is more than one
-            // slide in this chapter.
-            const prevBtn = root.querySelector('.landing-carousel-prev');
-            const nextBtn = root.querySelector('.landing-carousel-next');
-            const hasMultiple = slides.length > 1;
-            if (prevBtn) prevBtn.disabled = !hasMultiple || slideIndex === 0;
-            if (nextBtn) nextBtn.disabled = !hasMultiple || slideIndex === slides.length - 1;
+                // Enable/disable the desktop arrows.
+                const prevBtn = root.querySelector('.landing-carousel-prev');
+                const nextBtn = root.querySelector('.landing-carousel-next');
+                const hasMultiple = slides.length > 1;
+                if (prevBtn) prevBtn.disabled = !hasMultiple || slideIndex === 0;
+                if (nextBtn) nextBtn.disabled = !hasMultiple || slideIndex === slides.length - 1;
+            } else if (context === 'mobile') {
+                // Sync the mobile pagination dots and arrows scoped to this chapter.
+                const dotsWrap = root.querySelector(`.mobile-carousel-dots[data-chapter="${chapterIndex}"]`);
+                if (dotsWrap) {
+                    const dots = Array.from(dotsWrap.querySelectorAll('.landing-carousel-dot'));
+                    dots.forEach((dot, i) => {
+                        const active = i === slideIndex;
+                        dot.classList.toggle('is-active-dot', active);
+                        dot.setAttribute('aria-pressed', String(active));
+                    });
+                }
+
+                const prevBtn = root.querySelector(`.mobile-carousel-arrow[data-action="mobile-carousel-prev"][data-chapter="${chapterIndex}"]`);
+                const nextBtn = root.querySelector(`.mobile-carousel-arrow[data-action="mobile-carousel-next"][data-chapter="${chapterIndex}"]`);
+                const hasMultiple = slides.length > 1;
+                if (prevBtn) prevBtn.disabled = !hasMultiple || slideIndex === 0;
+                if (nextBtn) nextBtn.disabled = !hasMultiple || slideIndex === slides.length - 1;
+            }
         };
 
-        const handlePrev = () => {
+        const handlePrev = (context) => {
             const active = getActiveChapterIndex();
             if (active == null) return;
-            const current = this.state.landingCarouselState[active] || 0;
+            const key = context === 'mobile' ? 'mobile' : 'desktop';
+            const current = (this.state.landingCarouselState[active] && this.state.landingCarouselState[active][key]) || 0;
             if (current > 0) {
-                this.state.landingCarouselState[active] = current - 1;
-                updateCarouselSlide(active, current - 1);
+                if (!this.state.landingCarouselState[active]) this.state.landingCarouselState[active] = {};
+                this.state.landingCarouselState[active][key] = current - 1;
+                updateCarouselSlide(context, active, current - 1);
             }
         };
 
-        const handleNext = () => {
+        const handleNext = (context) => {
             const active = getActiveChapterIndex();
             if (active == null) return;
-            const count = getSlideCount(active);
-            const current = this.state.landingCarouselState[active] || 0;
+            const count = getSlideCount(context, active);
+            const key = context === 'mobile' ? 'mobile' : 'desktop';
+            const current = (this.state.landingCarouselState[active] && this.state.landingCarouselState[active][key]) || 0;
             if (current < count - 1) {
-                this.state.landingCarouselState[active] = current + 1;
-                updateCarouselSlide(active, current + 1);
+                if (!this.state.landingCarouselState[active]) this.state.landingCarouselState[active] = {};
+                this.state.landingCarouselState[active][key] = current + 1;
+                updateCarouselSlide(context, active, current + 1);
             }
         };
 
-        const handleDot = (chapterIndex, slideIndex) => {
-            this.state.landingCarouselState[chapterIndex] = slideIndex;
-            updateCarouselSlide(chapterIndex, slideIndex);
+        const handleDot = (context, chapterIndex, slideIndex) => {
+            const key = context === 'mobile' ? 'mobile' : 'desktop';
+            if (!this.state.landingCarouselState[chapterIndex]) this.state.landingCarouselState[chapterIndex] = {};
+            this.state.landingCarouselState[chapterIndex][key] = slideIndex;
+            updateCarouselSlide(context, chapterIndex, slideIndex);
         };
 
         // Store the active chapter index so the arrow/dot handlers can read it.
@@ -763,11 +837,22 @@ const App = {
             const prevBtn = e.target.closest('[data-action="landing-carousel-prev"]');
             const nextBtn = e.target.closest('[data-action="landing-carousel-next"]');
             const dotBtn = e.target.closest('[data-action="landing-carousel-dot"]');
-            if (prevBtn) { e.preventDefault(); handlePrev(); }
-            else if (nextBtn) { e.preventDefault(); handleNext(); }
+            if (prevBtn) { e.preventDefault(); handlePrev('desktop'); }
+            else if (nextBtn) { e.preventDefault(); handleNext('desktop'); }
             else if (dotBtn) {
                 e.preventDefault();
-                handleDot(Number(dotBtn.dataset.chapter), Number(dotBtn.dataset.slide));
+                handleDot('desktop', Number(dotBtn.dataset.chapter), Number(dotBtn.dataset.slide));
+            }
+
+            // Mobile carousel controls: scoped per chapter via data-chapter.
+            const mobilePrev = e.target.closest('[data-action="mobile-carousel-prev"]');
+            const mobileNext = e.target.closest('[data-action="mobile-carousel-next"]');
+            const mobileDot = e.target.closest('[data-action="mobile-carousel-dot"]');
+            if (mobilePrev) { e.preventDefault(); handlePrev('mobile'); }
+            else if (mobileNext) { e.preventDefault(); handleNext('mobile'); }
+            else if (mobileDot) {
+                e.preventDefault();
+                handleDot('mobile', Number(mobileDot.dataset.chapter), Number(mobileDot.dataset.slide));
             }
         };
 

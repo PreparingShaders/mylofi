@@ -1284,6 +1284,17 @@ input, select, textarea:focus {
     pointer-events: auto;
 }
 
+/* Hide the desktop dots for every chapter except the active one. Only the
+   active chapter's pagination row is visible; the rest are suppressed so the
+   dots always describe the slides the user is looking at. Mobile dots live in
+   their own per-chapter container and are shown independently. */
+.landing-carousel-dots-wrap .landing-carousel-dots {
+    display: none;
+}
+.landing-carousel-dots-wrap .landing-carousel-dots.is-active-dots {
+    display: flex;
+}
+
 /* Individual slides inside a stack: the first is visible, the rest are stacked
    underneath and cross-fade on demand when the user flips them manually. */
 .landing-showcase-screen {
