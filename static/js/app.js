@@ -487,11 +487,11 @@ const phoneFrame = (screenMarkup) => `
                         `)}
                         <!-- Navigation arrows, positioned at sides of phone frame -->
                         <button data-action="landing-carousel-prev" aria-label="Предыдущий скриншот"
-                                class="landing-carousel-arrow landing-carousel-prev absolute -left-6 sm:-left-7 top-1/2 -translate-y-1/2 z-30 w-9 h-9 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+                                class="landing-carousel-arrow landing-carousel-prev absolute -left-6 sm:-left-10 top-1/2 -translate-y-1/2 z-30 w-9 h-9 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"></path></svg>
                         </button>
                         <button data-action="landing-carousel-next" aria-label="Следующий скриншот"
-                                class="landing-carousel-arrow landing-carousel-next absolute -right-6 sm:-right-7 top-1/2 -translate-y-1/2 z-30 w-9 h-9 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+                                class="landing-carousel-arrow landing-carousel-next absolute -right-6 sm:-right-10 top-1/2 -translate-y-1/2 z-30 w-9 h-9 rounded-full flex items-center justify-center text-zinc-100/90 hover:text-lime-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path></svg>
                         </button>
                         <!-- Pagination dots, below the phone frame -->
