@@ -61,6 +61,16 @@ export const Nutrition = {
     _dailySummaryExpanded: false,
     _currentDailySummary: null,
 
+    // AI Synergy widget state (cross-analysis of nutrition + workouts). The
+    // widget lives on the Питание tab under the Daily Summary block; its period
+    // selector, running flag and last verdict are kept here because the widget
+    // is rebuilt by every full page render.
+    _aiSynergyPeriod: '14',          // '14' | '30' | 'custom'
+    _aiSynergyCustomRange: { start: '', end: '' },
+    _aiSynergyResult: null,          // last /ai/synergy payload
+    _aiSynergyReportExpanded: false, // whether the verdict report is open
+    _aiSynergyRunning: false,        // analysis in flight
+
     /**
      * Today's date as YYYY-MM-DD, in the user's own calendar. Every date in this
      * module is a plain calendar day, so all arithmetic on them runs in UTC:
@@ -497,7 +507,7 @@ export const Nutrition = {
      * expand, so its toggle stays hidden rather than opening to the same
      * text. Runs after every render of the card, regeneration included.
      */
-    syncDailySummaryToggles() {
+     syncDailySummaryToggles() {
         const container = this.app.elements.pageContent;
         container.querySelectorAll('.daily-summary').forEach((section) => {
             const text = section.querySelector('.daily-summary__text');
@@ -514,7 +524,147 @@ export const Nutrition = {
     },
 
     /**
-     * Newest-first ordering key for a meal. Timestamps arrive as ISO strings,
+     * Rebuilds the AI Synergy widget in place from the module's current state,
+     * then re-binds its controls. The widget is small and rebuilt only on real
+     * state changes (period pick, analysis start/finish, report toggle), never
+     * on the meal poll loop, so the in-place swap keeps the rest of the page
+     * (carousel + daily summary) untouched.
+     */
+    renderAiSynergyWidget() {
+        const container = this.app.elements.pageContent;
+        const existing = container.querySelector('.ai-synergy-widget');
+        if (!existing) return;
+
+        const html = Components.aiSynergyWidget({
+            period: this._aiSynergyPeriod,
+            customStart: this._aiSynergyCustomRange.start,
+            customEnd: this._aiSynergyCustomRange.end,
+            todayISO: this.todayISO(),
+            isPremium: !!this.app.state.user?.is_premium,
+            isRunning: this._aiSynergyRunning,
+            hasResult: !!this._aiSynergyResult,
+            reportExpanded: this._aiSynergyReportExpanded,
+            result: this._aiSynergyResult,
+        });
+
+        const host = document.createElement('div');
+        host.innerHTML = html.trim();
+        const fresh = host.firstElementChild;
+        if (fresh) {
+            existing.replaceWith(fresh);
+            this.bindAiSynergyWidget();
+        }
+    },
+
+    /**
+     * Request payload describing the selected period: either a day count
+     * (14 / 30) or an explicit date range for a custom window. Matches the
+     * AISynergyRequest schema, so the backend can aggregate exactly what the
+     * user picked.
+     */
+    getAiSynergyRequestData() {
+        if (this._aiSynergyPeriod === 'custom') {
+            const start = this._aiSynergyCustomRange.start;
+            const end = this._aiSynergyCustomRange.end;
+            // The date inputs enforce bounds; guard against an empty field
+            // slipping through so the server never sees a half-range.
+            if (start && end) return { start_date: start, end_date: end };
+            if (start) return { start_date: start, end_date: start };
+            if (end) return { start_date: end, end_date: end };
+            return null;
+        }
+        return { period_days: Number(this._aiSynergyPeriod) };
+    },
+
+    /** Period chip handler: update the model and refresh the shell. */
+    selectAiSynergyPeriod(period) {
+        if (this._aiSynergyRunning) return;
+        if (period === 'custom' && this._aiSynergyPeriod !== 'custom') {
+            this._aiSynergyCustomRange = { start: this.todayISO(), end: this.todayISO() };
+        }
+        this._aiSynergyPeriod = period;
+        // A new period is a fresh context: drop any verdict from the previous run.
+        this._aiSynergyResult = null;
+        this.renderAiSynergyWidget();
+    },
+
+    /** Reads the custom date inputs back into the model. */
+    syncAiSynergyCustomRange() {
+        const container = this.app.elements.pageContent;
+        const widget = container.querySelector('.ai-synergy-widget');
+        if (!widget) return;
+        const start = widget.querySelector('[data-ai-synergy-date="start"]')?.value ?? '';
+        const end = widget.querySelector('[data-ai-synergy-date="end"]')?.value ?? '';
+        this._aiSynergyCustomRange = { start, end };
+    },
+
+    /** Swaps the widget into the running (spinner) state. */
+    setAiSynergyRunning(running) {
+        this._aiSynergyRunning = running;
+        this.renderAiSynergyWidget();
+    },
+
+    /** Renders the analysis verdict inside the widget after the API answers. */
+    setAiSynergyResult(payload) {
+        this._aiSynergyResult = payload;
+        this._aiSynergyRunning = false;
+        // Default to an open report so the verdict is visible without an extra tap;
+        // the user has just asked for it.
+        this._aiSynergyReportExpanded = true;
+        this.renderAiSynergyWidget();
+    },
+
+    /** Expand/collapse the full Synergy verdict report. */
+    toggleAiSynergyReport() {
+        const container = this.app.elements.pageContent;
+        const widget = container.querySelector('.ai-synergy-widget');
+        const body = widget?.querySelector('.ai-synergy__report-body');
+        const toggle = widget?.querySelector('[data-action="toggle-ai-synergy-report"]');
+        if (!body || !toggle) return;
+
+        this._aiSynergyReportExpanded = !this._aiSynergyReportExpanded;
+        const expanded = this._aiSynergyReportExpanded;
+
+        body.classList.toggle('is-collapsed', !expanded);
+        toggle.setAttribute('aria-expanded', String(expanded));
+        toggle.textContent = expanded ? 'Свернуть ▴' : 'Развернуть ▾';
+    },
+
+    /** Re-binds the widget's controls after an in-place re-render. */
+    bindAiSynergyWidget() {
+        const container = this.app.elements.pageContent;
+        const widget = container.querySelector('.ai-synergy-widget');
+        if (!widget) return;
+
+        // Period chips: the document-level data-action listener has no case for
+        // "ai-synergy-period", so the chip handler lives here. Chips are rebuilt
+        // on every render, so they are re-bound each time.
+        widget.querySelectorAll('[data-action="ai-synergy-period"]').forEach((btn) => {
+            btn.onclick = () => this.selectAiSynergyPeriod(btn.dataset.period);
+        });
+
+        // Reflect the live selection on the chips (aria-pressed + active look).
+        widget.querySelectorAll('.ai-synergy__chip').forEach((chip) => {
+            const active = chip.dataset.period === this._aiSynergyPeriod;
+            chip.setAttribute('aria-pressed', String(active));
+            chip.classList.toggle('is-active', active);
+        });
+
+        // Custom date inputs keep the model in sync as the user edits them so the
+        // request always carries the latest window.
+        widget.querySelectorAll('[data-ai-synergy-date]').forEach((input) => {
+            input.addEventListener('change', () => this.syncAiSynergyCustomRange());
+            input.addEventListener('input', () => this.syncAiSynergyCustomRange());
+        });
+
+        // The launch button (data-action="launch-ai-synergy") and the report
+        // toggle (data-action="toggle-ai-synergy-report") are handled by the
+        // document-level delegated listener, so they intentionally stay
+        // un-bound here to avoid a double dispatch.
+    },
+
+    /**
+     * Newest ordering key for a meal. Timestamps arrive as ISO strings,
      * so they must be parsed before comparing (a raw "-" on strings yields NaN
      * and leaves the list in its original order).
      */
@@ -963,6 +1113,23 @@ export const Nutrition = {
                 ? `<div class="daily-summary-slot snap-center shrink-0">${Components.dailySummaryCard(dailySummary, this.recapCardOptions())}</div>`
                 : '';
 
+            // AI Synergy widget: sits under the Daily Summary block on the Питание
+            // tab. The Daily Summary is itself day-view only, so the widget is
+            // scoped to the same view so the two stay vertically aligned.
+            const aiSynergyWidgetSlot = (this.selectedPeriod === 'day')
+                ? `<div class="mt-4">${Components.aiSynergyWidget({
+                    period: this._aiSynergyPeriod,
+                    customStart: this._aiSynergyCustomRange.start,
+                    customEnd: this._aiSynergyCustomRange.end,
+                    todayISO: this.todayISO(),
+                    isPremium: !!user?.is_premium,
+                    isRunning: this._aiSynergyRunning,
+                    hasResult: !!this._aiSynergyResult,
+                    reportExpanded: this._aiSynergyReportExpanded,
+                    result: this._aiSynergyResult,
+                })}</div>`
+                : '';
+
             let html = `
                 <div class="single-viewport px-4 pt-4 pb-20">
                     <!-- HEADER -->
@@ -988,16 +1155,19 @@ export const Nutrition = {
                     <!-- STUCK ANALYSIS BANNER (polling budget spent) -->
                     ${this._pollingTimedOut ? this.renderAnalysisTimeoutBanner() : ''}
 
-                    <!-- SNAP CAROUSEL: daily summary first (day only), then action tile, then pending meals, then logged meals (LIFO) -->
-                    <div class="meal-carousel" id="meal-carousel">
-                        ${dailySummarySlot}
-                        ${Components.addMealActionCard()}
-                        ${pendingSorted.map((meal) => Components.mealCardPhoto(meal, cardOptions)).join('')}
-                        ${sortedMeals.map((meal) => Components.mealCardPhoto(meal, cardOptions)).join('')}
-                        ${totalMeals === 0 ? Components.mealCarouselEmptyState() : ''}
-                    </div>
+                     <!-- SNAP CAROUSEL: daily summary first (day only), then action tile, then pending meals, then logged meals (LIFO) -->
+                     <div class="meal-carousel" id="meal-carousel">
+                         ${dailySummarySlot}
+                         ${Components.addMealActionCard()}
+                         ${pendingSorted.map((meal) => Components.mealCardPhoto(meal, cardOptions)).join('')}
+                         ${sortedMeals.map((meal) => Components.mealCardPhoto(meal, cardOptions)).join('')}
+                         ${totalMeals === 0 ? Components.mealCarouselEmptyState() : ''}
+                     </div>
 
-                    <!-- FAILED SYNC ITEMS (inline if any) -->
+                     <!-- AI SYNERGY WIDGET: under the Daily Summary block -->
+                     ${aiSynergyWidgetSlot}
+
+                     <!-- FAILED SYNC ITEMS (inline if any) -->
                     ${failedItems.length > 0
                         ? `
                         <div class="viewport-content px-4 pb-2 -mx-4" id="failed-items-section">
@@ -1029,6 +1199,7 @@ export const Nutrition = {
             this.bindFailedItems();
             this.bindDailySummary();
             this.syncDailySummaryToggles();
+            this.bindAiSynergyWidget();
 
             // Every poll tick rebuilds the carousel too, so the position is put
             // back here instead of snapping to the add tile every 3 seconds.

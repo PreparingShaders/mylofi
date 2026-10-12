@@ -46,6 +46,7 @@ from app.schemas import (
     AIWorkoutSummaryRequest,
     AIWorkoutSummaryResponse,
 )
+from app.schemas.ai_synergy import AISynergyRequest, AISynergyResponse
 from app.services.auth import (
     verify_password,
     get_password_hash,
@@ -1322,3 +1323,38 @@ async def websocket_endpoint(
         pass
     finally:
         manager.disconnect(websocket)
+
+# ===== AI Synergy Routes =====
+@router.post("/ai/synergy", response_model=AISynergyResponse)
+async def ai_synergy(
+    request: AISynergyRequest,
+    tz_offset: Optional[int] = Query(None, description=TZ_OFFSET_DESCRIPTION),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.services.ai_synergy_service import run_ai_synergy
+
+    if not current_user.is_premium:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Анализ ИИ-Синергия доступен только по подписке Premium",
+        )
+
+    try:
+        tz_offset_minutes = normalize_tz_offset(tz_offset)
+        result = await run_ai_synergy(
+            db=db,
+            user=current_user,
+            avg_sleep_hours=request.avg_sleep_hours,
+            period_days=request.period_days,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            tz_offset_minutes=tz_offset_minutes,
+        )
+        return result
+    except Exception as e:
+        logger.exception(f"AI synergy endpoint failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Не удалось выполнить анализ синергии",
+        )

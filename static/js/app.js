@@ -9,7 +9,7 @@ import { DB } from './db.js';
 import { SyncEngine } from './sync.js';
 import { NetworkBanner } from './network.js';
 import { Components } from './components.js';
-import { Utils } from './utils.js';
+import { Utils, clientTimezone } from './utils.js';
 import { Theme } from './theme.js';
 import { Admin } from './admin.js';
 
@@ -860,8 +860,122 @@ const App = {
             case 'save-ai-persona':
                 await Profile.savePersona(this.elements.pageContent);
                 break;
+            case 'launch-ai-synergy':
+                this.launchAiSynergy();
+                break;
+            case 'close-ai-synergy-sleep-modal':
+                this.closeAiSynergySleepModal();
+                break;
+            case 'confirm-ai-synergy-sleep':
+                await this.confirmAiSynergySleep();
+                break;
+            case 'toggle-ai-synergy-report':
+                Nutrition.toggleAiSynergyReport();
+                break;
         }
     },
+
+    _aiSynergySleepModalState: null,
+
+    /**
+     * Opens the sleep-input drum-sheet for the AI Synergy widget. The period is
+     * already chosen in the widget itself; this sheet only collects the optional
+     * average-sleep figure and then hands control back to confirmAiSynergySleep,
+     * which performs the analysis and renders the result inside the widget.
+     */
+    launchAiSynergy() {
+        if (!this.elements.screens.main || !this.state.user) {
+            this.showToast('Сначала войдите в аккаунт', 'info');
+            return;
+        }
+
+        // A custom range needs both dates filled in before the analysis can run.
+        if (Nutrition._aiSynergyPeriod === 'custom') {
+            const data = Nutrition.getAiSynergyRequestData();
+            if (!data || !data.start_date || !data.end_date) {
+                this.showToast('Укажите кастомный диапазон дат', 'info');
+                return;
+            }
+        }
+
+        const host = document.getElementById('modals') || document.body;
+        const html = Components.aiSynergySleepModal();
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = html;
+        const modalEl = wrapper.firstElementChild;
+        host.appendChild(modalEl);
+
+        this._aiSynergySleepModalState = { modalEl };
+
+        // Clicks on the backdrop, close button and confirm button are routed
+        // through the document-level data-action listener (handleAction), so
+        // there is no need to re-bind them here - doing so would double-fire.
+        const escHandler = (e) => { if (e.key === 'Escape') this.closeAiSynergySleepModal(); };
+        document.addEventListener('keydown', escHandler);
+        modalEl._onEsc = escHandler;
+
+        // Lock body scroll while the sheet is open
+        this._aiSynergySleepModalState.bodyWasLocked = document.body.classList.contains('overflow-hidden');
+        document.body.classList.add('overflow-hidden');
+    },
+
+    closeAiSynergySleepModal() {
+        if (!this._aiSynergySleepModalState) return;
+        const { modalEl, bodyWasLocked } = this._aiSynergySleepModalState;
+        this._aiSynergySleepModalState = null;
+        if (modalEl._onEsc) {
+            document.removeEventListener('keydown', modalEl._onEsc);
+            delete modalEl._onEsc;
+        }
+        if (!bodyWasLocked) document.body.classList.remove('overflow-hidden');
+
+        const panel = modalEl.querySelector('.drum-sheet-panel');
+        if (panel) panel.classList.add('is-closing');
+        const backdrop = modalEl.querySelector('.drum-sheet-backdrop');
+        if (backdrop) backdrop.classList.add('is-closing');
+
+        setTimeout(() => { modalEl.remove(); }, 220);
+    },
+
+    async confirmAiSynergySleep() {
+        if (!this._aiSynergySleepModalState?.modalEl) return;
+        const modalEl = this._aiSynergySleepModalState.modalEl;
+
+        const sleepInput = modalEl.querySelector('#ai-synergy-sleep-input');
+        const sleepVal = sleepInput ? parseFloat(sleepInput.value) : NaN;
+        const avg_sleep_hours = (!isNaN(sleepVal) && sleepVal >= 4 && sleepVal <= 12)
+            ? sleepVal
+            : null;
+
+        // Close the sheet before the long request so the user sees the widget
+        // flip into its running state underneath.
+        this.closeAiSynergySleepModal();
+
+        // Build the request: period selection from the widget + optional sleep.
+        const body = { ...Nutrition.getAiSynergyRequestData() };
+        if (avg_sleep_hours != null) body.avg_sleep_hours = avg_sleep_hours;
+
+        const { offsetMinutes } = clientTimezone();
+        const endpoint = offsetMinutes != null
+            ? `/ai/synergy?tz_offset=${encodeURIComponent(offsetMinutes)}`
+            : '/ai/synergy';
+
+        Nutrition.setAiSynergyRunning(true);
+        try {
+            const resultPayload = await API.postImmediate(
+                endpoint,
+                body,
+                this.state.tokens.access
+            );
+            Nutrition.setAiSynergyResult(resultPayload);
+            this.showToast('Анализ ИИ-Синергии завершён', 'success');
+        } catch (e) {
+            console.error('[App] AI synergy failed:', e);
+            Nutrition.setAiSynergyRunning(false);
+            this.showToast(e?.message || 'Не удалось выполнить анализ', 'error');
+        }
+    },
+
 
     async handleToggleSet(event) {
         const btn = event.target.closest('[data-action="toggle-set"]');

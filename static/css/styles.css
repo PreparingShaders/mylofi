@@ -2019,6 +2019,53 @@ input, select, textarea:focus {
     font-family: ui-serif, system-ui, sans-serif;
 }
 
+/* ============ AI Synergy widget (Nutrition tab) ============ */
+/* Rendered inline under the Daily Summary block. Same glass surface as the
+   other cards, but with a lime badge so the cross-analysis stands out as a
+   distinct action rather than another recap. */
+.ai-synergy-widget {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.ai-synergy__badge {
+    flex-shrink: 0;
+}
+.ai-synergy__chip {
+    border: 1px solid rgba(132, 204, 22, 0.2);
+    background: rgba(132, 204, 22, 0.06);
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+.ai-synergy__chip[aria-pressed="true"],
+.ai-synergy__chip.is-active {
+    background: rgba(132, 204, 22, 0.16);
+    border-color: rgba(132, 204, 22, 0.4);
+}
+.ai-synergy__body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+/* Collapsible report: a smooth height reveal so the toggle feels responsive.
+   The expanded max-height is generous on purpose - the content decides its
+   own height and never gets clipped. */
+.ai-synergy__report-body {
+    max-height: 2000px;
+    opacity: 1;
+    overflow: hidden;
+    transition: max-height 0.28s ease, opacity 0.28s ease;
+}
+.ai-synergy__report-body.is-collapsed {
+    max-height: 0;
+    opacity: 0;
+    padding-inline: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+}
+.ai-synergy__report-body:not(.is-collapsed) {
+    padding: 4px 0 0;
+}
+
 /* ============ Nutrition page layout (iPhone 13 mini and up) ============ */
 /* The nutrition page is a scrolling document, not a fixed one-screen shell: the
    dashboard plus the meal cards are taller than any phone, and a card that has to

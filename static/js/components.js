@@ -1777,5 +1777,238 @@ export const Components = {
                 </div>
             </div>
         `;
+    },
+
+    /**
+     * AI Synergy widget, rendered on the Питание (nutrition) tab directly under
+     * the Daily Summary block. It hosts the period selector (14 / 30 / custom),
+     * the optional-sleep launch trigger, and - once analysis completes - the
+     * verdict rendered inline with an expand/collapse for the full report.
+     *
+     * The whole shell is a pure function of its options: the Nutrition module
+     * re-renders it in place whenever the period changes or a result lands,
+     * so there is no separate "idle" vs "result" markup to keep in sync.
+     */
+    aiSynergyWidget({
+        period = '14',
+        customStart = '',
+        customEnd = '',
+        todayISO = '',
+        isPremium = false,
+        isRunning = false,
+        hasResult = false,
+        reportExpanded = false,
+        result = null,
+    } = {}) {
+        const periodOptions = [
+            { value: '14', label: '14 дней' },
+            { value: '30', label: '30 дней' },
+            { value: 'custom', label: 'Кастомный' },
+        ];
+        const isCustom = period === 'custom';
+
+        const chips = periodOptions.map((opt) => {
+            const active = opt.value === period;
+            return `<button type="button" data-action="ai-synergy-period" data-period="${escapeHtml(opt.value)}"
+                    aria-pressed="${active}"
+                    class="ai-synergy__chip select-none px-3 py-1.5 rounded-full text-xs font-medium transition-colors btn-press
+                           ${active
+                               ? 'is-active bg-lime-500/16 border-lime-500/40 text-surface-900 dark:text-zinc-100'
+                               : 'glass text-surface-500 dark:text-surface-400 border border-surface-200 dark:border-white/10 hover:bg-surface-100 dark:hover:bg-zinc-800'}">
+                    ${opt.label}
+                </button>`;
+        }).join('');
+
+        const customInputs = isCustom
+            ? `<div class="ai-synergy__custom mt-2 flex items-end gap-2.5">
+                  <div class="flex-1">
+                      <label class="block text-[10px] font-semibold text-surface-500 dark:text-zinc-400 mb-1">С начала</label>
+                      <input type="date" data-ai-synergy-date="start" value="${escapeHtml(customStart)}" max="${escapeHtml(todayISO)}"
+                             class="w-full px-2.5 py-1.5 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 focus:border-lime-500 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"/>
+                  </div>
+                  <div class="flex-1">
+                      <label class="block text-[10px] font-semibold text-surface-500 dark:text-zinc-400 mb-1">По</label>
+                      <input type="date" data-ai-synergy-date="end" value="${escapeHtml(customEnd)}" max="${escapeHtml(todayISO)}"
+                             class="w-full px-2.5 py-1.5 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 focus:border-lime-500 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"/>
+                  </div>
+               </div>`
+            : '';
+
+        let body;
+        if (hasResult && result) {
+            body = this.aiSynergyReport({ result, expanded: reportExpanded });
+        } else if (isRunning) {
+            body = `<div class="ai-synergy__running flex items-center justify-center gap-2 py-3 text-surface-500 dark:text-zinc-400">
+                 <svg class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                 <span class="text-sm">Анализируем связь питания и тренировок…</span>
+            </div>`;
+        } else if (!isPremium) {
+            body = `<div class="rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2">
+                    <p class="text-xs font-semibold text-amber-600 dark:text-amber-400">Только для подписчиков Premium</p>
+                    <p class="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5">Глубокая связь питания и тренировок доступна по подписке Premium.</p>
+                </div>`;
+        } else {
+            body = `<button type="button" data-action="launch-ai-synergy"
+                          class="w-full py-2.5 rounded-2xl bg-lime-500 text-zinc-950 font-bold text-sm shadow-md hover:bg-lime-400 transition-all btn-press flex items-center justify-center gap-2">
+                <span>✨ Запустить анализ</span>
+            </button>`;
+        }
+
+        return `
+            <section class="ai-synergy-widget glass-strong rounded-3xl">
+                <div class="ai-synergy__head flex items-center gap-2.5">
+                    <span class="ai-synergy__badge inline-flex items-center gap-1 rounded-full border border-lime-500/30 bg-lime-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-lime-700 dark:text-lime-400">ИИ ✦</span>
+                    <h3 class="text-base font-bold text-surface-900 dark:text-zinc-100 truncate">✨ ИИ-Синергия (Питание + Спорт)</h3>
+                </div>
+                <p class="ai-synergy__subtitle mt-1 text-xs text-surface-500 dark:text-zinc-400">Анализ связи калорий, белков и силовых показателей</p>
+
+                <div class="ai-synergy__controls mt-3">
+                    <div class="ai-synergy__periods flex items-center gap-1.5 flex-wrap">
+                        ${chips}
+                    </div>
+                    ${customInputs}
+                </div>
+
+                <div class="ai-synergy__body" data-ai-synergy-body>
+                    ${body}
+                </div>
+            </section>
+        `;
+    },
+
+    /**
+     * Expandable wrapper around the verdict result card. The score headline
+     * is always visible; the full report (findings, growth points, risks,
+     * recommendations) collapses under a toggle so the widget does not turn
+     * into a wall of text before the user asks for it.
+     */
+    aiSynergyReport({ result, expanded = false } = {}) {
+        return `
+            <div class="ai-synergy__report">
+                <div class="ai-synergy__report-head flex items-center justify-between gap-2">
+                    <h4 class="text-sm font-semibold text-surface-900 dark:text-zinc-100">Вердикт ИИ-Синергии</h4>
+                    <button type="button" data-action="toggle-ai-synergy-report"
+                            aria-expanded="${expanded}"
+                            class="ai-synergy__report-toggle text-xs font-medium text-surface-500 dark:text-zinc-400 hover:text-surface-900 dark:hover:text-zinc-200 btn-press cursor-pointer inline-flex items-center gap-1">
+                        ${expanded ? 'Свернуть ▴' : 'Развернуть ▾'}
+                    </button>
+                </div>
+                <div class="ai-synergy__report-body mt-2 ${expanded ? '' : 'is-collapsed'}">
+                    ${this.aiSynergyResultCard(result)}
+                </div>
+            </div>
+        `;
+    },
+
+    /**
+     * Sleep input drum-sheet modal for the AI Synergy flow. The period is
+     * already chosen in the widget; this sheet only collects the optional
+     * average-sleep figure (4–12 h). The analysis itself is kicked off by the
+     * caller once the user confirms or skips.
+     */
+    aiSynergySleepModal({ value = '' } = {}) {
+        const sleepInputAttrs = 'type="number" min="4" max="12" step="0.5"';
+        const sleepControlId = 'ai-synergy-sleep-input';
+
+        return `
+            <div class="drum-sheet fixed inset-0 z-50 pointer-events-auto">
+                <div class="drum-sheet-backdrop absolute inset-0 bg-black/40 dark:bg-black/60" data-action="close-ai-synergy-sleep-modal"></div>
+                <div class="drum-sheet-panel absolute bottom-0 left-0 right-0 bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 rounded-t-2xl border-t border-zinc-200 dark:border-white/10 flex flex-col drum-sheet-safe" role="dialog" aria-modal="true" aria-labelledby="ai-synergy-sleep-title">
+                    <div class="flex flex-col gap-3.5 px-4 pt-0 pb-1">
+                        <div class="w-10 h-1 rounded-full bg-zinc-300 dark:bg-white/20 mx-auto drum-sheet-handle flex-shrink-0"></div>
+
+                        <div class="flex items-start justify-between gap-3">
+                            <div class="min-w-0">
+                                <div class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-500 font-semibold truncate">ИИ-СИНЕРГИЯ</div>
+                                <h3 id="ai-synergy-sleep-title" class="text-base font-bold text-zinc-900 dark:text-zinc-100 truncate">Средний сон за период</h3>
+                            </div>
+                            <button type="button" data-action="close-ai-synergy-sleep-modal" aria-label="Закрыть" class="sheet-close-btn w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0 flex items-center justify-center hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6l12 12M18 6L6 18"/></svg>
+                            </button>
+                        </div>
+
+                        <div class="space-y-3" data-ai-synergy-sleep-form>
+                            <div>
+                                <label for="${sleepControlId}" class="block text-xs text-zinc-500 dark:text-zinc-400 font-semibold mb-1.5">Средний сон (часы)</label>
+                                <div class="flex items-center gap-3">
+                                    <input id="${sleepControlId}" name="avg_sleep_hours" ${sleepInputAttrs} value="${escapeHtml(value === '' ? '' : String(value))}" placeholder="— пропустить"
+                                            class="w-24 px-3 py-2 rounded-xl glass-input text-zinc-900 dark:text-zinc-100 text-sm focus:border-lime-500 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"/>
+                                    <span class="text-xs text-zinc-500 dark:text-zinc-400">ч</span>
+                                </div>
+                                <p class="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">Опционально: от 4 до 12 часов. Оставьте пустым, чтобы пропустить.</p>
+                            </div>
+
+                            <div class="flex gap-2 pt-1">
+                                <button type="button" data-action="close-ai-synergy-sleep-modal"
+                                        class="flex-1 py-3 rounded-2xl glass text-sm font-semibold">
+                                    Пропустить
+                                </button>
+                                <button type="button" id="ai-synergy-sleep-confirm" data-action="confirm-ai-synergy-sleep"
+                                        class="flex-1 py-3 rounded-2xl bg-lime-500 text-zinc-950 font-bold text-sm shadow-md">
+                                    Готово
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    /**
+     * AI Synergy verdict result card rendered inside the widget after the
+     * analysis completes. The `payload` is the full /ai/synergy response; the
+     * card reads `payload.verdict` for the prose and `payload.metrics_snapshot`
+     * for the headline figures.
+     */
+    aiSynergyResultCard(payload) {
+        const v = payload?.verdict || {};
+        const score = v.overall_score != null ? `${v.overall_score}/10` : '—';
+        const items = (list) => (list || []).map((x) => `
+            <li class="flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+                <svg class="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-lime-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/></svg>
+                <span>${String(x)}</span>
+            </li>
+        `).join('') || '<li class="text-xs text-zinc-500">Нет данных</li>';
+
+        return `
+            <div class="space-y-3">
+                <div class="text-center">
+                    <p class="text-xs text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Общий счёт</p>
+                    <p class="text-3xl font-bold text-lime-500">${score}</p>
+                </div>
+
+                <div class="rounded-xl bg-zinc-50 dark:bg-zinc-800/40 border border-zinc-200 dark:border-white/10 p-3">
+                    <p class="text-xs text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Вердикт</p>
+                    <p class="text-sm font-medium text-zinc-900 dark:text-zinc-200">${String(v.headline || '—')}</p>
+                </div>
+
+                <div>
+                    <p class="text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Ключевые выводы</p>
+                    <ul class="space-y-1.5">${items(v.key_findings)}</ul>
+                </div>
+
+                <div>
+                    <p class="text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Точки роста</p>
+                    <ul class="space-y-1.5">${items(v.growth_points)}</ul>
+                </div>
+
+                <div>
+                    <p class="text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Факторы риска</p>
+                    <ul class="space-y-1.5">${items(v.risk_factors)}</ul>
+                </div>
+
+                <div>
+                    <p class="text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Рекомендация по питанию</p>
+                    <p class="text-sm text-zinc-700 dark:text-zinc-300">${String(v.nutrition_adjustment || '—')}</p>
+                </div>
+
+                <div>
+                    <p class="text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Рекомендация по тренировкам</p>
+                    <p class="text-sm text-zinc-700 dark:text-zinc-300">${String(v.workout_adjustment || '—')}</p>
+                </div>
+            </div>
+        `;
     }
 };
+
