@@ -2010,92 +2010,6 @@ export const Components = {
     },
 
     /**
-      * AI Synergy modal result card rendered inside the widget after the
-      * analysis completes. Kept as a separate function in case it is referenced
-      * elsewhere, but the modal uses `aiSynergyModal` for the full-screen view.
-      */
-    aiSynergyResultCard(payload) {
-        const v = payload?.verdict || {};
-        const score = v.overall_score != null ? `${v.overall_score}/10` : '—';
-        const persona = v.ai_persona || null;
-        
-        const renderFindings = (list) => {
-            if (!list || list.length === 0) {
-                return '<li class="text-xs text-zinc-500 dark:text-zinc-400">Нет данных</li>';
-            }
-            const toneConfigs = {
-                success: { bg: 'bg-emerald-500/10', border: 'border-emerald-500/30', text: 'text-emerald-400', darkText: 'dark:text-emerald-300', iconColor: 'text-emerald-400' },
-                warning: { bg: 'bg-amber-500/10', border: 'border-amber-500/30', text: 'text-amber-400', darkText: 'dark:text-amber-300', iconColor: 'text-amber-400' },
-                risk: { bg: 'bg-rose-500/10', border: 'border-rose-500/30', text: 'text-rose-400', darkText: 'dark:text-rose-300', iconColor: 'text-rose-400' },
-            };
-            return list.map((x) => {
-                const tone = classifyFinding(x);
-                const cfg = toneConfigs[tone] || toneConfigs.warning;
-                const iconPath = FINDING_ICON_PATHS[tone] || FINDING_ICON_PATHS.warning;
-                const svgAttrs = tone === 'success'
-                    ? 'fill="currentColor"'
-                    : 'fill="none" stroke="currentColor" stroke-width="2"';
-                return `
-                    <li class="flex items-start gap-2 px-2.5 py-1.5 rounded-lg border ${cfg.bg} ${cfg.border} ${cfg.text} ${cfg.darkText}">
-                        <svg class="mt-0.5 h-3.5 w-3.5 flex-shrink-0 ${cfg.iconColor}" ${svgAttrs} viewBox="0 0 24 24" aria-hidden="true">${iconPath}</svg>
-                        <span class="text-sm text-zinc-700 dark:text-zinc-300">${escapeHtml(String(x))}</span>
-                    </li>
-                `;
-            }).join('');
-        };
-
-        const personaMeta = {
-            kind: { emoji: '😊', label: 'Добрый нутрициолог' },
-            strict: { emoji: '🧊', label: 'Строгий тренер' },
-            sarcastic: { emoji: '😏', label: 'Саркастичный нутрициолог' },
-            custom: { emoji: '🎭', label: 'Ваш стиль' },
-        };
-        const personaBadge = persona && personaMeta[persona]
-            ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300"><span>${personaMeta[persona].emoji}</span>${personaMeta[persona].label}</span>`
-            : '';
-
-        return `
-            <div class="space-y-3">
-                <div class="text-center">
-                    <p class="text-xs text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Общий счёт</p>
-                    <p class="text-3xl font-bold text-purple-500">${score}</p>
-                    ${personaBadge ? `<p class="mt-1.5">${personaBadge}</p>` : ''}
-                </div>
-
-                <div class="rounded-xl bg-zinc-50 dark:bg-zinc-800/40 border border-zinc-200 dark:border-white/10 p-3">
-                    <p class="text-xs text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Вердикт</p>
-                    <p class="text-sm font-medium text-zinc-900 dark:text-zinc-200">${String(v.headline || '—')}</p>
-                </div>
-
-                <div>
-                    <p class="text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Ключевые выводы</p>
-                     <ul class="space-y-1.5">${renderFindings(v.key_findings)}</ul>
-                </div>
-
-                <div>
-                    <p class="text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Точки роста</p>
-                     <ul class="space-y-1.5">${renderFindings(v.growth_points)}</ul>
-                </div>
-
-                <div>
-                    <p class="text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Факторы риска</p>
-                     <ul class="space-y-1.5">${renderFindings(v.risk_factors)}</ul>
-                </div>
-
-                <div>
-                    <p class="text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Рекомендация по питанию</p>
-                    <p class="text-sm text-zinc-700 dark:text-zinc-300">${String(v.nutrition_adjustment || '—')}</p>
-                </div>
-
-                <div>
-                    <p class="text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Рекомендация по тренировкам</p>
-                    <p class="text-sm text-zinc-700 dark:text-zinc-300">${String(v.workout_adjustment || '—')}</p>
-                </div>
-            </div>
-        `;
-    },
-
-    /**
       * Full-screen modal for the AI Synergy report.
       *
       * Opens as a bottom-sheet on mobile and a centered modal on desktop.
@@ -2121,17 +2035,8 @@ export const Components = {
         else if (periodType === 'custom') periodLabel = 'Кастомный период';
         else if (periodDays) periodLabel = `${periodDays} дней`;
 
-        const personaMeta = {
-            kind: { emoji: '😊', label: 'Добрый нутрициолог' },
-            strict: { emoji: '🧊', label: 'Строгий тренер' },
-            sarcastic: { emoji: '😏', label: 'Саркастичный нутрициолог' },
-            custom: { emoji: '🎭', label: 'Ваш стиль' },
-        };
-        const personaBadge = persona && personaMeta[persona]
-            ? `<span class="ai-synergy-modal__persona">
-                 <span aria-hidden="true">${personaMeta[persona].emoji}</span>
-                 <span>${escapeHtml(personaMeta[persona].label)}</span>
-               </span>`
+        const personaEmoji = persona && AI_PERSONA_META[persona]
+            ? `<span class="ai-synergy-modal__persona-emoji" role="note" title="Стиль нутрициолога: ${escapeHtml(AI_PERSONA_META[persona].label)}">${AI_PERSONA_META[persona].emoji}</span>`
             : '';
 
         // Metrics snapshot
@@ -2178,21 +2083,21 @@ export const Components = {
                    ${keyFindings ? `<div class="ai-synergy-modal__finding-group">
                        <div class="ai-synergy-modal__section-title">
                            <svg class="ai-synergy-modal__section-icon text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m0 6a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                           <span>Ключевые выводы</span>
+                           <span>КЛЮЧЕВЫЕ ВЫВОДЫ</span>
                        </div>
                        <ul>${keyFindings}</ul>
                    </div>` : ''}
                    ${growthPoints ? `<div class="ai-synergy-modal__finding-group">
                        <div class="ai-synergy-modal__section-title">
-                           <svg class="ai-synergy-modal__section-icon text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M9 12a3 3 0 116 0 3 3 0 01-6 0z"/></svg>
-                           <span>Точки роста</span>
+                            <svg class="ai-synergy-modal__section-icon text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2v4M9 9a3 3 0 1 1 6 0 3 3 0 0 1-6 0Z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 12v3M9 15h6"/></svg>
+                            <span>ТОЧКИ РОСТА</span>
                        </div>
                        <ul>${growthPoints}</ul>
                    </div>` : ''}
                    ${riskFactors ? `<div class="ai-synergy-modal__finding-group">
                        <div class="ai-synergy-modal__section-title">
                            <svg class="ai-synergy-modal__section-icon text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1v-4h2v2h1v2zm0 0h1M10 12h.01M6 12a6 6 0 1112 0 6 6 0 01-12 0z"/></svg>
-                           <span>Факторы риска</span>
+                           <span>ФАКТОРЫ РИСКА</span>
                        </div>
                        <ul>${riskFactors}</ul>
                    </div>` : ''}
@@ -2220,7 +2125,7 @@ export const Components = {
                                 ${periodLabel ? `<p class="ai-synergy-modal__period">${escapeHtml(periodLabel)}</p>` : ''}
                             </div>
                         </div>
-                        ${personaBadge}
+                        ${personaEmoji}
                         <button type="button" class="ai-synergy-modal__close" data-action="close-ai-synergy-modal" aria-label="Закрыть">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6l12 12M18 6L6 18"/></svg>
                         </button>
@@ -2228,27 +2133,18 @@ export const Components = {
 
                     <div class="ai-synergy-modal__body">
                         <div class="ai-synergy-modal__section">
-                            ${personaBadge ? `<div class="flex justify-center mb-2">${personaBadge}</div>` : ''}
-                            <div class="ai-synergy-modal__score-block">
-                                <p class="ai-synergy-modal__score-label">Общий счёт</p>
-                                <p class="ai-synergy-modal__score-value">${score}</p>
+                            <div class="ai-synergy-modal__score-verdict flex items-center gap-3">
+                                <span class="ai-synergy-modal__score-badge">
+                                    ${score}
+                                </span>
+                                <p class="ai-synergy-modal__verdict-headline">${escapeHtml(headline || '—')}</p>
                             </div>
                         </div>
-
-                        ${headline ? `<div class="ai-synergy-modal__section">
-                            <div class="ai-synergy-modal__section-title">
-                                <svg class="ai-synergy-modal__section-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.878 16.878C8.768 16.59 7.854 15.91 7.24 14.93c-.15-.18-.28-.36-.39-.55a1 1 0 01.34-1.4l1-1 1-1 1 1c.21.22.51.35.83.35h3.51a1 1 0 00.83-.35l1-1 1-1 1 1a1 1 0 01.34 1.4 7 7 0 01-.25 1.07c-.33.71-.85 1.2-1.5 1.45a4.21 4.21 0 01-2.24 0z"/></svg>
-                                <span>Вердикт</span>
-                            </div>
-                             <div class="ai-synergy-modal__verdict">
-                                 <p class="ai-synergy-modal__verdict-headline">${escapeHtml(headline)}</p>
-                             </div>
-                        </div>` : ''}
 
                         ${metricsHtml ? `<div class="ai-synergy-modal__section">
                             <div class="ai-synergy-modal__section-title">
                                 <svg class="ai-synergy-modal__section-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m-3-3l3 3-3 3"/></svg>
-                                <span>Метрики</span>
+                                <span>МЕТРИКИ</span>
                             </div>
                             ${metricsHtml}
                         </div>` : ''}
@@ -2260,7 +2156,7 @@ export const Components = {
                         ${adjustmentsHtml ? `<div class="ai-synergy-modal__section">
                             <div class="ai-synergy-modal__section-title">
                                 <svg class="ai-synergy-modal__section-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 17h2M12 10v5m0 0l2-2m-2 2l-2 2"/></svg>
-                                <span>Рекомендации</span>
+                                <span>РЕКОМЕНДАЦИИ</span>
                             </div>
                             ${adjustmentsHtml}
                         </div>` : ''}
@@ -2274,7 +2170,7 @@ export const Components = {
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5M4 4l5 5-5 5v5h5M4 4l5 5-5-5z"/></svg>
                             <span>Пересчитать</span>
                         </button>
-                 </div>
+                    </div>
                 </div>
             </div>
         `;
