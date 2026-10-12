@@ -1813,7 +1813,7 @@ export const Components = {
                     aria-pressed="${active}"
                     class="ai-synergy__chip select-none px-3 py-1.5 rounded-full text-xs font-medium transition-colors btn-press
                            ${active
-                               ? 'is-active bg-lime-500/16 border-lime-500/40 text-surface-900 dark:text-zinc-100'
+                               ? 'is-active border-purple-500/40 bg-purple-500/10 text-surface-900 dark:text-zinc-100'
                                : 'glass text-surface-500 dark:text-surface-400 border border-surface-200 dark:border-white/10 hover:bg-surface-100 dark:hover:bg-zinc-800'}">
                     ${opt.label}
                 </button>`;
@@ -1824,12 +1824,12 @@ export const Components = {
                   <div class="flex-1">
                       <label class="block text-[10px] font-semibold text-surface-500 dark:text-zinc-400 mb-1">С начала</label>
                       <input type="date" data-ai-synergy-date="start" value="${escapeHtml(customStart)}" max="${escapeHtml(todayISO)}"
-                             class="w-full px-2.5 py-1.5 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 focus:border-lime-500 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"/>
+                             class="w-full px-2.5 py-1.5 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 focus:border-purple-500 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"/>
                   </div>
                   <div class="flex-1">
                       <label class="block text-[10px] font-semibold text-surface-500 dark:text-zinc-400 mb-1">По</label>
                       <input type="date" data-ai-synergy-date="end" value="${escapeHtml(customEnd)}" max="${escapeHtml(todayISO)}"
-                             class="w-full px-2.5 py-1.5 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 focus:border-lime-500 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"/>
+                             class="w-full px-2.5 py-1.5 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 focus:border-purple-500 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"/>
                   </div>
                </div>`
             : '';
@@ -1849,15 +1849,15 @@ export const Components = {
                 </div>`;
         } else {
             body = `<button type="button" data-action="launch-ai-synergy"
-                          class="w-full py-2.5 rounded-2xl bg-lime-500 text-zinc-950 font-bold text-sm shadow-md hover:bg-lime-400 transition-all btn-press flex items-center justify-center gap-2">
+                          class="w-full py-2.5 rounded-2xl bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-bold text-sm shadow-[0_0_20px_rgba(139,92,246,0.25)] hover:brightness-110 transition-all btn-press flex items-center justify-center gap-2">
                 <span>✨ Запустить анализ</span>
             </button>`;
         }
 
         return `
-            <section class="ai-synergy-widget glass-strong rounded-3xl">
+            <section class="ai-synergy-widget glass rounded-3xl p-4">
                 <div class="ai-synergy__head flex items-center gap-2.5">
-                    <span class="ai-synergy__badge inline-flex items-center gap-1 rounded-full border border-lime-500/30 bg-lime-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-lime-700 dark:text-lime-400">ИИ ✦</span>
+                    <span class="ai-synergy__badge ai-synergy__badge--purple inline-flex items-center gap-1 rounded-full border border-purple-500/30 bg-purple-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-purple-700 dark:text-purple-300">ИИ ✦</span>
                     <h3 class="text-base font-bold text-surface-900 dark:text-zinc-100 truncate">✨ ИИ-Синергия (Питание + Спорт)</h3>
                 </div>
                 <p class="ai-synergy__subtitle mt-1 text-xs text-surface-500 dark:text-zinc-400">Анализ связи калорий, белков и силовых показателей</p>
@@ -1885,17 +1885,16 @@ export const Components = {
     aiSynergyReport({ result, expanded = false } = {}) {
         return `
             <div class="ai-synergy__report">
-                <div class="ai-synergy__report-head flex items-center justify-between gap-2">
+                <div class="ai-synergy__report-head flex items-center gap-2">
                     <h4 class="text-sm font-semibold text-surface-900 dark:text-zinc-100">Вердикт ИИ-Синергии</h4>
-                    <button type="button" data-action="toggle-ai-synergy-report"
-                            aria-expanded="${expanded}"
-                            class="ai-synergy__report-toggle text-xs font-medium text-surface-500 dark:text-zinc-400 hover:text-surface-900 dark:hover:text-zinc-200 btn-press cursor-pointer inline-flex items-center gap-1">
-                        ${expanded ? 'Свернуть ▴' : 'Развернуть ▾'}
-                    </button>
                 </div>
                 <div class="ai-synergy__report-body mt-2 ${expanded ? '' : 'is-collapsed'}">
                     ${this.aiSynergyResultCard(result)}
                 </div>
+                <button type="button" data-action="toggle-ai-synergy-report"
+                        aria-expanded="${expanded}"
+                        class="ai-synergy__report-toggle text-xs text-purple-400 hover:text-purple-600 dark:hover:text-purple-300 font-medium cursor-pointer pt-1 inline-flex items-center gap-1 transition-colors btn-press"
+                        >${expanded ? 'Свернуть ▴' : 'Развернуть ▾'}</button>
             </div>
         `;
     },
@@ -1932,7 +1931,7 @@ export const Components = {
                                 <label for="${sleepControlId}" class="block text-xs text-zinc-500 dark:text-zinc-400 font-semibold mb-1.5">Средний сон (часы)</label>
                                 <div class="flex items-center gap-3">
                                     <input id="${sleepControlId}" name="avg_sleep_hours" ${sleepInputAttrs} value="${escapeHtml(value === '' ? '' : String(value))}" placeholder="— пропустить"
-                                            class="w-24 px-3 py-2 rounded-xl glass-input text-zinc-900 dark:text-zinc-100 text-sm focus:border-lime-500 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"/>
+                                            class="w-24 px-3 py-2 rounded-xl glass-input text-zinc-900 dark:text-zinc-100 text-sm focus:border-purple-500 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"/>
                                     <span class="text-xs text-zinc-500 dark:text-zinc-400">ч</span>
                                 </div>
                                 <p class="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">Опционально: от 4 до 12 часов. Оставьте пустым, чтобы пропустить.</p>
@@ -1944,7 +1943,7 @@ export const Components = {
                                     Пропустить
                                 </button>
                                 <button type="button" id="ai-synergy-sleep-confirm" data-action="confirm-ai-synergy-sleep"
-                                        class="flex-1 py-3 rounded-2xl bg-lime-500 text-zinc-950 font-bold text-sm shadow-md">
+                                        class="flex-1 py-3 rounded-2xl bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-bold text-sm shadow-[0_0_20px_rgba(139,92,246,0.25)]">
                                     Готово
                                 </button>
                             </div>
@@ -1966,7 +1965,7 @@ export const Components = {
         const score = v.overall_score != null ? `${v.overall_score}/10` : '—';
         const items = (list) => (list || []).map((x) => `
             <li class="flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-                <svg class="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-lime-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/></svg>
+                <svg class="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-purple-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/></svg>
                 <span>${String(x)}</span>
             </li>
         `).join('') || '<li class="text-xs text-zinc-500">Нет данных</li>';
@@ -1975,7 +1974,7 @@ export const Components = {
             <div class="space-y-3">
                 <div class="text-center">
                     <p class="text-xs text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Общий счёт</p>
-                    <p class="text-3xl font-bold text-lime-500">${score}</p>
+                    <p class="text-3xl font-bold text-purple-500">${score}</p>
                 </div>
 
                 <div class="rounded-xl bg-zinc-50 dark:bg-zinc-800/40 border border-zinc-200 dark:border-white/10 p-3">

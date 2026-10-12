@@ -1047,21 +1047,24 @@ html.dark,
 .meal-card-slot,
 .meal-action-slot,
 .meal-empty-slot,
-.daily-summary-slot {
+.daily-summary-slot,
+.ai-synergy-slot {
     width: min(85vw, 340px);
 }
 .meal-action-slot,
 .meal-empty-slot,
-.daily-summary-slot {
+.daily-summary-slot,
+.ai-synergy-slot {
     min-height: 360px;
 }
 @media (min-width: 640px) {
-    .meal-card-slot,
-    .meal-action-slot,
-    .meal-empty-slot,
-    .daily-summary-slot {
-        width: 380px;
-    }
+.meal-card-slot,
+.meal-action-slot,
+.meal-empty-slot,
+.daily-summary-slot,
+.ai-synergy-slot {
+    width: 380px;
+}
 }
 
 /* Meal carousel: a horizontal strip that is as tall as its tallest card. The cap
@@ -2020,9 +2023,10 @@ input, select, textarea:focus {
 }
 
 /* ============ AI Synergy widget (Nutrition tab) ============ */
-/* Rendered inline under the Daily Summary block. Same glass surface as the
-   other cards, but with a lime badge so the cross-analysis stands out as a
-   distinct action rather than another recap. */
+/* Rendered inline in the carousel's left column, directly after the Daily
+   Summary snap slot. Same glass surface and geometry as the daily-summary
+   card above it, but with a purple AI accent so the cross-analysis stands
+   out as a distinct action rather than another recap. */
 .ai-synergy-widget {
     display: flex;
     flex-direction: column;
@@ -2031,15 +2035,26 @@ input, select, textarea:focus {
 .ai-synergy__badge {
     flex-shrink: 0;
 }
+.ai-synergy__badge--purple {
+    color: #7e22ce;
+}
+.dark .ai-synergy__badge--purple {
+    color: #d8b4fe;
+}
 .ai-synergy__chip {
-    border: 1px solid rgba(132, 204, 22, 0.2);
-    background: rgba(132, 204, 22, 0.06);
+    border: 1px solid rgba(113, 113, 122, 0.2);
+    background: rgba(113, 113, 122, 0.06);
     transition: background 0.15s ease, border-color 0.15s ease;
 }
 .ai-synergy__chip[aria-pressed="true"],
 .ai-synergy__chip.is-active {
-    background: rgba(132, 204, 22, 0.16);
-    border-color: rgba(132, 204, 22, 0.4);
+    background: rgba(147, 51, 234, 0.10);
+    border-color: rgba(147, 51, 234, 0.40);
+}
+.dark .ai-synergy__chip[aria-pressed="true"],
+.dark .ai-synergy__chip.is-active {
+    background: rgba(147, 51, 234, 0.14);
+    border-color: rgba(147, 51, 234, 0.40);
 }
 .ai-synergy__body {
     display: flex;

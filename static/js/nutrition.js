@@ -1113,11 +1113,13 @@ export const Nutrition = {
                 ? `<div class="daily-summary-slot snap-center shrink-0">${Components.dailySummaryCard(dailySummary, this.recapCardOptions())}</div>`
                 : '';
 
-            // AI Synergy widget: sits under the Daily Summary block on the Питание
-            // tab. The Daily Summary is itself day-view only, so the widget is
-            // scoped to the same view so the two stay vertically aligned.
+            // AI Synergy widget: lives in the left column of the carousel,
+            // directly after the Daily Summary snap slot so the two stay
+            // vertically aligned and the widget matches the card's geometry.
+            // The Daily Summary is itself day-view only, so the widget is scoped
+            // to the same view.
             const aiSynergyWidgetSlot = (this.selectedPeriod === 'day')
-                ? `<div class="mt-4">${Components.aiSynergyWidget({
+                ? `<div class="ai-synergy-slot snap-center shrink-0">${Components.aiSynergyWidget({
                     period: this._aiSynergyPeriod,
                     customStart: this._aiSynergyCustomRange.start,
                     customEnd: this._aiSynergyCustomRange.end,
@@ -1155,17 +1157,17 @@ export const Nutrition = {
                     <!-- STUCK ANALYSIS BANNER (polling budget spent) -->
                     ${this._pollingTimedOut ? this.renderAnalysisTimeoutBanner() : ''}
 
-                     <!-- SNAP CAROUSEL: daily summary first (day only), then action tile, then pending meals, then logged meals (LIFO) -->
+                     <!-- SNAP CAROUSEL: daily summary first (day only), then the
+                          AI Synergy widget (day only, after the recap card),
+                          then the action tile, pending meals, logged meals (LIFO) -->
                      <div class="meal-carousel" id="meal-carousel">
                          ${dailySummarySlot}
+                         ${aiSynergyWidgetSlot}
                          ${Components.addMealActionCard()}
                          ${pendingSorted.map((meal) => Components.mealCardPhoto(meal, cardOptions)).join('')}
                          ${sortedMeals.map((meal) => Components.mealCardPhoto(meal, cardOptions)).join('')}
                          ${totalMeals === 0 ? Components.mealCarouselEmptyState() : ''}
                      </div>
-
-                     <!-- AI SYNERGY WIDGET: under the Daily Summary block -->
-                     ${aiSynergyWidgetSlot}
 
                      <!-- FAILED SYNC ITEMS (inline if any) -->
                     ${failedItems.length > 0
