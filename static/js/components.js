@@ -119,10 +119,12 @@ const FINDING_TONE_KEYWORDS = {
     ],
 };
 
+const SYNERGY_COOLDOWN_DAYS = 7;
+
 const FINDING_ICON_PATHS = {
-    success: '<path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>',
-    warning: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01m-9.5 0a9 9 0 1118 0 9 9 0 01-18 0z"/>',
-    risk: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.29 3.83a1 1 0 011.42 0L15.5 7.5 18.17 9.17a1 1 0 011.28 1.01v6.16a1 1 0 01-.8 1.02l-6.16 1.54a1 1 0 01-1.1-.15L8 15.5V12.5a1 1 0 011-1h.5l-.21-.21a1 1 0 010-1.42z"/>',
+    success: '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2"/><path d="M9 12l2 2 4-4"/>',
+    warning: '<path d="M10.29 3.83a1 1 0 011.42 0L20 10.11v6.88a1 1 0 01-.59 1.01l-6.71 2.5a1 1 0 01-.82 0L4.59 18a1 1 0 01-.59-1.01v-6.88l6.29-5.28a1 1 0 011.42 0z"/><path d="M12 9v4m0 4h.01"/>',
+    risk: '<path d="M8 7h8a2 2 0 012 2v2.286a1 1 0 01-.447.832l-3.553 2.132a1 1 0 00-.447.832V17a2 2 0 01-2 2H8a2 2 0 01-2-2v-2.146a1 1 0 00-.447-.832L3.447 11.082A1 1 0 013 10.286V8a2 2 0 012-2z"/><path d="M12 10v2m0 3h.01"/>',
 };
 
 const FINDING_TONE_CLASSES = {
@@ -143,13 +145,10 @@ function renderFindingItem(text, tone) {
     const iconPath = FINDING_ICON_PATHS[resolved];
     const toneClass = FINDING_TONE_CLASSES[resolved];
     const safeText = escapeHtml(String(text ?? ''));
-    const svgAttrs = resolved === 'success'
-        ? 'fill="currentColor"'
-        : 'fill="none" stroke="currentColor" stroke-width="2"';
     return `
         <li class="ai-synergy-modal__finding ${toneClass}">
             <span class="ai-synergy-modal__finding-icon" aria-hidden="true">
-                <svg class="w-4 h-4" ${svgAttrs} viewBox="0 0 24 24" aria-hidden="true">${iconPath}</svg>
+                <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true">${iconPath}</svg>
             </span>
             <span class="ai-synergy-modal__finding-text">${safeText}</span>
         </li>`
@@ -2035,6 +2034,20 @@ export const Components = {
         else if (periodType === 'custom') periodLabel = 'Кастомный период';
         else if (periodDays) periodLabel = `${periodDays} дней`;
 
+        // Cooldown: reanalyze is blocked for 7 days after the last analysis
+        let isReanalyzeDisabled = false;
+        let reanalyzeCooldownDateStr = '';
+        if (analyzedAt) {
+            const analyzedDate = new Date(analyzedAt);
+            if (!isNaN(analyzedDate.getTime())) {
+                const cooldownEnd = new Date(analyzedDate.getTime() + SYNERGY_COOLDOWN_DAYS * 24 * 60 * 60 * 1000);
+                if (Date.now() < cooldownEnd.getTime()) {
+                    isReanalyzeDisabled = true;
+                    reanalyzeCooldownDateStr = Utils.formatDate(cooldownEnd.toISOString());
+                }
+            }
+        }
+
         const personaEmoji = persona && AI_PERSONA_META[persona]
             ? `<span class="ai-synergy-modal__persona-emoji" role="note" title="Стиль нутрициолога: ${escapeHtml(AI_PERSONA_META[persona].label)}">${AI_PERSONA_META[persona].emoji}</span>`
             : '';
@@ -2087,17 +2100,17 @@ export const Components = {
                        </div>
                        <ul>${keyFindings}</ul>
                    </div>` : ''}
-                   ${growthPoints ? `<div class="ai-synergy-modal__finding-group">
-                       <div class="ai-synergy-modal__section-title">
-                            <svg class="ai-synergy-modal__section-icon text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2v4M9 9a3 3 0 1 1 6 0 3 3 0 0 1-6 0Z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 12v3M9 15h6"/></svg>
-                            <span>ТОЧКИ РОСТА</span>
+                    ${growthPoints ? `<div class="ai-synergy-modal__finding-group">
+                        <div class="ai-synergy-modal__section-title">
+                             <svg class="ai-synergy-modal__section-icon text-amber-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.29 3.83a1 1 0 011.42 0L20 10.11v6.88a1 1 0 01-.59 1.01l-6.71 2.5a1 1 0 01-.82 0L4.59 18a1 1 0 01-.59-1.01v-6.88l6.29-5.28a1 1 0 011.42 0z"/><path d="M12 9v4m0 4h.01"/></svg>
+                             <span>ТОЧКИ РОСТА</span>
                        </div>
                        <ul>${growthPoints}</ul>
                    </div>` : ''}
-                   ${riskFactors ? `<div class="ai-synergy-modal__finding-group">
-                       <div class="ai-synergy-modal__section-title">
-                           <svg class="ai-synergy-modal__section-icon text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1v-4h2v2h1v2zm0 0h1M10 12h.01M6 12a6 6 0 1112 0 6 6 0 01-12 0z"/></svg>
-                           <span>ФАКТОРЫ РИСКА</span>
+                    ${riskFactors ? `<div class="ai-synergy-modal__finding-group">
+                        <div class="ai-synergy-modal__section-title">
+                            <svg class="ai-synergy-modal__section-icon text-rose-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7h8a2 2 0 012 2v2.286a1 1 0 01-.447.832l-3.553 2.132a1 1 0 00-.447.832V17a2 2 0 01-2 2H8a2 2 0 01-2-2v-2.146a1 1 0 00-.447-.832L3.447 11.082A1 1 0 013 10.286V8a2 2 0 012-2z"/><path d="M12 10v2m0 3h.01"/></svg>
+                            <span>ФАКТОРЫ РИСКА</span>
                        </div>
                        <ul>${riskFactors}</ul>
                    </div>` : ''}
@@ -2166,11 +2179,15 @@ export const Components = {
                         <button type="button" class="ai-synergy-modal__footer-btn ai-synergy-modal__footer-btn--secondary" data-action="close-ai-synergy-modal">
                             Закрыть
                         </button>
-                        <button type="button" class="ai-synergy-modal__footer-btn ai-synergy-modal__footer-btn--primary" data-action="reanalyze-ai-synergy">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5M4 4l5 5-5 5v5h5M4 4l5 5-5-5z"/></svg>
-                            <span>Пересчитать</span>
-                        </button>
-                    </div>
+                        ${isReanalyzeDisabled
+                            ? `<button type="button" class="ai-synergy-modal__footer-btn ai-synergy-modal__footer-btn--primary ai-synergy-modal__footer-btn--disabled" disabled>
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5M4 4l5 5-5 5v5h5M4 4l5 5-5-5z"/></svg>
+                                <span>Кулдаун до ${reanalyzeCooldownDateStr}</span>
+                            </button>`
+                            : `<button type="button" class="ai-synergy-modal__footer-btn ai-synergy-modal__footer-btn--primary" data-action="reanalyze-ai-synergy">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5M4 4l5 5-5 5v5h5M4 4l5 5-5-5z"/></svg>
+                                <span>Пересчитать</span>
+                            </button>`}
                 </div>
             </div>
         `;

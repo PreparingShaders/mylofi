@@ -2256,8 +2256,8 @@ input, select, textarea:focus {
     color: #a1a1aa;
 }
 .ai-synergy-modal__section-icon {
-    width: 16px;
-    height: 16px;
+    width: 20px;
+    height: 20px;
     flex-shrink: 0;
 }
 .ai-synergy-modal__score-badge {
@@ -2357,8 +2357,8 @@ input, select, textarea:focus {
 }
 .ai-synergy-modal__finding-icon {
     flex-shrink: 0;
-    width: 18px;
-    height: 18px;
+    width: 20px;
+    height: 20px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2485,6 +2485,14 @@ input, select, textarea:focus {
 }
 .ai-synergy-modal__footer-btn--primary:hover {
     filter: brightness(1.1);
+}
+.ai-synergy-modal__footer-btn--disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+.ai-synergy-modal__footer-btn--disabled:hover {
+    filter: none;
 }
 .ai-synergy-modal__footer-btn--secondary {
     background: rgba(24, 24, 27, 0.06);
