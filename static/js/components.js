@@ -1858,9 +1858,9 @@ export const Components = {
             <section class="ai-synergy-widget glass rounded-3xl p-4">
                 <div class="ai-synergy__head flex items-center gap-2.5">
                     <span class="ai-synergy__badge inline-flex items-center gap-1 rounded-full border border-purple-500/30 bg-purple-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-purple-700 dark:text-purple-300">ИИ ✦</span>
-                    <h3 class="text-base font-bold text-surface-900 dark:text-zinc-100 truncate">ИИ-Синергия (Питание + Спорт)</h3>
+                    <h3 class="text-base font-bold text-surface-900 dark:text-zinc-100">ИИ-Синергия</h3>
                 </div>
-                <p class="ai-synergy__subtitle mt-1 text-xs text-surface-500 dark:text-zinc-400">Анализ связи калорий, белков и силовых показателей</p>
+                <p class="ai-synergy__subtitle mt-1 text-xs text-surface-500 dark:text-zinc-400">Питание и тренировки</p>
 
                 <div class="ai-synergy__controls mt-3">
                     <div class="ai-synergy__periods flex items-center gap-1.5 flex-wrap">
@@ -1963,18 +1963,42 @@ export const Components = {
     aiSynergyResultCard(payload) {
         const v = payload?.verdict || {};
         const score = v.overall_score != null ? `${v.overall_score}/10` : '—';
-        const items = (list) => (list || []).map((x) => `
-            <li class="flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-                <svg class="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-purple-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/></svg>
-                <span>${String(x)}</span>
-            </li>
-        `).join('') || '<li class="text-xs text-zinc-500">Нет данных</li>';
+        const persona = v.ai_persona || null;
+        
+        const renderFindings = (list, type) => {
+            if (!list || list.length === 0) {
+                return '<li class="text-xs text-zinc-500 dark:text-zinc-400">Нет данных</li>';
+            }
+            const configs = {
+                key_findings: { bg: 'bg-emerald-500/10', border: 'border-emerald-500/30', text: 'text-emerald-400', darkText: 'dark:text-emerald-300', iconColor: 'text-emerald-400' },
+                growth_points: { bg: 'bg-amber-500/10', border: 'border-amber-500/30', text: 'text-amber-400', darkText: 'dark:text-amber-300', iconColor: 'text-amber-400' },
+                risk_factors: { bg: 'bg-rose-500/10', border: 'border-rose-500/30', text: 'text-rose-400', darkText: 'dark:text-rose-300', iconColor: 'text-rose-400' },
+            };
+            const cfg = configs[type] || configs.key_findings;
+            return list.map((x) => `
+                <li class="flex items-start gap-2 px-2.5 py-1.5 rounded-lg border ${cfg.bg} ${cfg.border} ${cfg.text} ${cfg.darkText}">
+                    <svg class="mt-0.5 h-3.5 w-3.5 flex-shrink-0 ${cfg.iconColor}" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/></svg>
+                    <span class="text-sm text-zinc-700 dark:text-zinc-300">${String(x)}</span>
+                </li>
+            `).join('');
+        };
+
+        const personaMeta = {
+            kind: { emoji: '😊', label: 'Добрый нутрициолог' },
+            strict: { emoji: '🧊', label: 'Строгий тренер' },
+            sarcastic: { emoji: '😏', label: 'Саркастичный нутрициолог' },
+            custom: { emoji: '🎭', label: 'Ваш стиль' },
+        };
+        const personaBadge = persona && personaMeta[persona]
+            ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300"><span>${personaMeta[persona].emoji}</span>${personaMeta[persona].label}</span>`
+            : '';
 
         return `
             <div class="space-y-3">
                 <div class="text-center">
                     <p class="text-xs text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Общий счёт</p>
                     <p class="text-3xl font-bold text-purple-500">${score}</p>
+                    ${personaBadge ? `<p class="mt-1.5">${personaBadge}</p>` : ''}
                 </div>
 
                 <div class="rounded-xl bg-zinc-50 dark:bg-zinc-800/40 border border-zinc-200 dark:border-white/10 p-3">
@@ -1984,17 +2008,17 @@ export const Components = {
 
                 <div>
                     <p class="text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Ключевые выводы</p>
-                    <ul class="space-y-1.5">${items(v.key_findings)}</ul>
+                    <ul class="space-y-1.5">${renderFindings(v.key_findings, 'key_findings')}</ul>
                 </div>
 
                 <div>
                     <p class="text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Точки роста</p>
-                    <ul class="space-y-1.5">${items(v.growth_points)}</ul>
+                    <ul class="space-y-1.5">${renderFindings(v.growth_points, 'growth_points')}</ul>
                 </div>
 
                 <div>
                     <p class="text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Факторы риска</p>
-                    <ul class="space-y-1.5">${items(v.risk_factors)}</ul>
+                    <ul class="space-y-1.5">${renderFindings(v.risk_factors, 'risk_factors')}</ul>
                 </div>
 
                 <div>

@@ -1386,7 +1386,7 @@ async def get_ai_synergy(
     `available: false` with a reason, so the frontend renders an empty slot
     instead of an error - a first-time visit costs nothing but a quiet line.
     """
-    from app.services.ai_synergy_service import _get_latest_synergy, _json_default
+    from app.services.ai_synergy_service import _get_latest_synergy
     import json
 
     if not current_user.is_premium:
@@ -1405,6 +1405,8 @@ async def get_ai_synergy(
 
         payload = json.loads(latest.payload_json)
         verdict = payload.get("verdict") if isinstance(payload, dict) else None
+        if verdict and isinstance(verdict, dict) and latest.ai_persona:
+            verdict["ai_persona"] = latest.ai_persona
         return AISynergySavedResponse(
             available=True,
             analyzed_at=latest.created_at,

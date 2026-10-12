@@ -38,6 +38,7 @@ class AISynergyVerdict(BaseModel):
     risk_factors: List[str]
     nutrition_adjustment: str
     workout_adjustment: str
+    ai_persona: Optional[str] = None
 
 
 class AISynergyResponse(BaseModel):

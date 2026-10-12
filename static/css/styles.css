@@ -2089,12 +2089,13 @@ input, select, textarea:focus {
    it toggle visibility via CSS so the daily-summary card keeps its bindings
    across in-place synergy re-renders.
    The active slot participates in the flex flow so the card grows with its
-   content; the hidden slot is absolutely positioned to avoid layout shift. */
+   content; the hidden slot is absolutely positioned to avoid layout shift.
+   Both slots use dynamic height (max-height: none, overflow: visible) so the
+   page scrolls naturally when reports expand. */
 .ai-synergy-tab-card {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    min-height: 360px;
     align-self: start;
 }
 .ai-synergy-tab__header {
@@ -2104,11 +2105,13 @@ input, select, textarea:focus {
     display: flex;
     flex-direction: column;
     flex: 1;
-    min-height: 280px;
+    min-height: 0;
 }
 .ai-synergy-tab__slot {
     flex: 1;
     min-height: 0;
+    max-height: none;
+    overflow: visible;
     transition: opacity 0.22s ease;
 }
 .ai-synergy-tab__slot.is-hidden {

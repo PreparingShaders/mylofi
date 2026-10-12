@@ -4,11 +4,10 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone, date
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
-from sqlalchemy import func, select, and_
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.models import (
     Meal,
@@ -119,12 +118,6 @@ def build_synergy_prompt(
     persona_key = normalize_persona(user.ai_persona)
     persona_text = PERSONA_PROMPTS.get(persona_key, PERSONA_PROMPTS[DEFAULT_PERSONA])
 
-    lifestyle_block = ""
-    if avg_sleep_hours is not None:
-        lifestyle_block = f'"lifestyle": {{"avg_sleep_hours": {avg_sleep_hours}}},'
-    else:
-        lifestyle_block = '"lifestyle": {"avg_sleep_hours": null}, // сон не учтен пользователем'
-
     days_analyzed = aggregated.get("period_summary", {}).get("days_analyzed", 14) if isinstance(aggregated, dict) else 14
 
     prompt = f"""Ты — ведущий эксперт по спортивной нутрициологии и силовой подготовке. Твоя задача — провести глубокий перекрестный анализ данных пользователя за последние {days_analyzed} дней (питание, тренировки, антропометрия, сон) и выявить скрытые причины стагнации или точки прорыва.
@@ -135,6 +128,17 @@ def build_synergy_prompt(
 1. Сопоставь реальное потребление калорий и белка с целью пользователя (набор массы / похудение / поддержание).
 2. Оцени связь между качеством питания и силовыми результатами (тоннаж, RPE, прогресс по весам).
 3. Дай конструктивные, научно обоснованные и при этом практичные рекомендации без воды.
+
+=== ИНСТРУКЦИИ ПО ОЦЕНКЕ (overall_score) ===
+Оценка должна честно отражать баланс питания и тренировок. Используй полный диапазон 1–10:
+- 1–2: Критический дефицит калорий (>30% ниже цели) ИЛИ белок <1.0 г/кг веса ИЛИ полное отсутствие тренировок при цели набора массы.
+- 3–4: Сильный дефицит калорий (20–30% ниже цели) ИЛИ белок 1.0–1.4 г/кг ИЛИ сильный перекос по макронутриентам (жиры/углеводы >40% от цели) ИЛИ тренировки есть, но объём/интенсивность не соответствуют цели.
+- 5–6: Умеренные отклонения: калории ±15% от цели, белок 1.4–1.8 г/кг, тренировки регулярны, но прогресс по тоннажу стагнирует.
+- 7: Хороший баланс: калории ±10% от цели, белок 1.8–2.2 г/кг, тренировки системны, тоннаж растёт.
+- 8–9: Отличная синергия: калории и белок в цели, макросы сбалансированы, тоннаж прогрессирует, RPE в норме, сон 7+ ч.
+- 10: Идеальное выполнение: все метрики в зелёной зоне, прогресс по весам стабилен, восстановление оптимально.
+
+НИКОГДА не ставь 8–10 при дефиците калорий >15% или белке <1.6 г/кг (для цели набора) или при отсутствии прогресса тоннажа за 2+ недели.
 
 Данные пользователя:
 {json.dumps(aggregated, ensure_ascii=False, indent=2)}
@@ -207,8 +211,6 @@ async def _aggregate_period_data(
     avg_meal_quality_score = float(mr[5] or 0) if mr[5] else 0.0
 
     # For target adherence, sum over days? The spec gives daily averages; compute based on totals
-    total_cal = avg_daily_calories * days_analyzed if days_analyzed > 0 else 0
-    total_pro = avg_daily_protein_g * days_analyzed if days_analyzed > 0 else 0
     calorie_target_adherence_pct = (
         (avg_daily_calories / user.target_calories * 100) if user.target_calories and user.target_calories > 0 else 0.0
     )
@@ -482,6 +484,7 @@ async def run_ai_synergy(
             "risk_factors": [strip_emojis(str(x)) for x in (verdict.get("risk_factors") or [])][:10],
             "nutrition_adjustment": strip_emojis(str(verdict.get("nutrition_adjustment", "")))[:800],
             "workout_adjustment": strip_emojis(str(verdict.get("workout_adjustment", "")))[:800],
+            "ai_persona": user.ai_persona,
         },
     }
 
