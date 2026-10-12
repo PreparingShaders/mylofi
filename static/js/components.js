@@ -96,6 +96,65 @@ function macroTone(key, current, target) {
     return key;
 }
 
+// --- Finding classification: content-based semantic tone detection -------------
+//
+// Key findings from the synergy verdict can mix praise and risk on one list, so
+// the tone is derived from the text itself, not from which list it landed in:
+// a finding that reads "белок выше нормы" is a success, one that reads "дефицит
+// калорий" is a risk, and an advisory without either flag falls to warning. The
+// model is told to keep findings concise, so a handful of stems per category
+// catches the common phrasings without brittle regex.
+
+const FINDING_TONE_KEYWORDS = {
+    risk: [
+        'дефицит', 'недостаток', 'недостаточн', 'перекошен', 'перебор',
+        'избыток', 'риск', 'опасн', 'проблем', 'стагн', 'не раст',
+        'не достиг', 'не соответств', 'дисбаланс', 'переедание',
+        'недоедание', 'слаб', 'не хватает', 'отставание', 'ухудш',
+    ],
+    success: [
+        'хорош', 'отлич', 'сильн', 'прогрес', 'раст', 'в норм',
+        'баланс', 'оптим', 'достаточн', 'успешн', 'стабил',
+        'в цели', 'соответств', 'достигнут', 'в порядке',
+    ],
+};
+
+const FINDING_ICON_PATHS = {
+    success: '<path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>',
+    warning: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01m-9.5 0a9 9 0 1118 0 9 9 0 01-18 0z"/>',
+    risk: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.29 3.83a1 1 0 011.42 0L15.5 7.5 18.17 9.17a1 1 0 011.28 1.01v6.16a1 1 0 01-.8 1.02l-6.16 1.54a1 1 0 01-1.1-.15L8 15.5V12.5a1 1 0 011-1h.5l-.21-.21a1 1 0 010-1.42z"/>',
+};
+
+const FINDING_TONE_CLASSES = {
+    success: 'ai-synergy-modal__finding--success',
+    warning: 'ai-synergy-modal__finding--warning',
+    risk: 'ai-synergy-modal__finding--risk',
+};
+
+function classifyFinding(text) {
+    const lower = String(text || '').toLowerCase();
+    if (FINDING_TONE_KEYWORDS.risk.some(kw => lower.includes(kw))) return 'risk';
+    if (FINDING_TONE_KEYWORDS.success.some(kw => lower.includes(kw))) return 'success';
+    return 'warning';
+}
+
+function renderFindingItem(text, tone) {
+    const resolved = tone || classifyFinding(text);
+    const iconPath = FINDING_ICON_PATHS[resolved];
+    const toneClass = FINDING_TONE_CLASSES[resolved];
+    const safeText = escapeHtml(String(text ?? ''));
+    const svgAttrs = resolved === 'success'
+        ? 'fill="currentColor"'
+        : 'fill="none" stroke="currentColor" stroke-width="2"';
+    return `
+        <li class="ai-synergy-modal__finding ${toneClass}">
+            <span class="ai-synergy-modal__finding-icon" aria-hidden="true">
+                <svg class="w-4 h-4" ${svgAttrs} viewBox="0 0 24 24" aria-hidden="true">${iconPath}</svg>
+            </span>
+            <span class="ai-synergy-modal__finding-text">${safeText}</span>
+        </li>`
+}
+
 export const Components = {
     loadingSpinner(size = 'h-8 w-8') {
         return `<div class="flex items-center justify-center"><div class="animate-spin rounded-full ${size} border-2 border-primary-600 dark:border-zinc-200 border-t-transparent"></div></div>`;
@@ -1960,22 +2019,29 @@ export const Components = {
         const score = v.overall_score != null ? `${v.overall_score}/10` : '—';
         const persona = v.ai_persona || null;
         
-        const renderFindings = (list, type) => {
+        const renderFindings = (list) => {
             if (!list || list.length === 0) {
                 return '<li class="text-xs text-zinc-500 dark:text-zinc-400">Нет данных</li>';
             }
-            const configs = {
-                key_findings: { bg: 'bg-emerald-500/10', border: 'border-emerald-500/30', text: 'text-emerald-400', darkText: 'dark:text-emerald-300', iconColor: 'text-emerald-400' },
-                growth_points: { bg: 'bg-amber-500/10', border: 'border-amber-500/30', text: 'text-amber-400', darkText: 'dark:text-amber-300', iconColor: 'text-amber-400' },
-                risk_factors: { bg: 'bg-rose-500/10', border: 'border-rose-500/30', text: 'text-rose-400', darkText: 'dark:text-rose-300', iconColor: 'text-rose-400' },
+            const toneConfigs = {
+                success: { bg: 'bg-emerald-500/10', border: 'border-emerald-500/30', text: 'text-emerald-400', darkText: 'dark:text-emerald-300', iconColor: 'text-emerald-400' },
+                warning: { bg: 'bg-amber-500/10', border: 'border-amber-500/30', text: 'text-amber-400', darkText: 'dark:text-amber-300', iconColor: 'text-amber-400' },
+                risk: { bg: 'bg-rose-500/10', border: 'border-rose-500/30', text: 'text-rose-400', darkText: 'dark:text-rose-300', iconColor: 'text-rose-400' },
             };
-            const cfg = configs[type] || configs.key_findings;
-            return list.map((x) => `
-                <li class="flex items-start gap-2 px-2.5 py-1.5 rounded-lg border ${cfg.bg} ${cfg.border} ${cfg.text} ${cfg.darkText}">
-                    <svg class="mt-0.5 h-3.5 w-3.5 flex-shrink-0 ${cfg.iconColor}" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/></svg>
-                    <span class="text-sm text-zinc-700 dark:text-zinc-300">${String(x)}</span>
-                </li>
-            `).join('');
+            return list.map((x) => {
+                const tone = classifyFinding(x);
+                const cfg = toneConfigs[tone] || toneConfigs.warning;
+                const iconPath = FINDING_ICON_PATHS[tone] || FINDING_ICON_PATHS.warning;
+                const svgAttrs = tone === 'success'
+                    ? 'fill="currentColor"'
+                    : 'fill="none" stroke="currentColor" stroke-width="2"';
+                return `
+                    <li class="flex items-start gap-2 px-2.5 py-1.5 rounded-lg border ${cfg.bg} ${cfg.border} ${cfg.text} ${cfg.darkText}">
+                        <svg class="mt-0.5 h-3.5 w-3.5 flex-shrink-0 ${cfg.iconColor}" ${svgAttrs} viewBox="0 0 24 24" aria-hidden="true">${iconPath}</svg>
+                        <span class="text-sm text-zinc-700 dark:text-zinc-300">${escapeHtml(String(x))}</span>
+                    </li>
+                `;
+            }).join('');
         };
 
         const personaMeta = {
@@ -2003,17 +2069,17 @@ export const Components = {
 
                 <div>
                     <p class="text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Ключевые выводы</p>
-                    <ul class="space-y-1.5">${renderFindings(v.key_findings, 'key_findings')}</ul>
+                     <ul class="space-y-1.5">${renderFindings(v.key_findings)}</ul>
                 </div>
 
                 <div>
                     <p class="text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Точки роста</p>
-                    <ul class="space-y-1.5">${renderFindings(v.growth_points, 'growth_points')}</ul>
+                     <ul class="space-y-1.5">${renderFindings(v.growth_points)}</ul>
                 </div>
 
                 <div>
                     <p class="text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Факторы риска</p>
-                    <ul class="space-y-1.5">${renderFindings(v.risk_factors, 'risk_factors')}</ul>
+                     <ul class="space-y-1.5">${renderFindings(v.risk_factors)}</ul>
                 </div>
 
                 <div>
@@ -2072,27 +2138,9 @@ export const Components = {
         const metrics = result?.metrics_snapshot || {};
         const hasMetrics = metrics.avg_calories != null || metrics.avg_protein != null || metrics.total_workouts != null;
 
-        const renderFindings = (list, tone) => {
+        const renderFindings = (list) => {
             if (!list || list.length === 0) return '';
-            const iconMap = {
-                success: '<path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>',
-                warning: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01m-9.5 0a9 9 0 1118 0 9 9 0 01-18 0z"/>',
-                risk: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.29 3.83a1 1 0 011.42 0L15.5 7.5 18.17 9.17a1 1 0 011.28 1.01v6.16a1 1 0 01-.8 1.02l-6.16 1.54a1 1 0 01-1.1-.15L8 15.5V12.5a1 1 0 011-1h.5l-.21-.21a1 1 0 010-1.42z"/>',
-            };
-            const iconPath = iconMap[tone];
-            const toneClass = {
-                success: 'ai-synergy-modal__finding--success',
-                warning: 'ai-synergy-modal__finding--warning',
-                risk: 'ai-synergy-modal__finding--risk',
-            }[tone] || 'ai-synergy-modal__finding--success';
-            return list.map((x) => `
-                <li class="ai-synergy-modal__finding ${toneClass}">
-                    <span class="ai-synergy-modal__finding-icon" aria-hidden="true">
-                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">${iconPath}</svg>
-                    </span>
-                    <span class="ai-synergy-modal__finding-text">${String(x)}</span>
-                </li>
-            `).join('');
+            return list.map((x) => renderFindingItem(x)).join('');
         };
 
         const renderMetricRow = (label, value) => {
@@ -2112,9 +2160,9 @@ export const Components = {
             </div>
         `;
 
-        const keyFindings = renderFindings(v.key_findings, 'success');
-        const growthPoints = renderFindings(v.growth_points, 'warning');
-        const riskFactors = renderFindings(v.risk_factors, 'risk');
+        const keyFindings = renderFindings(v.key_findings);
+        const growthPoints = renderFindings(v.growth_points);
+        const riskFactors = renderFindings(v.risk_factors);
 
         const metricsHtml = hasMetrics ? `
             <div class="ai-synergy-modal__metrics">
@@ -2192,10 +2240,9 @@ export const Components = {
                                 <svg class="ai-synergy-modal__section-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.878 16.878C8.768 16.59 7.854 15.91 7.24 14.93c-.15-.18-.28-.36-.39-.55a1 1 0 01.34-1.4l1-1 1-1 1 1c.21.22.51.35.83.35h3.51a1 1 0 00.83-.35l1-1 1-1 1 1a1 1 0 01.34 1.4 7 7 0 01-.25 1.07c-.33.71-.85 1.2-1.5 1.45a4.21 4.21 0 01-2.24 0z"/></svg>
                                 <span>Вердикт</span>
                             </div>
-                            <div class="ai-synergy-modal__verdict">
-                                <p class="ai-synergy-modal__verdict-headline">${escapeHtml(headline)}</p>
-                                <p class="ai-synergy-modal__verdict-text">${escapeHtml(String(v.detailed_verdict || headline || '—'))}</p>
-                            </div>
+                             <div class="ai-synergy-modal__verdict">
+                                 <p class="ai-synergy-modal__verdict-headline">${escapeHtml(headline)}</p>
+                             </div>
                         </div>` : ''}
 
                         ${metricsHtml ? `<div class="ai-synergy-modal__section">

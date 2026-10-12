@@ -2323,14 +2323,6 @@ input, select, textarea:focus {
 .dark .ai-synergy-modal__verdict-headline {
     color: #fafafa;
 }
-.ai-synergy-modal__verdict-text {
-    font-size: 14px;
-    line-height: 1.6;
-    color: #3f3f46;
-}
-.dark .ai-synergy-modal__verdict-text {
-    color: #d4d4d8;
-}
 .ai-synergy-modal__findings-list {
     display: flex;
     flex-direction: column;

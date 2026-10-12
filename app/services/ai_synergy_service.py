@@ -146,7 +146,7 @@ def build_synergy_prompt(
 Формат ответа (строго валидный JSON):
 {{
   "verdict_headline": "Краткий вердикт синергии (до 10 слов)",
-  "overall_score": 85.0,
+   "overall_score": 8.5,
   "key_findings": [
     "Пункт анализа 1...",
     "Пункт анализа 2..."
