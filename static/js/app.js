@@ -866,14 +866,20 @@ const App = {
             case 'ai-synergy-tab':
                 Nutrition.selectAiSynergyTab(event.target.closest('[data-action="ai-synergy-tab"]')?.dataset.tab);
                 break;
+            case 'open-ai-synergy-modal':
+                Nutrition.openAiSynergyModal();
+                break;
+            case 'close-ai-synergy-modal':
+                Nutrition.closeAiSynergyModal();
+                break;
+            case 'reanalyze-ai-synergy':
+                this.reanalyzeAiSynergy();
+                break;
             case 'close-ai-synergy-sleep-modal':
                 this.closeAiSynergySleepModal();
                 break;
             case 'confirm-ai-synergy-sleep':
                 await this.confirmAiSynergySleep();
-                break;
-            case 'toggle-ai-synergy-report':
-                Nutrition.toggleAiSynergyReport();
                 break;
         }
     },
@@ -976,6 +982,58 @@ const App = {
             console.error('[App] AI synergy failed:', e);
             Nutrition.setAiSynergyRunning(false);
             this.showToast(e?.message || 'Не удалось выполнить анализ', 'error');
+        }
+    },
+
+    async reanalyzeAiSynergy() {
+        if (!this.state.tokens?.access) {
+            this.showToast('Сначала войдите в аккаунт', 'info');
+            return;
+        }
+
+        const body = { ...Nutrition.getAiSynergyRequestData() };
+        body.force = true;
+
+        const { offsetMinutes } = clientTimezone();
+        const endpoint = offsetMinutes != null
+            ? `/ai/synergy?tz_offset=${encodeURIComponent(offsetMinutes)}`
+            : '/ai/synergy';
+
+        const modal = document.querySelector('.ai-synergy-modal');
+        if (modal) {
+            const originalBody = modal.querySelector('.ai-synergy-modal__body').innerHTML;
+            modal.querySelector('.ai-synergy-modal__body').innerHTML = `
+                <div class="ai-synergy-modal__loading flex items-center justify-center py-8">
+                    <svg class="animate-spin w-6 h-6 text-purple-500" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span class="ml-3 text-sm text-surface-500 dark:text-zinc-400">Пересчитываем…</span>
+                </div>
+            `;
+        }
+
+        Nutrition.setAiSynergyRunning(true);
+        try {
+            const resultPayload = await API.postImmediate(
+                endpoint,
+                body,
+                this.state.tokens.access
+            );
+            Nutrition.setAiSynergyResult(resultPayload);
+            // Close the modal and re-open it with the fresh result
+            Nutrition.closeAiSynergyModal();
+            setTimeout(() => {
+                Nutrition.openAiSynergyModal();
+            }, 50);
+            this.showToast('Анализ ИИ-Синергии обновлён', 'success');
+        } catch (e) {
+            console.error('[App] AI synergy reanalyze failed:', e);
+            Nutrition.setAiSynergyRunning(false);
+            this.showToast(e?.message || 'Не удалось пересчитать', 'error');
+            if (modal) {
+                modal.querySelector('.ai-synergy-modal__body').innerHTML = originalBody;
+            }
         }
     },
 

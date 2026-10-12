@@ -1780,15 +1780,20 @@ export const Components = {
     },
 
     /**
-     * AI Synergy widget, rendered on the Питание (nutrition) tab directly under
-     * the Daily Summary block. It hosts the period selector (14 / 30 / custom),
-     * the optional-sleep launch trigger, and - once analysis completes - the
-     * verdict rendered inline with an expand/collapse for the full report.
-     *
-     * The whole shell is a pure function of its options: the Nutrition module
-     * re-renders it in place whenever the period changes or a result lands,
-     * so there is no separate "idle" vs "result" markup to keep in sync.
-     */
+      * AI Synergy widget, rendered on the Питание (nutrition) tab directly under
+      * the Daily Summary block. It hosts the period selector (14 / 30 / custom),
+      * the optional-sleep launch trigger, and - once analysis completes - the
+      * score and a short verdict snippet plus a «Открыть полный отчет» button
+      * that opens a full-screen modal.
+      *
+      * The widget stays compact inside the fixed carousel slot: no long report
+      * text or scrolling sheet lives here. The full breakdown (findings, metrics,
+      * adjustments) is rendered into a modal via `aiSynergyModal`.
+      *
+      * The whole shell is a pure function of its options: the Nutrition module
+      * re-renders it in place whenever the period changes or a result lands,
+      * so there is no separate "idle" vs "result" markup to keep in sync.
+      */
     aiSynergyWidget({
         period = '14',
         customStart = '',
@@ -1797,7 +1802,6 @@ export const Components = {
         isPremium = false,
         isRunning = false,
         hasResult = false,
-        reportExpanded = false,
         result = null,
     } = {}) {
         const periodOptions = [
@@ -1836,7 +1840,22 @@ export const Components = {
 
         let body;
         if (hasResult && result) {
-            body = this.aiSynergyReport({ result, expanded: reportExpanded });
+            const score = result.verdict?.overall_score != null ? `${result.verdict.overall_score}/10` : '—';
+            const headline = result.verdict?.headline || '';
+            body = `
+                <div class="ai-synergy__status flex items-center justify-center gap-4 py-3">
+                    <div class="text-center">
+                        <p class="text-[10px] font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider">Счёт</p>
+                        <p class="text-2xl font-bold text-purple-600 dark:text-purple-400 tabular-nums">${score}</p>
+                    </div>
+                    ${headline ? `<p class="text-sm font-medium text-surface-700 dark:text-zinc-200 text-center max-w-[180px] leading-snug">${escapeHtml(headline)}</p>` : '<p class="text-xs text-surface-500 dark:text-surface-400">Вердикт готов</p>'}
+                </div>
+                <button type="button" data-action="open-ai-synergy-modal"
+                        class="w-full py-2 rounded-2xl bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-bold text-sm shadow-[0_0_20px_rgba(139,92,246,0.25)] hover:brightness-110 transition-all btn-press flex items-center justify-center gap-2">
+                    <span>Открыть полный отчёт</span>
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                </button>
+            `;
         } else if (isRunning) {
             body = `<div class="ai-synergy__running flex items-center justify-center gap-2 py-3 text-surface-500 dark:text-zinc-400">
                  <svg class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
@@ -1849,7 +1868,7 @@ export const Components = {
                 </div>`;
         } else {
             body = `<button type="button" data-action="launch-ai-synergy"
-                          class="w-full py-2.5 rounded-2xl bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-bold text-sm shadow-[0_0_20px_rgba(139,92,246,0.25)] hover:brightness-110 transition-all btn-press flex items-center justify-center gap-2">
+                        class="w-full py-2.5 rounded-2xl bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-bold text-sm shadow-[0_0_20px_rgba(139,92,246,0.25)] hover:brightness-110 transition-all btn-press flex items-center justify-center gap-2">
                 <span>Запустить анализ</span>
             </button>`;
         }
@@ -1877,34 +1896,11 @@ export const Components = {
     },
 
     /**
-     * Expandable wrapper around the verdict result card. The score headline
-     * is always visible; the full report (findings, growth points, risks,
-     * recommendations) collapses under a toggle so the widget does not turn
-     * into a wall of text before the user asks for it.
-     */
-    aiSynergyReport({ result, expanded = false } = {}) {
-        return `
-            <div class="ai-synergy__report">
-                <div class="ai-synergy__report-head flex items-center gap-2">
-                    <h4 class="text-sm font-semibold text-surface-900 dark:text-zinc-100">Вердикт ИИ-Синергии</h4>
-                </div>
-                <div class="ai-synergy__report-body mt-2 ${expanded ? '' : 'is-collapsed'}">
-                    ${this.aiSynergyResultCard(result)}
-                </div>
-                <button type="button" data-action="toggle-ai-synergy-report"
-                        aria-expanded="${expanded}"
-                        class="ai-synergy__report-toggle text-xs text-purple-400 hover:text-purple-600 dark:hover:text-purple-300 font-medium cursor-pointer pt-1 inline-flex items-center gap-1 transition-colors btn-press"
-                        >${expanded ? 'Свернуть ▴' : 'Развернуть ▾'}</button>
-            </div>
-        `;
-    },
-
-    /**
-     * Sleep input drum-sheet modal for the AI Synergy flow. The period is
-     * already chosen in the widget; this sheet only collects the optional
-     * average-sleep figure (4–12 h). The analysis itself is kicked off by the
-     * caller once the user confirms or skips.
-     */
+      * Sleep input drum-sheet modal for the AI Synergy flow. The period is
+      * already chosen in the widget; this sheet only collects the optional
+      * average-sleep figure (4–12 h). The analysis itself is kicked off by the
+      * caller once the user confirms or skips.
+      */
     aiSynergySleepModal({ value = '' } = {}) {
         const sleepInputAttrs = 'type="number" min="4" max="12" step="0.5"';
         const sleepControlId = 'ai-synergy-sleep-input';
@@ -1955,11 +1951,10 @@ export const Components = {
     },
 
     /**
-     * AI Synergy verdict result card rendered inside the widget after the
-     * analysis completes. The `payload` is the full /ai/synergy response; the
-     * card reads `payload.verdict` for the prose and `payload.metrics_snapshot`
-     * for the headline figures.
-     */
+      * AI Synergy modal result card rendered inside the widget after the
+      * analysis completes. Kept as a separate function in case it is referenced
+      * elsewhere, but the modal uses `aiSynergyModal` for the full-screen view.
+      */
     aiSynergyResultCard(payload) {
         const v = payload?.verdict || {};
         const score = v.overall_score != null ? `${v.overall_score}/10` : '—';
@@ -2035,6 +2030,210 @@ export const Components = {
     },
 
     /**
+      * Full-screen modal for the AI Synergy report.
+      *
+      * Opens as a bottom-sheet on mobile and a centered modal on desktop.
+      * Contains the full breakdown: detailed verdict, metrics snapshot,
+      * color-coded key findings (emerald for successes, rose for risks,
+      * amber for warnings / growth points), and nutrition/workout adjustments.
+      *
+      * `result` is the /ai/synergy payload saved by `setAiSynergyResult`.
+      */
+    aiSynergyModal(result) {
+        const v = result?.verdict || {};
+        const score = v.overall_score != null ? `${v.overall_score}/10` : '—';
+        const persona = v.ai_persona || null;
+        const headline = v.headline || '';
+        const analyzedAt = result?.analyzed_at || '';
+        const periodDays = result?.period_days;
+        const periodType = result?.period_type || '';
+
+        // Period label: "14 дней" / "30 дней" / custom range or fallback
+        let periodLabel = '';
+        if (periodType === 'week' && periodDays) periodLabel = `${periodDays} дней`;
+        else if (periodType === 'month' && periodDays) periodLabel = `${periodDays} дней`;
+        else if (periodType === 'custom') periodLabel = 'Кастомный период';
+        else if (periodDays) periodLabel = `${periodDays} дней`;
+
+        const personaMeta = {
+            kind: { emoji: '😊', label: 'Добрый нутрициолог' },
+            strict: { emoji: '🧊', label: 'Строгий тренер' },
+            sarcastic: { emoji: '😏', label: 'Саркастичный нутрициолог' },
+            custom: { emoji: '🎭', label: 'Ваш стиль' },
+        };
+        const personaBadge = persona && personaMeta[persona]
+            ? `<span class="ai-synergy-modal__persona">
+                 <span aria-hidden="true">${personaMeta[persona].emoji}</span>
+                 <span>${escapeHtml(personaMeta[persona].label)}</span>
+               </span>`
+            : '';
+
+        // Metrics snapshot
+        const metrics = result?.metrics_snapshot || {};
+        const hasMetrics = metrics.avg_calories != null || metrics.avg_protein != null || metrics.total_workouts != null;
+
+        const renderFindings = (list, tone) => {
+            if (!list || list.length === 0) return '';
+            const iconMap = {
+                success: '<path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>',
+                warning: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01m-9.5 0a9 9 0 1118 0 9 9 0 01-18 0z"/>',
+                risk: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.29 3.83a1 1 0 011.42 0L15.5 7.5 18.17 9.17a1 1 0 011.28 1.01v6.16a1 1 0 01-.8 1.02l-6.16 1.54a1 1 0 01-1.1-.15L8 15.5V12.5a1 1 0 011-1h.5l-.21-.21a1 1 0 010-1.42z"/>',
+            };
+            const iconPath = iconMap[tone];
+            const toneClass = {
+                success: 'ai-synergy-modal__finding--success',
+                warning: 'ai-synergy-modal__finding--warning',
+                risk: 'ai-synergy-modal__finding--risk',
+            }[tone] || 'ai-synergy-modal__finding--success';
+            return list.map((x) => `
+                <li class="ai-synergy-modal__finding ${toneClass}">
+                    <span class="ai-synergy-modal__finding-icon" aria-hidden="true">
+                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">${iconPath}</svg>
+                    </span>
+                    <span class="ai-synergy-modal__finding-text">${String(x)}</span>
+                </li>
+            `).join('');
+        };
+
+        const renderMetricRow = (label, value) => {
+            const displayValue = value != null && value !== '' && value !== '—' ? escapeHtml(String(value)) : '—';
+            return `
+                <div class="ai-synergy-modal__metric">
+                    <span class="ai-synergy-modal__metric-label">${escapeHtml(label)}</span>
+                    <span class="ai-synergy-modal__metric-value">${displayValue}</span>
+                </div>
+            `;
+        };
+
+        const renderAdjustment = (label, text) => `
+            <div class="ai-synergy-modal__adjustment-item">
+                <span class="ai-synergy-modal__adjustment-label">${escapeHtml(label)}</span>
+                <p class="ai-synergy-modal__adjustment-text">${escapeHtml(String(text || '—'))}</p>
+            </div>
+        `;
+
+        const keyFindings = renderFindings(v.key_findings, 'success');
+        const growthPoints = renderFindings(v.growth_points, 'warning');
+        const riskFactors = renderFindings(v.risk_factors, 'risk');
+
+        const metricsHtml = hasMetrics ? `
+            <div class="ai-synergy-modal__metrics">
+                ${renderMetricRow('Средние ккал', metrics.avg_calories)}
+                ${renderMetricRow('Средний белок', metrics.avg_protein ? `${metrics.avg_protein} г` : null)}
+                ${renderMetricRow('Тренировок', metrics.total_workouts)}
+                ${renderMetricRow('Тренд тоннажа', metrics.tonnage_trend)}
+            </div>
+        ` : '';
+
+        const findingsHtml = keyFindings || growthPoints || riskFactors
+            ? `<div class="ai-synergy-modal__findings-list">
+                   ${keyFindings ? `<div class="ai-synergy-modal__finding-group">
+                       <div class="ai-synergy-modal__section-title">
+                           <svg class="ai-synergy-modal__section-icon text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m0 6a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                           <span>Ключевые выводы</span>
+                       </div>
+                       <ul>${keyFindings}</ul>
+                   </div>` : ''}
+                   ${growthPoints ? `<div class="ai-synergy-modal__finding-group">
+                       <div class="ai-synergy-modal__section-title">
+                           <svg class="ai-synergy-modal__section-icon text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M9 12a3 3 0 116 0 3 3 0 01-6 0z"/></svg>
+                           <span>Точки роста</span>
+                       </div>
+                       <ul>${growthPoints}</ul>
+                   </div>` : ''}
+                   ${riskFactors ? `<div class="ai-synergy-modal__finding-group">
+                       <div class="ai-synergy-modal__section-title">
+                           <svg class="ai-synergy-modal__section-icon text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1v-4h2v2h1v2zm0 0h1M10 12h.01M6 12a6 6 0 1112 0 6 6 0 01-12 0z"/></svg>
+                           <span>Факторы риска</span>
+                       </div>
+                       <ul>${riskFactors}</ul>
+                   </div>` : ''}
+               </div>`
+            : '';
+
+        const adjustmentsHtml = v.nutrition_adjustment || v.workout_adjustment
+            ? `<div class="ai-synergy-modal__adjustment">
+                   ${renderAdjustment('Рекомендация по питанию', v.nutrition_adjustment)}
+                   ${renderAdjustment('Рекомендация по тренировкам', v.workout_adjustment)}
+               </div>`
+            : '';
+
+        return `
+            <div class="ai-synergy-modal" role="dialog" aria-modal="true" aria-labelledby="ai-synergy-modal-title" data-action="close-ai-synergy-modal" tabindex="-1">
+                <div class="ai-synergy-modal__backdrop"></div>
+                <div class="ai-synergy-modal__panel" data-action="close-ai-synergy-modal">
+                    <div class="ai-synergy-modal__header">
+                        <div class="ai-synergy-modal__header-left">
+                            <span class="ai-synergy-modal__icon">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>
+                            </span>
+                            <div class="ai-synergy-modal__title-group">
+                                <h2 id="ai-synergy-modal-title" class="ai-synergy-modal__title">ИИ-Синергия</h2>
+                                ${periodLabel ? `<p class="ai-synergy-modal__period">${escapeHtml(periodLabel)}</p>` : ''}
+                            </div>
+                        </div>
+                        ${personaBadge}
+                        <button type="button" class="ai-synergy-modal__close" data-action="close-ai-synergy-modal" aria-label="Закрыть">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6l12 12M18 6L6 18"/></svg>
+                        </button>
+                    </div>
+
+                    <div class="ai-synergy-modal__body">
+                        <div class="ai-synergy-modal__section">
+                            ${personaBadge ? `<div class="flex justify-center mb-2">${personaBadge}</div>` : ''}
+                            <div class="ai-synergy-modal__score-block">
+                                <p class="ai-synergy-modal__score-label">Общий счёт</p>
+                                <p class="ai-synergy-modal__score-value">${score}</p>
+                            </div>
+                        </div>
+
+                        ${headline ? `<div class="ai-synergy-modal__section">
+                            <div class="ai-synergy-modal__section-title">
+                                <svg class="ai-synergy-modal__section-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.878 16.878C8.768 16.59 7.854 15.91 7.24 14.93c-.15-.18-.28-.36-.39-.55a1 1 0 01.34-1.4l1-1 1-1 1 1c.21.22.51.35.83.35h3.51a1 1 0 00.83-.35l1-1 1-1 1 1a1 1 0 01.34 1.4 7 7 0 01-.25 1.07c-.33.71-.85 1.2-1.5 1.45a4.21 4.21 0 01-2.24 0z"/></svg>
+                                <span>Вердикт</span>
+                            </div>
+                            <div class="ai-synergy-modal__verdict">
+                                <p class="ai-synergy-modal__verdict-headline">${escapeHtml(headline)}</p>
+                                <p class="ai-synergy-modal__verdict-text">${escapeHtml(String(v.detailed_verdict || headline || '—'))}</p>
+                            </div>
+                        </div>` : ''}
+
+                        ${metricsHtml ? `<div class="ai-synergy-modal__section">
+                            <div class="ai-synergy-modal__section-title">
+                                <svg class="ai-synergy-modal__section-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m-3-3l3 3-3 3"/></svg>
+                                <span>Метрики</span>
+                            </div>
+                            ${metricsHtml}
+                        </div>` : ''}
+
+                        ${findingsHtml ? `<div class="ai-synergy-modal__section">
+                            ${findingsHtml}
+                        </div>` : ''}
+
+                        ${adjustmentsHtml ? `<div class="ai-synergy-modal__section">
+                            <div class="ai-synergy-modal__section-title">
+                                <svg class="ai-synergy-modal__section-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 17h2M12 10v5m0 0l2-2m-2 2l-2 2"/></svg>
+                                <span>Рекомендации</span>
+                            </div>
+                            ${adjustmentsHtml}
+                        </div>` : ''}
+                    </div>
+
+                    <div class="ai-synergy-modal__footer">
+                        <button type="button" class="ai-synergy-modal__footer-btn ai-synergy-modal__footer-btn--secondary" data-action="close-ai-synergy-modal">
+                            Закрыть
+                        </button>
+                        <button type="button" class="ai-synergy-modal__footer-btn ai-synergy-modal__footer-btn--primary" data-action="reanalyze-ai-synergy">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5M4 4l5 5-5 5v5h5M4 4l5 5-5-5z"/></svg>
+                            <span>Пересчитать</span>
+                        </button>
+                 </div>
+                </div>
+            </div>
+        `;
+    },
+
+    /**
      * AI Synergy tab card: lives inside the first carousel slot alongside the
      * daily summary. Its header carries a tab switcher («Итог дня» / «ИИ-Синергия»);
      * selecting a tab swaps the visible slot. Both slots stay in the DOM so the
@@ -2055,7 +2254,6 @@ export const Components = {
         isPremium = false,
         isRunning = false,
         hasResult = false,
-        reportExpanded = false,
         result = null,
         dailySummaryHtml = '',
     } = {}) {
@@ -2087,7 +2285,6 @@ export const Components = {
             isPremium,
             isRunning,
             hasResult,
-            reportExpanded,
             result,
         });
 

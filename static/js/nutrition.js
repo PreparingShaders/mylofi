@@ -68,9 +68,9 @@ export const Nutrition = {
     _aiSynergyPeriod: '14',          // '14' | '30' | 'custom'
     _aiSynergyCustomRange: { start: '', end: '' },
     _aiSynergyResult: null,          // last /ai/synergy payload
-    _aiSynergyReportExpanded: false, // whether the verdict report is open
     _aiSynergyRunning: false,        // analysis in flight
     _aiSynergyTab: 'daily',          // 'daily' | 'synergy' - which tab is shown in the first carousel slot
+    _aiSynergyModalEl: null,         // full-screen modal element, if open
 
     /**
      * Fetch the latest saved synergy report so state survives page reloads.
@@ -112,7 +112,6 @@ export const Nutrition = {
     setAiSynergyResultFromSaved(payload) {
         this._aiSynergyResult = payload;
         this._aiSynergyRunning = false;
-        this._aiSynergyReportExpanded = false;
         this.renderAiSynergyWidget();
     },
 
@@ -588,7 +587,6 @@ export const Nutrition = {
             isPremium: !!this.app.state.user?.is_premium,
             isRunning: this._aiSynergyRunning,
             hasResult: !!this._aiSynergyResult,
-            reportExpanded: this._aiSynergyReportExpanded,
             result: this._aiSynergyResult,
         });
 
@@ -653,26 +651,55 @@ export const Nutrition = {
     setAiSynergyResult(payload) {
         this._aiSynergyResult = payload;
         this._aiSynergyRunning = false;
-        // Default to an open report so the verdict is visible without an extra tap;
-        // the user has just asked for it.
-        this._aiSynergyReportExpanded = true;
         this.renderAiSynergyTab();
     },
 
-    /** Expand/collapse the full Synergy verdict report. */
-    toggleAiSynergyReport() {
+    /** Open the full-screen AI Synergy modal. */
+    openAiSynergyModal() {
+        if (!this._aiSynergyResult) return;
         const container = this.app.elements.pageContent;
-        const widget = container.querySelector('.ai-synergy-widget');
-        const body = widget?.querySelector('.ai-synergy__report-body');
-        const toggle = widget?.querySelector('[data-action="toggle-ai-synergy-report"]');
-        if (!body || !toggle) return;
 
-        this._aiSynergyReportExpanded = !this._aiSynergyReportExpanded;
-        const expanded = this._aiSynergyReportExpanded;
+        // Close any existing modal first
+        this.closeAiSynergyModal();
 
-        body.classList.toggle('is-collapsed', !expanded);
-        toggle.setAttribute('aria-expanded', String(expanded));
-        toggle.textContent = expanded ? 'Свернуть ▴' : 'Развернуть ▾';
+        const html = Components.aiSynergyModal(this._aiSynergyResult);
+        const host = document.createElement('div');
+        host.innerHTML = html.trim();
+        const modalEl = host.firstElementChild;
+        document.body.appendChild(modalEl);
+
+        this._aiSynergyModalEl = modalEl;
+
+        // Prevent background scroll while modal is open
+        document.body.classList.add('overflow-hidden');
+
+        // Focus trap: close on backdrop click or Escape
+        const onKeydown = (e) => {
+            if (e.key === 'Escape') this.closeAiSynergyModal();
+        };
+        document.addEventListener('keydown', onKeydown);
+        modalEl._onKeydown = onKeydown;
+
+        // Backdrop click handler
+        modalEl.addEventListener('click', (e) => {
+            if (e.target === modalEl || e.target.classList.contains('ai-synergy-modal__backdrop')) {
+                this.closeAiSynergyModal();
+            }
+        });
+    },
+
+    /** Close the full-screen AI Synergy modal. */
+    closeAiSynergyModal() {
+        if (!this._aiSynergyModalEl) return;
+
+        const onKeydown = this._aiSynergyModalEl._onKeydown;
+        if (onKeydown) {
+            document.removeEventListener('keydown', onKeydown);
+        }
+
+        document.body.classList.remove('overflow-hidden');
+        this._aiSynergyModalEl.remove();
+        this._aiSynergyModalEl = null;
     },
 
     /** Re-binds the widget's controls after an in-place re-render. */
@@ -702,8 +729,8 @@ export const Nutrition = {
             input.addEventListener('input', () => this.syncAiSynergyCustomRange());
         });
 
-        // The launch button (data-action="launch-ai-synergy") and the report
-        // toggle (data-action="toggle-ai-synergy-report") are handled by the
+        // The launch button (data-action="launch-ai-synergy") and the modal
+        // trigger (data-action="open-ai-synergy-modal") are handled by the
         // document-level delegated listener, so they intentionally stay
         // un-bound here to avoid a double dispatch.
     },
@@ -752,7 +779,6 @@ export const Nutrition = {
             isPremium: !!this.app.state.user?.is_premium,
             isRunning: this._aiSynergyRunning,
             hasResult: !!this._aiSynergyResult,
-            reportExpanded: this._aiSynergyReportExpanded,
             result: this._aiSynergyResult,
             dailySummaryHtml,
         });
@@ -1243,7 +1269,6 @@ export const Nutrition = {
                     isPremium: !!user?.is_premium,
                     isRunning: this._aiSynergyRunning,
                     hasResult: !!this._aiSynergyResult,
-                    reportExpanded: this._aiSynergyReportExpanded,
                     result: this._aiSynergyResult,
                     dailySummaryHtml,
                 })}</div>`
