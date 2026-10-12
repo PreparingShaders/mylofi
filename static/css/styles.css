@@ -1048,13 +1048,13 @@ html.dark,
 .meal-action-slot,
 .meal-empty-slot,
 .daily-summary-slot,
-.ai-synergy-slot {
+.ai-synergy-tab-slot {
     width: min(85vw, 340px);
 }
 .meal-action-slot,
 .meal-empty-slot,
 .daily-summary-slot,
-.ai-synergy-slot {
+.ai-synergy-tab-slot {
     min-height: 360px;
 }
 @media (min-width: 640px) {
@@ -1062,7 +1062,7 @@ html.dark,
 .meal-action-slot,
 .meal-empty-slot,
 .daily-summary-slot,
-.ai-synergy-slot {
+.ai-synergy-tab-slot {
     width: 380px;
 }
 }
@@ -2079,6 +2079,35 @@ input, select, textarea:focus {
 }
 .ai-synergy__report-body:not(.is-collapsed) {
     padding: 4px 0 0;
+}
+
+/* ============ AI Synergy tab card (carousel slot) ============ */
+/* The tab card lives inside the meal carousel as its first snap slot. Its
+   header carries the «Итог дня» / «ИИ-Синергия» switcher; the two slots below
+   it toggle visibility via CSS so the daily-summary card keeps its bindings
+   across in-place synergy re-renders. */
+.ai-synergy-tab-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 360px;
+}
+.ai-synergy-tab__header {
+    flex-shrink: 0;
+}
+.ai-synergy-tab__body {
+    position: relative;
+    flex: 1;
+    min-height: 280px;
+}
+.ai-synergy-tab__slot {
+    position: absolute;
+    inset: 0;
+    transition: opacity 0.22s ease;
+}
+.ai-synergy-tab__slot.is-hidden {
+    opacity: 0;
+    pointer-events: none;
 }
 
 /* ============ Nutrition page layout (iPhone 13 mini and up) ============ */

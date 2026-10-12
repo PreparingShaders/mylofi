@@ -1575,7 +1575,7 @@ export const Components = {
                         </div>
                 </div>
             </div>
-         `;
+`;
     },
 
     /**
@@ -2008,6 +2008,81 @@ export const Components = {
                 </div>
             </div>
         `;
-    }
+    },
+
+    /**
+     * AI Synergy tab card: lives inside the first carousel slot alongside the
+     * daily summary. Its header carries a tab switcher («Итог дня» / «ИИ-Синергия»);
+     * selecting a tab swaps the visible slot. Both slots stay in the DOM so the
+     * daily summary card keeps its bindings across in-place synergy re-renders;
+     * CSS toggles visibility, and the controller re-binds the daily summary
+     * controls after every full render.
+     *
+     * The daily-summary content is injected by the caller (the controller
+     * renders it separately and passes the HTML in), so this component only owns
+     * the shell and the synergy body.
+     */
+    aiSynergyTab({
+        activeTab = 'daily',
+        period = '14',
+        customStart = '',
+        customEnd = '',
+        todayISO = '',
+        isPremium = false,
+        isRunning = false,
+        hasResult = false,
+        reportExpanded = false,
+        result = null,
+        dailySummaryHtml = '',
+    } = {}) {
+        const isSynergy = activeTab === 'synergy';
+        const tabBase = 'flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors btn-press';
+        const tabActive = 'is-active border-purple-500/40 bg-purple-500/10 text-surface-900 dark:text-zinc-100';
+        const tabInactive = 'glass text-surface-500 dark:text-surface-400 border border-surface-200 dark:border-white/10 hover:bg-surface-100 dark:hover:bg-zinc-800';
+
+        const dailyTab = `
+            <button type="button" data-action="ai-synergy-tab" data-tab="daily"
+                    aria-pressed="${!isSynergy}"
+                    class="${tabBase} ${!isSynergy ? tabActive : tabInactive}">
+                <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>
+                <span>Итог дня</span>
+            </button>`;
+        const synergyTabBtn = `
+            <button type="button" data-action="ai-synergy-tab" data-tab="synergy"
+                    aria-pressed="${isSynergy}"
+                    class="${tabBase} ${isSynergy ? tabActive : tabInactive}">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V5M15 19V5M5 19h14M5 5h14M5 5l-2-2M19 5l2-2"/></svg>
+                <span>ИИ-Синергия</span>
+            </button>`;
+
+        const synergyBody = this.aiSynergyWidget({
+            period,
+            customStart,
+            customEnd,
+            todayISO,
+            isPremium,
+            isRunning,
+            hasResult,
+            reportExpanded,
+            result,
+        });
+
+        return `
+            <section class="ai-synergy-tab-card glass rounded-3xl p-3.5 shadow-xl" role="region" aria-label="Итог дня / ИИ-Синергия">
+                <div class="ai-synergy-tab__header flex items-center gap-1.5 mb-2 p-1">
+                    ${dailyTab}
+                    ${synergyTabBtn}
+                </div>
+                <div class="ai-synergy-tab__body relative">
+                    <div class="ai-synergy-tab__slot ${isSynergy ? 'is-hidden' : ''}">
+                        ${dailySummaryHtml}
+                    </div>
+                    <div class="ai-synergy-tab__slot ${isSynergy ? '' : 'is-hidden'}">
+                        ${synergyBody}
+                    </div>
+                </div>
+            </section>
+        `;
+    },
 };
 

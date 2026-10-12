@@ -50,3 +50,21 @@ class AISynergyResponse(BaseModel):
     verdict: AISynergyVerdict
     limit: Optional[UsageLimitEntry] = None
     reason: Optional[str] = None
+
+
+class AISynergySavedResponse(BaseModel):
+    """Response for fetching a previously saved synergy report.
+
+    `available` mirrors the daily-summary contract: a stored report is an
+    object, a missing one is `available: false` plus a reason, so the
+    frontend renders the same two-state slot either way.
+    """
+    available: bool = False
+    analyzed_at: Optional[UtcDateTime] = None
+    period_days: Optional[int] = None
+    period_type: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    metrics_snapshot: Optional[Dict[str, Any]] = None
+    verdict: Optional[AISynergyVerdict] = None
+    reason: Optional[str] = None

@@ -70,6 +70,51 @@ export const Nutrition = {
     _aiSynergyResult: null,          // last /ai/synergy payload
     _aiSynergyReportExpanded: false, // whether the verdict report is open
     _aiSynergyRunning: false,        // analysis in flight
+    _aiSynergyTab: 'daily',          // 'daily' | 'synergy' - which tab is shown in the first carousel slot
+
+    /**
+     * Fetch the latest saved synergy report so state survives page reloads.
+     * Called on init and when switching to the synergy tab. Never throws:
+     * the nutrition page must render even when the report cannot be fetched.
+     */
+    async loadAiSynergyReport() {
+        if (this.selectedPeriod !== 'day') return null;
+        const token = this.app.state.tokens.access;
+        const user = this.app.state.user || {};
+        if (!user?.is_premium) {
+            this._aiSynergyResult = null;
+            return null;
+        }
+
+        try {
+            const data = await API.get('/ai/synergy', token);
+            if (data && data.available && data.verdict) {
+                this._aiSynergyResult = {
+                    success: true,
+                    analyzed_at: data.analyzed_at,
+                    period_days: data.period_days,
+                    period_type: data.period_type,
+                    metrics_snapshot: data.metrics_snapshot || {},
+                    verdict: data.verdict,
+                };
+            } else {
+                this._aiSynergyResult = null;
+            }
+            return this._aiSynergyResult;
+        } catch (error) {
+            console.warn('[Nutrition] Saved synergy report unavailable:', error?.message);
+            this._aiSynergyResult = null;
+            return null;
+        }
+    },
+
+    /** Populate the widget from a saved report without a model call. */
+    setAiSynergyResultFromSaved(payload) {
+        this._aiSynergyResult = payload;
+        this._aiSynergyRunning = false;
+        this._aiSynergyReportExpanded = false;
+        this.renderAiSynergyWidget();
+    },
 
     /**
      * Today's date as YYYY-MM-DD, in the user's own calendar. Every date in this
@@ -601,7 +646,7 @@ export const Nutrition = {
     /** Swaps the widget into the running (spinner) state. */
     setAiSynergyRunning(running) {
         this._aiSynergyRunning = running;
-        this.renderAiSynergyWidget();
+        this.renderAiSynergyTab();
     },
 
     /** Renders the analysis verdict inside the widget after the API answers. */
@@ -611,7 +656,7 @@ export const Nutrition = {
         // Default to an open report so the verdict is visible without an extra tap;
         // the user has just asked for it.
         this._aiSynergyReportExpanded = true;
-        this.renderAiSynergyWidget();
+        this.renderAiSynergyTab();
     },
 
     /** Expand/collapse the full Synergy verdict report. */
@@ -661,6 +706,67 @@ export const Nutrition = {
         // toggle (data-action="toggle-ai-synergy-report") are handled by the
         // document-level delegated listener, so they intentionally stay
         // un-bound here to avoid a double dispatch.
+    },
+
+    /**
+     * Tab switcher inside the first carousel slot: «Итог дня» / «ИИ-Синергия».
+     * Selecting the synergy tab swaps the visible slot and, on first entry,
+     * loads the latest saved report so state survives page reloads (F5).
+     */
+    bindAiSynergyTab() {
+        const container = this.app.elements.pageContent;
+        container.querySelectorAll('[data-action="ai-synergy-tab"]').forEach((btn) => {
+            btn.onclick = () => this.selectAiSynergyTab(btn.dataset.tab);
+        });
+    },
+
+    selectAiSynergyTab(tab) {
+        if (this._aiSynergyRunning) return;
+        if (tab === this._aiSynergyTab) return;
+        this._aiSynergyTab = tab;
+        if (tab === 'synergy' && !this._aiSynergyResult && !this._aiSynergyRunning) {
+            // First entry: pull the latest saved report so the verdict is
+            // already on screen instead of an empty launch button.
+            this.loadAiSynergyReport().then(() => this.renderAiSynergyTab());
+        } else {
+            this.renderAiSynergyTab();
+        }
+    },
+
+    /** Re-render the tab card in place after a tab change or a result lands. */
+    renderAiSynergyTab() {
+        const container = this.app.elements.pageContent;
+        const existing = container.querySelector('.ai-synergy-tab-card');
+        if (!existing) return;
+
+        const dailySummaryHtml = this._currentDailySummary
+            ? Components.dailySummaryCard(this._currentDailySummary, this.recapCardOptions())
+            : '';
+
+        const html = Components.aiSynergyTab({
+            activeTab: this._aiSynergyTab,
+            period: this._aiSynergyPeriod,
+            customStart: this._aiSynergyCustomRange.start,
+            customEnd: this._aiSynergyCustomRange.end,
+            todayISO: this.todayISO(),
+            isPremium: !!this.app.state.user?.is_premium,
+            isRunning: this._aiSynergyRunning,
+            hasResult: !!this._aiSynergyResult,
+            reportExpanded: this._aiSynergyReportExpanded,
+            result: this._aiSynergyResult,
+            dailySummaryHtml,
+        });
+
+        const host = document.createElement('div');
+        host.innerHTML = html.trim();
+        const fresh = host.firstElementChild;
+        if (fresh) {
+            existing.replaceWith(fresh);
+            this.bindAiSynergyTab();
+            this.bindAiSynergyWidget();
+            this.bindDailySummary();
+            this.syncDailySummaryToggles();
+        }
     },
 
     /**
@@ -1103,14 +1209,44 @@ export const Nutrition = {
                 body: this.renderNutritionSlide(ringSummary, ringTargets, qualityScore, this.periodCaption(periodData)),
             });
 
+            // On a user-triggered render (page switch, date step) in the day
+            // view, pull the latest saved synergy report so the verdict is
+            // already on screen instead of an empty launch button. The read
+            // rides in parallel with the other day-view requests and never
+            // throws: a first-time visit simply shows the launch button.
+            if (isDayPeriod && !this._pollingRender && !this._aiSynergyResult && !this._aiSynergyRunning) {
+                this.loadAiSynergyReport().catch(() => {});
+            }
+
 // The recap card lives inside the carousel as its first snap slot in
             // the day view. Its chip names the concrete day rather than reusing the
             // header label: the recap is a stored record of that date, and the
             // header says only "Сегодня". A finished day also earns the manual
             // generation trigger; a day still being eaten never does. Wider periods
             // have no single day to recap, so the card is left out of the carousel.
-            const dailySummarySlot = (this.selectedPeriod === 'day' && dailySummary)
-                ? `<div class="daily-summary-slot snap-center shrink-0">${Components.dailySummaryCard(dailySummary, this.recapCardOptions())}</div>`
+            const dailySummaryHtml = (this.selectedPeriod === 'day' && dailySummary)
+                ? Components.dailySummaryCard(dailySummary, this.recapCardOptions())
+                : '';
+
+            // AI Synergy tab: lives inside the first carousel slot in the day view,
+            // right next to the daily summary. Tapping a tab swaps the visible slot
+            // between "Итог дня" and the synergy interface (period selector,
+            // launch button, report). The state is remembered so switching tabs
+            // preserves the last verdict without a reload.
+            const synergyTabSlot = (this.selectedPeriod === 'day')
+                ? `<div class="ai-synergy-tab-slot snap-center shrink-0">${Components.aiSynergyTab({
+                    activeTab: this._aiSynergyTab,
+                    period: this._aiSynergyPeriod,
+                    customStart: this._aiSynergyCustomRange.start,
+                    customEnd: this._aiSynergyCustomRange.end,
+                    todayISO: this.todayISO(),
+                    isPremium: !!user?.is_premium,
+                    isRunning: this._aiSynergyRunning,
+                    hasResult: !!this._aiSynergyResult,
+                    reportExpanded: this._aiSynergyReportExpanded,
+                    result: this._aiSynergyResult,
+                    dailySummaryHtml,
+                })}</div>`
                 : '';
 
             let html = `
@@ -1138,33 +1274,17 @@ export const Nutrition = {
                     <!-- STUCK ANALYSIS BANNER (polling budget spent) -->
                     ${this._pollingTimedOut ? this.renderAnalysisTimeoutBanner() : ''}
 
-                     <!-- SNAP CAROUSEL: daily summary first (day only), then the
-                          action tile, pending meals, logged meals (LIFO) -->
+<!-- SNAP CAROUSEL: synergy tab first (day only), then the
+                           action tile, pending meals, logged meals (LIFO) -->
                      <div class="meal-carousel" id="meal-carousel">
-                         ${dailySummarySlot}
+                         ${synergyTabSlot}
                          ${Components.addMealActionCard()}
                          ${pendingSorted.map((meal) => Components.mealCardPhoto(meal, cardOptions)).join('')}
                          ${sortedMeals.map((meal) => Components.mealCardPhoto(meal, cardOptions)).join('')}
                          ${totalMeals === 0 ? Components.mealCarouselEmptyState() : ''}
                      </div>
 
-                     <!-- AI Synergy widget: placed under the daily-summary card
-                          (outside the carousel) in the day view only. -->
-                     ${this.selectedPeriod === 'day'
-                        ? `<div class="ai-synergy-wrap mt-3">${Components.aiSynergyWidget({
-                            period: this._aiSynergyPeriod,
-                            customStart: this._aiSynergyCustomRange.start,
-                            customEnd: this._aiSynergyCustomRange.end,
-                            todayISO: this.todayISO(),
-                            isPremium: !!user?.is_premium,
-                            isRunning: this._aiSynergyRunning,
-                            hasResult: !!this._aiSynergyResult,
-                            reportExpanded: this._aiSynergyReportExpanded,
-                            result: this._aiSynergyResult,
-                        })}</div>`
-                        : ''}
-
-                    <!-- FAILED SYNC ITEMS (inline if any) -->
+<!-- FAILED SYNC ITEMS (inline if any) -->
                     ${failedItems.length > 0
                         ? `
                         <div class="viewport-content px-4 pb-2 -mx-4" id="failed-items-section">
@@ -1196,6 +1316,7 @@ export const Nutrition = {
             this.bindFailedItems();
             this.bindDailySummary();
             this.syncDailySummaryToggles();
+            this.bindAiSynergyTab();
             this.bindAiSynergyWidget();
 
             // Every poll tick rebuilds the carousel too, so the position is put

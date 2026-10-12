@@ -46,7 +46,11 @@ from app.schemas import (
     AIWorkoutSummaryRequest,
     AIWorkoutSummaryResponse,
 )
-from app.schemas.ai_synergy import AISynergyRequest, AISynergyResponse
+from app.schemas.ai_synergy import (
+    AISynergyRequest,
+    AISynergyResponse,
+    AISynergySavedResponse,
+)
 from app.services.auth import (
     verify_password,
     get_password_hash,
@@ -1364,4 +1368,56 @@ async def ai_synergy(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Не удалось выполнить анализ синергии",
+        )
+
+
+@router.get("/ai/synergy", response_model=AISynergySavedResponse)
+async def get_ai_synergy(
+    period_type: Optional[str] = Query(None, description="Тип периода: week, month, custom"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Fetch the most recent saved synergy report for the user.
+
+    The report is keyed by `period_type` (and, for a custom window, the exact
+    date range). When nothing has been generated yet the answer is
+    `available: false` with a reason, so the frontend renders an empty slot
+    instead of an error - a first-time visit costs nothing but a quiet line.
+    """
+    from app.services.ai_synergy_service import _get_latest_synergy, _json_default
+    import json
+
+    if not current_user.is_premium:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Анализ ИИ-Синергия доступен только по подписке Premium",
+        )
+
+    try:
+        latest = await _get_latest_synergy(db, current_user.id, period_type or "week")
+        if latest is None or not latest.payload_json:
+            return AISynergySavedResponse(
+                available=False,
+                reason="Ещё не запускался анализ ИИ-Синергии за этот период",
+            )
+
+        payload = json.loads(latest.payload_json)
+        verdict = payload.get("verdict") if isinstance(payload, dict) else None
+        return AISynergySavedResponse(
+            available=True,
+            analyzed_at=latest.created_at,
+            period_days=payload.get("period_days") if isinstance(payload, dict) else None,
+            period_type=latest.period_type,
+            start_date=latest.start_date,
+            end_date=latest.end_date,
+            metrics_snapshot=payload.get("metrics_snapshot") if isinstance(payload, dict) else None,
+            verdict=verdict,
+        )
+    except Exception as e:
+        logger.exception(f"Failed to fetch saved synergy: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Не удалось загрузить сохранённый анализ синергии",
         )
