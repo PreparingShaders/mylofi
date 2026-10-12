@@ -1352,6 +1352,13 @@ async def ai_synergy(
             tz_offset_minutes=tz_offset_minutes,
         )
         return result
+    except ValueError as e:
+        # Rate-limit window not yet elapsed: tell the user exactly when
+        # the next analysis becomes available.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
     except Exception as e:
         logger.exception(f"AI synergy endpoint failed: {e}")
         raise HTTPException(

@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 from app.models import (
     Meal,
     MealStatus,
+    PeriodSummary,
     User,
     WorkoutSession,
     WorkoutSessionExercise,
@@ -31,6 +32,7 @@ from app.services.nutrition import utcnow
 logger = logging.getLogger(__name__)
 
 SYNERGY_TASK_TIMEOUT = 60.0
+SYNERGY_RATE_LIMIT_DAYS = 7
 
 REQUIRED_FIELDS = [
     "verdict_headline",
@@ -321,6 +323,88 @@ def _validate_synergy(result: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+def _resolve_period_type(period_days: Optional[int], start_date: Optional[date], end_date: Optional[date]) -> str:
+    """Derive the period_type label used for storage and rate limiting."""
+    if start_date is not None and end_date is not None:
+        span_days = max(1, (end_date - start_date).days)
+        if span_days <= 31:
+            return "month"
+        return "custom"
+    if period_days is not None:
+        if period_days >= 30:
+            return "month"
+        return "week"
+    return "week"
+
+
+async def _get_latest_synergy(
+    db: AsyncSession,
+    user_id: int,
+    period_type: str,
+) -> Optional[PeriodSummary]:
+    """Most recent synergy row for the user and period type, or None."""
+    result = await db.execute(
+        select(PeriodSummary)
+        .where(
+            PeriodSummary.user_id == user_id,
+            PeriodSummary.period_type == period_type,
+        )
+        .order_by(PeriodSummary.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+def _check_synergy_rate_limit(latest: Optional[PeriodSummary]) -> None:
+    """Raise ValueError when the 7-day cooldown has not elapsed.
+
+    The message names the exact date the next analysis becomes available,
+    so the frontend can render it verbatim instead of a generic error.
+    """
+    if latest is None:
+        return
+    now = utcnow()
+    next_available = latest.created_at + timedelta(days=SYNERGY_RATE_LIMIT_DAYS)
+    if now < next_available:
+        raise ValueError(
+            f"С момента последнего анализа прошло меньше {SYNERGY_RATE_LIMIT_DAYS} дней. "
+            f"Новый анализ станет доступен {next_available.strftime('%Y-%m-%d')}"
+        )
+
+
+async def _persist_synergy(
+    db: AsyncSession,
+    user: User,
+    period_type: str,
+    start_date: date,
+    end_date: date,
+    response: Dict[str, Any],
+) -> PeriodSummary:
+    """Append a new synergy verdict row without overwriting previous analyses."""
+    record = PeriodSummary(
+        user_id=user.id,
+        period_type=period_type,
+        start_date=start_date,
+        end_date=end_date,
+        summary_text=response.get("verdict", {}).get("headline", ""),
+        overall_score=response.get("verdict", {}).get("overall_score"),
+        payload_json=json.dumps(response, ensure_ascii=False, default=_json_default),
+        ai_persona=user.ai_persona,
+    )
+    db.add(record)
+    await db.flush()
+    return record
+
+
+def _json_default(obj: Any) -> Any:
+    """Fallback for json.dumps so datetime / date values serialize cleanly."""
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if isinstance(obj, set):
+        return list(obj)
+    return str(obj)
+
+
 async def run_ai_synergy(
     db: AsyncSession,
     user: User,
@@ -346,6 +430,10 @@ async def run_ai_synergy(
             period_days = max(1, (end_dt - start_dt).days)
         else:
             period_days = 14
+
+    period_type = _resolve_period_type(period_days, start_date, end_date)
+    latest = await _get_latest_synergy(db, user.id, period_type)
+    _check_synergy_rate_limit(latest)
 
     aggregated = await _aggregate_period_data(
         db, user, period_days, tz_offset_minutes, start_dt=start_dt, end_dt=end_dt,
@@ -379,6 +467,7 @@ async def run_ai_synergy(
         "success": True,
         "analyzed_at": utcnow(),
         "period_days": period_days,
+        "period_type": period_type,
         "metrics_snapshot": {
             "avg_calories": round(aggregated["period_summary"]["nutrition"]["avg_daily_calories"]),
             "avg_protein": round(aggregated["period_summary"]["nutrition"]["avg_daily_protein_g"]),
@@ -395,4 +484,15 @@ async def run_ai_synergy(
             "workout_adjustment": strip_emojis(str(verdict.get("workout_adjustment", "")))[:800],
         },
     }
+
+    await _persist_synergy(
+        db,
+        user,
+        period_type,
+        start_date or (start_dt.date() if start_dt else (now - timedelta(days=period_days)).date()),
+        end_date or (end_dt.date() if end_dt else now.date()),
+        response,
+    )
+    await db.commit()
+
     return response

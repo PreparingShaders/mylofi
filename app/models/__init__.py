@@ -209,11 +209,12 @@ class DailySummary(Base):
 class PeriodSummary(Base):
     """One AI-written recap of a week or a month of nutrition.
 
-    One row per (user, period_type, range): the endpoint regenerates in place
-    rather than appending, so a period never collects several takes of the same
-    recap and a re-read of the card can never pick up a stale one. A week and a
-    month that happen to share the same start date are distinct rows, because
-    they cover different spans and answer different questions.
+    Historical analyses are preserved rather than overwritten: the unique
+    constraint on (user, period_type, start, end) was dropped so re-running
+    the same period appends a new row instead of clobbering the old one. The
+    latest report is found by ordering by created_at DESC, and the full
+    verdict payload lives in `payload_json` so the widget can re-render a
+    historical analysis without a second model call.
     """
 
     __tablename__ = "period_summaries"
@@ -229,6 +230,10 @@ class PeriodSummary(Base):
     end_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     summary_text: Mapped[str] = mapped_column(Text, nullable=False)
     overall_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Full synergy verdict payload (headline, findings, recommendations, etc.)
+    # stored as JSON so the widget can re-render a historical analysis without
+    # a second model call.
+    payload_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Persona the recap was written in. Copied from the profile at generation
     # time, for the same reason meals and daily recaps carry theirs: switching
     # persona must not relabel text that was written in another voice.
@@ -242,14 +247,8 @@ class PeriodSummary(Base):
     user: Mapped["User"] = relationship("User", back_populates="period_summaries")
 
     __table_args__ = (
-        UniqueConstraint(
-            "user_id",
-            "period_type",
-            "start_date",
-            "end_date",
-            name="uq_period_summaries_user_range",
-        ),
         Index("ix_period_summaries_user_range", "user_id", "period_type", "start_date", "end_date"),
+        Index("ix_period_summaries_user_created", "user_id", "period_type", "created_at"),
     )
 
 

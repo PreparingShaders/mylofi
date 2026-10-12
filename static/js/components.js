@@ -1850,15 +1850,15 @@ export const Components = {
         } else {
             body = `<button type="button" data-action="launch-ai-synergy"
                           class="w-full py-2.5 rounded-2xl bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-bold text-sm shadow-[0_0_20px_rgba(139,92,246,0.25)] hover:brightness-110 transition-all btn-press flex items-center justify-center gap-2">
-                <span>✨ Запустить анализ</span>
+                <span>Запустить анализ</span>
             </button>`;
         }
 
         return `
             <section class="ai-synergy-widget glass rounded-3xl p-4">
                 <div class="ai-synergy__head flex items-center gap-2.5">
-                    <span class="ai-synergy__badge ai-synergy__badge--purple inline-flex items-center gap-1 rounded-full border border-purple-500/30 bg-purple-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-purple-700 dark:text-purple-300">ИИ ✦</span>
-                    <h3 class="text-base font-bold text-surface-900 dark:text-zinc-100 truncate">✨ ИИ-Синергия (Питание + Спорт)</h3>
+                    <span class="ai-synergy__badge inline-flex items-center gap-1 rounded-full border border-purple-500/30 bg-purple-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-purple-700 dark:text-purple-300">ИИ ✦</span>
+                    <h3 class="text-base font-bold text-surface-900 dark:text-zinc-100 truncate">ИИ-Синергия (Питание + Спорт)</h3>
                 </div>
                 <p class="ai-synergy__subtitle mt-1 text-xs text-surface-500 dark:text-zinc-400">Анализ связи калорий, белков и силовых показателей</p>
 

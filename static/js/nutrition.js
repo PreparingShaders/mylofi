@@ -1103,7 +1103,7 @@ export const Nutrition = {
                 body: this.renderNutritionSlide(ringSummary, ringTargets, qualityScore, this.periodCaption(periodData)),
             });
 
-            // The recap card lives inside the carousel as its first snap slot in
+// The recap card lives inside the carousel as its first snap slot in
             // the day view. Its chip names the concrete day rather than reusing the
             // header label: the recap is a stored record of that date, and the
             // header says only "Сегодня". A finished day also earns the manual
@@ -1111,25 +1111,6 @@ export const Nutrition = {
             // have no single day to recap, so the card is left out of the carousel.
             const dailySummarySlot = (this.selectedPeriod === 'day' && dailySummary)
                 ? `<div class="daily-summary-slot snap-center shrink-0">${Components.dailySummaryCard(dailySummary, this.recapCardOptions())}</div>`
-                : '';
-
-            // AI Synergy widget: lives in the left column of the carousel,
-            // directly after the Daily Summary snap slot so the two stay
-            // vertically aligned and the widget matches the card's geometry.
-            // The Daily Summary is itself day-view only, so the widget is scoped
-            // to the same view.
-            const aiSynergyWidgetSlot = (this.selectedPeriod === 'day')
-                ? `<div class="ai-synergy-slot snap-center shrink-0">${Components.aiSynergyWidget({
-                    period: this._aiSynergyPeriod,
-                    customStart: this._aiSynergyCustomRange.start,
-                    customEnd: this._aiSynergyCustomRange.end,
-                    todayISO: this.todayISO(),
-                    isPremium: !!user?.is_premium,
-                    isRunning: this._aiSynergyRunning,
-                    hasResult: !!this._aiSynergyResult,
-                    reportExpanded: this._aiSynergyReportExpanded,
-                    result: this._aiSynergyResult,
-                })}</div>`
                 : '';
 
             let html = `
@@ -1158,18 +1139,32 @@ export const Nutrition = {
                     ${this._pollingTimedOut ? this.renderAnalysisTimeoutBanner() : ''}
 
                      <!-- SNAP CAROUSEL: daily summary first (day only), then the
-                          AI Synergy widget (day only, after the recap card),
-                          then the action tile, pending meals, logged meals (LIFO) -->
+                          action tile, pending meals, logged meals (LIFO) -->
                      <div class="meal-carousel" id="meal-carousel">
                          ${dailySummarySlot}
-                         ${aiSynergyWidgetSlot}
                          ${Components.addMealActionCard()}
                          ${pendingSorted.map((meal) => Components.mealCardPhoto(meal, cardOptions)).join('')}
                          ${sortedMeals.map((meal) => Components.mealCardPhoto(meal, cardOptions)).join('')}
                          ${totalMeals === 0 ? Components.mealCarouselEmptyState() : ''}
                      </div>
 
-                     <!-- FAILED SYNC ITEMS (inline if any) -->
+                     <!-- AI Synergy widget: placed under the daily-summary card
+                          (outside the carousel) in the day view only. -->
+                     ${this.selectedPeriod === 'day'
+                        ? `<div class="ai-synergy-wrap mt-3">${Components.aiSynergyWidget({
+                            period: this._aiSynergyPeriod,
+                            customStart: this._aiSynergyCustomRange.start,
+                            customEnd: this._aiSynergyCustomRange.end,
+                            todayISO: this.todayISO(),
+                            isPremium: !!user?.is_premium,
+                            isRunning: this._aiSynergyRunning,
+                            hasResult: !!this._aiSynergyResult,
+                            reportExpanded: this._aiSynergyReportExpanded,
+                            result: this._aiSynergyResult,
+                        })}</div>`
+                        : ''}
+
+                    <!-- FAILED SYNC ITEMS (inline if any) -->
                     ${failedItems.length > 0
                         ? `
                         <div class="viewport-content px-4 pb-2 -mx-4" id="failed-items-section">

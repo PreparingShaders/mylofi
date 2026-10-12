@@ -45,6 +45,7 @@ class AISynergyResponse(BaseModel):
     success: bool = True
     analyzed_at: UtcDateTime
     period_days: int = 14
+    period_type: str = "week"
     metrics_snapshot: Dict[str, Any]
     verdict: AISynergyVerdict
     limit: Optional[UsageLimitEntry] = None

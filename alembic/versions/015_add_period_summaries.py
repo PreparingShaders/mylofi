@@ -1,7 +1,7 @@
 """add period_summaries table
 
 Revision ID: 015_add_period_summaries
-Revises: aeb9de67dac1_add_premium_expires_at_to_users
+Revises: 014_add_user_activity_tracking
 Create Date: 2026-10-09 22:00:00.000000
 
 """
@@ -11,7 +11,7 @@ from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
 revision = "015_add_period_summaries"
-down_revision = "aeb9de67dac1_add_premium_expires_at_to_users"
+down_revision = "014_add_user_activity_tracking"
 branch_labels = None
 depends_on = None
 
