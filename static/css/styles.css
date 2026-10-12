@@ -1050,6 +1050,7 @@ html.dark,
 .daily-summary-slot,
 .ai-synergy-tab-slot {
     width: min(85vw, 340px);
+    align-self: start;
 }
 .meal-action-slot,
 .meal-empty-slot,
@@ -2062,17 +2063,18 @@ input, select, textarea:focus {
     gap: 10px;
 }
 /* Collapsible report: a smooth height reveal so the toggle feels responsive.
-   The expanded max-height is generous on purpose - the content decides its
-   own height and never gets clipped. */
+   The expanded state grows naturally with content (no max-height cap) so
+   long verdicts expand the card and the page scrolls, matching meal cards. */
 .ai-synergy__report-body {
-    max-height: 2000px;
+    max-height: none;
     opacity: 1;
-    overflow: hidden;
+    overflow: visible;
     transition: max-height 0.28s ease, opacity 0.28s ease;
 }
 .ai-synergy__report-body.is-collapsed {
     max-height: 0;
     opacity: 0;
+    overflow: hidden;
     padding-inline: 0;
     padding-top: 0;
     padding-bottom: 0;
@@ -2085,29 +2087,36 @@ input, select, textarea:focus {
 /* The tab card lives inside the meal carousel as its first snap slot. Its
    header carries the «Итог дня» / «ИИ-Синергия» switcher; the two slots below
    it toggle visibility via CSS so the daily-summary card keeps its bindings
-   across in-place synergy re-renders. */
+   across in-place synergy re-renders.
+   The active slot participates in the flex flow so the card grows with its
+   content; the hidden slot is absolutely positioned to avoid layout shift. */
 .ai-synergy-tab-card {
     display: flex;
     flex-direction: column;
     gap: 8px;
     min-height: 360px;
+    align-self: start;
 }
 .ai-synergy-tab__header {
     flex-shrink: 0;
 }
 .ai-synergy-tab__body {
-    position: relative;
+    display: flex;
+    flex-direction: column;
     flex: 1;
     min-height: 280px;
 }
 .ai-synergy-tab__slot {
-    position: absolute;
-    inset: 0;
+    flex: 1;
+    min-height: 0;
     transition: opacity 0.22s ease;
 }
 .ai-synergy-tab__slot.is-hidden {
+    position: absolute;
+    inset: 0;
     opacity: 0;
     pointer-events: none;
+    z-index: -1;
 }
 
 /* ============ Nutrition page layout (iPhone 13 mini and up) ============ */
