@@ -544,8 +544,8 @@ export const Components = {
      * every render, so the state has to come from outside it).
      *
      * The verdict prose is a collapsible banner: two lines with an ellipsis
-     * by default, a "Развернуть ▾" link under them, and the full paragraph
-     * once expanded ("Свернуть ▴"). The clamp and its animation live in
+     * by default, a "Развернуть" link under them, and the full paragraph
+     * once expanded ("Свернуть"). The clamp and its animation live in
      * CSS (.daily-summary__text.is-collapsed); this markup only carries
      * the initial state and the toggle the controller binds.
      */
@@ -562,7 +562,6 @@ export const Components = {
         const head = `
             <div class="daily-summary__head flex items-center justify-between gap-2 min-w-0">
                 <span class="daily-summary__title min-w-0 truncate">
-                    <svg class="daily-summary__icon" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>
                     Итог дня
                 </span>
                 ${dateLabel ? `<span class="daily-summary__date min-w-0 truncate">${escapeHtml(dateLabel)}</span>` : ''}
@@ -603,7 +602,7 @@ export const Components = {
                     <p class="daily-summary__text${expanded ? '' : ' is-collapsed'}">${escapeHtml(text)}</p>
                     <button type="button" data-action="toggle-daily-summary"
                             class="daily-summary__toggle text-xs text-purple-400 hover:text-purple-600 dark:hover:text-purple-300 font-medium cursor-pointer pt-1 inline-flex items-center gap-1 transition-colors btn-press"
-                            aria-expanded="${expanded}">${expanded ? 'Свернуть ▴' : 'Развернуть ▾'}</button>
+                            aria-expanded="${expanded}">${expanded ? 'Свернуть' : 'Развернуть'}</button>
                 </div>
             </section>
         `;
@@ -1809,19 +1808,23 @@ export const Components = {
     },
 
     /**
-      * AI Synergy widget, rendered on the Питание (nutrition) tab directly under
-      * the Daily Summary block. It hosts the period selector (14 / 30 / custom),
-      * the optional-sleep launch trigger, and - once analysis completes - the
-      * score and a short verdict snippet plus a «Открыть полный отчет» button
-      * that opens a full-screen modal.
+      * AI Synergy widget, rendered in the first carousel slot directly
+      * under the Daily Summary block. It hosts the period selector
+      * (14 / 30 / custom), the optional-sleep launch trigger, and - once
+      * analysis completes - the score and a short verdict snippet plus a
+      * «Посмотреть отчёт» button that opens a full-screen modal.
       *
-      * The widget stays compact inside the fixed carousel slot: no long report
-      * text or scrolling sheet lives here. The full breakdown (findings, metrics,
-      * adjustments) is rendered into a modal via `aiSynergyModal`.
+      * The tile is a full-width stack of three zones: a header (title
+      * plus the score badge), a body (period controls and the verdict
+      * display) and a footer (one full-width action button). No long
+      * report text or scrolling sheet lives here; the full breakdown
+      * (findings, metrics, adjustments) is rendered into a modal via
+      * `aiSynergyModal`.
       *
-      * The whole shell is a pure function of its options: the Nutrition module
-      * re-renders it in place whenever the period changes or a result lands,
-      * so there is no separate "idle" vs "result" markup to keep in sync.
+      * The whole shell is a pure function of its options: the Nutrition
+      * module re-renders it in place whenever the period changes or a
+      * result lands, so there is no separate "idle" vs "result" markup
+      * to keep in sync.
       */
     aiSynergyWidget({
         period = '14',
@@ -1846,7 +1849,7 @@ export const Components = {
                     aria-pressed="${active}"
                     class="ai-synergy__chip select-none px-3 py-1.5 rounded-full text-xs font-medium transition-colors btn-press
                            ${active
-                               ? 'is-active border-purple-500/40 bg-purple-500/10 text-surface-900 dark:text-zinc-100'
+                               ? 'is-active text-surface-900 dark:text-zinc-100'
                                : 'glass text-surface-500 dark:text-surface-400 border border-surface-200 dark:border-white/10 hover:bg-surface-100 dark:hover:bg-zinc-800'}">
                     ${opt.label}
                 </button>`;
@@ -1854,16 +1857,16 @@ export const Components = {
 
         const customInputs = isCustom
             ? `<div class="ai-synergy__custom mt-2 flex items-end gap-2.5">
-                  <div class="flex-1">
-                      <label class="block text-[10px] font-semibold text-surface-500 dark:text-zinc-400 mb-1">С начала</label>
-                      <input type="date" data-ai-synergy-date="start" value="${escapeHtml(customStart)}" max="${escapeHtml(todayISO)}"
-                             class="w-full px-2.5 py-1.5 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 focus:border-purple-500 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"/>
-                  </div>
-                  <div class="flex-1">
-                      <label class="block text-[10px] font-semibold text-surface-500 dark:text-zinc-400 mb-1">По</label>
-                      <input type="date" data-ai-synergy-date="end" value="${escapeHtml(customEnd)}" max="${escapeHtml(todayISO)}"
-                             class="w-full px-2.5 py-1.5 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 focus:border-purple-500 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"/>
-                  </div>
+                   <div class="flex-1">
+                       <label class="block text-[10px] font-semibold text-surface-500 dark:text-zinc-400 mb-1">С начала</label>
+                       <input type="date" data-ai-synergy-date="start" value="${escapeHtml(customStart)}" max="${escapeHtml(todayISO)}"
+                              class="w-full px-2.5 py-1.5 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 focus:border-lime-500 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"/>
+                   </div>
+                   <div class="flex-1">
+                       <label class="block text-[10px] font-semibold text-surface-500 dark:text-zinc-400 mb-1">По</label>
+                       <input type="date" data-ai-synergy-date="end" value="${escapeHtml(customEnd)}" max="${escapeHtml(todayISO)}"
+                              class="w-full px-2.5 py-1.5 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 focus:border-lime-500 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"/>
+                   </div>
                </div>`
             : '';
 
@@ -1874,7 +1877,7 @@ export const Components = {
             const hasScore = Number.isFinite(score) && score > 0;
             if (hasScore) {
                 const scoreFormatted = score.toFixed(1);
-                scoreBadge = `<span class="daily-summary__score inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300 font-medium"><span class="opacity-60">✦ ИИ</span> ${scoreFormatted} <span class="opacity-60">/10</span></span>`;
+                scoreBadge = `<span class="daily-summary__score inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300 font-medium"><span class="opacity-60">✦ ИИ</span> ${scoreFormatted}<span class="opacity-60">/10</span></span>`;
             }
         }
 
@@ -1884,36 +1887,42 @@ export const Components = {
             const analyzedAt = result.analyzed_at || '';
             const dateLabel = analyzedAt ? Utils.formatDate(analyzedAt) : '';
             body = `
-                ${headline ? `<p class="ai-synergy__verdict text-sm font-medium text-surface-700 dark:text-zinc-200 text-center leading-snug">${escapeHtml(headline)}</p>` : '<p class="text-xs text-surface-500 dark:text-surface-400">Вердикт готов</p>'}
+                ${headline ? `<p class="ai-synergy__verdict text-sm font-medium text-surface-700 dark:text-zinc-200 leading-snug">${escapeHtml(headline)}</p>` : '<p class="text-xs text-surface-500 dark:text-surface-400">Вердикт готов</p>'}
                 ${dateLabel
-                     ? `<p class="text-[10px] text-surface-400 dark:text-surface-500 text-center">Анализ: ${escapeHtml(dateLabel)}</p>`
+                     ? `<p class="text-[10px] text-surface-400 dark:text-surface-500">Анализ: ${escapeHtml(dateLabel)}</p>`
                      : ''}
-                <button type="button" data-action="open-ai-synergy-modal"
-                        class="w-full py-2 rounded-2xl bg-zinc-900 dark:bg-zinc-800 border border-zinc-700 text-zinc-100 font-semibold text-sm btn-press flex items-center justify-center hover:bg-zinc-800 dark:hover:bg-zinc-700 transition-colors">
-                    <span>Посмотреть отчёт</span>
-                </button>
             `;
         } else if (isRunning) {
             body = `<div class="ai-synergy__running flex items-center justify-center gap-2 py-3 text-surface-500 dark:text-zinc-400">
                  <svg class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                  <span class="text-sm">Анализируем связь питания и тренировок…</span>
-            </div>`;
+             </div>`;
         } else if (!isPremium) {
-            body = `<div class="rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2">
+            body = `<div class="ai-synergy__gate rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2">
                     <p class="text-xs font-semibold text-amber-600 dark:text-amber-400">Только для подписчиков Premium</p>
                     <p class="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5">Глубокая связь питания и тренировок доступна по подписке Premium.</p>
                 </div>`;
         } else {
-            body = `<button type="button" data-action="launch-ai-synergy"
-                    class="w-full py-2.5 rounded-2xl bg-zinc-900 dark:bg-zinc-800 border border-zinc-700 text-zinc-100 font-semibold text-sm btn-press flex items-center justify-center gap-2 hover:bg-zinc-800 dark:hover:bg-zinc-700 transition-colors">
+            body = '';
+        }
+
+        let footer = '';
+        if (hasResult && result) {
+            footer = `<button type="button" data-action="open-ai-synergy-modal"
+                    class="ai-synergy__action w-full py-2 rounded-2xl bg-zinc-900 dark:bg-zinc-800 border border-zinc-700 text-zinc-100 font-semibold text-sm btn-press flex items-center justify-center hover:bg-zinc-800 dark:hover:bg-zinc-700 transition-colors">
+                <span>Посмотреть отчёт</span>
+            </button>`;
+        } else if (!isRunning && isPremium) {
+            footer = `<button type="button" data-action="launch-ai-synergy"
+                    class="ai-synergy__action w-full py-2.5 rounded-2xl bg-zinc-900 dark:bg-zinc-800 border border-zinc-700 text-zinc-100 font-semibold text-sm btn-press flex items-center justify-center gap-2 hover:bg-zinc-800 dark:hover:bg-zinc-700 transition-colors">
                 <span>Запустить анализ</span>
             </button>`;
         }
 
         return `
-            <section class="ai-synergy-widget glass rounded-3xl p-4">
-                <div class="ai-synergy__head flex items-center justify-between gap-2.5">
-                    <h3 class="text-sm font-semibold text-surface-900 dark:text-zinc-100">ИИ-Синергия</h3>
+            <section class="ai-synergy-widget glass rounded-2xl p-3.5" aria-label="ИИ-Синергия">
+                <div class="ai-synergy__head flex items-center justify-between gap-2 min-w-0">
+                    <h3 class="ai-synergy__title text-sm font-semibold text-surface-900 dark:text-zinc-100 truncate">ИИ-Синергия</h3>
                     ${scoreBadge}
                 </div>
 
@@ -1927,6 +1936,8 @@ export const Components = {
                 <div class="ai-synergy__body" data-ai-synergy-body>
                     ${body}
                 </div>
+
+                ${footer ? `<div class="ai-synergy__footer">${footer}</div>` : ''}
             </section>
         `;
     },
@@ -1999,7 +2010,6 @@ export const Components = {
     aiSynergyModal(result) {
         const v = result?.verdict || {};
         const score = v.overall_score != null ? `${v.overall_score}` : '';
-        const persona = v.ai_persona || null;
         const headline = v.headline || '';
         const analyzedAt = result?.analyzed_at || '';
 
@@ -2016,10 +2026,6 @@ export const Components = {
                 }
             }
         }
-
-        const personaEmoji = persona && AI_PERSONA_META[persona]
-            ? `<span class="ai-synergy-modal__persona-emoji" role="note" title="Стиль нутрициолога: ${escapeHtml(AI_PERSONA_META[persona].label)}">${AI_PERSONA_META[persona].emoji}</span>`
-            : '';
 
         // Metrics snapshot
         const metrics = result?.metrics_snapshot || {};
@@ -2096,18 +2102,14 @@ export const Components = {
                 <div class="ai-synergy-modal__panel" data-action="close-ai-synergy-modal">
                     <div class="ai-synergy-modal__header">
                         <div class="ai-synergy-modal__header-left">
-                            <span class="ai-synergy-modal__icon">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>
-                            </span>
                             <div class="ai-synergy-modal__title-group">
                                 <h2 id="ai-synergy-modal-title" class="ai-synergy-modal__title">ИИ-Синергия (Питание + Спорт)</h2>
                                 ${analyzedAt ? `<span class="ai-synergy-modal__date">${escapeHtml(Utils.formatDate(analyzedAt))}</span>` : ''}
                             </div>
                         </div>
                         ${score
-                             ? `<span class="ai-synergy-modal__score inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300 font-medium"><span class="opacity-60">ИИ</span> ${score}<span class="opacity-60">/10</span></span>`
+                             ? `<span class="ai-synergy-modal__score inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300 font-medium"><span class="opacity-60">✦ ИИ</span> ${score}<span class="opacity-60">/10</span></span>`
                             : ''}
-                        ${personaEmoji}
                         <button type="button" class="ai-synergy-modal__close" data-action="close-ai-synergy-modal" aria-label="Закрыть">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6l12 12M18 6L6 18"/></svg>
                         </button>
@@ -2155,77 +2157,5 @@ export const Components = {
         `;
     },
 
-    /**
-     * AI Synergy tab card: lives inside the first carousel slot alongside the
-     * daily summary. Its header carries a tab switcher («Итог дня» / «ИИ-Синергия»);
-     * selecting a tab swaps the visible slot. Both slots stay in the DOM so the
-     * daily summary card keeps its bindings across in-place synergy re-renders;
-     * CSS toggles visibility, and the controller re-binds the daily summary
-     * controls after every full render.
-     *
-     * The daily-summary content is injected by the caller (the controller
-     * renders it separately and passes the HTML in), so this component only owns
-     * the shell and the synergy body.
-     */
-    aiSynergyTab({
-        activeTab = 'daily',
-        period = '14',
-        customStart = '',
-        customEnd = '',
-        todayISO = '',
-        isPremium = false,
-        isRunning = false,
-        hasResult = false,
-        result = null,
-        dailySummaryHtml = '',
-    } = {}) {
-        const isSynergy = activeTab === 'synergy';
-        const tabBase = 'flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors btn-press';
-        const tabActive = 'is-active border-white/10 bg-white/5 text-surface-900 dark:text-zinc-100';
-        const tabInactive = 'glass text-surface-500 dark:text-surface-400 border border-surface-200 dark:border-white/10 hover:bg-surface-100 dark:hover:bg-zinc-800';
-
-        const dailyTab = `
-            <button type="button" data-action="ai-synergy-tab" data-tab="daily"
-                    aria-pressed="${!isSynergy}"
-                    class="${tabBase} ${!isSynergy ? tabActive : tabInactive}">
-                <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>
-                <span>Итог дня</span>
-            </button>`;
-        const synergyTabBtn = `
-            <button type="button" data-action="ai-synergy-tab" data-tab="synergy"
-                    aria-pressed="${isSynergy}"
-                    class="${tabBase} ${isSynergy ? tabActive : tabInactive}">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V5M15 19V5M5 19h14M5 5h14M5 5l-2-2M19 5l2-2"/></svg>
-                <span>ИИ-Синергия</span>
-            </button>`;
-
-        const synergyBody = this.aiSynergyWidget({
-            period,
-            customStart,
-            customEnd,
-            todayISO,
-            isPremium,
-            isRunning,
-            hasResult,
-            result,
-        });
-
-        return `
-            <section class="ai-synergy-tab-card glass rounded-3xl p-3.5 shadow-xl" role="region" aria-label="Итог дня / ИИ-Синергия">
-                <div class="ai-synergy-tab__header flex items-center gap-1.5 mb-2 p-1">
-                    ${dailyTab}
-                    ${synergyTabBtn}
-                </div>
-                <div class="ai-synergy-tab__body relative">
-                    <div class="ai-synergy-tab__slot ${isSynergy ? 'is-hidden' : ''}">
-                        ${dailySummaryHtml}
-                    </div>
-                    <div class="ai-synergy-tab__slot ${isSynergy ? '' : 'is-hidden'}">
-                        ${synergyBody}
-                    </div>
-                </div>
-            </section>
-        `;
-    },
 };
 

@@ -863,9 +863,6 @@ const App = {
             case 'launch-ai-synergy':
                 this.launchAiSynergy();
                 break;
-            case 'ai-synergy-tab':
-                Nutrition.selectAiSynergyTab(event.target.closest('[data-action="ai-synergy-tab"]')?.dataset.tab);
-                break;
             case 'open-ai-synergy-modal':
                 Nutrition.openAiSynergyModal();
                 break;
