@@ -1,30 +1,26 @@
-# Plan: AI Synergy Modal Final Polish (Deduplication, Scoring, and Finding Colors)
+# Plan: AI Synergy Widget Final DOM Layout Redesign
 
 ## Goals
-1. **Remove Verdict Duplication:**
-   - Eliminate redundant rendering of the verdict headline inside the modal report card so it appears exactly once.
-2. **Calibrate AI Scoring Formula & Prompt:**
-   - Update the LLM prompt in `ai_synergy_service.py` to strictly penalize severe calorie deficits, macro imbalances, and insufficient protein shortfalls (yielding scores in the `2–4 / 10` range), reserving `8–10` exclusively for balanced nutrition and training execution.
-3. **Semantic Color Coding & Icons for Key Findings:**
-   - Implement classification or heuristic detection for key findings to dynamically assign semantic styles:
-     - 🔴 **Risks / Deficits / Errors:** Rose (`text-rose-400`, `bg-rose-500/10`) with cross/warning icon.
-     - 🟢 **Successes / Positives:** Emerald (`text-emerald-400`, `bg-emerald-500/10`) with checkmark icon.
-     - 🟡 **Warnings / Advisories:** Amber (`text-amber-400`, `bg-amber-500/10`) with warning icon.
+1. **Header Redesign (`.ai-synergy__head`):**
+   - Remove the `ии` badge icon on the left.
+   - Keep title text `ИИ-Синергия`.
+   - Remove subtitle `Питание и тренировки`.
+   - Add score badge on the right using `daily-summary__score` classes (`<span class="daily-summary__score ..."><span class="opacity-60">✦ ИИ</span> ${scoreFormatted} <span class="opacity-60">/10</span></span>`).
+2. **Body Redesign (`.ai-synergy__body`):**
+   - Remove old score box (`ai-synergy__score-box`).
+   - Allow verdict/error text to take full width.
+3. **Action Button:**
+   - Remove `👀` icon/emoji. Keep clean text **«Посмотреть отчёт»** (or «Запустить анализ»).
+4. **Backend Scoring Validation:**
+   - Verify backend `_synergy_score_ceiling` implementation correctly caps scores under severe calorie/protein deficits.
 
 ---
 
-## Proposed Changes
-
-### 1. Backend AI Prompt (`app/services/ai_synergy_service.py`)
-- Refine prompt instructions: explicitly mandate strict scoring guidelines (e.g. extreme deficits or severe protein misses must score ≤ 4).
-
-### 2. Frontend Components (`static/js/components.js`)
-- **Modal Report Render (`aiSynergyModal` / `aiSynergyResultCard`):**
-  - Remove duplicate verdict text rendering.
-  - Add helper function `renderFindingItem(text)` that inspects text content or categorizes findings to apply appropriate emerald, rose, or amber icon and badge styling.
+## Proposed Changes (`static/js/components.js`)
+- Update `aiSynergyWidget` method to match the precise DOM structure requested.
 
 ---
 
 ## Validation & Verification
-1. Run `pytest` to verify test suite.
-2. Check score range calculation and visual rendering of findings in the AI Synergy modal report.
+1. Run `pytest` to verify tests.
+2. Check browser rendering of `aiSynergyWidget` in the carousel.

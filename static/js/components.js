@@ -42,7 +42,7 @@ const MACRO_ICON_PATHS = {
     carbs: '<path d="M12 3.6c.7 4.3 1.9 5.5 6.1 6.2-4.2.7-5.4 1.9-6.1 6.2-.7-4.3-1.9-5.5-6.1-6.2 4.2-.7 5.4-1.9 6.1-6.2Z"/>',
 };
 
-const SYNERGY_COOLDOWN_DAYS = 7;
+const SYNERGY_COOLDOWN_DAYS = 0;
 
 const FINDING_ICON_PATHS = {
     success: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12.5l2 2 4-4m0 0l-4-4m4 4L9 8.5"/>',
@@ -1867,30 +1867,30 @@ export const Components = {
                </div>`
             : '';
 
-        let body;
+        let scoreBadge = '';
         if (hasResult && result) {
             const scoreNum = result.verdict?.overall_score;
-            const scoreText = scoreNum != null ? String(scoreNum) : null;
+            const score = Number(scoreNum);
+            const hasScore = Number.isFinite(score) && score > 0;
+            if (hasScore) {
+                const scoreFormatted = score.toFixed(1);
+                scoreBadge = `<span class="daily-summary__score inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300 font-medium"><span class="opacity-60">✦ ИИ</span> ${scoreFormatted} <span class="opacity-60">/10</span></span>`;
+            }
+        }
+
+        let body;
+        if (hasResult && result) {
             const headline = result.verdict?.headline || '';
             const analyzedAt = result.analyzed_at || '';
             const dateLabel = analyzedAt ? Utils.formatDate(analyzedAt) : '';
             body = `
-                <div class="ai-synergy__status flex items-center justify-center gap-4 py-3">
-                    <div class="text-center">
-                        <p class="text-[10px] font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider">Счёт</p>
-                        ${scoreText
-                            ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300 font-medium"><span class="opacity-60">✦ ИИ</span> ${scoreText}<span class="opacity-60">/10</span></span>`
-                            : '<p class="text-2xl font-bold text-purple-600 dark:text-purple-400 tabular-nums">—</p>'}
-                    </div>
-                    ${headline ? `<p class="text-sm font-medium text-surface-700 dark:text-zinc-200 text-center max-w-[180px] leading-snug">${escapeHtml(headline)}</p>` : '<p class="text-xs text-surface-500 dark:text-surface-400">Вердикт готов</p>'}
-                </div>
+                ${headline ? `<p class="ai-synergy__verdict text-sm font-medium text-surface-700 dark:text-zinc-200 text-center leading-snug">${escapeHtml(headline)}</p>` : '<p class="text-xs text-surface-500 dark:text-surface-400">Вердикт готов</p>'}
                 ${dateLabel
-                    ? `<p class="text-[10px] text-surface-400 dark:text-surface-500 text-center">Анализ: ${escapeHtml(dateLabel)}</p>`
-                    : ''}
+                     ? `<p class="text-[10px] text-surface-400 dark:text-surface-500 text-center">Анализ: ${escapeHtml(dateLabel)}</p>`
+                     : ''}
                 <button type="button" data-action="open-ai-synergy-modal"
-                        class="w-full py-2 rounded-2xl bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-bold text-sm shadow-[0_0_20px_rgba(139,92,246,0.25)] hover:brightness-110 transition-all btn-press flex items-center justify-center gap-2">
-                    <span>👀 Посмотреть отчёт</span>
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M1 12s7-8 11-8 11 8 11 8-7 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3" fill="none"/></svg>
+                        class="w-full py-2 rounded-2xl bg-zinc-900 dark:bg-zinc-800 border border-zinc-700 text-zinc-100 font-semibold text-sm btn-press flex items-center justify-center hover:bg-zinc-800 dark:hover:bg-zinc-700 transition-colors">
+                    <span>Посмотреть отчёт</span>
                 </button>
             `;
         } else if (isRunning) {
@@ -1905,18 +1905,17 @@ export const Components = {
                 </div>`;
         } else {
             body = `<button type="button" data-action="launch-ai-synergy"
-                        class="w-full py-2.5 rounded-2xl bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-bold text-sm shadow-[0_0_20px_rgba(139,92,246,0.25)] hover:brightness-110 transition-all btn-press flex items-center justify-center gap-2">
+                    class="w-full py-2.5 rounded-2xl bg-zinc-900 dark:bg-zinc-800 border border-zinc-700 text-zinc-100 font-semibold text-sm btn-press flex items-center justify-center gap-2 hover:bg-zinc-800 dark:hover:bg-zinc-700 transition-colors">
                 <span>Запустить анализ</span>
             </button>`;
         }
 
         return `
             <section class="ai-synergy-widget glass rounded-3xl p-4">
-                <div class="ai-synergy__head flex items-center gap-2.5">
-                    <span class="ai-synergy__badge inline-flex items-center gap-1 rounded-full border border-purple-500/30 bg-purple-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-purple-700 dark:text-purple-300">ИИ ✦</span>
-                    <h3 class="text-base font-bold text-surface-900 dark:text-zinc-100">ИИ-Синергия</h3>
+                <div class="ai-synergy__head flex items-center justify-between gap-2.5">
+                    <h3 class="text-sm font-semibold text-surface-900 dark:text-zinc-100">ИИ-Синергия</h3>
+                    ${scoreBadge}
                 </div>
-                <p class="ai-synergy__subtitle mt-1 text-xs text-surface-500 dark:text-zinc-400">Питание и тренировки</p>
 
                 <div class="ai-synergy__controls mt-3">
                     <div class="ai-synergy__periods flex items-center gap-1.5 flex-wrap">
@@ -1976,7 +1975,7 @@ export const Components = {
                                     Пропустить
                                 </button>
                                 <button type="button" id="ai-synergy-sleep-confirm" data-action="confirm-ai-synergy-sleep"
-                                        class="flex-1 py-3 rounded-2xl bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-bold text-sm shadow-[0_0_20px_rgba(139,92,246,0.25)]">
+                                        class="flex-1 py-3 rounded-2xl bg-zinc-900 dark:bg-zinc-800 border border-zinc-700 text-zinc-100 font-semibold text-sm transition-colors hover:bg-zinc-800 dark:hover:bg-zinc-700">
                                     Готово
                                 </button>
                             </div>
@@ -2106,7 +2105,7 @@ export const Components = {
                             </div>
                         </div>
                         ${score
-                            ? `<span class="ai-synergy-modal__score inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300 font-medium"><span class="opacity-60">✦ ИИ</span> ${score}<span class="opacity-60">/10</span></span>`
+                             ? `<span class="ai-synergy-modal__score inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300 font-medium"><span class="opacity-60">ИИ</span> ${score}<span class="opacity-60">/10</span></span>`
                             : ''}
                         ${personaEmoji}
                         <button type="button" class="ai-synergy-modal__close" data-action="close-ai-synergy-modal" aria-label="Закрыть">
@@ -2143,7 +2142,7 @@ export const Components = {
                             Закрыть
                         </button>
                         ${isReanalyzeDisabled
-                            ? `<button type="button" class="ai-synergy-modal__footer-btn ai-synergy-modal__footer-btn--primary ai-synergy-modal__footer-btn--disabled" disabled>
+                         ? `<button type="button" class="ai-synergy-modal__footer-btn ai-synergy-modal__footer-btn--primary ai-synergy-modal__footer-btn--disabled" disabled>
                                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M1 4v6h6l-2-2M2 12a8 8 0 0 1 14.93-8l-.37 2.48A6 6 0 0 0 4.07 14H2zM17 1l4 4m0 0l-4 4m4-4H3"/></svg>
                                   <span>Доступно после ${reanalyzeCooldownDateStr}</span>
                              </button>`
@@ -2182,7 +2181,7 @@ export const Components = {
     } = {}) {
         const isSynergy = activeTab === 'synergy';
         const tabBase = 'flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors btn-press';
-        const tabActive = 'is-active border-purple-500/40 bg-purple-500/10 text-surface-900 dark:text-zinc-100';
+        const tabActive = 'is-active border-white/10 bg-white/5 text-surface-900 dark:text-zinc-100';
         const tabInactive = 'glass text-surface-500 dark:text-surface-400 border border-surface-200 dark:border-white/10 hover:bg-surface-100 dark:hover:bg-zinc-800';
 
         const dailyTab = `

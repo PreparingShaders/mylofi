@@ -31,7 +31,7 @@ from app.services.nutrition import utcnow
 logger = logging.getLogger(__name__)
 
 SYNERGY_TASK_TIMEOUT = 60.0
-SYNERGY_RATE_LIMIT_DAYS = 7
+SYNERGY_RATE_LIMIT_DAYS = 0
 
 REQUIRED_FIELDS = [
     "verdict_headline",
@@ -348,6 +348,109 @@ def _validate_synergy(result: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+def _synergy_score_ceiling(aggregated: Dict[str, Any]) -> int:
+    """Compute the maximum permissible overall_score from objective data.
+
+    Implements the tier-based caps and hard-rule caps from the synergy prompt:
+
+    Tier-based (checked from most severe to least):
+      - Critical (>30% deficit, protein <1.0 g/kg, or gain goal with zero
+        workouts) → ceiling 2.
+      - Strong (20–30% deficit, or protein 1.0–1.4 g/kg) → ceiling 4.
+      - Moderate (±15% calories, protein 1.4–1.8 g/kg) → ceiling 6.
+      - Excellent (tight caloric match, protein 1.9–2.2, tonnage strongly
+        trending, sleep ≥7 h) → ceiling 10.
+      - Good balance (±10% calories, protein 1.8–2.2, tonnage growing)
+        → ceiling 7.
+      - Otherwise → ceiling 10.
+
+    Hard-rule caps (anything above 7 is reined in to 7):
+      - Calorie deficit >15% below target.
+      - Protein <1.6 g/kg for a gain goal.
+      - Tonnage trend ≤0 over 2+ weeks of data.
+    """
+    if not isinstance(aggregated, dict):
+        return 10
+
+    profile = aggregated.get("user_profile") or {}
+    period = aggregated.get("period_summary") or {}
+    if not isinstance(period, dict):
+        return 10
+
+    nut = period.get("nutrition") or {}
+    work = period.get("workouts") or {}
+    lifestyle = period.get("lifestyle") or {}
+
+    target_calories = profile.get("target_calories")
+    avg_calories = nut.get("avg_daily_calories", 0) or 0
+    weight_kg = profile.get("weight_kg")
+    avg_protein = nut.get("avg_daily_protein_g", 0) or 0
+    goal = (profile.get("goal") or "").lower()
+    total_workouts = work.get("total_workouts", 0) or 0
+    tonnage_trend_pct = work.get("tonnage_trend_pct", 0) or 0
+    days_analyzed = period.get("days_analyzed", 14) or 14
+    avg_sleep = lifestyle.get("avg_sleep_hours")
+
+    if not target_calories or target_calories <= 0 or not weight_kg or weight_kg <= 0:
+        return 10
+
+    is_gain = goal in ("gain", "surplus", "muscle_gain")
+
+    cal_deficit_pct = 0.0
+    if avg_calories > 0:
+        cal_deficit_pct = (1 - avg_calories / target_calories) * 100
+    else:
+        cal_deficit_pct = 100.0
+
+    protein_per_kg = avg_protein / weight_kg
+
+    # --- Tier-based ceilings (most severe first) ---
+    if cal_deficit_pct > 30 or protein_per_kg < 1.0 or (is_gain and total_workouts == 0):
+        return 2
+    if cal_deficit_pct > 20 or protein_per_kg < 1.4:
+        return 4
+    if abs(cal_deficit_pct) <= 15 and 1.4 <= protein_per_kg <= 1.8:
+        return 6
+
+    is_excellent = (
+        abs(cal_deficit_pct) <= 3
+        and 1.9 <= protein_per_kg <= 2.2
+        and total_workouts > 0
+        and tonnage_trend_pct > 2
+        and avg_sleep is not None
+        and avg_sleep >= 7
+    )
+    if is_excellent:
+        return 10
+
+    if abs(cal_deficit_pct) <= 10 and 1.8 <= protein_per_kg <= 2.2 and total_workouts > 0 and tonnage_trend_pct > 0:
+        return 7
+
+    # --- Fallback: none of the tiers above matched ---
+    ceiling = 10
+    if cal_deficit_pct > 15:
+        ceiling = 7
+    elif is_gain and protein_per_kg < 1.6:
+        ceiling = 7
+    elif days_analyzed >= 14 and tonnage_trend_pct <= 0:
+        ceiling = 7
+
+    return ceiling
+
+
+def _calibrate_synergy_score(score: Any, aggregated: Dict[str, Any]) -> float:
+    """Clamp the LLM-derived overall_score to the data-derived ceiling.
+
+    The LLM may propose an optimistic 8–10 even when the objective data
+    doesn't support it.  This enforces the ceiling from
+    ``_synergy_score_ceiling`` so the published score never overstates
+    the user's actual nutrition / training balance.
+    """
+    raw = normalise_score(score)
+    ceiling = _synergy_score_ceiling(aggregated)
+    return min(raw, ceiling)
+
+
 def _resolve_period_type(period_days: Optional[int], start_date: Optional[date], end_date: Optional[date]) -> str:
     """Derive the period_type label used for storage and rate limiting."""
     if start_date is not None and end_date is not None:
@@ -381,10 +484,12 @@ async def _get_latest_synergy(
 
 
 def _check_synergy_rate_limit(latest: Optional[PeriodSummary]) -> None:
-    """Raise ValueError when the 7-day cooldown has not elapsed.
+    """Raise ValueError when the cooldown window has not elapsed.
 
-    The message names the exact date the next analysis becomes available,
-    so the frontend can render it verbatim instead of a generic error.
+    In Dev/Testing mode ``SYNERGY_RATE_LIMIT_DAYS`` is 0, so the check is a
+    no-op and recalculations are always allowed. The message names the exact
+    date the next analysis becomes available, so the frontend can render it
+    verbatim instead of a generic error.
     """
     if latest is None:
         return
@@ -486,7 +591,7 @@ async def run_ai_synergy(
 
     verdict = dict(result)
 
-    overall_score = normalise_score(verdict.get("overall_score"))
+    overall_score = _calibrate_synergy_score(verdict.get("overall_score"), aggregated)
 
     response = {
         "success": True,
