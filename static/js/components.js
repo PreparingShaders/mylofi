@@ -99,9 +99,9 @@ function macroTone(key, current, target) {
 // --- Finding classification: category-based semantic tone detection ----------
 
 const FINDING_CATEGORY_META = {
-    key_findings: { icon: 'success', tone: 'success' },
-    growth_points: { icon: 'lightbulb', tone: 'success' },
-    risk_factors: { icon: 'risk', tone: 'risk' },
+    key_findings: { icon: 'success' },
+    growth_points: { icon: 'lightbulb' },
+    risk_factors: { icon: 'risk' },
 };
 
 const SYNERGY_COOLDOWN_DAYS = 7;
@@ -113,10 +113,62 @@ const FINDING_ICON_PATHS = {
     lightbulb: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2.5a6.5 6.5 0 0 0-3 11.5A4.5 4.5 0 0 1 12 20a4.5 4.5 0 0 1 3-8.5 6.5 6.5 0 0 0-3-11.5z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17h6M10 11h4M9.5 7C10 6 11 5.5 12 5.5s2 .5 2.5 1.5"/>',
 };
 
+/* Keywords that signal a finding expresses a deficit, error, or problem.
+   Green (emerald) is reserved for genuine successes: any finding whose text
+   carries one of these is forced to amber (warning) or red (rose) instead. */
+const NEGATIVE_FINDING_KEYWORDS = [
+    'дефицит', 'недостат', 'стагна', 'недостиг', 'недостиж', 'ошибк',
+    'проблем', 'критичес', 'наруш', 'недостач', 'недооцен',
+    'insufficient', 'deficit', 'stagnation', 'error', 'problem', 'critical',
+];
+
+/**
+ * Resolve the semantic tone for a single finding.
+ *
+ * - risk_factors are always rose (risk): they are the narrow spots by definition.
+ * - growth_points default to amber (warning): they are improvement areas, never
+ *   successes, so they never borrow green. Only a genuinely critical line
+ *   escalates them to rose.
+ * - key_findings keep emerald (success) for positive statements only; deficits,
+ *   stagnation, errors and similar flip them to rose.
+ */
+function classifyFindingTone(text, category) {
+    const lower = String(text || '').toLowerCase().trim();
+    const isNegative = NEGATIVE_FINDING_KEYWORDS.some((kw) => lower.includes(kw));
+
+    if (category === 'risk_factors') {
+        return 'risk';
+    }
+    if (category === 'growth_points') {
+        return isNegative ? 'risk' : 'warning';
+    }
+    if (category === 'key_findings') {
+        return isNegative ? 'risk' : 'success';
+    }
+    return 'warning';
+}
+
 function renderFindingItem(text, category) {
-    const meta = FINDING_CATEGORY_META[category] || { icon: 'warning', tone: 'warning' };
-    const iconPath = FINDING_ICON_PATHS[meta.icon];
-    const toneClass = `ai-synergy-modal__finding--${meta.tone}`;
+    const meta = FINDING_CATEGORY_META[category] || { icon: 'warning' };
+    const tone = classifyFindingTone(text, category);
+
+    /* Match the icon glyph to the resolved tone: a green checkmark must never
+       sit on an amber or red callout. Growth points keep their lightbulb while
+       merely advisory (amber), switching to the risk glyph only when the text
+       turns critical. */
+    let iconKey;
+    if (category === 'growth_points' && tone === 'warning') {
+        iconKey = meta.icon;
+    } else if (tone === 'success') {
+        iconKey = 'success';
+    } else if (tone === 'warning') {
+        iconKey = 'warning';
+    } else {
+        iconKey = 'risk';
+    }
+
+    const iconPath = FINDING_ICON_PATHS[iconKey];
+    const toneClass = `ai-synergy-modal__finding--${tone}`;
     const safeText = escapeHtml(String(text ?? ''));
     return `
         <li class="ai-synergy-modal__finding ${toneClass}">
@@ -2051,36 +2103,33 @@ export const Components = {
 
         const metricsHtml = hasMetrics ? `
             <div class="ai-synergy-modal__metrics">
-                ${renderMetricRow('Средние ккал', metrics.avg_calories)}
-                ${renderMetricRow('Средний белок', metrics.avg_protein ? `${metrics.avg_protein} г` : null)}
-                ${renderMetricRow('Тренировок', metrics.total_workouts)}
-                ${renderMetricRow('Тренд тоннажа', metrics.tonnage_trend)}
+                ${renderMetricRow('Ккал', metrics.avg_calories)}
+                ${renderMetricRow('Белок', metrics.avg_protein ? `${metrics.avg_protein} г` : null)}
+                ${renderMetricRow('Тренир.', metrics.total_workouts)}
+                ${renderMetricRow('Тоннаж', metrics.tonnage_trend)}
             </div>
         ` : '';
 
         const findingsHtml = keyFindings || growthPoints || riskFactors
             ? `<div class="ai-synergy-modal__findings-list">
                    ${keyFindings ? `<div class="ai-synergy-modal__finding-group">
-                       <div class="ai-synergy-modal__section-title">
-                           <svg class="ai-synergy-modal__section-icon text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m0 6a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                           <span>КЛЮЧЕВЫЕ ВЫВОДЫ</span>
-                       </div>
-                       <ul>${keyFindings}</ul>
-                   </div>` : ''}
+                        <div class="ai-synergy-modal__section-title">
+                            <span>КЛЮЧЕВЫЕ ВЫВОДЫ</span>
+                        </div>
+                        <ul>${keyFindings}</ul>
+                    </div>` : ''}
                      ${growthPoints ? `<div class="ai-synergy-modal__finding-group">
-                         <div class="ai-synergy-modal__section-title">
-                              <svg class="ai-synergy-modal__section-icon text-amber-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5a6.5 6.5 0 0 0-3 11.5A4.5 4.5 0 0 1 12 20a4.5 4.5 0 0 1 3-8.5 6.5 6.5 0 0 0-3-11.5z"/><path d="M9 17h6M10 11h4M9.5 7C10 6 11 5.5 12 5.5s2 .5 2.5 1.5"/></svg>
-                              <span>ТОЧКИ РОСТА</span>
+                        <div class="ai-synergy-modal__section-title">
+                            <span>ТОЧКИ РОСТА</span>
                         </div>
                         <ul>${growthPoints}</ul>
                     </div>` : ''}
-                    ${riskFactors ? `<div class="ai-synergy-modal__finding-group">
-                        <div class="ai-synergy-modal__section-title">
-                            <svg class="ai-synergy-modal__section-icon text-rose-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7h8a2 2 0 012 2v2.286a1 1 0 01-.447.832l-3.553 2.132a1 1 0 00-.447.832V17a2 2 0 01-2 2H8a2 2 0 01-2-2v-2.146a1 1 0 00-.447-.832L3.447 11.082A1 1 0 013 10.286V8a2 2 0 012-2z"/><path d="M12 10v2m0 3h.01"/></svg>
-                            <span>ФАКТОРЫ РИСКА</span>
-                       </div>
-                       <ul>${riskFactors}</ul>
-                   </div>` : ''}
+                     ${riskFactors ? `<div class="ai-synergy-modal__finding-group">
+                         <div class="ai-synergy-modal__section-title">
+                             <span>ФАКТОРЫ РИСКА</span>
+                        </div>
+                        <ul>${riskFactors}</ul>
+                     </div>` : ''}
                </div>`
             : '';
 
@@ -2120,10 +2169,9 @@ export const Components = {
                         </div>
 
                         ${metricsHtml ? `<div class="ai-synergy-modal__section">
-                            <div class="ai-synergy-modal__section-title">
-                                <svg class="ai-synergy-modal__section-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m-3-3l3 3-3 3"/></svg>
-                                <span>МЕТРИКИ</span>
-                            </div>
+                         <div class="ai-synergy-modal__section-title">
+                             <span>МЕТРИКИ</span>
+                         </div>
                             ${metricsHtml}
                         </div>` : ''}
 
@@ -2133,7 +2181,6 @@ export const Components = {
 
                         ${adjustmentsHtml ? `<div class="ai-synergy-modal__section">
                             <div class="ai-synergy-modal__section-title">
-                                <svg class="ai-synergy-modal__section-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 17h2M12 10v5m0 0l2-2m-2 2l-2 2"/></svg>
                                 <span>РЕКОМЕНДАЦИИ</span>
                             </div>
                             ${adjustmentsHtml}
@@ -2147,7 +2194,7 @@ export const Components = {
                         ${isReanalyzeDisabled
                             ? `<button type="button" class="ai-synergy-modal__footer-btn ai-synergy-modal__footer-btn--primary ai-synergy-modal__footer-btn--disabled" disabled>
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5M4 4l5 5-5 5v5h5M4 4l5 5-5-5z"/></svg>
-                                <span>Кулдаун до ${reanalyzeCooldownDateStr}</span>
+                                 <span>Доступно после ${reanalyzeCooldownDateStr}</span>
                             </button>`
                             : `<button type="button" class="ai-synergy-modal__footer-btn ai-synergy-modal__footer-btn--primary" data-action="reanalyze-ai-synergy">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5M4 4l5 5-5 5v5h5M4 4l5 5-5-5z"/></svg>

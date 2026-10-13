@@ -2263,11 +2263,6 @@ input, select, textarea:focus {
 .dark .ai-synergy-modal__section-title {
     color: #a1a1aa;
 }
-.ai-synergy-modal__section-icon {
-    width: 20px;
-    height: 20px;
-    flex-shrink: 0;
-}
 .ai-synergy-modal__score {
     flex-shrink: 0;
 }
@@ -2376,15 +2371,16 @@ input, select, textarea:focus {
 }
 .ai-synergy-modal__metrics {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 8px;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
 }
 .ai-synergy-modal__metric {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    padding: 10px 12px;
-    border-radius: 12px;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 6px;
+    border-radius: 8px;
     background: rgba(24, 24, 27, 0.04);
     border: 1px solid rgba(24, 24, 27, 0.08);
     backdrop-filter: blur(8px);
@@ -2395,7 +2391,7 @@ input, select, textarea:focus {
     border-color: rgba(255, 255, 255, 0.08);
 }
 .ai-synergy-modal__metric-label {
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 600;
     color: #71717a;
     text-transform: uppercase;
@@ -2405,7 +2401,7 @@ input, select, textarea:focus {
     color: #a1a1aa;
 }
 .ai-synergy-modal__metric-value {
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 700;
     color: #18181b;
 }
