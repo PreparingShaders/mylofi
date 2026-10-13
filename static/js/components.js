@@ -2135,15 +2135,13 @@ return `
                         <button type="button" class="ai-synergy-modal__footer-btn ai-synergy-modal__footer-btn--secondary" data-action="close-ai-synergy-modal">
                             Закрыть
                         </button>
-                        ${isReanalyzeDisabled
+                         ${isReanalyzeDisabled
                          ? `<button type="button" class="ai-synergy-modal__footer-btn ai-synergy-modal__footer-btn--primary ai-synergy-modal__footer-btn--disabled" disabled>
-                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M1 4v6h6l-2-2M2 12a8 8 0 0 1 14.93-8l-.37 2.48A6 6 0 0 0 4.07 14H2zM17 1l4 4m0 0l-4 4m4-4H3"/></svg>
-                                  <span>Доступно после ${reanalyzeCooldownDateStr}</span>
-                             </button>`
-                            : `<button type="button" class="ai-synergy-modal__footer-btn ai-synergy-modal__footer-btn--primary" data-action="reanalyze-ai-synergy">
-                                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M1 4v6h6l-2-2M2 12a8 8 0 0 1 14.93-8l-.37 2.48A6 6 0 0 0 4.07 14H2zM17 1l4 4m0 0l-4 4m4-4H3"/></svg>
-                                  <span>Пересчитать</span>
-                              </button>`}
+                                 <span>Доступно после ${reanalyzeCooldownDateStr}</span>
+                              </button>`
+                             : `<button type="button" class="ai-synergy-modal__footer-btn ai-synergy-modal__footer-btn--primary" data-action="reanalyze-ai-synergy">
+                                   Пересчитать
+                               </button>`}
                     </div>
                 </div>
             </div>

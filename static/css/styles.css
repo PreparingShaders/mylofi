@@ -2461,10 +2461,10 @@ input, select, textarea:focus {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    padding: 14px 16px;
+    gap: 4px;
+    padding: 8px 16px;
     border-radius: 14px;
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 600;
     transition: all 0.15s ease;
 }
