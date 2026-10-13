@@ -1872,6 +1872,8 @@ export const Components = {
             const scoreNum = result.verdict?.overall_score;
             const scoreText = scoreNum != null ? String(scoreNum) : null;
             const headline = result.verdict?.headline || '';
+            const analyzedAt = result.analyzed_at || '';
+            const dateLabel = analyzedAt ? Utils.formatDate(analyzedAt) : '';
             body = `
                 <div class="ai-synergy__status flex items-center justify-center gap-4 py-3">
                     <div class="text-center">
@@ -1882,10 +1884,13 @@ export const Components = {
                     </div>
                     ${headline ? `<p class="text-sm font-medium text-surface-700 dark:text-zinc-200 text-center max-w-[180px] leading-snug">${escapeHtml(headline)}</p>` : '<p class="text-xs text-surface-500 dark:text-surface-400">Вердикт готов</p>'}
                 </div>
+                ${dateLabel
+                    ? `<p class="text-[10px] text-surface-400 dark:text-surface-500 text-center">Анализ: ${escapeHtml(dateLabel)}</p>`
+                    : ''}
                 <button type="button" data-action="open-ai-synergy-modal"
                         class="w-full py-2 rounded-2xl bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-bold text-sm shadow-[0_0_20px_rgba(139,92,246,0.25)] hover:brightness-110 transition-all btn-press flex items-center justify-center gap-2">
-                    <span>Открыть полный отчёт</span>
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                    <span>👀 Посмотреть отчёт</span>
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M1 12s7-8 11-8 11 8 11 8-7 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3" fill="none"/></svg>
                 </button>
             `;
         } else if (isRunning) {

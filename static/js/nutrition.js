@@ -87,7 +87,9 @@ export const Nutrition = {
         }
 
         try {
-            const data = await API.get('/ai/synergy', token);
+            const periodType = this.getAiSynergyPeriodType();
+            const endpoint = `/ai/synergy?period_type=${encodeURIComponent(periodType)}`;
+            const data = await API.get(endpoint, token);
             if (data && data.available && data.verdict) {
                 this._aiSynergyResult = {
                     success: true,
@@ -619,8 +621,29 @@ export const Nutrition = {
         return { period_days: Number(this._aiSynergyPeriod) };
     },
 
+    /**
+     * Resolve the period_type label the backend stores reports under, mirroring
+     * `_resolve_period_type` in ai_synergy_service.py so the saved-report GET
+     * returns the row for the period the widget is actually showing.
+     */
+    getAiSynergyPeriodType() {
+        if (this._aiSynergyPeriod === 'custom') {
+            const start = this._aiSynergyCustomRange.start;
+            const end = this._aiSynergyCustomRange.end;
+            if (start && end) {
+                const spanDays = Math.max(1, (
+                    new Date(end + 'T00:00:00Z').getTime() -
+                    new Date(start + 'T00:00:00Z').getTime()
+                ) / 86400000);
+                return spanDays <= 31 ? 'month' : 'custom';
+            }
+        }
+        const periodDays = Number(this._aiSynergyPeriod);
+        return periodDays >= 30 ? 'month' : 'week';
+    },
+
     /** Period chip handler: update the model and refresh the shell. */
-    selectAiSynergyPeriod(period) {
+    async selectAiSynergyPeriod(period) {
         if (this._aiSynergyRunning) return;
         if (period === 'custom' && this._aiSynergyPeriod !== 'custom') {
             this._aiSynergyCustomRange = { start: this.todayISO(), end: this.todayISO() };
@@ -628,6 +651,11 @@ export const Nutrition = {
         this._aiSynergyPeriod = period;
         // A new period is a fresh context: drop any verdict from the previous run.
         this._aiSynergyResult = null;
+        this.renderAiSynergyWidget();
+
+        // Pull the saved report for the new period so the widget shows a verdict
+        // instead of an empty launch button, mirroring the initial-load behaviour.
+        await this.loadAiSynergyReport();
         this.renderAiSynergyWidget();
     },
 
@@ -1160,9 +1188,15 @@ export const Nutrition = {
             // fly in parallel.
             const periodDataPromise = this.loadPeriodData();
             const dailySummaryPromise = this.loadDailySummary();
+            const synergyReportPromise = (this.selectedPeriod === 'day'
+                && !this._pollingRender
+                && !this._aiSynergyRunning)
+                ? this.loadAiSynergyReport()
+                : Promise.resolve(null);
             const loaded = await this.loadData();
             const periodData = await periodDataPromise;
             const dailySummary = await dailySummaryPromise;
+            await synergyReportPromise;
             const { summary, targets: apiTargets, failedItems, fromCache } = loaded;
             serverMeals = loaded.serverMeals;
             pendingMeals = loaded.pendingMeals;
@@ -1236,15 +1270,13 @@ export const Nutrition = {
             });
 
             // On a user-triggered render (page switch, date step) in the day
-            // view, pull the latest saved synergy report so the verdict is
-            // already on screen instead of an empty launch button. The read
-            // rides in parallel with the other day-view requests and never
-            // throws: a first-time visit simply shows the launch button.
-            if (isDayPeriod && !this._pollingRender && !this._aiSynergyResult && !this._aiSynergyRunning) {
-                this.loadAiSynergyReport().catch(() => {});
-            }
+            // view, the saved synergy report is awaited alongside the other
+            // day-view requests (see synergyReportPromise above) so the verdict
+            // is already on screen instead of an empty launch button. A
+            // first-time visit or a non-premium user simply shows the launch
+            // button - loadAiSynergyReport never throws.
 
-// The recap card lives inside the carousel as its first snap slot in
+            // The recap card lives inside the carousel as its first snap slot in
             // the day view. Its chip names the concrete day rather than reusing the
             // header label: the recap is a stored record of that date, and the
             // header says only "Сегодня". A finished day also earns the manual
