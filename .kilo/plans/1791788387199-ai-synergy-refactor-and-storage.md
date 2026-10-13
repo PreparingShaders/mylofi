@@ -1,19 +1,28 @@
-# Plan: AI Synergy Modal Footer Buttons Final Polish
+# Plan: AI Synergy Backend Expert Prompt Enhancement & Tone Integration
 
 ## Goals
-1. **Compact Footer Button Sizing:**
-   - Reduce height and vertical padding (`py-2` or smaller) for modal footer buttons ("Закрыть" and "Пересчитать") to make them sleek, compact, and balanced.
-2. **"Пересчитать" Button Text Cleanup:**
-   - Remove any icons, arrows, or emojis from the "Пересчитать" button, leaving pure text.
-   - Ensure both buttons have identical compact sizing, rounded corners, and clean styling matching Profile page aesthetics.
+1. **Dynamic Tone/Persona Adaptation:**
+   - Modify `build_synergy_prompt` in `app/services/ai_synergy_service.py` to correctly utilize `user.ai_persona_custom_text` when the selected persona is "custom".
+   - Inject the actual custom text as system instructions for the LLM.
+2. **Expert Synergy Analysis Enforcement:**
+   - Strengthen the prompt to mandate deep causal analysis: instruct the model to explicitly link diet/nutrition/sleep data with training outcomes (tonnage, RPE).
+   - Require explaining *why* current metrics lead to predicted results in 2–4 weeks.
+   - Clarify the requirement for high-level expertise (sports nutritionist + elite trainer).
+3. **JSON Contract & Style Compliance:**
+   - Confirm strict JSON structure and `tone` (`success`, `warning`, `risk`) adherence in prompts.
+4. **Validation:**
+   - Test that persona settings (including custom) correctly influence response tone while maintaining rigorous expert-level analysis and valid JSON contract.
 
 ---
 
-## Proposed Changes (`static/js/components.js`, `static/css/styles.css`)
-- Update modal footer button classes in `aiSynergyModal` to use compact padding (`py-2 px-4 text-xs` or similar) and clean text markup.
+## Proposed Changes (`app/services/ai_synergy_service.py`)
+- **`build_synergy_prompt`:**
+  - Enhance persona handling logic.
+  - Revise the system instruction block to mandate causal chain analysis and high-level sports expert tone.
+  - Re-verify strict JSON output format.
 
 ---
 
 ## Validation & Verification
-1. Run `pytest` to verify test suite passes.
-2. Verify visual rendering of modal footer buttons.
+1. Run `pytest` to ensure all existing rules and synergy service tests pass.
+2. Perform manual validation of generated report content, persona adherence, and JSON structure consistency.
