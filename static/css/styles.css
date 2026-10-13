@@ -2207,6 +2207,14 @@ input, select, textarea:focus {
 .dark .ai-synergy-modal__period {
     color: #a1a1aa;
 }
+.ai-synergy-modal__date {
+    font-size: 11px;
+    font-weight: 600;
+    color: #71717a;
+}
+.dark .ai-synergy-modal__date {
+    color: #a1a1aa;
+}
 .ai-synergy-modal__close {
     flex-shrink: 0;
     width: 36px;
@@ -2260,42 +2268,17 @@ input, select, textarea:focus {
     height: 20px;
     flex-shrink: 0;
 }
-.ai-synergy-modal__score-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+.ai-synergy-modal__score {
     flex-shrink: 0;
-    min-width: 56px;
-    height: 32px;
-    padding: 0 10px;
-    border-radius: 9999px;
-    font-size: 14px;
-    font-weight: 700;
-    font-variant-numeric: tabular-nums;
-    line-height: 1;
-    white-space: nowrap;
-    color: var(--s-bg, #fafafa);
-    background: linear-gradient(135deg, #a855f7 0%, #6366f1 100%);
-    box-shadow: 0 0 10px rgba(139, 92, 246, 0.30);
-}
-.dark .ai-synergy-modal__score-badge {
-    color: #fafafa;
-}
-.ai-synergy-modal__score-verdict {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    width: 100%;
 }
 .ai-synergy-modal__verdict-headline {
     font-size: 14px;
     font-weight: 500;
     line-height: 1.5;
-    color: #18181b;
-    overflow-wrap: break-word;
+    color: #4b5563;
 }
 .dark .ai-synergy-modal__verdict-headline {
-    color: #fafafa;
+    color: #a1a1aa;
 }
 .ai-synergy-modal__persona-emoji {
     flex-shrink: 0;
@@ -2320,40 +2303,39 @@ input, select, textarea:focus {
     display: flex;
     align-items: flex-start;
     gap: 8px;
-    padding: 12px;
+    padding: 7px 10px;
     border-radius: 12px;
-    font-size: 13px;
-    line-height: 1.5;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #3f3f46;
+    background: var(--ai-callout-bg, rgba(24, 24, 27, 0.03));
+    border-left: 2px solid var(--ai-callout-accent, rgba(124, 58, 237, 0.4));
+    border-top: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
+    border-right: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
+    border-bottom: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
+}
+.dark .ai-synergy-modal__finding {
+    color: #d4d4d8;
+    --ai-callout-bg: rgba(255, 255, 255, 0.03);
+    --ai-callout-border: rgba(255, 255, 255, 0.06);
 }
 .ai-synergy-modal__finding--success {
-    background: rgba(16, 185, 129, 0.1);
-    border: 1px solid rgba(16, 185, 129, 0.25);
-    color: #065f46;
-}
-.dark .ai-synergy-modal__finding--success {
-    background: rgba(16, 185, 129, 0.15);
-    border-color: rgba(16, 185, 129, 0.3);
-    color: #6ee7b7;
+    --ai-callout-accent: rgba(16, 185, 129, 0.5);
 }
 .ai-synergy-modal__finding--warning {
-    background: rgba(245, 158, 11, 0.1);
-    border: 1px solid rgba(245, 158, 11, 0.25);
-    color: #92400e;
-}
-.dark .ai-synergy-modal__finding--warning {
-    background: rgba(245, 158, 11, 0.15);
-    border-color: rgba(245, 158, 11, 0.3);
-    color: #fbbf24;
+    --ai-callout-accent: rgba(251, 146, 6, 0.5);
 }
 .ai-synergy-modal__finding--risk {
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.25);
-    color: #991b1b;
+    --ai-callout-accent: rgba(239, 68, 68, 0.5);
+}
+.dark .ai-synergy-modal__finding--success {
+    --ai-callout-accent: rgba(6, 146, 108, 0.45);
+}
+.dark .ai-synergy-modal__finding--warning {
+    --ai-callout-accent: rgba(251, 191, 36, 0.45);
 }
 .dark .ai-synergy-modal__finding--risk {
-    background: rgba(239, 68, 68, 0.15);
-    border-color: rgba(239, 68, 68, 0.3);
-    color: #fca5a5;
+    --ai-callout-accent: rgba(248, 79, 79, 0.45);
 }
 .ai-synergy-modal__finding-icon {
     flex-shrink: 0;
@@ -2376,6 +2358,18 @@ input, select, textarea:focus {
     background: rgba(239, 68, 68, 0.2);
     color: #ef4444;
 }
+.dark .ai-synergy-modal__finding--success .ai-synergy-modal__finding-icon {
+    background: rgba(16, 185, 129, 0.3);
+    color: #6ee7b7;
+}
+.dark .ai-synergy-modal__finding--warning .ai-synergy-modal__finding-icon {
+    background: rgba(245, 158, 11, 0.3);
+    color: #fbbf24;
+}
+.dark .ai-synergy-modal__finding--risk .ai-synergy-modal__finding-icon {
+    background: rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
+}
 .ai-synergy-modal__finding-text {
     flex: 1;
     min-width: 0;
@@ -2390,12 +2384,14 @@ input, select, textarea:focus {
     flex-direction: column;
     gap: 4px;
     padding: 10px 12px;
-    border-radius: 10px;
-    background: rgba(24, 24, 27, 0.03);
+    border-radius: 12px;
+    background: rgba(24, 24, 27, 0.04);
     border: 1px solid rgba(24, 24, 27, 0.08);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
 }
 .dark .ai-synergy-modal__metric {
-    background: rgba(255, 255, 255, 0.03);
+    background: rgba(255, 255, 255, 0.04);
     border-color: rgba(255, 255, 255, 0.08);
 }
 .ai-synergy-modal__metric-label {

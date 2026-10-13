@@ -96,27 +96,12 @@ function macroTone(key, current, target) {
     return key;
 }
 
-// --- Finding classification: content-based semantic tone detection -------------
-//
-// Key findings from the synergy verdict can mix praise and risk on one list, so
-// the tone is derived from the text itself, not from which list it landed in:
-// a finding that reads "белок выше нормы" is a success, one that reads "дефицит
-// калорий" is a risk, and an advisory without either flag falls to warning. The
-// model is told to keep findings concise, so a handful of stems per category
-// catches the common phrasings without brittle regex.
+// --- Finding classification: category-based semantic tone detection ----------
 
-const FINDING_TONE_KEYWORDS = {
-    risk: [
-        'дефицит', 'недостаток', 'недостаточн', 'перекошен', 'перебор',
-        'избыток', 'риск', 'опасн', 'проблем', 'стагн', 'не раст',
-        'не достиг', 'не соответств', 'дисбаланс', 'переедание',
-        'недоедание', 'слаб', 'не хватает', 'отставание', 'ухудш',
-    ],
-    success: [
-        'хорош', 'отлич', 'сильн', 'прогрес', 'раст', 'в норм',
-        'баланс', 'оптим', 'достаточн', 'успешн', 'стабил',
-        'в цели', 'соответств', 'достигнут', 'в порядке',
-    ],
+const FINDING_CATEGORY_META = {
+    key_findings: { icon: 'success', tone: 'success' },
+    growth_points: { icon: 'lightbulb', tone: 'success' },
+    risk_factors: { icon: 'risk', tone: 'risk' },
 };
 
 const SYNERGY_COOLDOWN_DAYS = 7;
@@ -125,25 +110,13 @@ const FINDING_ICON_PATHS = {
     success: '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2"/><path d="M9 12l2 2 4-4"/>',
     warning: '<path d="M10.29 3.83a1 1 0 011.42 0L20 10.11v6.88a1 1 0 01-.59 1.01l-6.71 2.5a1 1 0 01-.82 0L4.59 18a1 1 0 01-.59-1.01v-6.88l6.29-5.28a1 1 0 011.42 0z"/><path d="M12 9v4m0 4h.01"/>',
     risk: '<path d="M8 7h8a2 2 0 012 2v2.286a1 1 0 01-.447.832l-3.553 2.132a1 1 0 00-.447.832V17a2 2 0 01-2 2H8a2 2 0 01-2-2v-2.146a1 1 0 00-.447-.832L3.447 11.082A1 1 0 013 10.286V8a2 2 0 012-2z"/><path d="M12 10v2m0 3h.01"/>',
+    lightbulb: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2.5a6.5 6.5 0 0 0-3 11.5A4.5 4.5 0 0 1 12 20a4.5 4.5 0 0 1 3-8.5 6.5 6.5 0 0 0-3-11.5z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17h6M10 11h4M9.5 7C10 6 11 5.5 12 5.5s2 .5 2.5 1.5"/>',
 };
 
-const FINDING_TONE_CLASSES = {
-    success: 'ai-synergy-modal__finding--success',
-    warning: 'ai-synergy-modal__finding--warning',
-    risk: 'ai-synergy-modal__finding--risk',
-};
-
-function classifyFinding(text) {
-    const lower = String(text || '').toLowerCase();
-    if (FINDING_TONE_KEYWORDS.risk.some(kw => lower.includes(kw))) return 'risk';
-    if (FINDING_TONE_KEYWORDS.success.some(kw => lower.includes(kw))) return 'success';
-    return 'warning';
-}
-
-function renderFindingItem(text, tone) {
-    const resolved = tone || classifyFinding(text);
-    const iconPath = FINDING_ICON_PATHS[resolved];
-    const toneClass = FINDING_TONE_CLASSES[resolved];
+function renderFindingItem(text, category) {
+    const meta = FINDING_CATEGORY_META[category] || { icon: 'warning', tone: 'warning' };
+    const iconPath = FINDING_ICON_PATHS[meta.icon];
+    const toneClass = `ai-synergy-modal__finding--${meta.tone}`;
     const safeText = escapeHtml(String(text ?? ''));
     return `
         <li class="ai-synergy-modal__finding ${toneClass}">
@@ -1898,13 +1871,16 @@ export const Components = {
 
         let body;
         if (hasResult && result) {
-            const score = result.verdict?.overall_score != null ? `${result.verdict.overall_score}/10` : '—';
+            const scoreNum = result.verdict?.overall_score;
+            const scoreText = scoreNum != null ? String(scoreNum) : null;
             const headline = result.verdict?.headline || '';
             body = `
                 <div class="ai-synergy__status flex items-center justify-center gap-4 py-3">
                     <div class="text-center">
                         <p class="text-[10px] font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider">Счёт</p>
-                        <p class="text-2xl font-bold text-purple-600 dark:text-purple-400 tabular-nums">${score}</p>
+                        ${scoreText
+                            ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300 font-medium"><span class="opacity-60">✦ ИИ</span> ${scoreText}<span class="opacity-60">/10</span></span>`
+                            : '<p class="text-2xl font-bold text-purple-600 dark:text-purple-400 tabular-nums">—</p>'}
                     </div>
                     ${headline ? `<p class="text-sm font-medium text-surface-700 dark:text-zinc-200 text-center max-w-[180px] leading-snug">${escapeHtml(headline)}</p>` : '<p class="text-xs text-surface-500 dark:text-surface-400">Вердикт готов</p>'}
                 </div>
@@ -2020,19 +1996,10 @@ export const Components = {
       */
     aiSynergyModal(result) {
         const v = result?.verdict || {};
-        const score = v.overall_score != null ? `${v.overall_score}/10` : '—';
+        const score = v.overall_score != null ? `${v.overall_score}` : '';
         const persona = v.ai_persona || null;
         const headline = v.headline || '';
         const analyzedAt = result?.analyzed_at || '';
-        const periodDays = result?.period_days;
-        const periodType = result?.period_type || '';
-
-        // Period label: "14 дней" / "30 дней" / custom range or fallback
-        let periodLabel = '';
-        if (periodType === 'week' && periodDays) periodLabel = `${periodDays} дней`;
-        else if (periodType === 'month' && periodDays) periodLabel = `${periodDays} дней`;
-        else if (periodType === 'custom') periodLabel = 'Кастомный период';
-        else if (periodDays) periodLabel = `${periodDays} дней`;
 
         // Cooldown: reanalyze is blocked for 7 days after the last analysis
         let isReanalyzeDisabled = false;
@@ -2056,15 +2023,15 @@ export const Components = {
         const metrics = result?.metrics_snapshot || {};
         const hasMetrics = metrics.avg_calories != null || metrics.avg_protein != null || metrics.total_workouts != null;
 
-        const renderFindings = (list) => {
+        const renderFindings = (list, category) => {
             if (!list || list.length === 0) return '';
-            return list.map((x) => renderFindingItem(x)).join('');
+            return list.map((x) => renderFindingItem(x, category)).join('');
         };
 
         const renderMetricRow = (label, value) => {
             const displayValue = value != null && value !== '' && value !== '—' ? escapeHtml(String(value)) : '—';
             return `
-                <div class="ai-synergy-modal__metric">
+                <div class="ai-synergy-modal__metric glass rounded-2xl">
                     <span class="ai-synergy-modal__metric-label">${escapeHtml(label)}</span>
                     <span class="ai-synergy-modal__metric-value">${displayValue}</span>
                 </div>
@@ -2078,9 +2045,9 @@ export const Components = {
             </div>
         `;
 
-        const keyFindings = renderFindings(v.key_findings);
-        const growthPoints = renderFindings(v.growth_points);
-        const riskFactors = renderFindings(v.risk_factors);
+        const keyFindings = renderFindings(v.key_findings, 'key_findings');
+        const growthPoints = renderFindings(v.growth_points, 'growth_points');
+        const riskFactors = renderFindings(v.risk_factors, 'risk_factors');
 
         const metricsHtml = hasMetrics ? `
             <div class="ai-synergy-modal__metrics">
@@ -2100,13 +2067,13 @@ export const Components = {
                        </div>
                        <ul>${keyFindings}</ul>
                    </div>` : ''}
-                    ${growthPoints ? `<div class="ai-synergy-modal__finding-group">
-                        <div class="ai-synergy-modal__section-title">
-                             <svg class="ai-synergy-modal__section-icon text-amber-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.29 3.83a1 1 0 011.42 0L20 10.11v6.88a1 1 0 01-.59 1.01l-6.71 2.5a1 1 0 01-.82 0L4.59 18a1 1 0 01-.59-1.01v-6.88l6.29-5.28a1 1 0 011.42 0z"/><path d="M12 9v4m0 4h.01"/></svg>
-                             <span>ТОЧКИ РОСТА</span>
-                       </div>
-                       <ul>${growthPoints}</ul>
-                   </div>` : ''}
+                     ${growthPoints ? `<div class="ai-synergy-modal__finding-group">
+                         <div class="ai-synergy-modal__section-title">
+                              <svg class="ai-synergy-modal__section-icon text-amber-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5a6.5 6.5 0 0 0-3 11.5A4.5 4.5 0 0 1 12 20a4.5 4.5 0 0 1 3-8.5 6.5 6.5 0 0 0-3-11.5z"/><path d="M9 17h6M10 11h4M9.5 7C10 6 11 5.5 12 5.5s2 .5 2.5 1.5"/></svg>
+                              <span>ТОЧКИ РОСТА</span>
+                        </div>
+                        <ul>${growthPoints}</ul>
+                    </div>` : ''}
                     ${riskFactors ? `<div class="ai-synergy-modal__finding-group">
                         <div class="ai-synergy-modal__section-title">
                             <svg class="ai-synergy-modal__section-icon text-rose-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7h8a2 2 0 012 2v2.286a1 1 0 01-.447.832l-3.553 2.132a1 1 0 00-.447.832V17a2 2 0 01-2 2H8a2 2 0 01-2-2v-2.146a1 1 0 00-.447-.832L3.447 11.082A1 1 0 013 10.286V8a2 2 0 012-2z"/><path d="M12 10v2m0 3h.01"/></svg>
@@ -2124,7 +2091,7 @@ export const Components = {
                </div>`
             : '';
 
-        return `
+         return `
             <div class="ai-synergy-modal" role="dialog" aria-modal="true" aria-labelledby="ai-synergy-modal-title" data-action="close-ai-synergy-modal" tabindex="-1">
                 <div class="ai-synergy-modal__backdrop"></div>
                 <div class="ai-synergy-modal__panel" data-action="close-ai-synergy-modal">
@@ -2134,10 +2101,13 @@ export const Components = {
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>
                             </span>
                             <div class="ai-synergy-modal__title-group">
-                                <h2 id="ai-synergy-modal-title" class="ai-synergy-modal__title">ИИ-Синергия</h2>
-                                ${periodLabel ? `<p class="ai-synergy-modal__period">${escapeHtml(periodLabel)}</p>` : ''}
+                                <h2 id="ai-synergy-modal-title" class="ai-synergy-modal__title">ИИ-Синергия (Питание + Спорт)</h2>
+                                ${analyzedAt ? `<span class="ai-synergy-modal__date">${escapeHtml(Utils.formatDate(analyzedAt))}</span>` : ''}
                             </div>
                         </div>
+                        ${score
+                            ? `<span class="ai-synergy-modal__score inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300 font-medium"><span class="opacity-60">✦ ИИ</span> ${score}<span class="opacity-60">/10</span></span>`
+                            : ''}
                         ${personaEmoji}
                         <button type="button" class="ai-synergy-modal__close" data-action="close-ai-synergy-modal" aria-label="Закрыть">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6l12 12M18 6L6 18"/></svg>
@@ -2146,12 +2116,7 @@ export const Components = {
 
                     <div class="ai-synergy-modal__body">
                         <div class="ai-synergy-modal__section">
-                            <div class="ai-synergy-modal__score-verdict flex items-center gap-3">
-                                <span class="ai-synergy-modal__score-badge">
-                                    ${score}
-                                </span>
-                                <p class="ai-synergy-modal__verdict-headline">${escapeHtml(headline || '—')}</p>
-                            </div>
+                            <p class="ai-synergy-modal__verdict-headline leading-relaxed text-surface-600 dark:text-surface-300">${escapeHtml(headline || '—')}</p>
                         </div>
 
                         ${metricsHtml ? `<div class="ai-synergy-modal__section">
