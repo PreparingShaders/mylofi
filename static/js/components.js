@@ -42,6 +42,14 @@ const MACRO_ICON_PATHS = {
     carbs: '<path d="M12 3.6c.7 4.3 1.9 5.5 6.1 6.2-4.2.7-5.4 1.9-6.1 6.2-.7-4.3-1.9-5.5-6.1-6.2 4.2-.7 5.4-1.9 6.1-6.2Z"/>',
 };
 
+const SYNERGY_COOLDOWN_DAYS = 7;
+
+const FINDING_ICON_PATHS = {
+    success: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12.5l2 2 4-4m0 0l-4-4m4 4L9 8.5"/>',
+    warning: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.29 3.83a1 1 0 0 1 1.42 0L20 10.11v6.88a1 1 0 0 1-.59 1.01l-6.71 2.5a1 1 0 0 1-.82 0L4.59 18a1 1 0 0 1-.59-1.01v-6.88l6.29-5.28a1 1 0 0 1 1.42 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 13v4m0 4h.01"/>',
+    risk: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.14 5.59A2.75 2.75 0 0 1 13 7v5.75a.75.75 0 0 1-1.5 0V7a1.25 1.25 0 0 0-2.36-.61zM12 15.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/>',
+};
+
 /* Verdict personas. The label is deliberately short: the badge shares a line
    with the "Вердикт нутрициолога" heading on a 375px screen, so anything longer
    wraps the header instead of sitting next to the score. An unknown key renders
@@ -53,6 +61,27 @@ const AI_PERSONA_META = {
     sarcastic: { emoji: '😏', label: 'Саркастичный нутрициолог' },
     custom: { emoji: '🎭', label: 'Ваш стиль' },
 };
+
+/**
+ * Render one finding line. `item` is expected to be `{ text, tone }` from the
+ * backend contract; a bare string is accepted for backward compatibility with
+ * older saved reports.
+ */
+function renderFindingItem(item, category) {
+    const isObject = typeof item === 'object' && item !== null;
+    const text = isObject ? item.text : item;
+    const tone = isObject ? (item.tone || 'warning') : 'warning';
+    const iconPath = FINDING_ICON_PATHS[tone] || FINDING_ICON_PATHS.warning;
+    const toneClass = `ai-synergy-modal__finding--${tone}`;
+    const safeText = escapeHtml(String(text ?? ''));
+    return `
+        <li class="ai-synergy-modal__finding ${toneClass}">
+            <span class="ai-synergy-modal__finding-icon" aria-hidden="true">
+                <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true">${iconPath}</svg>
+            </span>
+            <span class="ai-synergy-modal__finding-text">${safeText}</span>
+        </li>`
+}
 
 function buildSmoothPath(pts, tension = 0.2) {
     if (!pts.length) return '';
@@ -94,89 +123,6 @@ function macroTone(key, current, target) {
     if (key === 'protein') return value >= goal ? 'protein-goal' : 'protein';
     if (key === 'fat') return value > goal ? 'danger' : 'fat';
     return key;
-}
-
-// --- Finding classification: category-based semantic tone detection ----------
-
-const FINDING_CATEGORY_META = {
-    key_findings: { icon: 'success' },
-    growth_points: { icon: 'lightbulb' },
-    risk_factors: { icon: 'risk' },
-};
-
-const SYNERGY_COOLDOWN_DAYS = 7;
-
-const FINDING_ICON_PATHS = {
-    success: '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2"/><path d="M9 12l2 2 4-4"/>',
-    warning: '<path d="M10.29 3.83a1 1 0 011.42 0L20 10.11v6.88a1 1 0 01-.59 1.01l-6.71 2.5a1 1 0 01-.82 0L4.59 18a1 1 0 01-.59-1.01v-6.88l6.29-5.28a1 1 0 011.42 0z"/><path d="M12 9v4m0 4h.01"/>',
-    risk: '<path d="M8 7h8a2 2 0 012 2v2.286a1 1 0 01-.447.832l-3.553 2.132a1 1 0 00-.447.832V17a2 2 0 01-2 2H8a2 2 0 01-2-2v-2.146a1 1 0 00-.447-.832L3.447 11.082A1 1 0 013 10.286V8a2 2 0 012-2z"/><path d="M12 10v2m0 3h.01"/>',
-    lightbulb: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2.5a6.5 6.5 0 0 0-3 11.5A4.5 4.5 0 0 1 12 20a4.5 4.5 0 0 1 3-8.5 6.5 6.5 0 0 0-3-11.5z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17h6M10 11h4M9.5 7C10 6 11 5.5 12 5.5s2 .5 2.5 1.5"/>',
-};
-
-/* Keywords that signal a finding expresses a deficit, error, or problem.
-   Green (emerald) is reserved for genuine successes: any finding whose text
-   carries one of these is forced to amber (warning) or red (rose) instead. */
-const NEGATIVE_FINDING_KEYWORDS = [
-    'дефицит', 'недостат', 'стагна', 'недостиг', 'недостиж', 'ошибк',
-    'проблем', 'критичес', 'наруш', 'недостач', 'недооцен',
-    'insufficient', 'deficit', 'stagnation', 'error', 'problem', 'critical',
-];
-
-/**
- * Resolve the semantic tone for a single finding.
- *
- * - risk_factors are always rose (risk): they are the narrow spots by definition.
- * - growth_points default to amber (warning): they are improvement areas, never
- *   successes, so they never borrow green. Only a genuinely critical line
- *   escalates them to rose.
- * - key_findings keep emerald (success) for positive statements only; deficits,
- *   stagnation, errors and similar flip them to rose.
- */
-function classifyFindingTone(text, category) {
-    const lower = String(text || '').toLowerCase().trim();
-    const isNegative = NEGATIVE_FINDING_KEYWORDS.some((kw) => lower.includes(kw));
-
-    if (category === 'risk_factors') {
-        return 'risk';
-    }
-    if (category === 'growth_points') {
-        return isNegative ? 'risk' : 'warning';
-    }
-    if (category === 'key_findings') {
-        return isNegative ? 'risk' : 'success';
-    }
-    return 'warning';
-}
-
-function renderFindingItem(text, category) {
-    const meta = FINDING_CATEGORY_META[category] || { icon: 'warning' };
-    const tone = classifyFindingTone(text, category);
-
-    /* Match the icon glyph to the resolved tone: a green checkmark must never
-       sit on an amber or red callout. Growth points keep their lightbulb while
-       merely advisory (amber), switching to the risk glyph only when the text
-       turns critical. */
-    let iconKey;
-    if (category === 'growth_points' && tone === 'warning') {
-        iconKey = meta.icon;
-    } else if (tone === 'success') {
-        iconKey = 'success';
-    } else if (tone === 'warning') {
-        iconKey = 'warning';
-    } else {
-        iconKey = 'risk';
-    }
-
-    const iconPath = FINDING_ICON_PATHS[iconKey];
-    const toneClass = `ai-synergy-modal__finding--${tone}`;
-    const safeText = escapeHtml(String(text ?? ''));
-    return `
-        <li class="ai-synergy-modal__finding ${toneClass}">
-            <span class="ai-synergy-modal__finding-icon" aria-hidden="true">
-                <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true">${iconPath}</svg>
-            </span>
-            <span class="ai-synergy-modal__finding-text">${safeText}</span>
-        </li>`
 }
 
 export const Components = {
@@ -2193,13 +2139,13 @@ export const Components = {
                         </button>
                         ${isReanalyzeDisabled
                             ? `<button type="button" class="ai-synergy-modal__footer-btn ai-synergy-modal__footer-btn--primary ai-synergy-modal__footer-btn--disabled" disabled>
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5M4 4l5 5-5 5v5h5M4 4l5 5-5-5z"/></svg>
-                                 <span>Доступно после ${reanalyzeCooldownDateStr}</span>
-                            </button>`
-                            : `<button type="button" class="ai-synergy-modal__footer-btn ai-synergy-modal__footer-btn--primary" data-action="reanalyze-ai-synergy">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5M4 4l5 5-5 5v5h5M4 4l5 5-5-5z"/></svg>
-                                <span>Пересчитать</span>
-                            </button>`}
+                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M1 4v6h6l-2-2M2 12a8 8 0 0 1 14.93-8l-.37 2.48A6 6 0 0 0 4.07 14H2zM17 1l4 4m0 0l-4 4m4-4H3"/></svg>
+                                  <span>Доступно после ${reanalyzeCooldownDateStr}</span>
+                             </button>`
+                             : `<button type="button" class="ai-synergy-modal__footer-btn ai-synergy-modal__footer-btn--primary" data-action="reanalyze-ai-synergy">
+                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M1 4v6h6l-2-2M2 12a8 8 0 0 1 14.93-8l-.37 2.48A6 6 0 0 0 4.07 14H2zM17 1l4 4m0 0l-4 4m4-4H3"/></svg>
+                                 <span>Пересчитать</span>
+                             </button>`}
                 </div>
             </div>
         `;

@@ -140,31 +140,57 @@ def build_synergy_prompt(
 
 НИКОГДА не ставь 8–10 при дефиците калорий >15% или белке <1.6 г/кг (для цели набора) или при отсутствии прогресса тоннажа за 2+ недели.
 
-Данные пользователя:
+    Данные пользователя:
 {json.dumps(aggregated, ensure_ascii=False, indent=2)}
 
 Формат ответа (строго валидный JSON):
 {{
   "verdict_headline": "Краткий вердикт синергии (до 10 слов)",
-   "overall_score": 8.5,
+  "overall_score": 8.5,
   "key_findings": [
-    "Пункт анализа 1...",
-    "Пункт анализа 2..."
+    {{ "text": "Пункт анализа 1...", "tone": "success" }},
+    {{ "text": "Пункт анализа 2...", "tone": "warning" }}
   ],
   "growth_points": [
-    "Точка роста 1 (что улучшить)...",
-    "Точка роста 2..."
+    {{ "text": "Точка роста 1 (что улучшить)...", "tone": "warning" }}
   ],
   "risk_factors": [
-    "Риск или узкое место 1..."
+    {{ "text": "Риск или узкое место 1...", "tone": "risk" }}
   ],
   "nutrition_adjustment": "Комплексная рекомендация по питанию под тренировочный план",
   "workout_adjustment": "Рекомендация по тренировкам под текущий рацион"
 }}
 
+Правила разметки tone для каждого массива:
+- key_findings: "success" для позитивных выводов (соответствие цели, рост тоннажа, хорошее качество питания),
+  "warning" для нейтральных/информационных выводов, "risk" для выявленных проблем (дефицит калорий/белка, стагнация).
+- growth_points: всегда "warning" (область для улучшения), "risk" только если проблема критическая.
+- risk_factors: всегда "risk".
+
 Ответ должен быть только валидным JSON без комментариев.
 """
     return prompt
+
+
+VALID_TONES = ("success", "warning", "risk")
+
+
+def _normalise_finding(item: Any) -> Dict[str, str]:
+    """Coerce one LLM finding entry into a {text, tone} dict.
+
+    The model is expected to return objects already, but it can emit a plain
+    string. We fall back to "warning" for any unparseable shape so a bad response
+    never breaks rendering.
+    """
+    if isinstance(item, dict):
+        text = strip_emojis(str(item.get("text", "")))
+        tone = str(item.get("tone", "")).strip().lower()
+        if tone not in VALID_TONES:
+            tone = "warning"
+        return {"text": text, "tone": tone}
+    text = strip_emojis(str(item))
+    return {"text": text, "tone": "warning"}
+
 
 async def _aggregate_period_data(
     db: AsyncSession,
@@ -312,16 +338,13 @@ def _validate_synergy(result: Dict[str, Any]) -> Dict[str, Any]:
         if field not in result:
             raise ValueError(f"Missing required field: {field}")
     result["overall_score"] = normalise_score(result["overall_score"])
-    if not isinstance(result.get("key_findings"), list):
-        raise ValueError("key_findings must be a list")
-    if not isinstance(result.get("growth_points"), list):
-        raise ValueError("growth_points must be a list")
-    if not isinstance(result.get("risk_factors"), list):
-        raise ValueError("risk_factors must be a list")
     if not isinstance(result.get("verdict_headline"), str) or not result["verdict_headline"].strip():
         raise ValueError("verdict_headline must be a non-empty string")
     for list_field in ("key_findings", "growth_points", "risk_factors"):
-        result[list_field] = [strip_emojis(str(x)) for x in result[list_field] if str(x).strip()]
+        raw = result.get(list_field)
+        if not isinstance(raw, list):
+            raise ValueError(f"{list_field} must be a list")
+        result[list_field] = [_normalise_finding(x) for x in raw if x is not None and str(x).strip()][:10]
     return result
 
 
@@ -479,9 +502,9 @@ async def run_ai_synergy(
         "verdict": {
             "headline": strip_emojis(str(verdict.get("verdict_headline", "")))[:120],
             "overall_score": overall_score,
-            "key_findings": [strip_emojis(str(x)) for x in (verdict.get("key_findings") or [])][:10],
-            "growth_points": [strip_emojis(str(x)) for x in (verdict.get("growth_points") or [])][:10],
-            "risk_factors": [strip_emojis(str(x)) for x in (verdict.get("risk_factors") or [])][:10],
+            "key_findings": [f for f in (verdict.get("key_findings") or []) if isinstance(f, dict)][:10],
+            "growth_points": [f for f in (verdict.get("growth_points") or []) if isinstance(f, dict)][:10],
+            "risk_factors": [f for f in (verdict.get("risk_factors") or []) if isinstance(f, dict)][:10],
             "nutrition_adjustment": strip_emojis(str(verdict.get("nutrition_adjustment", "")))[:800],
             "workout_adjustment": strip_emojis(str(verdict.get("workout_adjustment", "")))[:800],
             "ai_persona": user.ai_persona,

@@ -1,7 +1,7 @@
 """Contracts for AI Synergy - cross-analysis of nutrition and workouts."""
 
 from datetime import date
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -29,13 +29,26 @@ class AISynergyRequest(BaseModel):
         return v
 
 
+FindingTone = Literal["success", "warning", "risk"]
+
+
+class AISynergyFinding(BaseModel):
+    """One finding line rendered in the synergy modal.
+
+    `tone` drives the icon and colour: the backend classifies each
+    finding instead of the frontend guessing from keywords.
+    """
+    text: str
+    tone: FindingTone = "warning"
+
+
 class AISynergyVerdict(BaseModel):
     """Verdict from AI synergy analysis."""
     headline: str
     overall_score: float
-    key_findings: List[str]
-    growth_points: List[str]
-    risk_factors: List[str]
+    key_findings: List[AISynergyFinding]
+    growth_points: List[AISynergyFinding]
+    risk_factors: List[AISynergyFinding]
     nutrition_adjustment: str
     workout_adjustment: str
     ai_persona: Optional[str] = None
