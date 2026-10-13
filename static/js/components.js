@@ -44,12 +44,6 @@ const MACRO_ICON_PATHS = {
 
 const SYNERGY_COOLDOWN_DAYS = 0;
 
-const FINDING_ICON_PATHS = {
-    success: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12.5l2 2 4-4m0 0l-4-4m4 4L9 8.5"/>',
-    warning: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.29 3.83a1 1 0 0 1 1.42 0L20 10.11v6.88a1 1 0 0 1-.59 1.01l-6.71 2.5a1 1 0 0 1-.82 0L4.59 18a1 1 0 0 1-.59-1.01v-6.88l6.29-5.28a1 1 0 0 1 1.42 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 13v4m0 4h.01"/>',
-    risk: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.14 5.59A2.75 2.75 0 0 1 13 7v5.75a.75.75 0 0 1-1.5 0V7a1.25 1.25 0 0 0-2.36-.61zM12 15.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/>',
-};
-
 /* Verdict personas. The label is deliberately short: the badge shares a line
    with the "Вердикт нутрициолога" heading on a 375px screen, so anything longer
    wraps the header instead of sitting next to the score. An unknown key renders
@@ -71,14 +65,11 @@ function renderFindingItem(item, category) {
     const isObject = typeof item === 'object' && item !== null;
     const text = isObject ? item.text : item;
     const tone = isObject ? (item.tone || 'warning') : 'warning';
-    const iconPath = FINDING_ICON_PATHS[tone] || FINDING_ICON_PATHS.warning;
     const toneClass = `ai-synergy-modal__finding--${tone}`;
     const safeText = escapeHtml(String(text ?? ''));
     return `
         <li class="ai-synergy-modal__finding ${toneClass}">
-            <span class="ai-synergy-modal__finding-icon" aria-hidden="true">
-                <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true">${iconPath}</svg>
-            </span>
+            <span class="ai-synergy-modal__finding-dot" aria-hidden="true"></span>
             <span class="ai-synergy-modal__finding-text">${safeText}</span>
         </li>`
 }
@@ -2096,14 +2087,15 @@ export const Components = {
                </div>`
             : '';
 
-         return `
+return `
             <div class="ai-synergy-modal" role="dialog" aria-modal="true" aria-labelledby="ai-synergy-modal-title" data-action="close-ai-synergy-modal" tabindex="-1">
                 <div class="ai-synergy-modal__backdrop"></div>
                 <div class="ai-synergy-modal__panel" data-action="close-ai-synergy-modal">
                     <div class="ai-synergy-modal__header">
                         <div class="ai-synergy-modal__header-left">
                             <div class="ai-synergy-modal__title-group">
-                                <h2 id="ai-synergy-modal-title" class="ai-synergy-modal__title">ИИ-Синергия (Питание + Спорт)</h2>
+                                <h2 id="ai-synergy-modal-title" class="ai-synergy-modal__title">ИИ-Синергия</h2>
+                                <span class="ai-synergy-modal__subtitle">Питание + Спорт</span>
                                 ${analyzedAt ? `<span class="ai-synergy-modal__date">${escapeHtml(Utils.formatDate(analyzedAt))}</span>` : ''}
                             </div>
                         </div>
@@ -2148,10 +2140,11 @@ export const Components = {
                                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M1 4v6h6l-2-2M2 12a8 8 0 0 1 14.93-8l-.37 2.48A6 6 0 0 0 4.07 14H2zM17 1l4 4m0 0l-4 4m4-4H3"/></svg>
                                   <span>Доступно после ${reanalyzeCooldownDateStr}</span>
                              </button>`
-                             : `<button type="button" class="ai-synergy-modal__footer-btn ai-synergy-modal__footer-btn--primary" data-action="reanalyze-ai-synergy">
-                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M1 4v6h6l-2-2M2 12a8 8 0 0 1 14.93-8l-.37 2.48A6 6 0 0 0 4.07 14H2zM17 1l4 4m0 0l-4 4m4-4H3"/></svg>
-                                 <span>Пересчитать</span>
-                             </button>`}
+                            : `<button type="button" class="ai-synergy-modal__footer-btn ai-synergy-modal__footer-btn--primary" data-action="reanalyze-ai-synergy">
+                                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M1 4v6h6l-2-2M2 12a8 8 0 0 1 14.93-8l-.37 2.48A6 6 0 0 0 4.07 14H2zM17 1l4 4m0 0l-4 4m4-4H3"/></svg>
+                                  <span>Пересчитать</span>
+                              </button>`}
+                    </div>
                 </div>
             </div>
         `;

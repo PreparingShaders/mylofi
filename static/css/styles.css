@@ -2134,21 +2134,23 @@ input, select, textarea:focus {
     top: 0;
     z-index: 10;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     gap: 12px;
     padding: calc(16px + env(safe-area-inset-top, 0px)) 20px 16px;
     background: inherit;
     border-bottom: 1px solid rgba(24, 24, 27, 0.08);
+    flex-wrap: wrap;
 }
 .dark .ai-synergy-modal__header {
     border-bottom-color: rgba(255, 255, 255, 0.08);
 }
 .ai-synergy-modal__header-left {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 12px;
     min-width: 0;
+    flex: 1;
 }
 .ai-synergy-modal__title-group {
     display: flex;
@@ -2166,6 +2168,17 @@ input, select, textarea:focus {
 }
 .dark .ai-synergy-modal__title {
     color: #fafafa;
+}
+.ai-synergy-modal__subtitle {
+    font-size: 12px;
+    font-weight: 500;
+    color: #71717a;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.dark .ai-synergy-modal__subtitle {
+    color: #a1a1aa;
 }
 .ai-synergy-modal__period {
     font-size: 12px;
@@ -2319,6 +2332,37 @@ input, select, textarea:focus {
     background: rgba(239, 68, 68, 0.3);
     color: #fca5a5;
 }
+.ai-synergy-modal__finding-dot {
+    flex-shrink: 0;
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    margin-top: 4px;
+}
+.ai-synergy-modal__finding--success .ai-synergy-modal__finding-dot {
+    background: #10b981;
+    box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+}
+.ai-synergy-modal__finding--warning .ai-synergy-modal__finding-dot {
+    background: #f59e0b;
+    box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+}
+.ai-synergy-modal__finding--risk .ai-synergy-modal__finding-dot {
+    background: #ef4444;
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+}
+.dark .ai-synergy-modal__finding--success .ai-synergy-modal__finding-dot {
+    background: #34d399;
+    box-shadow: 0 0 6px rgba(52, 211, 153, 0.6);
+}
+.dark .ai-synergy-modal__finding--warning .ai-synergy-modal__finding-dot {
+    background: #fbbf24;
+    box-shadow: 0 0 6px rgba(251, 191, 36, 0.6);
+}
+.dark .ai-synergy-modal__finding--risk .ai-synergy-modal__finding-dot {
+    background: #f87171;
+    box-shadow: 0 0 6px rgba(248, 113, 113, 0.6);
+}
 .ai-synergy-modal__finding-text {
     flex: 1;
     min-width: 0;
@@ -2449,20 +2493,19 @@ input, select, textarea:focus {
     cursor: not-allowed;
 }
 .ai-synergy-modal__footer-btn--secondary {
-    background: rgba(24, 24, 27, 0.06);
-    color: #52525b;
+    background: #18181b;
+    border: 1px solid #3f3f46;
+    color: #f4f4f5;
 }
 .ai-synergy-modal__footer-btn--secondary:hover {
-    background: rgba(24, 24, 27, 0.12);
-    color: #18181b;
+    background: #27272a;
 }
 .dark .ai-synergy-modal__footer-btn--secondary {
-    background: rgba(255, 255, 255, 0.06);
-    color: #a1a1aa;
+    background: #27272a;
+    border-color: #4b4b55;
 }
 .dark .ai-synergy-modal__footer-btn--secondary:hover {
-    background: rgba(255, 255, 255, 0.12);
-    color: #fafafa;
+    background: #3f3f46;
 }
 
 /* Desktop modal: centered with max-width */
