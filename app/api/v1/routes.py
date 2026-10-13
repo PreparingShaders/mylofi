@@ -1386,7 +1386,7 @@ async def get_ai_synergy(
     `available: false` with a reason, so the frontend renders an empty slot
     instead of an error - a first-time visit costs nothing but a quiet line.
     """
-    from app.services.ai_synergy_service import _get_latest_synergy
+    from app.services.ai_synergy_service import _get_latest_synergy, _normalise_finding
     import json
 
     if not current_user.is_premium:
@@ -1407,6 +1407,13 @@ async def get_ai_synergy(
         verdict = payload.get("verdict") if isinstance(payload, dict) else None
         if verdict and isinstance(verdict, dict) and latest.ai_persona:
             verdict["ai_persona"] = latest.ai_persona
+            # Legacy reports may store findings as plain strings instead of
+            # {text, tone} objects. Normalise them so the response always
+            # satisfies the AISynergyFinding contract.
+            for findings_field in ("key_findings", "growth_points", "risk_factors"):
+                raw = verdict.get(findings_field)
+                if isinstance(raw, list):
+                    verdict[findings_field] = [_normalise_finding(f) for f in raw]
         return AISynergySavedResponse(
             available=True,
             analyzed_at=latest.created_at,
