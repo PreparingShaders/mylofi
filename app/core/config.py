@@ -54,7 +54,7 @@ class Settings(BaseSettings):
 
     # Email (Brevo API)
     BREVO_API_KEY: str = ""
-    BREVO_SENDER_EMAIL: str = "no-reply@mylofi.app"
+    BREVO_SENDER_EMAIL: str = "classname1984@gmail.com"
     BREVO_SENDER_NAME: str = "MyLofi"
 
     # File upload

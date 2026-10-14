@@ -1,6 +1,5 @@
 import logging
 import os
-from typing import Optional
 
 import httpx
 
@@ -12,9 +11,19 @@ logger = logging.getLogger(__name__)
 
 BREVO_API_BASE = "https://api.brevo.com/v3"
 
+_PLACEHOLDER_KEYS = {
+    "your-brevo-api-key",
+    "your-api-key",
+    "",
+    None,
+}
 
-def _brevo_key() -> Optional[str]:
-    return os.getenv("BREVO_API_KEY") or settings.BREVO_API_KEY or None
+
+def _brevo_key() -> str | None:
+    key = os.getenv("BREVO_API_KEY") or settings.BREVO_API_KEY or None
+    if key in _PLACEHOLDER_KEYS:
+        return None
+    return key
 
 
 def _sender() -> dict:
@@ -39,7 +48,10 @@ async def send_verification_email(
     api_key = _brevo_key()
     if not api_key:
         logger.warning(
-            "[Email] BREVO_API_KEY is not set; skipping email delivery for %s", email
+            "[Email] BREVO_API_KEY is not set or is a placeholder; "
+            "skipping email delivery for %s. "
+            "Set a valid BREVO_API_KEY in the environment to enable email sending.",
+            email,
         )
         return False
 
@@ -84,8 +96,9 @@ async def send_verification_email(
             response = await client.post(
                 f"{BREVO_API_BASE}/smtp/email",
                 headers={
+                    "accept": "application/json",
+                    "content-type": "application/json",
                     "api-key": api_key,
-                    "Content-Type": "application/json",
                 },
                 json=payload,
             )
