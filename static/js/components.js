@@ -2185,15 +2185,21 @@ return `
         `;
     },
 
-    authForm(mode) {
+    authForm(mode, ctx = {}) {
         const isLogin = mode === 'login';
-        return `
-            <form id="${isLogin ? 'login-form' : 'register-form'}" class="auth-modal__form space-y-2.5" data-auth-mode="${mode}">
-                <!-- Inline error banner — populated by Auth.showError() when the
-                     server rejects the credentials. Kept inside the form so the
-                     user sees the reason right above the fields. -->
-                <div class="auth-modal__error hidden" data-auth-error></div>
-                ${isLogin ? `
+        const isRegister = mode === 'register';
+        const isForgot = mode === 'forgot-password';
+        const isVerify = mode === 'verify-code';
+        const isNewPassword = mode === 'new-password';
+
+        const errorBanner = `
+            <div class="auth-modal__error hidden" data-auth-error></div>
+        `;
+
+        if (isLogin) {
+            return `
+                <form id="login-form" class="auth-modal__form space-y-2.5" data-auth-mode="login">
+                    ${errorBanner}
                     <div class="auth-modal__field-group">
                         <label for="login-email" class="auth-modal__field-label">Email</label>
                         <input type="email" id="login-email" name="email" placeholder="Email" required autocomplete="email" class="auth-modal__input">
@@ -2202,7 +2208,27 @@ return `
                         <label for="login-password" class="auth-modal__field-label">Пароль</label>
                         <input type="password" id="login-password" name="password" placeholder="Пароль" required autocomplete="current-password" class="auth-modal__input">
                     </div>
-                ` : `
+                    <div class="auth-modal__field-group">
+                        <button type="button" data-action="switch-auth-mode" data-mode="forgot-password" class="auth-modal__forgot-link">
+                            Забыли пароль?
+                        </button>
+                    </div>
+                </form>
+                <div class="auth-modal__footer">
+                    <button type="button" class="auth-modal__footer-btn auth-modal__footer-btn--secondary" data-action="switch-auth-mode" data-mode="register">
+                        Зарегистрироваться
+                    </button>
+                    <button type="submit" form="login-form" class="auth-modal__footer-btn auth-modal__footer-btn--primary">
+                        Войти
+                    </button>
+                </div>
+            `;
+        }
+
+        if (isRegister) {
+            return `
+                <form id="register-form" class="auth-modal__form space-y-2.5" data-auth-mode="register">
+                    ${errorBanner}
                     <div class="auth-modal__field-group">
                         <label for="register-email" class="auth-modal__field-label">Email</label>
                         <input type="email" id="register-email" name="email" placeholder="Email" required autocomplete="email" class="auth-modal__input">
@@ -2214,7 +2240,6 @@ return `
                     <div class="auth-modal__field-group">
                         <label for="register-password" class="auth-modal__field-label">Пароль</label>
                         <input type="password" id="register-password" name="password" placeholder="Пароль" required autocomplete="new-password" class="auth-modal__input" data-auth-password>
-                        <!-- Interactive password strength meter, only for registration -->
                         <div class="auth-modal__password-meter" data-auth-password-meter hidden>
                             <div class="auth-modal__meter-bar">
                                 <div class="auth-modal__meter-fill" data-auth-password-fill></div>
@@ -2230,17 +2255,107 @@ return `
                         <input type="password" id="register-password-confirm" name="password_confirm" placeholder="Подтвердите пароль" required autocomplete="new-password" class="auth-modal__input" data-auth-password-confirm>
                         <div class="auth-modal__match" data-auth-password-match hidden></div>
                     </div>
-                `}
-            </form>
-            <div class="auth-modal__footer">
-                <button type="button" class="auth-modal__footer-btn auth-modal__footer-btn--secondary" data-action="switch-auth-mode" data-mode="${isLogin ? 'register' : 'login'}">
-                    ${isLogin ? 'Зарегистрироваться' : 'Войти'}
-                </button>
-                <button type="submit" form="${isLogin ? 'login-form' : 'register-form'}" class="auth-modal__footer-btn auth-modal__footer-btn--primary">
-                    ${isLogin ? 'Войти' : 'Создать дневник'}
-                </button>
-            </div>
-        `;
+                </form>
+                <div class="auth-modal__footer">
+                    <button type="button" class="auth-modal__footer-btn auth-modal__footer-btn--secondary" data-action="switch-auth-mode" data-mode="login">
+                        Войти
+                    </button>
+                    <button type="submit" form="register-form" class="auth-modal__footer-btn auth-modal__footer-btn--primary">
+                        Создать дневник
+                    </button>
+                </div>
+            `;
+        }
+
+        if (isForgot) {
+            const emailVal = ctx.email || '';
+            return `
+                <form id="forgot-password-form" class="auth-modal__form space-y-2.5" data-auth-mode="forgot-password">
+                    ${errorBanner}
+                    <p class="auth-modal__hint text-sm text-surface-600 dark:text-zinc-400">
+                        Введите email, и мы пришлём код для восстановления пароля.
+                    </p>
+                    <div class="auth-modal__field-group">
+                        <label for="forgot-email" class="auth-modal__field-label">Email</label>
+                        <input type="email" id="forgot-email" name="email" placeholder="Email" required autocomplete="email" class="auth-modal__input" value="${escapeHtml(emailVal)}">
+                    </div>
+                </form>
+                <div class="auth-modal__footer">
+                    <button type="button" class="auth-modal__footer-btn auth-modal__footer-btn--secondary" data-action="switch-auth-mode" data-mode="login">
+                        Назад к входу
+                    </button>
+                    <button type="submit" form="forgot-password-form" class="auth-modal__footer-btn auth-modal__footer-btn--primary">
+                        Отправить код
+                    </button>
+                </div>
+            `;
+        }
+
+        if (isVerify) {
+            const isReset = ctx.purpose === 'reset_password';
+            return `
+                <form id="verify-code-form" class="auth-modal__form space-y-2.5" data-auth-mode="verify-code" data-auth-purpose="${ctx.purpose || 'register'}">
+                    ${errorBanner}
+                    <p class="auth-modal__hint text-sm text-surface-600 dark:text-zinc-400">
+                        ${isReset ? 'Введите код из письма для восстановления пароля.' : 'Введите код из письма для подтверждения регистрации.'}
+                    </p>
+                    <div class="auth-modal__code-inputs" data-auth-code-inputs>
+                        <input type="text" inputmode="numeric" maxlength="1" class="auth-modal__code-cell" data-auth-code-cell data-index="0">
+                        <input type="text" inputmode="numeric" maxlength="1" class="auth-modal__code-cell" data-auth-code-cell data-index="1">
+                        <input type="text" inputmode="numeric" maxlength="1" class="auth-modal__code-cell" data-auth-code-cell data-index="2">
+                        <input type="text" inputmode="numeric" maxlength="1" class="auth-modal__code-cell" data-auth-code-cell data-index="3">
+                        <input type="text" inputmode="numeric" maxlength="1" class="auth-modal__code-cell" data-auth-code-cell data-index="4">
+                        <input type="text" inputmode="numeric" maxlength="1" class="auth-modal__code-cell" data-auth-code-cell data-index="5">
+                    </div>
+                    <input type="hidden" name="code" data-auth-code-value>
+                </form>
+                <div class="auth-modal__footer">
+                    <button type="button" class="auth-modal__footer-btn auth-modal__footer-btn--secondary auth-modal__resend-btn" data-action="resend-code" data-auth-resend data-resend-purpose="${ctx.purpose || 'register'}">
+                        <span class="auth-modal__resend-text">Запросить повторно</span>
+                        <span class="auth-modal__resend-timer" data-auth-resend-timer hidden>(30с)</span>
+                    </button>
+                    <button type="submit" form="verify-code-form" class="auth-modal__footer-btn auth-modal__footer-btn--primary" data-auth-verify-submit>
+                        ${isReset ? 'Продолжить' : 'Подтвердить'}
+                    </button>
+                </div>
+            `;
+        }
+
+        if (isNewPassword) {
+            return `
+                <form id="new-password-form" class="auth-modal__form space-y-2.5" data-auth-mode="new-password">
+                    ${errorBanner}
+                    <div class="auth-modal__field-group">
+                        <label for="new-password" class="auth-modal__field-label">Новый пароль</label>
+                        <input type="password" id="new-password" name="password" placeholder="Новый пароль" required autocomplete="new-password" class="auth-modal__input" data-auth-password>
+                        <div class="auth-modal__password-meter" data-auth-password-meter hidden>
+                            <div class="auth-modal__meter-bar">
+                                <div class="auth-modal__meter-fill" data-auth-password-fill></div>
+                            </div>
+                            <div class="auth-modal__meter-meta">
+                                <span class="auth-modal__meter-label" data-auth-password-label>Слабый</span>
+                                <span class="auth-modal__meter-req">10+ символов, цифры, прописные и строчные буквы, спецсимволы</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="auth-modal__field-group">
+                        <label for="new-password-confirm" class="auth-modal__field-label">Подтвердите пароль</label>
+                        <input type="password" id="new-password-confirm" name="password_confirm" placeholder="Подтвердите пароль" required autocomplete="new-password" class="auth-modal__input" data-auth-password-confirm>
+                        <div class="auth-modal__match" data-auth-password-match hidden></div>
+                    </div>
+                </form>
+                <div class="auth-modal__footer">
+                    <button type="button" class="auth-modal__footer-btn auth-modal__footer-btn--secondary" data-action="switch-auth-mode" data-mode="login">
+                        Назад к входу
+                    </button>
+                    <button type="submit" form="new-password-form" class="auth-modal__footer-btn auth-modal__footer-btn--primary">
+                        Сохранить пароль
+                    </button>
+                </div>
+            `;
+        }
+
+        return this.authForm('login');
     },
 
     /**
@@ -2276,13 +2391,64 @@ return `
             const switchBtn = e.target.closest('[data-action="switch-auth-mode"]');
             if (switchBtn) {
                 const newMode = switchBtn.dataset.mode;
-                const container = modalEl.querySelector('[data-auth-form-container]');
-                const titleLabel = modalEl.querySelector('[data-auth-mode-label]');
-                if (container) container.innerHTML = this.authForm(newMode);
-                if (titleLabel) {
-                    titleLabel.dataset.authModeLabel = newMode === 'login' ? 'Вход' : 'Регистрация';
-                    titleLabel.textContent = newMode === 'login' ? 'Войти' : 'Создать дневник';
-                }
+                const ctx = modalEl._authCtx || {};
+                this._switchAuthForm(modalEl, newMode, ctx);
+            }
+
+            const resendBtn = e.target.closest('[data-action="resend-code"]');
+            if (resendBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                const ctx = modalEl._authCtx || {};
+                const purpose = resendBtn.dataset.resendPurpose || ctx.purpose || 'register';
+                app.Auth.handleResendCode(ctx.email, purpose, app, modalEl);
+            }
+        });
+
+        // Code input: auto-focus next cell, backspace to previous, auto-submit
+        modalEl.addEventListener('input', (e) => {
+            const cell = e.target.closest('[data-auth-code-cell]');
+            if (!cell) return;
+            const cells = Array.from(modalEl.querySelectorAll('[data-auth-code-cell]'));
+            const idx = cells.indexOf(cell);
+            cell.value = cell.value.replace(/\D/g, '').slice(0, 1);
+            if (cell.value && idx < cells.length - 1) {
+                cells[idx + 1].focus();
+            }
+            this._updateCodeValue(modalEl);
+            const allFilled = cells.every(c => c.value.length === 1);
+            if (allFilled) {
+                const submitBtn = modalEl.querySelector('[data-auth-verify-submit]');
+                if (submitBtn) submitBtn.click();
+            }
+        });
+
+        modalEl.addEventListener('keydown', (e) => {
+            const cell = e.target.closest('[data-auth-code-cell]');
+            if (!cell) return;
+            const cells = Array.from(modalEl.querySelectorAll('[data-auth-code-cell]'));
+            const idx = cells.indexOf(cell);
+            if (e.key === 'Backspace' && !cell.value && idx > 0) {
+                cells[idx - 1].focus();
+            }
+        });
+
+        // Paste: distribute pasted digits across cells
+        modalEl.addEventListener('paste', (e) => {
+            const cell = e.target.closest('[data-auth-code-cell]');
+            if (!cell) return;
+            e.preventDefault();
+            const paste = (e.clipboardData || window.clipboardData).getData('text/plain').replace(/\D/g, '').slice(0, 6);
+            if (!paste) return;
+            const cells = Array.from(modalEl.querySelectorAll('[data-auth-code-cell]'));
+            paste.split('').forEach((d, i) => {
+                if (cells[i]) cells[i].value = d;
+            });
+            this._updateCodeValue(modalEl);
+            const allFilled = cells.every(c => c.value.length === 1);
+            if (allFilled) {
+                const submitBtn = modalEl.querySelector('[data-auth-verify-submit]');
+                if (submitBtn) submitBtn.click();
             }
         });
 
@@ -2290,7 +2456,10 @@ return `
             const form = e.target.closest('form');
             if (form) {
                 if (form.id === 'login-form') app.Auth.handleLogin(e, app);
-                if (form.id === 'register-form') app.Auth.handleRegister(e, app);
+                else if (form.id === 'register-form') app.Auth.handleRegister(e, app);
+                else if (form.id === 'forgot-password-form') app.Auth.handleForgotPassword(e, app, modalEl);
+                else if (form.id === 'verify-code-form') app.Auth.handleVerifyCode(e, app, modalEl);
+                else if (form.id === 'new-password-form') app.Auth.handleResetPassword(e, app, modalEl);
             }
         });
 
@@ -2298,7 +2467,7 @@ return `
         modalEl._bodyWasLocked = document.body.classList.contains('overflow-hidden');
         document.body.classList.add('overflow-hidden');
 
-        // Interactive password strength meter (registration only).
+        // Interactive password strength meter (registration and new-password).
         this.initPasswordStrength(modalEl);
     },
 
@@ -2374,6 +2543,76 @@ return `
         passwordInput.addEventListener('input', render);
         if (confirmInput) confirmInput.addEventListener('input', render);
         render();
+    },
+
+    /**
+     * Switch the auth modal to a new form mode, preserving context (email,
+     * purpose) and updating the title. Re-initialises mode-specific widgets
+     * (password strength, code input focus, resend timer).
+     */
+    _switchAuthForm(modalEl, mode, ctx = {}) {
+        modalEl._authCtx = ctx;
+        const container = modalEl.querySelector('[data-auth-form-container]');
+        const titleLabel = modalEl.querySelector('[data-auth-mode-label]');
+        if (!container) return;
+        container.innerHTML = this.authForm(mode, ctx);
+        if (titleLabel) {
+            const labels = {
+                login: { label: 'Вход', title: 'Войти' },
+                register: { label: 'Регистрация', title: 'Создать дневник' },
+                'forgot-password': { label: 'Восстановление', title: 'Восстановить пароль' },
+                'verify-code': { label: 'Подтверждение', title: 'Введите код' },
+                'new-password': { label: 'Новый пароль', title: 'Новый пароль' },
+            };
+            const t = labels[mode] || labels.login;
+            titleLabel.dataset.authModeLabel = t.label;
+            titleLabel.textContent = t.title;
+        }
+        if (mode === 'verify-code') {
+            this.initResendTimer(modalEl);
+            const firstCell = modalEl.querySelector('[data-auth-code-cell]');
+            if (firstCell) firstCell.focus();
+        }
+        this.initPasswordStrength(modalEl);
+    },
+
+    /**
+     * Reassemble the 6-digit code from individual cells into the hidden
+     * input so it can be submitted with the form.
+     */
+    _updateCodeValue(modalEl) {
+        const cells = modalEl.querySelectorAll('[data-auth-code-cell]');
+        const code = Array.from(cells).map(c => c.value).join('');
+        const hidden = modalEl.querySelector('[data-auth-code-value]');
+        if (hidden) hidden.value = code;
+    },
+
+    /**
+     * Start (or restart) the 30-second resend-code countdown timer.
+     * Disables the resend button until it reaches zero.
+     */
+    initResendTimer(modalEl) {
+        const btn = modalEl.querySelector('[data-auth-resend]');
+        const timerSpan = modalEl.querySelector('[data-auth-resend-timer]');
+        const textSpan = modalEl.querySelector('.auth-modal__resend-text');
+        if (!btn) return;
+        btn.disabled = true;
+        let seconds = 30;
+        const tick = () => {
+            if (timerSpan) {
+                timerSpan.hidden = false;
+                timerSpan.textContent = `(${seconds}с)`;
+            }
+            seconds--;
+            if (seconds <= 0) {
+                btn.disabled = false;
+                if (timerSpan) timerSpan.hidden = true;
+                if (textSpan) textSpan.textContent = 'Запросить код повторно';
+                return;
+            }
+            setTimeout(tick, 1000);
+        };
+        tick();
     },
 
     closeAuthModal(modalEl) {

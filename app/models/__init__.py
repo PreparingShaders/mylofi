@@ -47,6 +47,7 @@ class User(Base):
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.USER, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", nullable=False)
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, server_default="1")
 
     # Profile data
     height_cm: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -125,6 +126,26 @@ class RefreshToken(Base):
     user: Mapped["User"] = relationship("User", back_populates="refresh_tokens")
 
     __table_args__ = (Index("ix_refresh_tokens_user_expires", "user_id", "expires_at"),)
+
+
+class VerificationCode(Base):
+    """One-time code sent to an email for registration or password reset."""
+
+    __tablename__ = "verification_codes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    code: Mapped[str] = mapped_column(String(6), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    # Temporary store for registration: the password hash and name that will be
+    # turned into a real user once the code is confirmed. Nullable because
+    # password-reset codes have no need of it.
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    __table_args__ = (Index("ix_verification_codes_email_purpose", "email", "purpose"),)
 
 
 class Meal(Base):
@@ -412,6 +433,7 @@ class ExerciseCatalog(Base):
 __all__ = [
     "User",
     "RefreshToken",
+    "VerificationCode",
     "Meal",
     "MealStatus",
     "DailySummary",

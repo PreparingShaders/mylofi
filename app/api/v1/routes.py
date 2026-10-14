@@ -1,117 +1,59 @@
 import logging
+import random
 from datetime import date, datetime, timedelta, timezone
-from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form, WebSocket, Header, BackgroundTasks
-from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional
 
 from app.db.session import get_db
+from app.models import User, VerificationCode
 from app.schemas import (
-    UserRegister,
-    UserMe,
-    UserUpdate,
     AiPersona,
-    AnthropometricsUpdate,
-    AnthropometricsResponse,
-    UsageResponse,
-    Token,
-    RefreshTokenRequest,
-    MealCreate,
-    MealUpdate,
-    MealResponse,
-    MealListResponse,
-    PhotoUploadResponse,
-    DailySummaryResponse,
-    WorkoutTemplateCreate,
-    WorkoutTemplateUpdate,
-    WorkoutTemplateResponse,
-    WorkoutSessionCreate,
-    WorkoutSessionUpdate,
-    WorkoutSessionResponse,
-    WorkoutHistoryResponse,
-    WorkoutSessionExerciseCreate,
-    ExerciseCatalogResponse,
-    ExerciseCatalogCreate,
-    ExerciseCatalogUpdate,
-    BuildWorkoutSessionRequest,
-    QuickStartWorkoutRequest,
-    QuickStartWorkoutResponse,
-    TemplateStartRequest,
-    WorkoutCompletionRequest,
-    WorkoutCompletionResponse,
-    WorkoutSetUpdate,
-    WorkoutSetCreate,
     AIWorkoutPreviewRequest,
     AIWorkoutPreviewResponse,
     AIWorkoutSummaryRequest,
     AIWorkoutSummaryResponse,
+    AnthropometricsResponse,
+    AnthropometricsUpdate,
+    BuildWorkoutSessionRequest,
+    DailySummaryResponse,
+    ExerciseCatalogCreate,
+    ExerciseCatalogResponse,
+    ExerciseCatalogUpdate,
+    MealCreate,
+    MealListResponse,
+    MealResponse,
+    MealUpdate,
+    PasswordResetConfirm,
+    PhotoUploadResponse,
+    QuickStartWorkoutRequest,
+    QuickStartWorkoutResponse,
+    RefreshTokenRequest,
+    ResendCodeRequest,
+    TemplateStartRequest,
+    Token,
+    UsageResponse,
+    UserMe,
+    UserRegister,
+    UserUpdate,
+    VerificationRequest,
+    VerificationResponse,
+    VerificationVerify,
+    WorkoutCompletionRequest,
+    WorkoutCompletionResponse,
+    WorkoutHistoryResponse,
+    WorkoutSessionCreate,
+    WorkoutSessionExerciseCreate,
+    WorkoutSessionResponse,
+    WorkoutSessionUpdate,
+    WorkoutSetCreate,
+    WorkoutSetUpdate,
+    WorkoutTemplateCreate,
+    WorkoutTemplateResponse,
+    WorkoutTemplateUpdate,
 )
 from app.schemas.ai_synergy import (
     AISynergyRequest,
     AISynergyResponse,
     AISynergySavedResponse,
-)
-from app.services.auth import (
-    verify_password,
-    get_password_hash,
-    decode_token,
-    create_user_tokens,
-    rotate_refresh_token,
-    revoke_all_user_refresh_tokens,
-)
-from app.services.nutrition import (
-    create_meal,
-    get_meal,
-    update_meal,
-    delete_meal,
-    get_meals_for_date,
-    get_meals_for_range,
-    save_uploaded_photo,
-    get_daily_nutrition_summary,
-    get_period_nutrition_summary,
-    process_meal_photo_task,
-    normalize_tz_offset,
-    resolve_eaten_at,
-    utcnow,
-    meal_to_response,
-)
-from app.services.workout import (
-    create_workout_template,
-    get_workout_templates,
-    get_workout_template,
-    update_workout_template,
-    delete_workout_template,
-    create_workout_session,
-    get_workout_session,
-    get_active_workout_session,
-    update_workout_session,
-    complete_workout_session,
-    cancel_workout_session,
-    get_workout_history,
-    update_set_completion,
-    get_exercises,
-    quick_start_workout,
-    create_exercise,
-    update_exercise,
-    delete_exercise,
-    build_workout_session,
-    get_workout_statistics,
-    get_last_exercise_sets,
-    get_filtered_tonnage,
-    get_workout_session_detail,
-)
-from app.services.exercise_data import MUSCLE_GROUPS, EQUIPMENT
-from app.services.limits import (
-    build_usage_snapshot,
-    can_create_workout_template,
-    can_use_meal_ai,
-    consume_meal_ai,
-    count_workout_templates,
-)
-from app.services.nutrition_targets import (
-    calculate_macro_targets,
-    normalize_activity_level,
-    normalize_goal,
 )
 from app.services.ai_summary import get_or_create_daily_summary
 from app.services.ai_workout_service import (
@@ -123,8 +65,85 @@ from app.services.ai_workout_service import (
     get_workout_analysis,
     load_stored_ai_plan,
 )
-from app.models import User
-from app.ws.manager import manager, get_websocket_user
+from app.services.auth import (
+    create_user_tokens,
+    decode_token,
+    get_password_hash,
+    revoke_all_user_refresh_tokens,
+    rotate_refresh_token,
+    verify_password,
+)
+from app.services.email import send_verification_email
+from app.services.exercise_data import EQUIPMENT, MUSCLE_GROUPS
+from app.services.limits import (
+    build_usage_snapshot,
+    can_create_workout_template,
+    can_use_meal_ai,
+    consume_meal_ai,
+    count_workout_templates,
+)
+from app.services.nutrition import (
+    create_meal,
+    delete_meal,
+    get_daily_nutrition_summary,
+    get_meal,
+    get_meals_for_date,
+    get_meals_for_range,
+    get_period_nutrition_summary,
+    meal_to_response,
+    normalize_tz_offset,
+    process_meal_photo_task,
+    resolve_eaten_at,
+    save_uploaded_photo,
+    update_meal,
+    utcnow,
+)
+from app.services.nutrition_targets import (
+    calculate_macro_targets,
+    normalize_activity_level,
+    normalize_goal,
+)
+from app.services.workout import (
+    build_workout_session,
+    cancel_workout_session,
+    complete_workout_session,
+    create_exercise,
+    create_workout_session,
+    create_workout_template,
+    delete_exercise,
+    delete_workout_template,
+    get_active_workout_session,
+    get_exercises,
+    get_filtered_tonnage,
+    get_last_exercise_sets,
+    get_workout_history,
+    get_workout_session,
+    get_workout_session_detail,
+    get_workout_statistics,
+    get_workout_template,
+    get_workout_templates,
+    quick_start_workout,
+    update_exercise,
+    update_set_completion,
+    update_workout_session,
+    update_workout_template,
+)
+from app.ws.manager import get_websocket_user, manager
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Query,
+    UploadFile,
+    WebSocket,
+    status,
+)
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 
@@ -132,7 +151,7 @@ router = APIRouter()
 # ===== Dependency: Get Current User =====
 async def get_current_user(
     db: AsyncSession = Depends(get_db),
-    authorization: Optional[str] = Header(None),
+    authorization: str | None = Header(None),
 ) -> User:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
@@ -194,17 +213,70 @@ async def get_current_admin_user(
 
 
 # Need to import select for the dependency
-from sqlalchemy import select, func
-
+from sqlalchemy import func, select
 
 logger = logging.getLogger(__name__)
 
 
 # ===== Auth Routes =====
-@router.post("/auth/register", response_model=Token, status_code=status.HTTP_201_CREATED)
+
+VERIFICATION_CODE_TTL_MINUTES = 10
+VERIFICATION_CODE_LENGTH = 6
+
+
+def _generate_verification_code() -> str:
+    return "".join(random.choices("0123456789", k=VERIFICATION_CODE_LENGTH))
+
+
+async def _store_verification_code(
+    db: AsyncSession,
+    email: str,
+    purpose: str,
+    password_hash: str | None = None,
+    full_name: str | None = None,
+) -> str:
+    """Create or replace a verification code for (email, purpose)."""
+    code = _generate_verification_code()
+    expires_at = datetime.now(timezone.utc) + timedelta(
+        minutes=VERIFICATION_CODE_TTL_MINUTES
+    )
+
+    # Invalidate any previous code for this email + purpose
+    result = await db.execute(
+        select(VerificationCode).where(
+            VerificationCode.email == email,
+            VerificationCode.purpose == purpose,
+        )
+    )
+    existing = result.scalar_one_or_none()
+    if existing:
+        existing.code = code
+        existing.expires_at = expires_at
+        existing.password_hash = password_hash
+        existing.full_name = full_name
+    else:
+        db_code = VerificationCode(
+            email=email,
+            code=code,
+            purpose=purpose,
+            expires_at=expires_at,
+            password_hash=password_hash,
+            full_name=full_name,
+        )
+        db.add(db_code)
+
+    await db.commit()
+    return code
+
+
+@router.post("/auth/register", response_model=VerificationResponse)
 async def register(user_data: UserRegister, db: AsyncSession = Depends(get_db)):
-    """Register a new user"""
-    # Check if email exists
+    """Step 1 of registration: generates a 6-digit code and emails it.
+
+    The user is not created yet — only a VerificationCode row is written.
+    The caller must confirm the code via /auth/verify-register before the
+    account exists in the database.
+    """
     result = await db.execute(select(User).where(User.email == user_data.email))
     if result.scalar_one_or_none():
         raise HTTPException(
@@ -212,28 +284,202 @@ async def register(user_data: UserRegister, db: AsyncSession = Depends(get_db)):
             detail="Email already registered",
         )
 
-    # The very first user on the platform becomes an admin: there is no other
-    # way to reach the panel once it exists, and a bootstrap is cheaper than a
-    # manual flag in the database.
+    code = await _store_verification_code(
+        db,
+        email=user_data.email,
+        purpose="register",
+        password_hash=get_password_hash(user_data.password),
+        full_name=user_data.full_name,
+    )
+
+    await send_verification_email(user_data.email, code, purpose="register")
+
+    return VerificationResponse(status="verification_required", email=user_data.email)
+
+
+@router.post("/auth/verify-register", response_model=Token)
+async def verify_register(
+    verify_data: VerificationVerify,
+    db: AsyncSession = Depends(get_db),
+):
+    """Step 2 of registration: confirm the 6-digit code and create the user."""
+    result = await db.execute(
+        select(VerificationCode).where(
+            VerificationCode.email == verify_data.email,
+            VerificationCode.purpose == "register",
+        )
+    )
+    stored = result.scalar_one_or_none()
+    if not stored:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Код не найден. Запросите новый код.",
+        )
+
+    if stored.expires_at < datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Срок действия кода истёл. Запросите новый код.",
+        )
+
+    if stored.code != verify_data.code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Неверный код подтверждения",
+        )
+
+    if not stored.password_hash:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Ошибка регистрации: данные не сохранены",
+        )
+
+    # The first user on the platform becomes an admin
     user_count_result = await db.execute(select(func.count()).select_from(User))
     total_users = int(user_count_result.scalar() or 0)
 
-    # Create user
-    hashed_password = get_password_hash(user_data.password)
     user = User(
-        email=user_data.email,
-        hashed_password=hashed_password,
-        full_name=user_data.full_name,
+        email=stored.email,
+        hashed_password=stored.password_hash,
+        full_name=stored.full_name,
         is_admin=(total_users == 0),
+        is_verified=True,
     )
     db.add(user)
     await db.commit()
-    await db.refresh(user)
 
-    # Create tokens
+    await db.delete(stored)
+    await db.commit()
+
     access_token, refresh_token = await create_user_tokens(db, user)
-
     return Token(access_token=access_token, refresh_token=refresh_token)
+
+
+@router.post("/auth/resend-code", response_model=VerificationResponse)
+async def resend_code(
+    resend_data: ResendCodeRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate a new verification code and email it again."""
+    if resend_data.purpose == "register":
+        result = await db.execute(
+            select(VerificationCode).where(
+                VerificationCode.email == resend_data.email,
+                VerificationCode.purpose == "register",
+            )
+        )
+        stored = result.scalar_one_or_none()
+    else:
+        stored = None
+
+    code = await _store_verification_code(
+        db,
+        email=resend_data.email,
+        purpose=resend_data.purpose,
+        password_hash=stored.password_hash if stored else None,
+        full_name=stored.full_name if stored else None,
+    )
+
+    await send_verification_email(resend_data.email, code, purpose=resend_data.purpose)
+    return VerificationResponse(status="code_sent", email=resend_data.email)
+
+
+@router.post("/auth/forgot-password", response_model=VerificationResponse)
+async def forgot_password(
+    request: VerificationRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate a password-reset code. Always returns success for security."""
+    result = await db.execute(select(User).where(User.email == request.email))
+    user = result.scalar_one_or_none()
+
+    if user:
+        code = await _store_verification_code(
+            db, email=request.email, purpose="reset_password"
+        )
+        await send_verification_email(request.email, code, purpose="reset_password")
+
+    return VerificationResponse(status="code_sent", email=request.email)
+
+
+@router.post("/auth/verify-reset-code")
+async def verify_reset_code(
+    verify_data: VerificationVerify,
+    db: AsyncSession = Depends(get_db),
+):
+    """Verify a password-reset code without consuming it yet."""
+    result = await db.execute(
+        select(VerificationCode).where(
+            VerificationCode.email == verify_data.email,
+            VerificationCode.purpose == "reset_password",
+        )
+    )
+    stored = result.scalar_one_or_none()
+    if not stored:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Код не найден. Запросите новый код.",
+        )
+
+    if stored.expires_at < datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Срок действия кода истёл. Запросите новый код.",
+        )
+
+    if stored.code != verify_data.code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Неверный код подтверждения",
+        )
+
+    return {"status": "verified", "email": verify_data.email}
+
+
+@router.post("/auth/reset-password")
+async def reset_password(
+    reset_data: PasswordResetConfirm,
+    db: AsyncSession = Depends(get_db),
+):
+    """Verify the code and update the user's password."""
+    result = await db.execute(
+        select(VerificationCode).where(
+            VerificationCode.email == reset_data.email,
+            VerificationCode.purpose == "reset_password",
+        )
+    )
+    stored = result.scalar_one_or_none()
+    if not stored:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Код не найден. Запросите новый код.",
+        )
+
+    if stored.expires_at < datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Срок действия кода истёл. Запросите новый код.",
+        )
+
+    if stored.code != reset_data.code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Неверный код подтверждения",
+        )
+
+    user_result = await db.execute(select(User).where(User.email == reset_data.email))
+    user = user_result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Пользователь не найден",
+        )
+
+    user.hashed_password = get_password_hash(reset_data.new_password)
+    await db.delete(stored)
+    await db.commit()
+
+    return {"status": "password_reset", "email": reset_data.email}
 
 
 @router.post("/auth/login", response_model=Token)
@@ -270,7 +516,9 @@ async def refresh_token(
 ):
     """Refresh access token using refresh token"""
     try:
-        access_token, refresh_token = await rotate_refresh_token(db, token_data.refresh_token)
+        access_token, refresh_token = await rotate_refresh_token(
+            db, token_data.refresh_token
+        )
         return Token(access_token=access_token, refresh_token=refresh_token)
     except ValueError as e:
         raise HTTPException(
@@ -288,6 +536,7 @@ async def logout(
 ):
     """Logout - revoke refresh token"""
     from app.services.auth import revoke_refresh_token
+
     await revoke_refresh_token(db, token_data.refresh_token)
     return {"message": "Successfully logged out"}
 
@@ -329,7 +578,10 @@ async def update_current_user(
 
     # A persona switch to anything but "custom" retires the custom wording, so
     # switching back does not silently revive an instruction the user left behind.
-    if "ai_persona" in update_data and update_data["ai_persona"] != AiPersona.CUSTOM.value:
+    if (
+        "ai_persona" in update_data
+        and update_data["ai_persona"] != AiPersona.CUSTOM.value
+    ):
         update_data["ai_persona_custom_text"] = None
 
     for field, value in update_data.items():
@@ -442,13 +694,17 @@ async def toggle_pro(
 
 
 # ===== Nutrition Routes =====
-@router.post("/nutrition/photos", response_model=PhotoUploadResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/nutrition/photos",
+    response_model=PhotoUploadResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def upload_meal_photo(
     file: UploadFile = File(...),
-    eaten_at: Optional[str] = Form(None),
-    notes: Optional[str] = Form(None),
-    tz_offset: Optional[int] = Form(None),
-    tz: Optional[str] = Form(None),
+    eaten_at: str | None = Form(None),
+    notes: str | None = Form(None),
+    tz_offset: int | None = Form(None),
+    tz: str | None = Form(None),
     background_tasks: BackgroundTasks = BackgroundTasks(),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -495,7 +751,9 @@ async def upload_meal_photo(
         )
 
     # Save photo
-    photo_path, thumbnail_path = await save_uploaded_photo(file_content, file.filename or "photo.jpg")
+    photo_path, thumbnail_path = await save_uploaded_photo(
+        file_content, file.filename or "photo.jpg"
+    )
 
     # Create meal record
     meal_data = MealCreate(eaten_at=parsed_eaten_at, notes=notes)
@@ -522,21 +780,23 @@ TZ_OFFSET_DESCRIPTION = (
 
 @router.get("/nutrition/logs", response_model=MealListResponse)
 async def get_nutrition_logs(
-    date: Optional[str] = Query(None, description="Date in YYYY-MM-DD format"),
-    tz_offset: Optional[int] = Query(None, description=TZ_OFFSET_DESCRIPTION),
+    date: str | None = Query(None, description="Date in YYYY-MM-DD format"),
+    tz_offset: int | None = Query(None, description=TZ_OFFSET_DESCRIPTION),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Get meals for a specific date"""
     offset = normalize_tz_offset(tz_offset)
-    return await get_meals_for_date(db, current_user.id, _parse_target_date(date, offset), offset)
+    return await get_meals_for_date(
+        db, current_user.id, _parse_target_date(date, offset), offset
+    )
 
 
 @router.get("/nutrition/meals", response_model=MealListResponse)
 async def get_nutrition_meals_range(
-    start_date: Optional[str] = Query(None, description="Range start, YYYY-MM-DD"),
-    end_date: Optional[str] = Query(None, description="Range end, YYYY-MM-DD"),
-    tz_offset: Optional[int] = Query(None, description=TZ_OFFSET_DESCRIPTION),
+    start_date: str | None = Query(None, description="Range start, YYYY-MM-DD"),
+    end_date: str | None = Query(None, description="Range end, YYYY-MM-DD"),
+    tz_offset: int | None = Query(None, description=TZ_OFFSET_DESCRIPTION),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -551,21 +811,25 @@ async def get_nutrition_meals_range(
 
 @router.get("/nutrition/summary")
 async def get_nutrition_summary(
-    date: Optional[str] = Query(None, description="Date in YYYY-MM-DD format"),
-    tz_offset: Optional[int] = Query(None, description=TZ_OFFSET_DESCRIPTION),
+    date: str | None = Query(None, description="Date in YYYY-MM-DD format"),
+    tz_offset: int | None = Query(None, description=TZ_OFFSET_DESCRIPTION),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Get aggregated nutrition summary for a date"""
     offset = normalize_tz_offset(tz_offset)
-    return await get_daily_nutrition_summary(db, current_user.id, _parse_target_date(date, offset), offset)
+    return await get_daily_nutrition_summary(
+        db, current_user.id, _parse_target_date(date, offset), offset
+    )
 
 
 @router.get("/nutrition/daily-summary", response_model=DailySummaryResponse)
 async def get_nutrition_daily_summary(
-    date: Optional[str] = Query(None, description="Date in YYYY-MM-DD format"),
-    tz_offset: Optional[int] = Query(None, description=TZ_OFFSET_DESCRIPTION),
-    force: bool = Query(False, description="Regenerate the recap even when one is already stored"),
+    date: str | None = Query(None, description="Date in YYYY-MM-DD format"),
+    tz_offset: int | None = Query(None, description=TZ_OFFSET_DESCRIPTION),
+    force: bool = Query(
+        False, description="Regenerate the recap even when one is already stored"
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -581,11 +845,13 @@ async def get_nutrition_daily_summary(
     """
     offset = normalize_tz_offset(tz_offset)
     target_date = _parse_target_date(date, offset)
-    payload = await get_or_create_daily_summary(db, current_user, target_date, offset, force=force)
+    payload = await get_or_create_daily_summary(
+        db, current_user, target_date, offset, force=force
+    )
     return payload
 
 
-def _parse_target_date(date: Optional[str], tz_offset_minutes: int = 0) -> date:
+def _parse_target_date(date: str | None, tz_offset_minutes: int = 0) -> date:
     """Parse an optional YYYY-MM-DD query param, falling back to today.
 
     The fallback is today *on the client's clock*: the device is the only thing
@@ -602,8 +868,8 @@ def _parse_target_date(date: Optional[str], tz_offset_minutes: int = 0) -> date:
 
 @router.get("/nutrition/week")
 async def get_nutrition_week(
-    date: Optional[str] = Query(None, description="Any date within the week, YYYY-MM-DD"),
-    tz_offset: Optional[int] = Query(None, description=TZ_OFFSET_DESCRIPTION),
+    date: str | None = Query(None, description="Any date within the week, YYYY-MM-DD"),
+    tz_offset: int | None = Query(None, description=TZ_OFFSET_DESCRIPTION),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -620,8 +886,8 @@ async def get_nutrition_week(
 
 @router.get("/nutrition/month")
 async def get_nutrition_month(
-    date: Optional[str] = Query(None, description="Any date within the month, YYYY-MM-DD"),
-    tz_offset: Optional[int] = Query(None, description=TZ_OFFSET_DESCRIPTION),
+    date: str | None = Query(None, description="Any date within the month, YYYY-MM-DD"),
+    tz_offset: int | None = Query(None, description=TZ_OFFSET_DESCRIPTION),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -638,9 +904,9 @@ async def get_nutrition_month(
 
 @router.get("/nutrition/range")
 async def get_nutrition_range(
-    start_date: Optional[str] = Query(None, description="Range start, YYYY-MM-DD"),
-    end_date: Optional[str] = Query(None, description="Range end, YYYY-MM-DD"),
-    tz_offset: Optional[int] = Query(None, description=TZ_OFFSET_DESCRIPTION),
+    start_date: str | None = Query(None, description="Range start, YYYY-MM-DD"),
+    end_date: str | None = Query(None, description="Range end, YYYY-MM-DD"),
+    tz_offset: int | None = Query(None, description=TZ_OFFSET_DESCRIPTION),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -675,7 +941,9 @@ async def get_meal_endpoint(
     """
     meal = await get_meal(db, meal_id, current_user.id)
     if not meal:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meal not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Meal not found"
+        )
     return meal_to_response(meal)
 
 
@@ -689,7 +957,9 @@ async def update_meal_endpoint(
     """Update meal details (manual edit after analysis)"""
     meal = await update_meal(db, meal_id, current_user.id, meal_data)
     if not meal:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meal not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Meal not found"
+        )
     # `meal_to_response` parses the JSON-encoded `tags` column into a list so the
     # MealResponse schema (which expects List[str]) validates instead of 500-ing.
     return meal_to_response(meal)
@@ -704,20 +974,23 @@ async def delete_meal_endpoint(
     """Delete a meal"""
     success = await delete_meal(db, meal_id, current_user.id)
     if not success:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meal not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Meal not found"
+        )
     return {"message": "Meal deleted"}
 
 
 # Need to import settings
 from app.core.config import get_settings
+
 settings = get_settings()
 
 
 # ===== Exercise Catalog Routes =====
-@router.get("/workouts/exercises", response_model=List[ExerciseCatalogResponse])
+@router.get("/workouts/exercises", response_model=list[ExerciseCatalogResponse])
 async def list_exercises(
-    muscle_group: Optional[str] = Query(None, description="Filter by muscle group"),
-    equipment: Optional[str] = Query(None, description="Filter by equipment"),
+    muscle_group: str | None = Query(None, description="Filter by muscle group"),
+    equipment: str | None = Query(None, description="Filter by equipment"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -757,7 +1030,9 @@ async def update_exercise_endpoint(
     """Update a personal exercise"""
     exercise = await update_exercise(db, exercise_id, current_user.id, exercise_data)
     if not exercise:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exercise not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Exercise not found"
+        )
     return exercise
 
 
@@ -770,7 +1045,9 @@ async def delete_exercise_endpoint(
     """Delete a personal exercise"""
     success = await delete_exercise(db, exercise_id, current_user.id)
     if not success:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exercise not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Exercise not found"
+        )
     return {"message": "Exercise deleted"}
 
 
@@ -799,7 +1076,11 @@ async def build_workout_session_endpoint(
 
 
 # ===== Workout Template Routes =====
-@router.post("/workouts/templates", response_model=WorkoutTemplateResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/workouts/templates",
+    response_model=WorkoutTemplateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_workout_template_endpoint(
     template_data: WorkoutTemplateCreate,
     db: AsyncSession = Depends(get_db),
@@ -821,7 +1102,7 @@ async def create_workout_template_endpoint(
     return template
 
 
-@router.get("/workouts/templates", response_model=List[WorkoutTemplateResponse])
+@router.get("/workouts/templates", response_model=list[WorkoutTemplateResponse])
 async def get_workout_templates_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -840,11 +1121,15 @@ async def get_workout_template_endpoint(
     """Get a specific workout template"""
     template = await get_workout_template(db, template_id, current_user.id)
     if not template:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Template not found"
+        )
     return template
 
 
-@router.patch("/workouts/templates/{template_id}", response_model=WorkoutTemplateResponse)
+@router.patch(
+    "/workouts/templates/{template_id}", response_model=WorkoutTemplateResponse
+)
 async def update_workout_template_endpoint(
     template_id: int,
     template_data: WorkoutTemplateUpdate,
@@ -852,9 +1137,13 @@ async def update_workout_template_endpoint(
     current_user: User = Depends(get_current_user),
 ):
     """Update a workout template"""
-    template = await update_workout_template(db, template_id, current_user.id, template_data)
+    template = await update_workout_template(
+        db, template_id, current_user.id, template_data
+    )
     if not template:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Template not found"
+        )
     return template
 
 
@@ -867,7 +1156,9 @@ async def delete_workout_template_endpoint(
     """Delete a workout template"""
     success = await delete_workout_template(db, template_id, current_user.id)
     if not success:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Template not found"
+        )
     return {"message": "Template deleted"}
 
 
@@ -913,7 +1204,11 @@ async def quick_start_session(
     return QuickStartWorkoutResponse(session_id=session.id)
 
 
-@router.post("/workouts/sessions", response_model=WorkoutSessionResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/workouts/sessions",
+    response_model=WorkoutSessionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_workout_session_endpoint(
     session_data: WorkoutSessionCreate,
     db: AsyncSession = Depends(get_db),
@@ -932,7 +1227,9 @@ async def create_workout_session_endpoint(
     return session
 
 
-@router.get("/workouts/sessions/active", response_model=Optional[WorkoutSessionResponse])
+@router.get(
+    "/workouts/sessions/active", response_model=Optional[WorkoutSessionResponse]
+)
 async def get_active_session(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -951,7 +1248,9 @@ async def get_workout_session_endpoint(
     """Get a specific workout session"""
     session = await get_workout_session(db, session_id, current_user.id)
     if not session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
     return session
 
 
@@ -963,9 +1262,13 @@ async def update_workout_session_endpoint(
     current_user: User = Depends(get_current_user),
 ):
     """Update a workout session (add sets, update reps/weight, etc.)"""
-    session = await update_workout_session(db, session_id, current_user.id, session_data)
+    session = await update_workout_session(
+        db, session_id, current_user.id, session_data
+    )
     if not session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
     return session
 
 
@@ -975,7 +1278,7 @@ async def update_workout_session_endpoint(
 )
 async def complete_workout_session_endpoint(
     session_id: int,
-    request: Optional[WorkoutCompletionRequest] = None,
+    request: WorkoutCompletionRequest | None = None,
     background_tasks: BackgroundTasks = BackgroundTasks(),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -996,7 +1299,9 @@ async def complete_workout_session_endpoint(
         duration_seconds=data.duration_seconds,
     )
     if not session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
 
     if data.with_ai_analysis:
         background_tasks.add_task(
@@ -1016,7 +1321,9 @@ async def complete_workout_session_endpoint(
     )
 
 
-@router.post("/workouts/sessions/{session_id}/cancel", response_model=WorkoutSessionResponse)
+@router.post(
+    "/workouts/sessions/{session_id}/cancel", response_model=WorkoutSessionResponse
+)
 async def cancel_workout_session_endpoint(
     session_id: int,
     db: AsyncSession = Depends(get_db),
@@ -1025,14 +1332,20 @@ async def cancel_workout_session_endpoint(
     """Cancel a workout session"""
     session = await cancel_workout_session(db, session_id, current_user.id)
     if not session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
     return session
 
 
-@router.post("/workouts/templates/{template_id}/start", response_model=WorkoutSessionResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/workouts/templates/{template_id}/start",
+    response_model=WorkoutSessionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def start_workout_from_template(
     template_id: int,
-    request: Optional[TemplateStartRequest] = None,
+    request: TemplateStartRequest | None = None,
     background_tasks: BackgroundTasks = BackgroundTasks(),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -1052,7 +1365,9 @@ async def start_workout_from_template(
         )
     template = await get_workout_template(db, template_id, current_user.id)
     if not template:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Template not found"
+        )
 
     session_exercises = []
     for ex in template.exercises:
@@ -1076,7 +1391,9 @@ async def start_workout_from_template(
                     weight_kg=0.0,
                     rest_seconds=ex.rest_seconds,
                 )
-                for set_num in range(start_num, start_num + target_sets - len(past_sets))
+                for set_num in range(
+                    start_num, start_num + target_sets - len(past_sets)
+                )
             ]
         session_exercises.append(
             WorkoutSessionExerciseCreate(
@@ -1101,7 +1418,9 @@ async def start_workout_from_template(
         background_tasks.add_task(build_workout_preview_and_store, db, session.id)
         session = await get_workout_session(db, session.id, current_user.id)
         if session is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+            )
 
     return session
 
@@ -1130,11 +1449,17 @@ async def get_workout_statistics_endpoint(
 @router.get("/workouts/tonnage")
 async def get_tonnage_endpoint(
     period: str = Query("week", description="Preset window: week, month or all"),
-    start_date: Optional[str] = Query(None, description="Range start, YYYY-MM-DD (overrides period)"),
-    end_date: Optional[str] = Query(None, description="Range end, YYYY-MM-DD (overrides period)"),
-    muscle_group: Optional[str] = Query(None, description="Filter by catalog muscle group"),
-    exercise_name: Optional[str] = Query(None, description="Filter by exercise name"),
-    template_id: Optional[int] = Query(None, description="Filter by source template"),
+    start_date: str | None = Query(
+        None, description="Range start, YYYY-MM-DD (overrides period)"
+    ),
+    end_date: str | None = Query(
+        None, description="Range end, YYYY-MM-DD (overrides period)"
+    ),
+    muscle_group: str | None = Query(
+        None, description="Filter by catalog muscle group"
+    ),
+    exercise_name: str | None = Query(None, description="Filter by exercise name"),
+    template_id: int | None = Query(None, description="Filter by source template"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1160,7 +1485,9 @@ async def get_workout_history_detail_endpoint(
     """Detailed history for a single session: metrics, delta, summary and per-exercise trends"""
     detail = await get_workout_session_detail(db, current_user.id, session_id)
     if not detail:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
     return detail
 
 
@@ -1183,7 +1510,9 @@ async def update_set_endpoint(
         set_data.rest_time_seconds,
     )
     if not workout_set:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Set not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Set not found"
+        )
     return {
         "message": "Set updated",
         "is_completed": workout_set.is_completed,
@@ -1220,7 +1549,9 @@ async def ai_workout_preview(
     if request.template_id is not None:
         template = await get_workout_template(db, request.template_id, current_user.id)
         if template is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Template not found"
+            )
 
     stored = None
     if request.session_id is not None:
@@ -1241,10 +1572,12 @@ async def ai_workout_preview(
     )
 
 
-@router.post("/ai/workout-summary/{workout_id}", response_model=AIWorkoutSummaryResponse)
+@router.post(
+    "/ai/workout-summary/{workout_id}", response_model=AIWorkoutSummaryResponse
+)
 async def ai_workout_summary(
     workout_id: int,
-    request: Optional[AIWorkoutSummaryRequest] = None,
+    request: AIWorkoutSummaryRequest | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1262,7 +1595,9 @@ async def ai_workout_summary(
     data = request or AIWorkoutSummaryRequest()
     session = await get_workout_session(db, workout_id, current_user.id)
     if not session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
 
     if not current_user.is_premium:
         raise HTTPException(
@@ -1292,7 +1627,9 @@ async def ai_workout_summary_read(
     """
     session = await get_workout_session(db, workout_id, current_user.id)
     if not session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
 
     return await get_workout_analysis(db, current_user, session)
 
@@ -1317,6 +1654,7 @@ async def websocket_endpoint(
             data = await websocket.receive_text()
             # Echo ping/pong for keepalive
             import json
+
             try:
                 msg = json.loads(data)
                 if msg.get("type") == "ping":
@@ -1328,11 +1666,12 @@ async def websocket_endpoint(
     finally:
         manager.disconnect(websocket)
 
+
 # ===== AI Synergy Routes =====
 @router.post("/ai/synergy", response_model=AISynergyResponse)
 async def ai_synergy(
     request: AISynergyRequest,
-    tz_offset: Optional[int] = Query(None, description=TZ_OFFSET_DESCRIPTION),
+    tz_offset: int | None = Query(None, description=TZ_OFFSET_DESCRIPTION),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1373,9 +1712,11 @@ async def ai_synergy(
 
 @router.get("/ai/synergy", response_model=AISynergySavedResponse)
 async def get_ai_synergy(
-    period_type: Optional[str] = Query(None, description="Тип периода: week, month, custom"),
-    start_date: Optional[date] = Query(None),
-    end_date: Optional[date] = Query(None),
+    period_type: str | None = Query(
+        None, description="Тип периода: week, month, custom"
+    ),
+    start_date: date | None = Query(None),
+    end_date: date | None = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1386,8 +1727,9 @@ async def get_ai_synergy(
     `available: false` with a reason, so the frontend renders an empty slot
     instead of an error - a first-time visit costs nothing but a quiet line.
     """
-    from app.services.ai_synergy_service import _get_latest_synergy, _normalise_finding
     import json
+
+    from app.services.ai_synergy_service import _get_latest_synergy, _normalise_finding
 
     if not current_user.is_premium:
         raise HTTPException(
@@ -1417,11 +1759,15 @@ async def get_ai_synergy(
         return AISynergySavedResponse(
             available=True,
             analyzed_at=latest.created_at,
-            period_days=payload.get("period_days") if isinstance(payload, dict) else None,
+            period_days=payload.get("period_days")
+            if isinstance(payload, dict)
+            else None,
             period_type=latest.period_type,
             start_date=latest.start_date,
             end_date=latest.end_date,
-            metrics_snapshot=payload.get("metrics_snapshot") if isinstance(payload, dict) else None,
+            metrics_snapshot=payload.get("metrics_snapshot")
+            if isinstance(payload, dict)
+            else None,
             verdict=verdict,
         )
     except Exception as e:

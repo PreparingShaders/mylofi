@@ -1,12 +1,12 @@
 """Pytest configuration for E2E tests."""
 
 import asyncio
+
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete
-
 from app.db.session import async_session_maker
-from app.models import User
+from app.models import User, VerificationCode
+from sqlalchemy import delete
 
 pytest_plugins = ["pytest_asyncio"]
 
@@ -24,6 +24,14 @@ async def cleanup_test_users():
     yield
     # Teardown: delete test users matching patterns
     async with async_session_maker() as db:
-        await db.execute(delete(User).where(User.email.like('test_%@example.com')))
-        await db.execute(delete(User).where(User.email.like('test_%@%.com')))
+        await db.execute(
+            delete(VerificationCode).where(
+                VerificationCode.email.like("test_%@example.com")
+            )
+        )
+        await db.execute(
+            delete(VerificationCode).where(VerificationCode.email.like("test_%@%.com"))
+        )
+        await db.execute(delete(User).where(User.email.like("test_%@example.com")))
+        await db.execute(delete(User).where(User.email.like("test_%@%.com")))
         await db.commit()

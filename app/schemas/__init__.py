@@ -127,6 +127,32 @@ class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
 
+# Verification & password reset schemas
+class VerificationRequest(BaseModel):
+    email: TestEmailStr
+
+
+class VerificationVerify(BaseModel):
+    email: TestEmailStr
+    code: str = Field(min_length=6, max_length=6)
+
+
+class ResendCodeRequest(BaseModel):
+    email: TestEmailStr
+    purpose: str = Field(default="register", pattern="^(register|reset_password)$")
+
+
+class PasswordResetConfirm(BaseModel):
+    email: TestEmailStr
+    code: str = Field(min_length=6, max_length=6)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class VerificationResponse(BaseModel):
+    status: str
+    email: TestEmailStr
+
+
 # User schemas
 class UserBase(BaseModel):
     email: TestEmailStr
@@ -732,6 +758,11 @@ __all__ = [
     "UserRegister",
     "UserLogin",
     "RefreshTokenRequest",
+    "VerificationRequest",
+    "VerificationVerify",
+    "ResendCodeRequest",
+    "PasswordResetConfirm",
+    "VerificationResponse",
     "UserBase",
     "UserCreate",
     "UserUpdate",

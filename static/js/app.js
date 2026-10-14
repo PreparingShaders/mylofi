@@ -866,6 +866,9 @@ const App = {
             if (e.defaultPrevented) return;
             if (e.target.id === 'login-form') Auth.handleLogin(e, this);
             if (e.target.id === 'register-form') Auth.handleRegister(e, this);
+            if (e.target.id === 'forgot-password-form') Auth.handleForgotPassword(e, this, document.querySelector('.auth-modal'));
+            if (e.target.id === 'verify-code-form') Auth.handleVerifyCode(e, this, document.querySelector('.auth-modal'));
+            if (e.target.id === 'new-password-form') Auth.handleResetPassword(e, this, document.querySelector('.auth-modal'));
         });
 
         document.addEventListener('click', (e) => {

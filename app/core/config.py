@@ -1,6 +1,6 @@
 from functools import lru_cache
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List
 
 
 class Settings(BaseSettings):
@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
     # CORS
-    CORS_ORIGINS: List[str] = ["http://localhost:8000", "http://127.0.0.1:8000"]
+    CORS_ORIGINS: list[str] = ["http://localhost:8000", "http://127.0.0.1:8000"]
 
     # Vision API (legacy)
     VISION_API_URL: str = "http://localhost:8001/analyze"
@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     VAPID_PRIVATE_KEY: str = ""
     VAPID_PUBLIC_KEY: str = ""
     VAPID_CLAIMS_SUB: str = "mailto:admin@mylofi.app"
+
+    # Email (Brevo API)
+    BREVO_API_KEY: str = ""
+    BREVO_SENDER_EMAIL: str = "no-reply@mylofi.app"
+    BREVO_SENDER_NAME: str = "MyLofi"
 
     # File upload
     MAX_FILE_SIZE_MB: int = 10
