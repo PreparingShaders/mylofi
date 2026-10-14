@@ -2188,7 +2188,7 @@ return `
     authForm(mode) {
         const isLogin = mode === 'login';
         return `
-            <form id="${isLogin ? 'login-form' : 'register-form'}" class="auth-modal__form space-y-3" data-auth-mode="${mode}">
+            <form id="${isLogin ? 'login-form' : 'register-form'}" class="auth-modal__form space-y-2.5" data-auth-mode="${mode}">
                 <!-- Inline error banner — populated by Auth.showError() when the
                      server rejects the credentials. Kept inside the form so the
                      user sees the reason right above the fields. -->
@@ -2213,11 +2213,22 @@ return `
                     </div>
                     <div class="auth-modal__field-group">
                         <label for="register-password" class="auth-modal__field-label">Пароль</label>
-                        <input type="password" id="register-password" name="password" placeholder="Пароль" required autocomplete="new-password" class="auth-modal__input">
+                        <input type="password" id="register-password" name="password" placeholder="Пароль" required autocomplete="new-password" class="auth-modal__input" data-auth-password>
+                        <!-- Interactive password strength meter, only for registration -->
+                        <div class="auth-modal__password-meter" data-auth-password-meter hidden>
+                            <div class="auth-modal__meter-bar">
+                                <div class="auth-modal__meter-fill" data-auth-password-fill></div>
+                            </div>
+                            <div class="auth-modal__meter-meta">
+                                <span class="auth-modal__meter-label" data-auth-password-label>Слабый</span>
+                                <span class="auth-modal__meter-req">10+ символов, цифры, прописные и строчные буквы, спецсимволы</span>
+                            </div>
+                        </div>
                     </div>
                     <div class="auth-modal__field-group">
                         <label for="register-password-confirm" class="auth-modal__field-label">Подтвердите пароль</label>
-                        <input type="password" id="register-password-confirm" name="password_confirm" placeholder="Подтвердите пароль" required autocomplete="new-password" class="auth-modal__input">
+                        <input type="password" id="register-password-confirm" name="password_confirm" placeholder="Подтвердите пароль" required autocomplete="new-password" class="auth-modal__input" data-auth-password-confirm>
+                        <div class="auth-modal__match" data-auth-password-match hidden></div>
                     </div>
                 `}
             </form>
@@ -2286,6 +2297,83 @@ return `
         // Lock body scroll
         modalEl._bodyWasLocked = document.body.classList.contains('overflow-hidden');
         document.body.classList.add('overflow-hidden');
+
+        // Interactive password strength meter (registration only).
+        this.initPasswordStrength(modalEl);
+    },
+
+    /**
+     * Live password strength meter for the registration form. Reads the
+     * `data-auth-password` input, scores it against the requirements (10+
+     * chars, lowercase, uppercase, digit, symbol) and paints the meter bar +
+     * label. Also compares the confirmation field and shows a match hint.
+     */
+    initPasswordStrength(modalEl) {
+        const passwordInput = modalEl.querySelector('[data-auth-password]');
+        const confirmInput = modalEl.querySelector('[data-auth-password-confirm]');
+        const meter = modalEl.querySelector('[data-auth-password-meter]');
+        const fill = modalEl.querySelector('[data-auth-password-fill]');
+        const label = modalEl.querySelector('[data-auth-password-label]');
+        const matchEl = modalEl.querySelector('[data-auth-password-match]');
+        if (!passwordInput || !meter || !fill || !label) return;
+
+        const scorePassword = (pw) => {
+            if (!pw) return { score: 0, checks: {} };
+            const checks = {
+                len10: pw.length >= 10,
+                lower: /[a-z]/.test(pw),
+                upper: /[A-Z]/.test(pw),
+                digit: /\d/.test(pw),
+                symbol: /[^A-Za-z0-9]/.test(pw),
+            };
+            const score = Object.values(checks).filter(Boolean).length;
+            return { score, checks };
+        };
+
+        const render = () => {
+            const pw = passwordInput.value || '';
+            const { score, checks } = scorePassword(pw);
+            const hasAny = pw.length > 0;
+            meter.hidden = !hasAny;
+
+            if (!hasAny) {
+                fill.style.width = '0%';
+                fill.className = 'auth-modal__meter-fill';
+                label.textContent = 'Слабый';
+                label.className = 'auth-modal__meter-label';
+                if (matchEl) matchEl.hidden = true;
+                return;
+            }
+
+            const levels = [
+                { key: 0, pct: '20%', color: 'bg-red-500', text: 'Слабый', cls: 'text-red-500' },
+                { key: 1, pct: '40%', color: 'bg-orange-500', text: 'Низкий', cls: 'text-orange-500' },
+                { key: 2, pct: '60%', color: 'bg-amber-500', text: 'Средний', cls: 'text-amber-500' },
+                { key: 3, pct: '80%', color: 'bg-lime-500', text: 'Хороший', cls: 'text-lime-500' },
+                { key: 4, pct: '100%', color: 'bg-emerald-500', text: 'Надежный', cls: 'text-emerald-500' },
+            ];
+            const level = levels[Math.min(score, levels.length - 1)];
+            fill.style.width = level.pct;
+            fill.className = `auth-modal__meter-fill ${level.color}`;
+            label.textContent = level.text;
+            label.className = `auth-modal__meter-label ${level.cls}`;
+
+            if (confirmInput && matchEl) {
+                const confirm = confirmInput.value || '';
+                if (confirm.length > 0) {
+                    matchEl.hidden = false;
+                    const matched = confirm === pw;
+                    matchEl.textContent = matched ? 'Пароли совпадают' : 'Пароли не совпадают';
+                    matchEl.className = `auth-modal__match ${matched ? 'text-emerald-500' : 'text-red-500'}`;
+                } else {
+                    matchEl.hidden = true;
+                }
+            }
+        };
+
+        passwordInput.addEventListener('input', render);
+        if (confirmInput) confirmInput.addEventListener('input', render);
+        render();
     },
 
     closeAuthModal(modalEl) {

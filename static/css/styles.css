@@ -1415,9 +1415,9 @@ input, select, textarea:focus {
 }
 .auth-modal__input {
     width: 100%;
-    padding: 10px 14px;
-    border-radius: 12px;
-    font-size: 15px;
+    padding: 9px 12px;
+    border-radius: 11px;
+    font-size: 14px;
     font-weight: 500;
     background: rgba(244, 244, 245, 0.8);
     border: 1px solid rgba(24, 24, 27, 0.08);
@@ -1472,12 +1472,9 @@ input, select, textarea:focus {
 }
 .auth-modal__footer {
     flex-shrink: 0;
-    position: sticky;
-    bottom: 0;
-    z-index: 10;
     display: flex;
-    gap: 12px;
-    padding: 16px 20px calc(16px + env(safe-area-inset-bottom, 0px));
+    gap: 10px;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
     background: inherit;
     border-top: 1px solid rgba(24, 24, 27, 0.08);
 }
@@ -1490,9 +1487,9 @@ input, select, textarea:focus {
     align-items: center;
     justify-content: center;
     gap: 4px;
-    padding: 12px 16px;
-    border-radius: 14px;
-    font-size: 14px;
+    padding: 9px 12px;
+    border-radius: 12px;
+    font-size: 13px;
     font-weight: 600;
     transition: all 0.15s ease;
 }
@@ -1528,12 +1525,71 @@ input, select, textarea:focus {
     background: #3f3f46;
 }
 
+/* Password strength meter — shown under the registration password field. */
+.auth-modal__password-meter {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 2px;
+    min-width: 0;
+    max-width: 100%;
+    width: 100%;
+}
+.auth-modal__meter-bar {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 6px;
+    border-radius: 999px;
+    background: rgba(24, 24, 27, 0.1);
+    overflow: hidden;
+}
+.dark .auth-modal__meter-bar {
+    background: rgba(255, 255, 255, 0.08);
+}
+.auth-modal__meter-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 999px;
+    background: #71717a;
+    transition: width 0.2s ease, background-color 0.2s ease;
+}
+.auth-modal__meter-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    max-width: 100%;
+}
+.auth-modal__meter-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: #71717a;
+    white-space: nowrap;
+}
+.auth-modal__meter-req {
+    font-size: 10px;
+    font-weight: 500;
+    color: #a1a1aa;
+    white-space: normal;
+    break-words: keep-all;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    max-width: 100%;
+    line-height: 1.35;
+}
+.auth-modal__match {
+    font-size: 12px;
+    font-weight: 600;
+    margin-top: 2px;
+    min-height: 0;
+}
+
 /* Desktop modal: centered with max-width */
 @media (min-width: 640px) {
     .auth-modal__panel {
         margin: auto;
         width: 90%;
-        max-width: 480px;
+        max-width: 440px;
         max-height: 90vh;
         border-radius: 24px;
         box-shadow: 0 24px 64px rgba(0, 0, 0, 0.2);

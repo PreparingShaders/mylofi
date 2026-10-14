@@ -94,19 +94,13 @@ export const Auth = {
     showError(app, message) {
         console.error('[Auth] Error:', message);
         // Render the message inside the open auth modal's inline banner so the
-        // user sees the reason right above the fields (toast may be hidden or
-        // the modal may be the only visible UI on the landing page).
+        // user sees the reason right above the fields. Do NOT also fire a
+        // showToast here — the banner already covers the same UI area and a
+        // second toast would duplicate the message on screen.
         const banner = document.querySelector('.auth-modal [data-auth-error]');
         if (banner) {
             banner.textContent = message;
             banner.classList.remove('hidden');
-        }
-        try {
-            if (typeof app?.showToast === 'function') {
-                app.showToast(message, 'error');
-            }
-        } catch (e) {
-            console.error('[Auth] showToast failed:', e);
         }
         if (!banner && !app?.elements?.toastContainer) {
             window.alert(message);
