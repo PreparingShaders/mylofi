@@ -58,18 +58,19 @@ async def login(page: Page, email: str, password: str = "Password123!"):
         const btn = document.querySelector('#screen-landing button[data-action="show-auth"]');
         if (btn) btn.click();
     }''')
-    await page.wait_for_selector('#screen-auth:not(.hidden)')
-
+    # Auth is modal-based: wait for the login form inside the auth modal
+    await page.wait_for_selector('#login-form')
+    
     # Fill login form
     await page.fill('#login-form input[type="email"]', email)
     await page.fill('#login-form input[type="password"]', password)
-    
+
     # Listen for dialogs (alerts) and console errors
     page.on('dialog', lambda dialog: print(f"[ALERT] {dialog.message}") or dialog.accept())
     page.on('console', lambda msg: print(f"[CONSOLE] {msg.type}: {msg.text}") if msg.type in ['error', 'warning'] else None)
-    
-    # Submit and wait
-    await page.click('#login-form button[type="submit"]')
+
+    # Submit the form (button is outside form, associated via form attribute)
+    await page.click('button[type="submit"][form="login-form"]')
     
     # Wait a bit for response
     await page.wait_for_timeout(3000)
@@ -99,7 +100,8 @@ async def login(page: Page, email: str, password: str = "Password123!"):
 
 
 async def register_new_user(page: Page, email: str, password: str = "Password123!", name: str = "Test User"):
-    """Register a new user. Returns after registration shows login screen."""
+    """Register a new user. After registration, the app auto-logs in and
+    transitions to the main dashboard screen."""
     await page.goto(BASE_URL)
     # Wait for splash screen to be completely removed from DOM
     await page.wait_for_selector('#app-splash', state='detached', timeout=15000)
@@ -112,21 +114,22 @@ async def register_new_user(page: Page, email: str, password: str = "Password123
         const btn = document.querySelector('#screen-landing button[data-action="show-register"]');
         if (btn) btn.click();
     }''')
-    await page.wait_for_selector('#screen-auth:not(.hidden)')
+    # Auth is modal-based: wait for the register form inside the auth modal
+    await page.wait_for_selector('#register-form')
 
     # Fill register form
     await page.fill('#register-form input[name="full_name"]', name)
     await page.fill('#register-form input[type="email"]', email)
     await page.fill('#register-form input[type="password"]', password)
     await page.fill('#register-form input[name="password_confirm"]', password)
-    
+
     # Listen for dialogs (alerts) and console errors
     page.on('dialog', lambda dialog: print(f"[ALERT] {dialog.message}") or dialog.accept())
     page.on('console', lambda msg: print(f"[CONSOLE] {msg.type}: {msg.text}") if msg.type in ['error', 'warning', 'log'] else None)
-    
-    # Submit and wait
+
+    # Submit the form (button is outside form, associated via form attribute)
     print("Submitting register form...")
-    await page.click('#register-form button[type="submit"]')
+    await page.click('button[type="submit"][form="register-form"]')
     
     # Wait a bit for response
     await page.wait_for_timeout(3000)
@@ -149,8 +152,8 @@ async def register_new_user(page: Page, email: str, password: str = "Password123
     except Exception:
         pass
     
-    # Wait for auth screen (login form) to be shown after registration
-    await page.wait_for_selector('#screen-auth:not(.hidden)', timeout=10000)
+    # After registration the app auto-logs in and transitions to the main screen
+    await page.wait_for_selector('#screen-main:not(.hidden)', timeout=10000)
     # Ensure splash is gone
     await page.wait_for_selector('#app-splash', state='detached', timeout=10000)
 
@@ -159,20 +162,18 @@ class TestRegistrationFlow:
     """Test user registration flow."""
 
     async def test_register_new_user(self, page: Page):
-        """Test registration flow for a new user."""
+        """Test registration flow for a new user (auto-login after register)."""
         import uuid
         unique_email = f"test_{uuid.uuid4().hex[:8]}@example.com"
 
-        # Register new user
+        # Register new user - registration now auto-logs in and lands on main screen
         await register_new_user(page, unique_email, "TestPass123!", "Test User")
         
-        # After registration, app shows login screen - now log in
-        await page.fill('#login-form input[type="email"]', unique_email)
-        await page.fill('#login-form input[type="password"]', "TestPass123!")
-        await page.click('#login-form button[type="submit"]')
+        # Verify we're on the main app (already logged in after registration)
         await page.wait_for_selector('#screen-main:not(.hidden)', timeout=10000)
+        assert await page.locator('#screen-main:not(.hidden)').is_visible()
 
-        # Verify we're on the main app (nutrition page)
+        # Verify user is on nutrition page
         await page.wait_for_selector('#page-content')
         # Wait for nutrition page to fully render (uses h3 for title)
         await page.wait_for_selector('h3:has-text("Питание")', timeout=10000)

@@ -1274,34 +1274,250 @@ input, select, textarea:focus {
     background: rgba(9, 9, 11, 0.4);
 }
 
-/* Auth Modal */
+/* Auth Modal - styled to match AI Synergy modal */
 .auth-modal {
-    /* Container handles centering via absolute positioning on panel */
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    background: transparent;
+    pointer-events: auto;
 }
-.auth-modal-backdrop {
-    /* Full screen backdrop with blur */
+.auth-modal__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(9, 9, 11, 0.55);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    animation: auth-modal-fade-in 0.2s ease-out;
 }
-.auth-modal-panel {
-    /* Panel animation handled inline via transform/opacity classes */
+.auth-modal__panel {
+    position: relative;
+    z-index: 1;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: #fafafa;
+    border-radius: 24px 24px 0 0;
+    max-height: 100%;
+    overflow: hidden;
+    animation: auth-modal-slide-up 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+    box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.15);
 }
-
-/* Auth modal form inputs - ensure glass-input works in modal context */
-.auth-modal .glass-input {
+.dark .auth-modal__panel {
+    background: #09090b;
+}
+@keyframes auth-modal-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+@keyframes auth-modal-slide-up {
+    from { opacity: 0; transform: translateY(100%); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.auth-modal__header {
+    flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: calc(16px + env(safe-area-inset-top, 0px)) 20px 16px;
+    background: inherit;
+    border-bottom: 1px solid rgba(24, 24, 27, 0.08);
+    flex-wrap: wrap;
+}
+.dark .auth-modal__header {
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+.auth-modal__header-left {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    min-width: 0;
+    flex: 1;
+}
+.auth-modal__title-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.auth-modal__title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #18181b;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.dark .auth-modal__title {
+    color: #fafafa;
+}
+.auth-modal__close {
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    background: rgba(24, 24, 27, 0.06);
+    color: #52525b;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+.auth-modal__close:hover {
+    background: rgba(24, 24, 27, 0.12);
+    color: #18181b;
+}
+.dark .auth-modal__close {
+    background: rgba(255, 255, 255, 0.06);
+    color: #a1a1aa;
+}
+.dark .auth-modal__close:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fafafa;
+}
+.auth-modal__body {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 16px 20px 24px;
+    min-height: 0;
+}
+.auth-modal__form-container {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+.auth-modal__form {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+.auth-modal__field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.auth-modal__field-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #3f3f46;
+}
+.dark .auth-modal__field-label {
+    color: #d4d4d8;
+}
+.auth-modal__input {
+    width: 100%;
+    padding: 12px 16px;
+    border-radius: 12px;
+    font-size: 15px;
+    font-weight: 500;
     background: rgba(244, 244, 245, 0.8);
     border: 1px solid rgba(24, 24, 27, 0.08);
+    color: #18181b;
+    transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
 }
-.dark .auth-modal .glass-input {
+.auth-modal__input::placeholder {
+    color: #a1a1aa;
+}
+.auth-modal__input:focus {
+    outline: none;
+    border-color: #84cc16;
+    box-shadow: 0 0 0 3px rgba(132, 204, 22, 0.2);
+    background: #fff;
+}
+.dark .auth-modal__input {
     background: rgba(63, 63, 70, 0.55);
     border: 1px solid rgba(255, 255, 255, 0.06);
     color: #fafafa;
 }
-
-/* Auth modal close button hover */
-.auth-modal-panel button[aria-label="Закрыть"]:hover {
-    background: rgba(24, 24, 27, 0.1);
+.dark .auth-modal__input::placeholder {
+    color: #71717a;
 }
-.dark .auth-modal-panel button[aria-label="Закрыть"]:hover {
-    background: rgba(255, 255, 255, 0.1);
+.dark .auth-modal__input:focus {
+    border-color: #84cc16;
+    box-shadow: 0 0 0 3px rgba(132, 204, 22, 0.3);
+    background: #18181b;
+}
+.auth-modal__footer {
+    flex-shrink: 0;
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+    display: flex;
+    gap: 12px;
+    padding: 16px 20px calc(16px + env(safe-area-inset-bottom, 0px));
+    background: inherit;
+    border-top: 1px solid rgba(24, 24, 27, 0.08);
+}
+.dark .auth-modal__footer {
+    border-top-color: rgba(255, 255, 255, 0.08);
+}
+.auth-modal__footer-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 12px 16px;
+    border-radius: 14px;
+    font-size: 14px;
+    font-weight: 600;
+    transition: all 0.15s ease;
+}
+.auth-modal__footer-btn--primary {
+    background: #18181b;
+    border: 1px solid #3f3f46;
+    color: #f4f4f5;
+}
+.dark .auth-modal__footer-btn--primary {
+    background: #27272a;
+    border-color: #4b4b55;
+}
+.auth-modal__footer-btn--primary:hover {
+    background: #27272a;
+}
+.dark .auth-modal__footer-btn--primary:hover {
+    background: #3f3f46;
+}
+.auth-modal__footer-btn--secondary {
+    background: #f4f4f5;
+    border: 1px solid #e4e4e7;
+    color: #18181b;
+}
+.auth-modal__footer-btn--secondary:hover {
+    background: #e4e4e7;
+}
+.dark .auth-modal__footer-btn--secondary {
+    background: #27272a;
+    border-color: #3f3f46;
+    color: #f4f4f5;
+}
+.dark .auth-modal__footer-btn--secondary:hover {
+    background: #3f3f46;
+}
+
+/* Desktop modal: centered with max-width */
+@media (min-width: 640px) {
+    .auth-modal__panel {
+        margin: auto;
+        width: 90%;
+        max-width: 480px;
+        max-height: 90vh;
+        border-radius: 24px;
+        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.2);
+    }
+    .auth-modal__header {
+        border-radius: 24px 24px 0 0;
+    }
+    .auth-modal__footer {
+        border-radius: 0 0 24px 24px;
+    }
 }
 
 /* ============ Landing showcase carousel (per-chapter phone) ============ */
@@ -1392,8 +1608,19 @@ input, select, textarea:focus {
     background: rgba(255, 255, 255, 0.12);
 }
 
-/* Active state is now controlled via Tailwind classes in updateLandingThemeControls:
-   bg-surface-200 dark:bg-zinc-800 text-surface-900 dark:text-zinc-100 shadow-sm */
+/* Active state: explicit theme-aware background so the active chip is
+   always clearly highlighted without a glaring white square in dark mode.
+   This backs up the Tailwind classes applied in updateLandingThemeControls
+   and updateThemeControls. */
+.landing-theme-btn-active {
+    background-color: #e4e4e7;
+    color: #18181b;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+}
+.dark .landing-theme-btn-active {
+    background-color: #27272a;
+    color: #f4f4f5;
+}
 
 /* ============ Compact Nutrition Dashboard ============ */
 /* The ring is centred in a full-width box that reserves room under it, so the

@@ -104,10 +104,12 @@ export const Auth = {
             app.state.user = user;
             app.saveTokens();
             
-            // Close auth modal if open
+            // Close auth modal if open, then transition to the main app.
+            // Await the modal's exit animation so the screen switch doesn't
+            // race with the modal still fading out.
             const authModal = document.querySelector('.auth-modal');
             if (authModal && app.Components?.closeAuthModal) {
-                app.Components.closeAuthModal(authModal);
+                await app.Components.closeAuthModal(authModal);
             }
             
             app.showScreen('main');
@@ -123,17 +125,29 @@ export const Auth = {
         const formData = new FormData(event.target);
         
         try {
-            await API.post('/auth/register', { 
+            const response = await API.post('/auth/register', { 
                 email: formData.get('email'), 
                 password: formData.get('password'), 
                 full_name: formData.get('full_name') 
             });
+            if (!response?.access_token) {
+                throw new Error('Сервер не вернул токен доступа');
+            }
+            app.state.tokens.access = response.access_token;
+            app.state.tokens.refresh = response.refresh_token;
+            app.saveTokens();
+            const user = await API.get('/users/me', app.state.tokens.access);
+            app.state.user = user;
+            app.saveTokens();
+            
             app.showToast('Аккаунт создан', 'success');
             
-            // Close auth modal if open
+            // Close auth modal if open, then transition to the main app.
+            // Await the modal's exit animation so the screen switch doesn't
+            // race with the modal still fading out.
             const authModal = document.querySelector('.auth-modal');
             if (authModal && app.Components?.closeAuthModal) {
-                app.Components.closeAuthModal(authModal);
+                await app.Components.closeAuthModal(authModal);
             }
             
             app.showScreen('main');

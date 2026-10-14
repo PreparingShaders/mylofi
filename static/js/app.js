@@ -1065,26 +1065,16 @@ const App = {
         const modalEl = wrapper.firstElementChild;
         host.appendChild(modalEl);
 
-        // Animate in
-        requestAnimationFrame(() => {
-            const panel = modalEl.querySelector('[data-auth-panel]');
-            const backdrop = modalEl.querySelector('.auth-modal-backdrop');
-            if (panel) {
-                panel.classList.remove('scale-95', 'opacity-0');
-                panel.classList.add('scale-100', 'opacity-100');
-            }
-            if (backdrop) backdrop.classList.remove('opacity-0');
-        });
-
-        // Initialize modal event handlers
+        // Initialize modal event handlers (CSS handles animations)
         Components.initAuthModal(modalEl, this);
     },
 
     closeAuthModal() {
         const modalEl = this.elements.modals?.querySelector('.auth-modal');
         if (modalEl) {
-            Components.closeAuthModal(modalEl);
+            return Components.closeAuthModal(modalEl);
         }
+        return Promise.resolve();
     },
 
     async confirmAiSynergySleep() {

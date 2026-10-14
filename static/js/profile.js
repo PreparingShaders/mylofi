@@ -5,7 +5,7 @@ import { Theme } from './theme.js';
 import { Utils } from './utils.js';
 
 export const THEME_OPTION_BASE = 'flex items-center justify-center gap-1 px-1 py-2 rounded-lg text-[11px] sm:text-xs font-medium transition-all min-w-0';
-export const THEME_OPTION_ACTIVE = 'bg-white dark:bg-zinc-100 text-surface-900 dark:text-zinc-950 shadow-sm';
+export const THEME_OPTION_ACTIVE = 'bg-surface-200 dark:bg-zinc-800 text-surface-900 dark:text-zinc-100 shadow-sm';
 export const THEME_OPTION_IDLE = 'text-surface-500 dark:text-zinc-400 hover:text-surface-900 dark:hover:text-zinc-200';
 
 const THEME_OPTIONS = [

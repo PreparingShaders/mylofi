@@ -2151,23 +2151,29 @@ return `
     /**
      * Auth Modal component for Login/Register forms.
      * Renders a modal with backdrop, close button, and form switching.
+     * Styled to match the AI Synergy modal design.
      */
     authModal(initialMode = 'login') {
         return `
-            <div class="auth-modal fixed inset-0 z-50 pointer-events-auto" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
-                <div class="auth-modal-backdrop absolute inset-0 bg-black/40 dark:bg-black/60 backdrop-blur-sm" data-action="close-auth-modal"></div>
-                <div class="auth-modal-panel absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md mx-4 bg-white dark:bg-zinc-900 rounded-2xl shadow-xl border border-zinc-200 dark:border-white/10 overflow-hidden transform transition-all duration-200 scale-95 opacity-0"
-                     data-auth-panel>
-                    <div class="flex items-center justify-between p-4 border-b border-zinc-200 dark:border-white/10">
-                        <h2 id="auth-modal-title" class="text-lg font-bold text-zinc-900 dark:text-zinc-100">
-                            <span data-auth-mode-label="${initialMode === 'login' ? 'Вход' : 'Регистрация'}">${initialMode === 'login' ? 'Войти' : 'Создать дневник'}</span>
-                        </h2>
-                        <button type="button" data-action="close-auth-modal" aria-label="Закрыть" class="w-8 h-8 rounded-xl text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-white/5 flex items-center justify-center transition-colors">
+            <div class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" tabindex="-1">
+                <div class="auth-modal__backdrop" data-action="close-auth-modal"></div>
+                <div class="auth-modal__panel" data-action="close-auth-modal" data-auth-panel>
+                    <div class="auth-modal__header">
+                        <div class="auth-modal__header-left">
+                            <div class="auth-modal__title-group">
+                                <h2 id="auth-modal-title" class="auth-modal__title">
+                                    <span data-auth-mode-label="${initialMode === 'login' ? 'Вход' : 'Регистрация'}">${initialMode === 'login' ? 'Войти' : 'Создать дневник'}</span>
+                                </h2>
+                            </div>
+                        </div>
+                        <button type="button" class="auth-modal__close" data-action="close-auth-modal" aria-label="Закрыть">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6l12 12M18 6L6 18"/></svg>
                         </button>
                     </div>
-                    <div class="p-4" data-auth-form-container>
-                        ${this.authForm(initialMode)}
+                    <div class="auth-modal__body">
+                        <div class="auth-modal__form-container" data-auth-form-container>
+                            ${this.authForm(initialMode)}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -2177,25 +2183,43 @@ return `
     authForm(mode) {
         const isLogin = mode === 'login';
         return `
-            <form id="${isLogin ? 'login-form' : 'register-form'}" class="space-y-4" data-auth-mode="${mode}">
+            <form id="${isLogin ? 'login-form' : 'register-form'}" class="auth-modal__form space-y-4" data-auth-mode="${mode}">
                 ${isLogin ? `
-                    <input type="email" name="email" placeholder="Email" required autocomplete="email" class="w-full px-4 py-3 rounded-xl glass-input">
-                    <input type="password" name="password" placeholder="Пароль" required autocomplete="current-password" class="w-full px-4 py-3 rounded-xl glass-input">
-                    <button type="submit" class="w-full py-3 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl font-semibold">Войти</button>
+                    <div class="auth-modal__field-group">
+                        <label for="login-email" class="auth-modal__field-label">Email</label>
+                        <input type="email" id="login-email" name="email" placeholder="Email" required autocomplete="email" class="auth-modal__input">
+                    </div>
+                    <div class="auth-modal__field-group">
+                        <label for="login-password" class="auth-modal__field-label">Пароль</label>
+                        <input type="password" id="login-password" name="password" placeholder="Пароль" required autocomplete="current-password" class="auth-modal__input">
+                    </div>
                 ` : `
-                    <input type="email" name="email" placeholder="Email" required autocomplete="email" class="w-full px-4 py-3 rounded-xl glass-input">
-                    <input type="text" name="full_name" placeholder="Имя" autocomplete="name" class="w-full px-4 py-3 rounded-xl glass-input">
-                    <input type="password" name="password" placeholder="Пароль" required autocomplete="new-password" class="w-full px-4 py-3 rounded-xl glass-input">
-                    <input type="password" name="password_confirm" placeholder="Подтвердите пароль" required autocomplete="new-password" class="w-full px-4 py-3 rounded-xl glass-input">
-                    <button type="submit" class="w-full py-3 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl font-semibold">Зарегистрироваться</button>
+                    <div class="auth-modal__field-group">
+                        <label for="register-email" class="auth-modal__field-label">Email</label>
+                        <input type="email" id="register-email" name="email" placeholder="Email" required autocomplete="email" class="auth-modal__input">
+                    </div>
+                    <div class="auth-modal__field-group">
+                        <label for="register-name" class="auth-modal__field-label">Имя</label>
+                        <input type="text" id="register-name" name="full_name" placeholder="Имя" autocomplete="name" class="auth-modal__input">
+                    </div>
+                    <div class="auth-modal__field-group">
+                        <label for="register-password" class="auth-modal__field-label">Пароль</label>
+                        <input type="password" id="register-password" name="password" placeholder="Пароль" required autocomplete="new-password" class="auth-modal__input">
+                    </div>
+                    <div class="auth-modal__field-group">
+                        <label for="register-password-confirm" class="auth-modal__field-label">Подтвердите пароль</label>
+                        <input type="password" id="register-password-confirm" name="password_confirm" placeholder="Подтвердите пароль" required autocomplete="new-password" class="auth-modal__input">
+                    </div>
                 `}
-                <p class="text-center text-sm text-zinc-500 dark:text-zinc-400 mt-2">
-                    ${isLogin ? 'Нет аккаунта? ' : 'Уже есть аккаунт? '}
-                    <button type="button" data-action="switch-auth-mode" data-mode="${isLogin ? 'register' : 'login'}" class="text-lime-600 dark:text-lime-400 font-medium hover:underline">
-                        ${isLogin ? 'Зарегистрироваться' : 'Войти'}
-                    </button>
-                </p>
             </form>
+            <div class="auth-modal__footer">
+                <button type="button" class="auth-modal__footer-btn auth-modal__footer-btn--secondary" data-action="switch-auth-mode" data-mode="${isLogin ? 'register' : 'login'}">
+                    ${isLogin ? 'Зарегистрироваться' : 'Войти'}
+                </button>
+                <button type="submit" form="${isLogin ? 'login-form' : 'register-form'}" class="auth-modal__footer-btn auth-modal__footer-btn--primary">
+                    ${isLogin ? 'Войти' : 'Создать дневник'}
+                </button>
+            </div>
         `;
     },
 
@@ -2205,7 +2229,7 @@ return `
      */
     initAuthModal(modalEl, app) {
         // Close on backdrop click
-        modalEl.querySelector('.auth-modal-backdrop')?.addEventListener('click', () => {
+        modalEl.querySelector('.auth-modal__backdrop')?.addEventListener('click', () => {
             this.closeAuthModal(modalEl);
         });
 
@@ -2221,10 +2245,11 @@ return `
         document.addEventListener('keydown', escHandler);
         modalEl._authEscHandler = escHandler;
 
-        // Form switching
-        modalEl.querySelectorAll('[data-action="switch-auth-mode"]').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const newMode = e.target.dataset.mode;
+        // Event delegation for form switching and form submit
+        modalEl.addEventListener('click', (e) => {
+            const switchBtn = e.target.closest('[data-action="switch-auth-mode"]');
+            if (switchBtn) {
+                const newMode = switchBtn.dataset.mode;
                 const container = modalEl.querySelector('[data-auth-form-container]');
                 const titleLabel = modalEl.querySelector('[data-auth-mode-label]');
                 if (container) container.innerHTML = this.authForm(newMode);
@@ -2232,25 +2257,16 @@ return `
                     titleLabel.dataset.authModeLabel = newMode === 'login' ? 'Вход' : 'Регистрация';
                     titleLabel.textContent = newMode === 'login' ? 'Войти' : 'Создать дневник';
                 }
-                // Re-attach form submit handlers
-                const form = container.querySelector('form');
-                if (form) {
-                    form.addEventListener('submit', (e) => {
-                        if (form.id === 'login-form') app.Auth.handleLogin(e, app);
-                        if (form.id === 'register-form') app.Auth.handleRegister(e, app);
-                    });
-                }
-            });
+            }
         });
 
-        // Form submit handlers
-        const form = modalEl.querySelector('form');
-        if (form) {
-            form.addEventListener('submit', (e) => {
+        modalEl.addEventListener('submit', (e) => {
+            const form = e.target.closest('form');
+            if (form) {
                 if (form.id === 'login-form') app.Auth.handleLogin(e, app);
                 if (form.id === 'register-form') app.Auth.handleRegister(e, app);
-            });
-        }
+            }
+        });
 
         // Lock body scroll
         modalEl._bodyWasLocked = document.body.classList.contains('overflow-hidden');
@@ -2258,7 +2274,7 @@ return `
     },
 
     closeAuthModal(modalEl) {
-        if (!modalEl) return;
+        if (!modalEl) return Promise.resolve();
 
         // Remove Escape handler
         if (modalEl._authEscHandler) {
@@ -2271,11 +2287,16 @@ return `
 
         // Animate out
         const panel = modalEl.querySelector('[data-auth-panel]');
-        const backdrop = modalEl.querySelector('.auth-modal-backdrop');
+        const backdrop = modalEl.querySelector('.auth-modal__backdrop');
         if (panel) panel.classList.add('scale-95', 'opacity-0');
         if (backdrop) backdrop.classList.add('opacity-0');
 
-        setTimeout(() => modalEl.remove(), 200);
+        return new Promise(resolve => {
+            setTimeout(() => {
+                modalEl.remove();
+                resolve();
+            }, 200);
+        });
     },
 
 };
