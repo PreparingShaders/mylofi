@@ -29,6 +29,7 @@ const App = {
         currentSessionId: null,
         landingCarouselState: {},
         _showcaseImages: null,
+        landingThemeState: { mode: 'system', dark: false },
     },
     
     elements: {},
@@ -245,9 +246,9 @@ const App = {
 
         /* ============ Landing showcase data (per-chapter phones) ============ */
 
-        // Three chapters: nutrition, workouts, and the upcoming AI Synergy module.
-        // The 3rd chapter carries a "Скоро" badge and a placeholder slide inside
-        // the phone carousel; its screenshot (image_26.png) is already staged.
+// Three chapters: nutrition, workouts, and the AI Synergy promo block.
+        // The 3rd chapter is a fully-realised section with a live phone
+        // carousel served from the sinergy screenshot folder.
         const showcaseChapters = [
             {
                 id: 'landing-nutrition',
@@ -276,71 +277,58 @@ const App = {
             {
                 id: 'landing-ai-synergy',
                 index: 2,
-                tag: 'ИИ-СИНЕРГИЯ · СКОРО',
-                title: 'Годами занимаешься, а спортивного тела нет?',
-                text: 'Уникальный комплексный анализ, объединяющий данные о питании и тренировках в единую систему. ИИ наглядно показывает скрытые причины отсутствия результатов, подсвечивает сильные и слабые стороны твоего прогресса.',
+                tag: 'ИИ-СИНЕРГИЯ',
+                title: 'Союз питания и тренировок в одном ИИ-анализе',
+                text: 'ИИ не просто считает калории и подходы — он видит причинно-следственные связи. Узнайте, как дефицит белка или калорий прямо сейчас блокирует рост силы и массы, и получите точечные рекомендации по выходу из застоя.',
                 points: [
                     'Связь питания и спорта. Анализ того, как твой рацион влияет на силовые показатели и восстановление.',
                     'Точки роста. Четкое понимание, что именно нужно изменить в плане, чтобы сдвинуть вес с мертвой точки.',
-                    'Модуль в разработке. Скоро откроем доступ к глубокой аналитике твоего метаболизма и прогресса.',
+                    'Глубокий ИИ-анализ. Сводные рекомендации на основе одновременного разбора питания и тренировок.',
                 ],
-                comingSoon: true,
             },
         ];
 
         // Screenshot assets — one primary slide per chapter, plus optional extra
         // slides for the chapters that already have several screenshots on disk.
         // The phone carousel cross-fades between the slides of the active chapter.
+        //
+        // Paths are theme-aware: each slide carries a Black (dark) and a White
+        // (light) filename. When the landing is in dark mode the carousel serves
+        // the Black set, otherwise the White set, so the screenshots always
+        // match the active UI theme. Switching the theme rewrites every <img>
+        // src via applyLandingTheme().
         const showcaseImages = [
             {
-                src: '/static/images/image_24.png',
+                folder: 'nutrition',
                 alt: 'Питание',
                 slides: [
-                    { src: '/static/images/image_24.png', alt: 'Питание' },
-                    { src: '/static/images/nutrituon/Screenshot iPhone 17 Pro Max 10.10.2026 at 22.05.43.png', alt: 'Питание' },
-                    { src: '/static/images/nutrituon/Screenshot iPhone 17 Pro Max 10.10.2026 at 22.08.32.png', alt: 'Питание' },
-                    { src: '/static/images/nutrituon/Screenshot iPhone 17 Pro Max 10.10.2026 at 22.12.41.png', alt: 'Питание' },
+                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.06.49.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.12.png' },
+                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.06.56.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.18.png' },
+                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.07.08.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.24.png' },
+                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.07.34.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.33.png' },
+                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.07.53.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.09.18.png' },
                 ],
             },
             {
-                src: '/static/images/image_25.png',
+                folder: 'workout',
                 alt: 'Тренировки',
                 slides: [
-                    { src: '/static/images/image_25.png', alt: 'Тренировки' },
-                    { src: '/static/images/workout/Screenshot iPhone 17 Pro Max 10.10.2026 at 22.13.25.png', alt: 'Тренировки' },
-                    { src: '/static/images/workout/Screenshot iPhone 17 Pro Max 10.10.2026 at 22.14.02.png', alt: 'Тренировки' },
-                    { src: '/static/images/workout/Screenshot iPhone 17 Pro Max 10.10.2026 at 22.14.38.png', alt: 'Тренировки' },
-                    { src: '/static/images/workout/Screenshot iPhone 17 Pro Max 10.10.2026 at 22.16.41.png', alt: 'Тренировки' },
+                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.10.44.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.12.28.png' },
+                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.11.02.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.12.36.png' },
+                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.11.20.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.13.11.png' },
+                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.11.52.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.13.22.png' },
+                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.11.58.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.14.14.png' },
                 ],
             },
             {
-                src: '/static/images/image_26.png',
+                folder: 'sinergy',
                 alt: 'ИИ-Синергия',
-                comingSoon: true,
                 slides: [
-                    { src: '/static/images/image_26.png', alt: 'ИИ-Синергия' },
+                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.00.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.09.37.png' },
+                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.04.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.09.50.png' },
                 ],
             },
         ];
-
-        // Placeholder slide for the "coming soon" AI Synergy chapter: a tinted
-        // panel with a badge instead of a live screenshot.
-        const comingSoonSlide = (chapterIndex) => `
-            <div data-chapter="${chapterIndex}" data-slide="0"
-                 class="landing-showcase-screen absolute inset-0 w-full h-full flex flex-col items-center justify-center text-center px-8 bg-gradient-to-b from-surface-50 to-surface-100 dark:from-zinc-950 dark:to-zinc-900">
-                <span class="inline-flex items-center gap-1.5 rounded-full border border-lime-500/30 bg-lime-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-lime-700 dark:text-lime-400 mb-6">
-                    <span class="h-1.5 w-1.5 rounded-full bg-lime-400 animate-pulse"></span>
-                    Скоро
-                </span>
-                <div class="w-14 h-14 rounded-2xl bg-lime-500/10 border border-lime-500/20 flex items-center justify-center mb-5 shadow-[0_0_24px_rgba(132,204,22,0.18)]">
-                    <svg class="w-7 h-7 text-lime-400" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" aria-hidden="true">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 3l1.5 5.5L19 9.5l-4 4 1.5 5.5L12 17l-4.5 2.5L9 13.5 5 9l5.5-1.5z"></path>
-                    </svg>
-                </div>
-                <p class="text-sm font-medium text-surface-500 dark:text-zinc-300">ИИ-Синергия</p>
-                <p class="mt-1 text-xs text-surface-600 dark:text-zinc-500">Модуль в разработке</p>
-            </div>
-        `;
 
         // Device shell wrapping each chapter's slide stack. aspect-[9/19.5]
         // matches the iPhone 17 Pro Max screen proportions (780x1695 screenshots)
@@ -364,11 +352,9 @@ const App = {
         // creating the Zig-Zag pattern. Arrows sit outside the phone frame so
         // they never overlap the screen.
         const chapterBlock = (chapter) => {
-            const slides = chapter.comingSoon
-                ? comingSoonSlide(chapter.index)
-                : showcaseSlides(chapter.index);
+            const slides = showcaseSlides(chapter.index);
 
-            const hasMultiple = !chapter.comingSoon && showcaseImages[chapter.index].slides.length > 1;
+            const hasMultiple = showcaseImages[chapter.index].slides.length > 1;
 
             const dots = hasMultiple
                 ? Array.from({ length: showcaseImages[chapter.index].slides.length }, (_, i) => `
@@ -436,11 +422,12 @@ const App = {
 
         // Renders the slide stack for a chapter's phone frame. Each slide is
         // absolutely positioned so the cross-fade is a pure opacity toggle.
+        // Paths are theme-aware: they are rewritten by landingImageSrc() so the
+        // carousel always serves the Black or White screenshot set.
         const showcaseSlides = (chapterIndex) => {
             const chapter = showcaseImages[chapterIndex];
-            const slides = chapter.slides || [{ src: chapter.src, alt: chapter.alt }];
-            return slides.map((slide, i) => `
-                <img data-chapter="${chapterIndex}" data-slide="${i}" src="${slide.src}" alt="${slide.alt}"
+            return chapter.slides.map((slide, i) => `
+                <img data-chapter="${chapterIndex}" data-slide="${i}" src="${this.landingImageSrc(chapter.folder, slide)}" alt="${chapter.alt}"
                      class="landing-showcase-screen absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ease-in-out ${i === 0 ? 'opacity-100' : 'opacity-0 pointer-events-none'}"
                      ${i === 0 ? '' : 'aria-hidden="true"'} />
             `).join('');
@@ -475,6 +462,18 @@ const App = {
                                         <a href="#landing-workouts" class="px-3 py-2 text-sm font-medium text-surface-600 dark:text-zinc-400 hover:text-surface-900 dark:hover:text-zinc-100 transition-colors">Тренировки</a>
                                         <a href="#landing-ai-synergy" class="px-3 py-2 text-sm font-medium text-surface-600 dark:text-zinc-400 hover:text-surface-900 dark:hover:text-zinc-100 transition-colors">ИИ-Синергия</a>
                                     </nav>
+                                    <!-- Public theme switcher (Light / Dark / System) -->
+                                    <div id="landing-theme" class="flex items-center gap-1 p-1 rounded-xl bg-surface-100 dark:bg-zinc-800/60 border border-surface-200 dark:border-white/5">
+                                        <button type="button" data-action="set-theme" data-theme="light" data-landing-theme-btn aria-label="Светлая тема" class="landing-theme-btn w-8 h-8 flex items-center justify-center rounded-lg transition-all">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.36 6.36l-.7-.7M6.34 6.34l-.7-.7m12.72 0l-.7.7M6.34 17.66l-.7.7M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+                                        </button>
+                                        <button type="button" data-action="set-theme" data-theme="dark" data-landing-theme-btn aria-label="Тёмная тема" class="landing-theme-btn w-8 h-8 flex items-center justify-center rounded-lg transition-all">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+                                        </button>
+                                        <button type="button" data-action="set-theme" data-theme="system" data-landing-theme-btn aria-label="Системная тема" class="landing-theme-btn w-8 h-8 flex items-center justify-center rounded-lg transition-all">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                                        </button>
+                                    </div>
                                     <button data-action="show-auth" class="px-5 py-2.5 rounded-xl border border-surface-200 dark:border-zinc-800 text-sm font-medium text-surface-500 dark:text-zinc-300 hover:text-surface-900 dark:hover:text-zinc-100 hover:border-surface-300 dark:hover:border-zinc-700 hover:bg-surface-100 dark:hover:bg-zinc-900 transition-all">
                                         Войти
                                     </button>
@@ -512,6 +511,20 @@ const App = {
                                 <a data-action="close-landing-menu" href="#landing-nutrition" class="px-4 py-3 rounded-xl text-sm font-medium text-surface-500 dark:text-zinc-300 hover:text-surface-900 dark:hover:text-zinc-100 hover:bg-surface-100 dark:hover:bg-zinc-900 transition-colors">Питание</a>
                                 <a data-action="close-landing-menu" href="#landing-workouts" class="px-4 py-3 rounded-xl text-sm font-medium text-surface-500 dark:text-zinc-300 hover:text-surface-900 dark:hover:text-zinc-100 hover:bg-surface-100 dark:hover:bg-zinc-900 transition-colors">Тренировки</a>
                                 <a data-action="close-landing-menu" href="#landing-ai-synergy" class="px-4 py-3 rounded-xl text-sm font-medium text-surface-500 dark:text-zinc-300 hover:text-surface-900 dark:hover:text-zinc-100 hover:bg-surface-100 dark:hover:bg-zinc-900 transition-colors">ИИ-Синергия</a>
+                                <div class="flex items-center justify-between gap-3 px-1 py-2">
+                                    <span class="text-xs font-semibold uppercase tracking-wider text-surface-400 dark:text-zinc-500">Тема</span>
+                                    <div id="landing-theme-mobile" class="flex items-center gap-1 p-1 rounded-xl bg-surface-100 dark:bg-zinc-800/60 border border-surface-200 dark:border-white/5">
+                                        <button type="button" data-action="set-theme" data-theme="light" data-landing-theme-btn aria-label="Светлая тема" class="landing-theme-btn w-8 h-8 flex items-center justify-center rounded-lg transition-all">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.36 6.36l-.7-.7M6.34 6.34l-.7-.7m12.72 0l-.7.7M6.34 17.66l-.7.7M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+                                        </button>
+                                        <button type="button" data-action="set-theme" data-theme="dark" data-landing-theme-btn aria-label="Тёмная тема" class="landing-theme-btn w-8 h-8 flex items-center justify-center rounded-lg transition-all">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+                                        </button>
+                                        <button type="button" data-action="set-theme" data-theme="system" data-landing-theme-btn aria-label="Системная тема" class="landing-theme-btn w-8 h-8 flex items-center justify-center rounded-lg transition-all">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                                        </button>
+                                    </div>
+                                </div>
                                 <div class="h-px bg-surface-200 dark:bg-zinc-800 my-3"></div>
                                 <button data-action="show-auth" class="w-full px-4 py-3 rounded-xl border border-surface-200 dark:border-zinc-800 text-sm font-medium text-surface-500 dark:text-zinc-300 hover:text-surface-900 dark:hover:text-zinc-100 hover:bg-surface-100 dark:hover:bg-zinc-900 transition-colors">
                                     Войти
@@ -592,6 +605,78 @@ const App = {
         `;
 
         this.initLandingShowcase();
+        this.initLandingTheme();
+    },
+
+    /**
+     * Theme-aware screenshot paths for the landing carousels.
+     *
+     * The phone mockups are exported twice: a dark-graphite set under
+     * static/images/Black/<folder>/... and a light one under
+     * static/images/White/<folder>/.... When the landing is rendered in dark
+     * mode we serve the Black set, otherwise the White set, so the screenshots
+     * always match the active UI theme.
+     */
+    landingImageSrc(folder, slide) {
+        const dark = this.state.landingThemeState.dark;
+        const set = dark ? 'Black' : 'White';
+        const filename = slide && typeof slide === 'object'
+            ? (dark ? slide.black : slide.white)
+            : slide;
+        return `/static/images/${set}/${folder}/${filename}`;
+    },
+
+    /**
+     * Re-writes every landing carousel <img> src to match the current theme
+     * and refreshes the theme-switcher highlight. Safe to call repeatedly.
+     */
+    applyLandingTheme() {
+        const root = this.elements.screens.landing;
+        if (!root) return;
+
+        const dark = Theme.isDark();
+        this.state.landingThemeState = { mode: Theme.getMode(), dark };
+
+        root.querySelectorAll('img.landing-showcase-screen').forEach(img => {
+            const ci = Number(img.dataset.chapter);
+            const chapter = showcaseImages[ci];
+            if (!chapter) return;
+            const slide = chapter.slides[Number(img.dataset.slide)];
+            if (!slide) return;
+            img.src = this.landingImageSrc(chapter.folder, slide);
+        });
+
+        this.updateLandingThemeControls(Theme.getMode());
+    },
+
+    /**
+     * Initialise the public theme switcher rendered inside the landing header:
+     * sync the active highlight, and listen for theme changes (manual toggle
+     * or system change routed through Theme) so the screenshots flip too.
+     */
+    initLandingTheme() {
+        this.applyLandingTheme();
+
+        if (!this._landingThemeListener) {
+            const handler = () => this.applyLandingTheme();
+            this._landingThemeListener = handler;
+            document.addEventListener('themechange', handler);
+        }
+    },
+
+    updateLandingThemeControls(mode) {
+        document.querySelectorAll('[data-landing-theme-btn]').forEach(btn => {
+            const isActive = btn.dataset.theme === mode;
+            btn.classList.toggle('landing-theme-btn-active', isActive);
+            btn.classList.toggle('text-surface-900', isActive);
+            btn.classList.toggle('dark:text-zinc-100', isActive);
+            btn.classList.toggle('bg-white', isActive);
+            btn.classList.toggle('dark:bg-zinc-100', isActive);
+            btn.classList.toggle('shadow-sm', isActive);
+            btn.classList.toggle('text-surface-400', !isActive);
+            btn.classList.toggle('dark:text-zinc-500', !isActive);
+            btn.setAttribute('aria-pressed', String(isActive));
+        });
     },
 
     /**
@@ -673,7 +758,7 @@ const App = {
         root.addEventListener('click', carouselListener);
         this._landingCarouselListener = carouselListener;
 
-        // Initialise every chapter's carousel at slide 0 (skip coming-soon).
+        // Initialise every chapter's carousel at slide 0.
         Array.from(root.querySelectorAll('[data-chapter-index]')).forEach(chapterEl => {
             const ci = Number(chapterEl.dataset.chapterIndex);
             if (root.querySelector(`.landing-carousel-arrow[data-chapter="${ci}"]`)) {
@@ -1182,10 +1267,15 @@ const App = {
 
     updateThemeControls(mode) {
         document.querySelectorAll('[data-action="set-theme"]').forEach(btn => {
+            // The landing header has its own compact theme switcher; let
+            // updateLandingThemeControls own its highlight instead of
+            // flattening these buttons into the profile toggle classes.
+            if (btn.hasAttribute('data-landing-theme-btn')) return;
             const isActive = btn.dataset.theme === mode;
             btn.className = THEME_OPTION_BASE + ' ' + (isActive ? THEME_OPTION_ACTIVE : THEME_OPTION_IDLE);
             btn.setAttribute('aria-pressed', String(isActive));
         });
+        this.updateLandingThemeControls(mode);
     },
 
     showToast(message, type = 'info') {

@@ -1340,6 +1340,24 @@ input, select, textarea:focus {
     box-shadow: 0 0 10px rgba(163, 230, 53, 0.4);
 }
 
+/* Public theme switcher in the landing header (Light / Dark / System). The
+   active icon is lifted onto a contrasting chip so it stays legible in both
+   themes; the inactive icons fade to the current text-sec color. */
+.landing-theme-btn {
+    color: #71717a;
+}
+.dark .landing-theme-btn {
+    color: #a1a1aa;
+}
+.landing-theme-btn-active {
+    color: #18181b;
+    background: #ffffff;
+}
+.dark .landing-theme-btn-active {
+    color: #09090b;
+    background: #fafafa;
+}
+
 /* ============ Compact Nutrition Dashboard ============ */
 /* The ring is centred in a full-width box that reserves room under it, so the
    carbs label can hang below the circle without pushing the card taller.
