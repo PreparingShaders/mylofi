@@ -103,6 +103,13 @@ export const Auth = {
             const user = await API.get('/users/me', app.state.tokens.access);
             app.state.user = user;
             app.saveTokens();
+            
+            // Close auth modal if open
+            const authModal = document.querySelector('.auth-modal');
+            if (authModal && app.Components?.closeAuthModal) {
+                app.Components.closeAuthModal(authModal);
+            }
+            
             app.showScreen('main');
             app.showPage('nutrition');
         } catch (error) {
@@ -122,8 +129,15 @@ export const Auth = {
                 full_name: formData.get('full_name') 
             });
             app.showToast('Аккаунт создан', 'success');
-            app.showScreen('auth');
-            this.renderLogin(app.elements.screens.auth, app);
+            
+            // Close auth modal if open
+            const authModal = document.querySelector('.auth-modal');
+            if (authModal && app.Components?.closeAuthModal) {
+                app.Components.closeAuthModal(authModal);
+            }
+            
+            app.showScreen('main');
+            app.showPage('nutrition');
         } catch (error) {
             console.error('[Auth] Register error:', error);
             this.showError(app, this.extractErrorMessage(error));

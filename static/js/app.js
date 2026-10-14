@@ -82,6 +82,8 @@ const App = {
         console.log('[App] Initializing...');
         Theme.init();
         this.cacheElements();
+        this.Components = Components; // Expose Components for auth modal handling
+        this.Auth = Auth; // Expose Auth for components
 
         try {
             // Проверка элементов перед продолжением
@@ -678,10 +680,10 @@ const App = {
         document.querySelectorAll('[data-landing-theme-btn]').forEach(btn => {
             const isActive = btn.dataset.theme === mode;
             btn.classList.toggle('landing-theme-btn-active', isActive);
+            btn.classList.toggle('bg-surface-200', isActive);
+            btn.classList.toggle('dark:bg-zinc-800', isActive);
             btn.classList.toggle('text-surface-900', isActive);
             btn.classList.toggle('dark:text-zinc-100', isActive);
-            btn.classList.toggle('bg-white', isActive);
-            btn.classList.toggle('dark:bg-zinc-100', isActive);
             btn.classList.toggle('shadow-sm', isActive);
             btn.classList.toggle('text-surface-400', !isActive);
             btn.classList.toggle('dark:text-zinc-500', !isActive);
@@ -886,13 +888,14 @@ const App = {
         switch (action) {
             case 'show-auth':
                 this.toggleLandingMenu(false);
-                this.showScreen('auth');
-                Auth.renderLogin(this.elements.screens.auth, this);
+                this.openAuthModal('login');
                 break;
             case 'show-register':
                 this.toggleLandingMenu(false);
-                this.showScreen('auth');
-                Auth.renderRegister(this.elements.screens.auth, this);
+                this.openAuthModal('register');
+                break;
+            case 'close-auth-modal':
+                this.closeAuthModal();
                 break;
             case 'toggle-landing-menu':
                 this.toggleLandingMenu();
@@ -1052,6 +1055,36 @@ const App = {
         if (backdrop) backdrop.classList.add('is-closing');
 
         setTimeout(() => { modalEl.remove(); }, 220);
+    },
+
+    openAuthModal(mode = 'login') {
+        const host = this.elements.modals || document.body;
+        const html = Components.authModal(mode);
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = html;
+        const modalEl = wrapper.firstElementChild;
+        host.appendChild(modalEl);
+
+        // Animate in
+        requestAnimationFrame(() => {
+            const panel = modalEl.querySelector('[data-auth-panel]');
+            const backdrop = modalEl.querySelector('.auth-modal-backdrop');
+            if (panel) {
+                panel.classList.remove('scale-95', 'opacity-0');
+                panel.classList.add('scale-100', 'opacity-100');
+            }
+            if (backdrop) backdrop.classList.remove('opacity-0');
+        });
+
+        // Initialize modal event handlers
+        Components.initAuthModal(modalEl, this);
+    },
+
+    closeAuthModal() {
+        const modalEl = this.elements.modals?.querySelector('.auth-modal');
+        if (modalEl) {
+            Components.closeAuthModal(modalEl);
+        }
     },
 
     async confirmAiSynergySleep() {

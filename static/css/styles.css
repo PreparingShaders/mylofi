@@ -1274,6 +1274,36 @@ input, select, textarea:focus {
     background: rgba(9, 9, 11, 0.4);
 }
 
+/* Auth Modal */
+.auth-modal {
+    /* Container handles centering via absolute positioning on panel */
+}
+.auth-modal-backdrop {
+    /* Full screen backdrop with blur */
+}
+.auth-modal-panel {
+    /* Panel animation handled inline via transform/opacity classes */
+}
+
+/* Auth modal form inputs - ensure glass-input works in modal context */
+.auth-modal .glass-input {
+    background: rgba(244, 244, 245, 0.8);
+    border: 1px solid rgba(24, 24, 27, 0.08);
+}
+.dark .auth-modal .glass-input {
+    background: rgba(63, 63, 70, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    color: #fafafa;
+}
+
+/* Auth modal close button hover */
+.auth-modal-panel button[aria-label="Закрыть"]:hover {
+    background: rgba(24, 24, 27, 0.1);
+}
+.dark .auth-modal-panel button[aria-label="Закрыть"]:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
 /* ============ Landing showcase carousel (per-chapter phone) ============ */
 /* Each chapter renders its own autonomous phone: the slides are stacked inside
    the frame and cross-faded with a pure opacity toggle. Arrows sit outside the
@@ -1347,18 +1377,23 @@ input, select, textarea:focus {
    themes; the inactive icons fade to the current text-sec color. */
 .landing-theme-btn {
     color: #71717a;
+    background: rgba(24, 24, 27, 0.06);
+    border: 1px solid transparent;
+    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 .dark .landing-theme-btn {
     color: #a1a1aa;
+    background: rgba(255, 255, 255, 0.06);
 }
-.landing-theme-btn-active {
-    color: #18181b;
-    background: #ffffff;
+.landing-theme-btn:hover:not(.landing-theme-btn-active) {
+    background: rgba(24, 24, 27, 0.12);
 }
-.dark .landing-theme-btn-active {
-    color: #09090b;
-    background: #fafafa;
+.dark .landing-theme-btn:hover:not(.landing-theme-btn-active) {
+    background: rgba(255, 255, 255, 0.12);
 }
+
+/* Active state is now controlled via Tailwind classes in updateLandingThemeControls:
+   bg-surface-200 dark:bg-zinc-800 text-surface-900 dark:text-zinc-100 shadow-sm */
 
 /* ============ Compact Nutrition Dashboard ============ */
 /* The ring is centred in a full-width box that reserves room under it, so the

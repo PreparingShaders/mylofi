@@ -2145,7 +2145,137 @@ return `
                     </div>
                 </div>
             </div>
+`;
+    },
+
+    /**
+     * Auth Modal component for Login/Register forms.
+     * Renders a modal with backdrop, close button, and form switching.
+     */
+    authModal(initialMode = 'login') {
+        return `
+            <div class="auth-modal fixed inset-0 z-50 pointer-events-auto" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+                <div class="auth-modal-backdrop absolute inset-0 bg-black/40 dark:bg-black/60 backdrop-blur-sm" data-action="close-auth-modal"></div>
+                <div class="auth-modal-panel absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md mx-4 bg-white dark:bg-zinc-900 rounded-2xl shadow-xl border border-zinc-200 dark:border-white/10 overflow-hidden transform transition-all duration-200 scale-95 opacity-0"
+                     data-auth-panel>
+                    <div class="flex items-center justify-between p-4 border-b border-zinc-200 dark:border-white/10">
+                        <h2 id="auth-modal-title" class="text-lg font-bold text-zinc-900 dark:text-zinc-100">
+                            <span data-auth-mode-label="${initialMode === 'login' ? 'Вход' : 'Регистрация'}">${initialMode === 'login' ? 'Войти' : 'Создать дневник'}</span>
+                        </h2>
+                        <button type="button" data-action="close-auth-modal" aria-label="Закрыть" class="w-8 h-8 rounded-xl text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-white/5 flex items-center justify-center transition-colors">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6l12 12M18 6L6 18"/></svg>
+                        </button>
+                    </div>
+                    <div class="p-4" data-auth-form-container>
+                        ${this.authForm(initialMode)}
+                    </div>
+                </div>
+            </div>
         `;
+    },
+
+    authForm(mode) {
+        const isLogin = mode === 'login';
+        return `
+            <form id="${isLogin ? 'login-form' : 'register-form'}" class="space-y-4" data-auth-mode="${mode}">
+                ${isLogin ? `
+                    <input type="email" name="email" placeholder="Email" required autocomplete="email" class="w-full px-4 py-3 rounded-xl glass-input">
+                    <input type="password" name="password" placeholder="Пароль" required autocomplete="current-password" class="w-full px-4 py-3 rounded-xl glass-input">
+                    <button type="submit" class="w-full py-3 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl font-semibold">Войти</button>
+                ` : `
+                    <input type="email" name="email" placeholder="Email" required autocomplete="email" class="w-full px-4 py-3 rounded-xl glass-input">
+                    <input type="text" name="full_name" placeholder="Имя" autocomplete="name" class="w-full px-4 py-3 rounded-xl glass-input">
+                    <input type="password" name="password" placeholder="Пароль" required autocomplete="new-password" class="w-full px-4 py-3 rounded-xl glass-input">
+                    <input type="password" name="password_confirm" placeholder="Подтвердите пароль" required autocomplete="new-password" class="w-full px-4 py-3 rounded-xl glass-input">
+                    <button type="submit" class="w-full py-3 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl font-semibold">Зарегистрироваться</button>
+                `}
+                <p class="text-center text-sm text-zinc-500 dark:text-zinc-400 mt-2">
+                    ${isLogin ? 'Нет аккаунта? ' : 'Уже есть аккаунт? '}
+                    <button type="button" data-action="switch-auth-mode" data-mode="${isLogin ? 'register' : 'login'}" class="text-lime-600 dark:text-lime-400 font-medium hover:underline">
+                        ${isLogin ? 'Зарегистрироваться' : 'Войти'}
+                    </button>
+                </p>
+            </form>
+        `;
+    },
+
+    /**
+     * Initialize auth modal event handlers (backdrop click, Escape key, form switching).
+     * Should be called after the modal is inserted into the DOM.
+     */
+    initAuthModal(modalEl, app) {
+        // Close on backdrop click
+        modalEl.querySelector('.auth-modal-backdrop')?.addEventListener('click', () => {
+            this.closeAuthModal(modalEl);
+        });
+
+        // Close button
+        modalEl.querySelectorAll('[data-action="close-auth-modal"]').forEach(btn => {
+            btn.addEventListener('click', () => this.closeAuthModal(modalEl));
+        });
+
+        // Escape key
+        const escHandler = (e) => {
+            if (e.key === 'Escape') this.closeAuthModal(modalEl);
+        };
+        document.addEventListener('keydown', escHandler);
+        modalEl._authEscHandler = escHandler;
+
+        // Form switching
+        modalEl.querySelectorAll('[data-action="switch-auth-mode"]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const newMode = e.target.dataset.mode;
+                const container = modalEl.querySelector('[data-auth-form-container]');
+                const titleLabel = modalEl.querySelector('[data-auth-mode-label]');
+                if (container) container.innerHTML = this.authForm(newMode);
+                if (titleLabel) {
+                    titleLabel.dataset.authModeLabel = newMode === 'login' ? 'Вход' : 'Регистрация';
+                    titleLabel.textContent = newMode === 'login' ? 'Войти' : 'Создать дневник';
+                }
+                // Re-attach form submit handlers
+                const form = container.querySelector('form');
+                if (form) {
+                    form.addEventListener('submit', (e) => {
+                        if (form.id === 'login-form') app.Auth.handleLogin(e, app);
+                        if (form.id === 'register-form') app.Auth.handleRegister(e, app);
+                    });
+                }
+            });
+        });
+
+        // Form submit handlers
+        const form = modalEl.querySelector('form');
+        if (form) {
+            form.addEventListener('submit', (e) => {
+                if (form.id === 'login-form') app.Auth.handleLogin(e, app);
+                if (form.id === 'register-form') app.Auth.handleRegister(e, app);
+            });
+        }
+
+        // Lock body scroll
+        modalEl._bodyWasLocked = document.body.classList.contains('overflow-hidden');
+        document.body.classList.add('overflow-hidden');
+    },
+
+    closeAuthModal(modalEl) {
+        if (!modalEl) return;
+
+        // Remove Escape handler
+        if (modalEl._authEscHandler) {
+            document.removeEventListener('keydown', modalEl._authEscHandler);
+            delete modalEl._authEscHandler;
+        }
+
+        // Restore body scroll
+        if (!modalEl._bodyWasLocked) document.body.classList.remove('overflow-hidden');
+
+        // Animate out
+        const panel = modalEl.querySelector('[data-auth-panel]');
+        const backdrop = modalEl.querySelector('.auth-modal-backdrop');
+        if (panel) panel.classList.add('scale-95', 'opacity-0');
+        if (backdrop) backdrop.classList.add('opacity-0');
+
+        setTimeout(() => modalEl.remove(), 200);
     },
 
 };
