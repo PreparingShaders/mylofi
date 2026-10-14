@@ -30,33 +30,36 @@ const SHOWCASE_IMAGES = [
         folder: 'nutrition',
         alt: 'Питание',
         slides: [
-            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.06.49.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.12.png' },
-            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.06.56.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.18.png' },
-            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.07.08.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.24.png' },
-            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.07.34.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.33.png' },
-            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.07.53.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.09.18.png' },
+            { black: '1.png', white: '1.png' },
+            { black: '2.png', white: '2.png' },
+            { black: '3.png', white: '3.png' },
+            { black: '4.png', white: '4.png' },
+            { black: '5.png', white: '5.png' },
         ],
     },
     {
         folder: 'workout',
         alt: 'Тренировки',
         slides: [
-            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.10.44.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.12.28.png' },
-            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.11.02.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.12.36.png' },
-            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.11.20.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.13.11.png' },
-            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.11.52.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.13.22.png' },
-            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.11.58.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.14.14.png' },
+            { black: '1.png', white: '1.png' },
+            { black: '2.png', white: '2.png' },
+            { black: '3.png', white: '3.png' },
+            { black: '4.png', white: '4.png' },
+            { black: '5.png', white: '5.png' },
+            { black: '6.png', white: '6.png' },
         ],
     },
     {
         folder: 'sinergy',
         alt: 'ИИ-Синергия',
         slides: [
-            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.00.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.09.37.png' },
-            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.04.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.09.50.png' },
+            { black: '1.png', white: '1.png' },
+            { black: '2.png', white: '2.png' },
         ],
     },
 ];
+
+const getChapterSlides = (chapterIndex) => SHOWCASE_IMAGES?.[chapterIndex]?.slides || [];
 
 const App = {
     state: {
@@ -356,15 +359,16 @@ const App = {
         // creating the Zig-Zag pattern. Arrows sit outside the phone frame so
         // they never overlap the screen.
         const chapterBlock = (chapter) => {
-            const slides = showcaseSlides(chapter.index);
-
-            const hasMultiple = SHOWCASE_IMAGES[chapter.index].slides.length > 1;
+            const chapterIndex = chapter.index;
+            const slides = showcaseSlides(chapterIndex);
+            const totalSlides = getChapterSlides(chapterIndex).length;
+            const hasMultiple = totalSlides > 1;
 
             const dots = hasMultiple
-                ? Array.from({ length: SHOWCASE_IMAGES[chapter.index].slides.length }, (_, i) => `
-                    <button data-action="chapter-carousel-dot" data-chapter="${chapter.index}" data-slide="${i}"
+                ? Array.from({ length: totalSlides }, (_, i) => `
+                    <button data-action="chapter-carousel-dot" data-chapter="${chapterIndex}" data-slide="${i}"
                             class="landing-carousel-dot h-1.5 w-1.5 rounded-full bg-surface-400/70 dark:bg-zinc-600/70 transition-all duration-200 hover:bg-lime-400/80 ${i === 0 ? 'opacity-100' : 'opacity-60'}"
-                            aria-label="Скриншот ${i + 1} из ${SHOWCASE_IMAGES[chapter.index].slides.length}"></button>
+                            aria-label="Скриншот ${i + 1} из ${totalSlides}"></button>
                 `).join('')
                 : '';
 
@@ -430,7 +434,9 @@ const App = {
         // carousel always serves the Black or White screenshot set.
         const showcaseSlides = (chapterIndex) => {
             const chapter = SHOWCASE_IMAGES[chapterIndex];
-            return chapter.slides.map((slide, i) => `
+            if (!chapter) return '';
+            const slides = getChapterSlides(chapterIndex);
+            return slides.map((slide, i) => `
                 <img data-chapter="${chapterIndex}" data-slide="${i}" src="${this.landingImageSrc(chapter.folder, slide)}" alt="${chapter.alt}"
                      class="landing-showcase-screen absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ease-in-out ${i === 0 ? 'opacity-100' : 'opacity-0 pointer-events-none'}"
                      ${i === 0 ? '' : 'aria-hidden="true"'} />
@@ -707,21 +713,22 @@ const App = {
             Array.from(root.querySelectorAll(`[data-chapter="${chapterIndex}"][data-slide]`));
 
         const updateCarouselSlide = (chapterIndex, slideIndex) => {
-            const slides = getSlidesFor(chapterIndex);
-            if (!slides.length) return;
+            // The array length is the single source of truth for every bound
+            // below, so the carousel can never outrun the available slides.
+            const totalSlides = getChapterSlides(chapterIndex).length;
+            if (!totalSlides) return;
 
-            // Clamp to the real slide count so we never land on an index with
-            // no <img> behind it (which would render a blank phone screen).
-            // totalSlides = slides.length - 1 is the last valid index.
-            const total = slides.length;
-            const totalSlides = total - 1;
+            const domSlides = getSlidesFor(chapterIndex);
             let idx = Number(slideIndex);
             if (!Number.isFinite(idx)) idx = 0;
-            idx = Math.max(0, Math.min(totalSlides, idx));
+            // Clamp to the real slide count so we never land on an index with
+            // no <img> behind it (which would render a blank phone screen).
+            // totalSlides - 1 is the last valid index.
+            idx = Math.max(0, Math.min(totalSlides - 1, idx));
 
             this.state.landingCarouselState[chapterIndex] = idx;
 
-            slides.forEach(slide => {
+            domSlides.forEach(slide => {
                 const active = Number(slide.dataset.slide) === idx;
                 slide.classList.toggle('opacity-100', active);
                 slide.classList.toggle('opacity-0', !active);
@@ -731,8 +738,9 @@ const App = {
                 else slide.setAttribute('aria-hidden', 'true');
             });
 
-            // Sync the pagination dots to the real slide count so the number of
-            // dots always matches the number of slides in this chapter.
+            // Sync the pagination dots' active highlight to the current slide.
+            // The number of dots was rendered from totalSlides at render time,
+            // so here we only flip the highlight per dot.
             const dots = Array.from(root.querySelectorAll(`.landing-carousel-dot[data-chapter="${chapterIndex}"]`));
             dots.forEach((dot, i) => {
                 const active = i === idx;
@@ -742,9 +750,8 @@ const App = {
 
             const prevBtn = root.querySelector(`.landing-carousel-arrow[data-action="chapter-carousel-prev"][data-chapter="${chapterIndex}"]`);
             const nextBtn = root.querySelector(`.landing-carousel-arrow[data-action="chapter-carousel-next"][data-chapter="${chapterIndex}"]`);
-            const hasMultiple = total > 1;
-            if (prevBtn) prevBtn.disabled = !hasMultiple || idx === 0;
-            if (nextBtn) nextBtn.disabled = !hasMultiple || idx === totalSlides;
+            if (prevBtn) prevBtn.disabled = idx === 0;
+            if (nextBtn) nextBtn.disabled = idx >= totalSlides - 1;
         };
 
         const carouselListener = (e) => {
@@ -759,9 +766,9 @@ const App = {
             } else if (nextBtn) {
                 e.preventDefault();
                 const ci = Number(nextBtn.dataset.chapter);
-                const count = getSlidesFor(ci).length;
+                const totalSlides = getChapterSlides(ci).length;
                 const current = this.state.landingCarouselState[ci] || 0;
-                if (current < count - 1) updateCarouselSlide(ci, current + 1);
+                if (current < totalSlides - 1) updateCarouselSlide(ci, current + 1);
             } else if (dotBtn) {
                 e.preventDefault();
                 const ci = Number(dotBtn.dataset.chapter);
