@@ -2157,7 +2157,12 @@ return `
         return `
             <div class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" tabindex="-1">
                 <div class="auth-modal__backdrop" data-action="close-auth-modal"></div>
-                <div class="auth-modal__panel" data-action="close-auth-modal" data-auth-panel>
+                <!-- NOTE: the panel itself must NOT carry data-action="close-auth-modal".
+                     The global click delegate in app.js resolves closest('[data-action]')
+                     and would treat every click inside the form (inputs, submit,
+                     switch buttons) as a close request, instantly hiding the modal.
+                     Only the backdrop and the close (✕) button may close it. -->
+                <div class="auth-modal__panel" data-auth-panel>
                     <div class="auth-modal__header">
                         <div class="auth-modal__header-left">
                             <div class="auth-modal__title-group">
@@ -2183,7 +2188,11 @@ return `
     authForm(mode) {
         const isLogin = mode === 'login';
         return `
-            <form id="${isLogin ? 'login-form' : 'register-form'}" class="auth-modal__form space-y-4" data-auth-mode="${mode}">
+            <form id="${isLogin ? 'login-form' : 'register-form'}" class="auth-modal__form space-y-3" data-auth-mode="${mode}">
+                <!-- Inline error banner — populated by Auth.showError() when the
+                     server rejects the credentials. Kept inside the form so the
+                     user sees the reason right above the fields. -->
+                <div class="auth-modal__error hidden" data-auth-error></div>
                 ${isLogin ? `
                     <div class="auth-modal__field-group">
                         <label for="login-email" class="auth-modal__field-label">Email</label>
@@ -2228,14 +2237,20 @@ return `
      * Should be called after the modal is inserted into the DOM.
      */
     initAuthModal(modalEl, app) {
-        // Close on backdrop click
-        modalEl.querySelector('.auth-modal__backdrop')?.addEventListener('click', () => {
+        // Close on backdrop click — only the backdrop itself closes the modal, and
+        // stopPropagation keeps the global click delegate in app.js from
+        // re-firing close-auth-modal for the same click.
+        modalEl.querySelector('.auth-modal__backdrop')?.addEventListener('click', (e) => {
+            e.stopPropagation();
             this.closeAuthModal(modalEl);
         });
 
         // Close button
         modalEl.querySelectorAll('[data-action="close-auth-modal"]').forEach(btn => {
-            btn.addEventListener('click', () => this.closeAuthModal(modalEl));
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.closeAuthModal(modalEl);
+            });
         });
 
         // Escape key
@@ -2288,7 +2303,10 @@ return `
         // Animate out
         const panel = modalEl.querySelector('[data-auth-panel]');
         const backdrop = modalEl.querySelector('.auth-modal__backdrop');
-        if (panel) panel.classList.add('scale-95', 'opacity-0');
+        if (panel) {
+            panel.classList.add('scale-95', 'opacity-0');
+            panel.style.transformOrigin = 'center bottom';
+        }
         if (backdrop) backdrop.classList.add('opacity-0');
 
         return new Promise(resolve => {

@@ -1280,9 +1280,11 @@ input, select, textarea:focus {
     inset: 0;
     z-index: 100;
     display: flex;
-    flex-direction: column;
+    align-items: center;
+    justify-content: center;
     background: transparent;
     pointer-events: auto;
+    padding: 16px;
 }
 .auth-modal__backdrop {
     position: absolute;
@@ -1295,15 +1297,17 @@ input, select, textarea:focus {
 .auth-modal__panel {
     position: relative;
     z-index: 1;
-    flex: 1;
+    width: 100%;
+    max-width: 420px;
+    max-height: calc(100vh - 32px);
+    height: auto;
     display: flex;
     flex-direction: column;
     background: #fafafa;
-    border-radius: 24px 24px 0 0;
-    max-height: 100%;
+    border-radius: 24px;
     overflow: hidden;
-    animation: auth-modal-slide-up 0.3s cubic-bezier(0.22, 1, 0.36, 1);
-    box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.15);
+    animation: auth-modal-scale-in 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+    box-shadow: 0 24px 60px -12px rgba(0, 0, 0, 0.4);
 }
 .dark .auth-modal__panel {
     background: #09090b;
@@ -1312,20 +1316,17 @@ input, select, textarea:focus {
     from { opacity: 0; }
     to { opacity: 1; }
 }
-@keyframes auth-modal-slide-up {
-    from { opacity: 0; transform: translateY(100%); }
-    to { opacity: 1; transform: translateY(0); }
+@keyframes auth-modal-scale-in {
+    from { opacity: 0; transform: scale(0.96) translateY(8px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
 }
 .auth-modal__header {
     flex-shrink: 0;
-    position: sticky;
-    top: 0;
-    z-index: 10;
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
     gap: 12px;
-    padding: calc(16px + env(safe-area-inset-top, 0px)) 20px 16px;
+    padding: 16px 20px 12px;
     background: inherit;
     border-bottom: 1px solid rgba(24, 24, 27, 0.08);
     flex-wrap: wrap;
@@ -1385,35 +1386,36 @@ input, select, textarea:focus {
     flex: 1;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
-    padding: 16px 20px 24px;
+    padding: 12px 16px 16px;
     min-height: 0;
 }
 .auth-modal__form-container {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 10px;
 }
 .auth-modal__form {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 10px;
 }
 .auth-modal__field-group {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
 }
 .auth-modal__field-label {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     color: #3f3f46;
+    margin-left: 2px;
 }
 .dark .auth-modal__field-label {
     color: #d4d4d8;
 }
 .auth-modal__input {
     width: 100%;
-    padding: 12px 16px;
+    padding: 10px 14px;
     border-radius: 12px;
     font-size: 15px;
     font-weight: 500;
@@ -1443,6 +1445,30 @@ input, select, textarea:focus {
     border-color: #84cc16;
     box-shadow: 0 0 0 3px rgba(132, 204, 22, 0.3);
     background: #18181b;
+}
+
+/* Inline auth error banner — populated by Auth.showError() when the server
+   rejects the credentials. Hidden by default via the .hidden class. */
+.auth-modal__error {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    color: #b91c1c;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1.4;
+}
+.auth-modal__error.hidden {
+    display: none;
+}
+.dark .auth-modal__error {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
 }
 .auth-modal__footer {
     flex-shrink: 0;

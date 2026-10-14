@@ -5,14 +5,14 @@ export const Auth = {
     renderLogin(container, app) {
         container.innerHTML = `
             <div class="min-h-screen flex items-center justify-center p-4">
-                <div class="w-full max-w-md glass rounded-2xl p-6">
-                    <h1 class="text-3xl font-bold text-center mb-8">MyLofi</h1>
-                    <form id="login-form" class="space-y-4">
-                        <input type="email" name="email" placeholder="Email" required class="w-full px-4 py-3 rounded-xl glass-input">
-                        <input type="password" name="password" placeholder="Пароль" required class="w-full px-4 py-3 rounded-xl glass-input">
-                        <button type="submit" class="w-full py-3 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl font-semibold">Войти</button>
+                <div class="w-full max-w-sm glass rounded-2xl p-5 sm:p-6">
+                    <h1 class="text-2xl font-bold text-center mb-6">MyLofi</h1>
+                    <form id="login-form" class="space-y-3">
+                        <input type="email" name="email" placeholder="Email" required autocomplete="email" class="w-full px-4 py-2.5 rounded-xl glass-input">
+                        <input type="password" name="password" placeholder="Пароль" required autocomplete="current-password" class="w-full px-4 py-2.5 rounded-xl glass-input">
+                        <button type="submit" class="w-full py-2.5 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl font-semibold">Войти</button>
                     </form>
-                    <p class="text-center text-sm mt-6">
+                    <p class="text-center text-sm mt-4">
                         Нет аккаунта? 
                         <button data-action="show-register" class="text-surface-900 dark:text-zinc-100 font-medium hover:underline">Зарегистрироваться</button>
                     </p>
@@ -29,16 +29,16 @@ export const Auth = {
     renderRegister(container, app) {
         container.innerHTML = `
             <div class="min-h-screen flex items-center justify-center p-4">
-                <div class="w-full max-w-md glass rounded-2xl p-6">
-                    <h1 class="text-3xl font-bold text-center mb-8">MyLofi</h1>
-                    <form id="register-form" class="space-y-4">
-                        <input type="email" name="email" placeholder="Email" required class="w-full px-4 py-3 rounded-xl glass-input">
-                        <input type="text" name="full_name" placeholder="Имя" class="w-full px-4 py-3 rounded-xl glass-input">
-                        <input type="password" name="password" placeholder="Пароль" required class="w-full px-4 py-3 rounded-xl glass-input">
-                        <input type="password" name="password_confirm" placeholder="Подтвердите пароль" required class="w-full px-4 py-3 rounded-xl glass-input">
-                        <button type="submit" class="w-full py-3 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl font-semibold">Зарегистрироваться</button>
+                <div class="w-full max-w-sm glass rounded-2xl p-5 sm:p-6">
+                    <h1 class="text-2xl font-bold text-center mb-6">MyLofi</h1>
+                    <form id="register-form" class="space-y-3">
+                        <input type="email" name="email" placeholder="Email" required autocomplete="email" class="w-full px-4 py-2.5 rounded-xl glass-input">
+                        <input type="text" name="full_name" placeholder="Имя" autocomplete="name" class="w-full px-4 py-2.5 rounded-xl glass-input">
+                        <input type="password" name="password" placeholder="Пароль" required autocomplete="new-password" class="w-full px-4 py-2.5 rounded-xl glass-input">
+                        <input type="password" name="password_confirm" placeholder="Подтвердите пароль" required autocomplete="new-password" class="w-full px-4 py-2.5 rounded-xl glass-input">
+                        <button type="submit" class="w-full py-2.5 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-xl font-semibold">Зарегистрироваться</button>
                     </form>
-                    <p class="text-center text-sm mt-6">
+                    <p class="text-center text-sm mt-4">
                         Уже есть аккаунт? 
                         <button data-action="show-auth" class="text-surface-900 dark:text-zinc-100 font-medium hover:underline">Войти</button>
                     </p>
@@ -52,30 +52,63 @@ export const Auth = {
     },
     
     extractErrorMessage(error) {
+        const status = error?.status;
         const detail = error?.data?.detail;
+
+        // 401 / 400 from the login endpoint almost always means bad creds.
+        if (status === 401 || status === 400) {
+            if (typeof detail === 'string' && detail) {
+                const lower = detail.toLowerCase();
+                if (lower.includes('не найден') || lower.includes('not found') ||
+                    lower.includes('нет такого') || lower.includes('user not found') ||
+                    lower.includes('incorrect') || lower.includes('неверн')) {
+                    return 'Неверный email или пароль';
+                }
+            }
+            return 'Неверный email или пароль';
+        }
+        if (status === 422) {
+            if (typeof detail === 'string' && detail) return detail;
+            return 'Проверьте правильность введённых данных';
+        }
+        if (status === 0 || error?.name === 'TypeError' || error?.message === 'Failed to fetch') {
+            return 'Ошибка соединения с сервером. Проверьте подключение к интернету.';
+        }
         if (typeof detail === 'string' && detail) return detail;
         if (Array.isArray(detail) && detail.length) {
             const first = detail[0];
             if (first?.msg) return first.msg;
         }
         if (typeof error?.data?.message === 'string' && error.data.message) return error.data.message;
-        if (typeof error?.message === 'string' && error.message) return error.message;
+        if (typeof error?.message === 'string' && error.message) {
+            // Strip the raw HTTP line we attach in api.js for a friendlier read.
+            const msg = error.message;
+            if (msg.startsWith('HTTP 401') || msg.startsWith('HTTP 400')) return 'Неверный email или пароль';
+            if (msg.startsWith('HTTP 422')) return 'Проверьте правильность введённых данных';
+            if (msg.startsWith('HTTP 5')) return 'Сервер временно недоступен. Попробуйте позже.';
+            return msg;
+        }
         return 'Неизвестная ошибка';
     },
     
     showError(app, message) {
         console.error('[Auth] Error:', message);
-        let shown = false;
+        // Render the message inside the open auth modal's inline banner so the
+        // user sees the reason right above the fields (toast may be hidden or
+        // the modal may be the only visible UI on the landing page).
+        const banner = document.querySelector('.auth-modal [data-auth-error]');
+        if (banner) {
+            banner.textContent = message;
+            banner.classList.remove('hidden');
+        }
         try {
             if (typeof app?.showToast === 'function') {
                 app.showToast(message, 'error');
-                shown = Boolean(app.elements?.toastContainer);
             }
         } catch (e) {
             console.error('[Auth] showToast failed:', e);
-            shown = false;
         }
-        if (!shown) {
+        if (!banner && !app?.elements?.toastContainer) {
             window.alert(message);
         }
     },
@@ -106,10 +139,13 @@ export const Auth = {
             
             // Close auth modal if open, then transition to the main app.
             // Await the modal's exit animation so the screen switch doesn't
-            // race with the modal still fading out.
+            // race with the modal still fading out. If the modal is already
+            // gone (or Components isn't loaded yet) just proceed.
             const authModal = document.querySelector('.auth-modal');
             if (authModal && app.Components?.closeAuthModal) {
                 await app.Components.closeAuthModal(authModal);
+            } else if (authModal) {
+                authModal.remove();
             }
             
             app.showScreen('main');
