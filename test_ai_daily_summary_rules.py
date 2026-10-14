@@ -39,10 +39,10 @@ TARGETS = {
 }
 
 GOOD_SUMMARY = (
-    "День вышел плотным по калориям, и тяжёлым приёмом стал поздний ужин. "
-    "Белка за день набралось больше дневной отметки, и это отличная новость для мышц и для сытости. "
-    "Овощей и клетчатки было заметно меньше, чем хотелось бы, а соли набралось многовато. "
-    "Как улучшение: начни завтра с овощного приёма пищи и не добавляй соль в ужин."
+    "День вышел плотным по калориям: 2450 ккал против нормы 2000, и тяжёлым приёмом стал поздний ужин. "
+    "Белка за день набралось 120 г — это больше дневной отметки, и отличная новость для мышц и сытости. "
+    "Овощей и клетчатки было заметно меньше, чем хотелось бы, а соли набралось 2100 мг — многовато. "
+    "Как улучшение: начни завтра с овощного приёма пищы и не добавляй соль в ужин."
 )
 
 # A model that ignored the brief: emoji and an essay instead of one paragraph.
@@ -155,6 +155,16 @@ def test_prompt_carries_the_rules_for_every_persona(persona):
     assert "БЕЛОК - ВСЕГДА ПЛЮС" in prompt
     assert f"РОВНО {SUMMARY_MIN_SENTENCES}-{SUMMARY_MAX_SENTENCES} предложений" in prompt
     assert "Персона влияет только на тон формулировок summary_text" in prompt
+    # The old "no digits" rule is gone: the recap must now carry exact figures.
+    assert "НИ ОДНОЙ ЦИФРЫ В summary_text" not in prompt
+    # New rules: direct address and exact numbers.
+    assert "О БАЗОВОМ ОБРАЩЕНИИ" in prompt
+    assert "Клиент," in prompt
+    assert "Пользователь," in prompt
+    assert "Атлет," in prompt
+    assert "ТОЧНЫЕ ЦИФРЫ" in prompt
+    assert "514 ккал" in prompt
+    assert "35 г белка" in prompt
 
 
 def test_prompt_carries_the_day_it_is_about():
@@ -202,7 +212,7 @@ def test_prompt_uses_the_persona_and_its_custom_wording():
     # An unknown persona falls back to the default voice, rules intact.
     fallback = _prompt("joke-mode-that-does-not-exist")
     assert PERSONA_PROMPTS["kind"] in fallback
-    assert "РОВНО 3-6 предложений" in fallback
+    assert "РОВНО 3-5 предложений" in fallback
 
 
 # --- the stored recap obeys the rules ------------------------------------------
@@ -345,15 +355,28 @@ async def test_a_day_with_nothing_eaten_sums_to_nothing():
     assert all(isinstance(totals[key], float) for key in ("calories", "protein_g", "fat_g", "carbs_g"))
 
 
-def test_prompt_forbids_the_model_from_writing_figures():
-    """The recap speaks about the day; the numbers are the database's job."""
+def test_prompt_requires_exact_numbers_in_recap():
+    """The recap must restate the day's figures as digits from the context."""
     for persona in sorted(PERSONA_PROMPTS):
         prompt = _prompt(persona)
 
-        assert "НИ ОДНОЙ ЦИФРЫ В summary_text" in prompt
-        # The exact sums are still context - without them the model cannot say
-        # whether the day was over its norms.
+        assert "ТОЧНЫЕ ЦИФРЫ" in prompt
+        # The exact sums are still context — they are the source the model must
+        # copy, not invent.
         assert "посчитано точно по базе" in prompt
+        # The old "no digits" rule is gone.
+        assert "НИ ОДНОЙ ЦИФРЫ В summary_text" not in prompt
+
+
+def test_prompt_forbids_dry_address_and_allows_direct_you():
+    """No "Клиент," / "Пользователь," / "Атлет," — address straight to "ты"."""
+    for persona in sorted(PERSONA_PROMPTS):
+        prompt = _prompt(persona)
+
+        assert "О БАЗОВОМ ОБРАЩЕНИИ" in prompt
+        assert '"Клиент,"' in prompt
+        assert '"Пользователь,"' in prompt
+        assert '"Атлет,"' in prompt
 
 
 def test_meal_times_are_read_in_the_clients_own_clock():

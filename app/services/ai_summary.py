@@ -13,8 +13,8 @@ down with it.
 
 The model's job is the verdict and the score. Every number in the product comes
 from SQL: `load_day_totals` sums the day exactly, the prompt carries those sums as
-context and forbids the model from writing any figure of its own, and the response
-hands the same sums back verbatim.
+context and requires the model to restate them as digits (never invention of its
+own), and the response hands the same sums back verbatim.
 """
 
 import asyncio
@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 # a sentence end); the lower one is a prompt rule only, because padding a recap
 # the model already wrote well is worse than a slightly short one.
 SUMMARY_MIN_SENTENCES = 3
-SUMMARY_MAX_SENTENCES = 6
+SUMMARY_MAX_SENTENCES = 5
 
 # Wall-clock budget for one recap. `run_text_cascade` bounds every individual
 # model call; this bounds the cascade as a whole so the request that triggered an
@@ -191,13 +191,14 @@ def build_daily_summary_prompt(
     """Prompt for one day's recap, in the user's own nutritionist voice.
 
     The persona is a tone of voice, not a task: it is stated once and the rules
-    below (the JSON contract, the length, the no-emoji rule, the no-digits rule)
-    stay binding regardless of voice, exactly as they do for the dish verdict.
+    below (the JSON contract, the length, the no-emoji rule, the exact-digits rule,
+    the direct-address rule) stay binding regardless of voice, exactly as they do
+    for the dish verdict.
 
     `totals` are the exact day sums the database produced (`load_day_totals`). They
-    are context for the judgement, not something to repeat: the recap is prose plus
-    a score, and every figure the user sees is rendered from the same arithmetic
-    outside the model.
+    are context for the judgement and the model is required to restate them as
+    digits in summary_text: the recap is prose plus a score, and every figure the
+    user sees is rendered from the same arithmetic outside the model.
     """
     t_cal = targets.get("target_calories") if targets else None
     t_pro = targets.get("target_protein_g") if targets else None
@@ -247,20 +248,21 @@ def build_daily_summary_prompt(
 
     return f"""Ты — нутрициолог. Ты уже видел все приёмы пищи пользователя за один день и верни СТРОГО валидный JSON с полями:
 {{
-  "summary_text": "Итог дня РОВНО из 3-6 связанных предложений: без эмодзи.",
+  "summary_text": "Итог дня РОВНО из 3-5 связанных предложений: без эмодзи, с точными цифрами.",
   "overall_score": 7.5
 }}
-Все числовые значения — float. overall_score от 1.0 до 10.0: это оценка дня целиком, а не средняя оценка блюд. summary_text — связный текст РОВНО из 3-6 предложений без воды и без эмодзи. Никаких пояснений, только JSON.
+Все числовые значения — float. overall_score от 1.0 до 10.0: это оценка дня целиком, а не средняя оценка блюд. summary_text — связный текст РОВНО из 3-5 предложений без воды и без эмодзи. Никаких пояснений, только JSON.
 
 Правила итога дня (обязательно):
 1. ДЛИНА: в summary_text РОВНО {SUMMARY_MIN_SENTENCES}-{SUMMARY_MAX_SENTENCES} предложений, связанных в один связный текст. Меньше {SUMMARY_MIN_SENTENCES} или больше {SUMMARY_MAX_SENTENCES} - нарушение. Каждое предложение несу: не добивай объём дежурными фразами.
 2. НОЛЬ ЭМОДЗИ: ни одного эмодзи, смайлика, иконки или символического значка из наборов эмодзи. Только обычные буквы, пробелы и знаки препинания.
 3. НИКАКИХ СПИСКОВ И РАЗМЕТОК: summary_text - один абзац обычным текстом, без маркеров, нумерации, заголовков и переносов строк.
-4. О ЧЁМ ГОВОРИТЬ: как распределился день по времени (что оказалось тяжёлым приёмом, а что лёгким), что в составе было плюсом и где риск (сахар, соль, переработка, недостаток овощей или клетчатки), насколько день вписан в цель пользователя и одно конкретное действие на завтра.
-5. ЧЕСТНОСТЬ: если день вышел за нормы - назови это прямо и конкретно ("превышено по калориям", "жиры выше нормы"), без приуменьшений. Если всё в пределах нормы - скажи это прямо. Если норм нет ('?') - оценивай день само по себе, без сравнения.
-6. НИ ОДНОЙ ЦИФРЫ В summary_text: калории, белки, жиры, углеводы, клетчатку, сахар и натрий система уже посчитала точно по базе и показывает пользователю отдельно. В тексте итога чисел нет - говори словами ("превышено по калориям", "белка выше нормы", "жиры заметно выше нормы") и опирайся на точные итоги из блока Контекст. Любая цифра или число прописью в summary_text - нарушение.
-7. БЕЛОК - ВСЕГДА ПЛЮС: превышение белка никогда не подаётся как ошибка, избыток или замечание. Белок выше нормы - это польза для мышц и для сытости, и модель обязана это отметить.
-8. ПЕРСОНА - ТОЛЬКО ТОН: любая персона задаёт только тон формулировок. Длина, отсутствие эмодзи, запрет цифр, формат ответа, честность по превышениям и похвала белка действуют при любой персона.
+4. О БАЗОВОМ ОБРАЩЕНИИ: никогда не начинай сухим обращением вроде "Клиент," или "Пользователь," или "Атлет,". Говори сразу на "ты", без формальностей, и можешь обращаться по имени, если знаешь его.
+5. О ЧЁМ ГОВОРИТЬ: как распределился день по времени (что оказалось тяжёлым приёмом, а что лёгким), что в составе было плюсом и где риск (сахар, соль, переработка, недостаток овощей или клетчатки), насколько день вписан в цель пользователя и одно конкретное действие на завтра.
+6. ЧЕСТНОСТЬ: если день вышел за нормы - назови это прямо и конкретно ("превышено по калориям", "жиры выше нормы"), без приуменьшений. Если всё в пределах нормы - скажи это прямо. Если норм нет ('?') - оценивай день само по себе, без сравнения.
+7. ТОЧНЫЕ ЦИФРЫ: калории, белки, жиры, углеводы, клетчатка, сахар и натрий посчитаны системой точно по базе и переданы в блоке Контекст. Обязательно используй эти цифры в тексте числами (например, "514 ккал", "35 г белка"), а не прописью или обобщениями без цифел. Любая цифра в summary_text должна совпадать с итогами из Контекста.
+8. БЕЛОК - ВСЕГДА ПЛЮС: превышение белка никогда не подаётся как ошибка, избыток или замечание. Белок выше нормы - это польза для мышц и для сытости, и модель обязана это отметить.
+9. ПЕРСОНА - ТОЛЬКО ТОН: любая персона задаёт только тон формулировок. Длина, отсутствие эмодзи, запрет списков, точность цифел, прямота обращения, формат ответа, честность по превышениям и похвала белку действуют при любой персоне.
 
 {persona_line}
 
