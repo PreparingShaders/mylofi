@@ -17,6 +17,47 @@ const TOGGLE_BASE = 'flex-shrink-0 w-11 h-11 rounded-2xl text-xl font-bold trans
 const TOGGLE_COMPLETED = 'bg-lime-400 text-zinc-950 border-lime-400 shadow-[0_0_12px_rgba(163,230,53,0.4)]';
 const TOGGLE_UNCOMPLETED = 'glass text-surface-400 dark:text-surface-500';
 
+// Screenshot assets — one primary slide per chapter, plus optional extra
+// slides for the chapters that already have several screenshots on disk.
+// The phone carousel cross-fades between the slides of the active chapter.
+//
+// Declared at module scope (not inside renderLanding) so the theme-aware
+// helpers `landingImageSrc` / `applyLandingTheme` can read it after a theme
+// toggle fires from `handleAction` — a closure over a local `const` inside
+// renderLanding would throw ReferenceError on every subsequent toggle.
+const SHOWCASE_IMAGES = [
+    {
+        folder: 'nutrition',
+        alt: 'Питание',
+        slides: [
+            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.06.49.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.12.png' },
+            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.06.56.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.18.png' },
+            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.07.08.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.24.png' },
+            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.07.34.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.33.png' },
+            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.07.53.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.09.18.png' },
+        ],
+    },
+    {
+        folder: 'workout',
+        alt: 'Тренировки',
+        slides: [
+            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.10.44.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.12.28.png' },
+            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.11.02.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.12.36.png' },
+            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.11.20.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.13.11.png' },
+            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.11.52.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.13.22.png' },
+            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.11.58.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.14.14.png' },
+        ],
+    },
+    {
+        folder: 'sinergy',
+        alt: 'ИИ-Синергия',
+        slides: [
+            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.00.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.09.37.png' },
+            { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.04.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.09.50.png' },
+        ],
+    },
+];
+
 const App = {
     state: {
         user: null,
@@ -288,57 +329,20 @@ const App = {
             },
         ];
 
-        // Screenshot assets — one primary slide per chapter, plus optional extra
-        // slides for the chapters that already have several screenshots on disk.
-        // The phone carousel cross-fades between the slides of the active chapter.
-        //
-        // Paths are theme-aware: each slide carries a Black (dark) and a White
-        // (light) filename. When the landing is in dark mode the carousel serves
-        // the Black set, otherwise the White set, so the screenshots always
-        // match the active UI theme. Switching the theme rewrites every <img>
-        // src via applyLandingTheme().
-        const showcaseImages = [
-            {
-                folder: 'nutrition',
-                alt: 'Питание',
-                slides: [
-                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.06.49.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.12.png' },
-                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.06.56.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.18.png' },
-                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.07.08.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.24.png' },
-                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.07.34.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.33.png' },
-                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.07.53.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.09.18.png' },
-                ],
-            },
-            {
-                folder: 'workout',
-                alt: 'Тренировки',
-                slides: [
-                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.10.44.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.12.28.png' },
-                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.11.02.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.12.36.png' },
-                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.11.20.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.13.11.png' },
-                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.11.52.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.13.22.png' },
-                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.11.58.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.14.14.png' },
-                ],
-            },
-            {
-                folder: 'sinergy',
-                alt: 'ИИ-Синергия',
-                slides: [
-                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.00.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.09.37.png' },
-                    { black: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.08.04.png', white: 'Screenshot iPhone 17 Pro Max 14.10.2026 at 06.09.50.png' },
-                ],
-            },
-        ];
-
         // Device shell wrapping each chapter's slide stack. aspect-[9/19.5]
         // matches the iPhone 17 Pro Max screen proportions (780x1695 screenshots)
         // so the mockup stays undistorted. Arrows are positioned outside this
         // frame by the chapter markup.
+        //
+        // The physical body (bezel, Dynamic Island cutout, rounded frame) is
+        // ALWAYS graphite-black — it is hardware, not UI. Only the screenshot
+        // content inside the screen reacts to the active theme, so the mockup
+        // keeps its dark bezel even in light mode.
         const phoneFrame = (screenMarkup) => `
     <div class="landing-phone-frame mx-auto w-[280px] sm:w-[300px]">
-        <div class="relative w-full aspect-[9/19.5] rounded-[33px] bg-surface-50 dark:bg-zinc-950 overflow-hidden border border-surface-200 dark:border-black/60">
+        <div class="relative w-full aspect-[9/19.5] rounded-[33px] bg-zinc-950 overflow-hidden border border-black/80 shadow-[0_20px_50px_-10px_rgba(0,0,0,0.6)]">
             <!-- Dynamic Island cutout -->
-            <div class="absolute top-2 left-1/2 -translate-x-1/2 w-24 h-5 bg-surface-50 dark:bg-zinc-950 rounded-full z-30 pointer-events-none border border-surface-200 dark:border-black/60"></div>
+            <div class="absolute top-2 left-1/2 -translate-x-1/2 w-24 h-5 bg-zinc-950 rounded-full z-30 pointer-events-none border border-black/80"></div>
             ${screenMarkup}
         </div>
     </div>
@@ -354,13 +358,13 @@ const App = {
         const chapterBlock = (chapter) => {
             const slides = showcaseSlides(chapter.index);
 
-            const hasMultiple = showcaseImages[chapter.index].slides.length > 1;
+            const hasMultiple = SHOWCASE_IMAGES[chapter.index].slides.length > 1;
 
             const dots = hasMultiple
-                ? Array.from({ length: showcaseImages[chapter.index].slides.length }, (_, i) => `
+                ? Array.from({ length: SHOWCASE_IMAGES[chapter.index].slides.length }, (_, i) => `
                     <button data-action="chapter-carousel-dot" data-chapter="${chapter.index}" data-slide="${i}"
                             class="landing-carousel-dot h-1.5 w-1.5 rounded-full bg-surface-400/70 dark:bg-zinc-600/70 transition-all duration-200 hover:bg-lime-400/80 ${i === 0 ? 'opacity-100' : 'opacity-60'}"
-                            aria-label="Скриншот ${i + 1} из ${showcaseImages[chapter.index].slides.length}"></button>
+                            aria-label="Скриншот ${i + 1} из ${SHOWCASE_IMAGES[chapter.index].slides.length}"></button>
                 `).join('')
                 : '';
 
@@ -425,7 +429,7 @@ const App = {
         // Paths are theme-aware: they are rewritten by landingImageSrc() so the
         // carousel always serves the Black or White screenshot set.
         const showcaseSlides = (chapterIndex) => {
-            const chapter = showcaseImages[chapterIndex];
+            const chapter = SHOWCASE_IMAGES[chapterIndex];
             return chapter.slides.map((slide, i) => `
                 <img data-chapter="${chapterIndex}" data-slide="${i}" src="${this.landingImageSrc(chapter.folder, slide)}" alt="${chapter.alt}"
                      class="landing-showcase-screen absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ease-in-out ${i === 0 ? 'opacity-100' : 'opacity-0 pointer-events-none'}"
@@ -613,12 +617,12 @@ const App = {
      *
      * The phone mockups are exported twice: a dark-graphite set under
      * static/images/Black/<folder>/... and a light one under
-     * static/images/White/<folder>/.... When the landing is rendered in dark
-     * mode we serve the Black set, otherwise the White set, so the screenshots
-     * always match the active UI theme.
+     * static/images/White/<folder>/.... The source of truth for the active
+     * theme is the `dark` class on <html> (kept in sync by Theme.apply()),
+     * so we read it directly from the DOM instead of trusting a cached flag.
      */
     landingImageSrc(folder, slide) {
-        const dark = this.state.landingThemeState.dark;
+        const dark = document.documentElement.classList.contains('dark');
         const set = dark ? 'Black' : 'White';
         const filename = slide && typeof slide === 'object'
             ? (dark ? slide.black : slide.white)
@@ -634,12 +638,12 @@ const App = {
         const root = this.elements.screens.landing;
         if (!root) return;
 
-        const dark = Theme.isDark();
+        const dark = document.documentElement.classList.contains('dark');
         this.state.landingThemeState = { mode: Theme.getMode(), dark };
 
         root.querySelectorAll('img.landing-showcase-screen').forEach(img => {
             const ci = Number(img.dataset.chapter);
-            const chapter = showcaseImages[ci];
+            const chapter = SHOWCASE_IMAGES[ci];
             if (!chapter) return;
             const slide = chapter.slides[Number(img.dataset.slide)];
             if (!slide) return;
@@ -706,10 +710,19 @@ const App = {
             const slides = getSlidesFor(chapterIndex);
             if (!slides.length) return;
 
-            this.state.landingCarouselState[chapterIndex] = slideIndex;
+            // Clamp to the real slide count so we never land on an index with
+            // no <img> behind it (which would render a blank phone screen).
+            // totalSlides = slides.length - 1 is the last valid index.
+            const total = slides.length;
+            const totalSlides = total - 1;
+            let idx = Number(slideIndex);
+            if (!Number.isFinite(idx)) idx = 0;
+            idx = Math.max(0, Math.min(totalSlides, idx));
+
+            this.state.landingCarouselState[chapterIndex] = idx;
 
             slides.forEach(slide => {
-                const active = Number(slide.dataset.slide) === slideIndex;
+                const active = Number(slide.dataset.slide) === idx;
                 slide.classList.toggle('opacity-100', active);
                 slide.classList.toggle('opacity-0', !active);
                 slide.classList.toggle('pointer-events-none', !active);
@@ -718,18 +731,20 @@ const App = {
                 else slide.setAttribute('aria-hidden', 'true');
             });
 
+            // Sync the pagination dots to the real slide count so the number of
+            // dots always matches the number of slides in this chapter.
             const dots = Array.from(root.querySelectorAll(`.landing-carousel-dot[data-chapter="${chapterIndex}"]`));
             dots.forEach((dot, i) => {
-                const active = i === slideIndex;
+                const active = i === idx;
                 dot.classList.toggle('is-active-dot', active);
                 dot.setAttribute('aria-pressed', String(active));
             });
 
             const prevBtn = root.querySelector(`.landing-carousel-arrow[data-action="chapter-carousel-prev"][data-chapter="${chapterIndex}"]`);
             const nextBtn = root.querySelector(`.landing-carousel-arrow[data-action="chapter-carousel-next"][data-chapter="${chapterIndex}"]`);
-            const hasMultiple = slides.length > 1;
-            if (prevBtn) prevBtn.disabled = !hasMultiple || slideIndex === 0;
-            if (nextBtn) nextBtn.disabled = !hasMultiple || slideIndex === slides.length - 1;
+            const hasMultiple = total > 1;
+            if (prevBtn) prevBtn.disabled = !hasMultiple || idx === 0;
+            if (nextBtn) nextBtn.disabled = !hasMultiple || idx === totalSlides;
         };
 
         const carouselListener = (e) => {
@@ -913,6 +928,10 @@ const App = {
                 if (!mode) break;
                 Theme.set(mode);
                 this.updateThemeControls(mode);
+                // The landing header has its own compact theme switcher; refresh
+                // its highlight and the screenshot carousel immediately after
+                // Theme.set() has flipped the `dark` class on <html>.
+                this.applyLandingTheme();
                 this.showToast(
                     mode === 'system' ? 'Тема: системная' : (mode === 'dark' ? 'Тема: тёмная' : 'Тема: светлая'),
                     'info'

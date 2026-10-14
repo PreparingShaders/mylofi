@@ -1313,6 +1313,8 @@ input, select, textarea:focus {
 }
 .landing-carousel-arrow:disabled {
     cursor: not-allowed;
+    opacity: 0.35;
+    pointer-events: none;
 }
 
 /* The per-chapter dots wrapper is pointer-events-none so the dots opt back in,
@@ -2982,25 +2984,24 @@ input[data-field="reps"] {
 
 /* ============ Landing: Apple-style Sticky Scroll Showcase ============ */
 
-/* Realistic phone shell: light slate bezel in light mode, deep graphite in dark. */
+/* Realistic phone shell: ALWAYS graphite-black. The bezel is hardware, not
+   UI, so it must not react to the active theme — only the screenshot content
+   inside the screen does. Keeping it dark in both themes makes the mockup
+   read as a physical device on any background. */
 .landing-phone-frame {
     position: relative;
     overflow: hidden;
     border-radius: 42px;
     padding: 9px;
-    background: linear-gradient(155deg, #cbd5e6 0%, #e4e4e7 32%, #f4f4f5 72%, #fafafa 100%);
+    background: linear-gradient(155deg, #18181b 0%, #09090b 32%, #000000 72%, #000000 100%);
     box-shadow:
-        0 0 0 1px rgba(148, 163, 184, 0.35),
-        0 30px 60px -25px rgba(0, 0, 0, 0.08),
-        0 0 70px -18px rgba(132, 204, 22, 0.14);
-}
-.dark .landing-phone-frame {
-    background: linear-gradient(155deg, #52525b 0%, #27272a 32%, #09090b 72%, #000000 100%);
-    box-shadow:
-        0 0 0 1px rgba(82, 82, 91, 0.55),
+        0 0 0 1px rgba(0, 0, 0, 0.6),
         0 30px 60px -25px rgba(0, 0, 0, 0.95),
         0 0 70px -18px rgba(132, 204, 22, 0.18);
 }
+/* Keep the frame dark even when the page itself switches to light mode:
+   the default rule already renders it dark, and the old light-bezel rule is
+   removed so nothing can lighten the bezel again. */
 
 /* Screenshots fill the rounded screen and never bleed past the bezel */
 .landing-phone-frame img {
