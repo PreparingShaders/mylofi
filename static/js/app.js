@@ -900,6 +900,9 @@ const App = {
             case 'close-auth-modal':
                 this.closeAuthModal();
                 break;
+            case 'change-password':
+                this.openAuthModal('forgot-password', { email: this.state.user?.email });
+                break;
             case 'toggle-landing-menu':
                 this.toggleLandingMenu();
                 break;
@@ -1060,12 +1063,13 @@ const App = {
         setTimeout(() => { modalEl.remove(); }, 220);
     },
 
-    openAuthModal(mode = 'login') {
+    openAuthModal(mode = 'login', ctx = {}) {
         const host = this.elements.modals || document.body;
-        const html = Components.authModal(mode);
+        const html = Components.authModal(mode, ctx);
         const wrapper = document.createElement('div');
         wrapper.innerHTML = html;
         const modalEl = wrapper.firstElementChild;
+        modalEl._authCtx = ctx;
         host.appendChild(modalEl);
 
         // Initialize modal event handlers (CSS handles animations)

@@ -2153,7 +2153,15 @@ return `
      * Renders a modal with backdrop, close button, and form switching.
      * Styled to match the AI Synergy modal design.
      */
-    authModal(initialMode = 'login') {
+    authModal(initialMode = 'login', ctx = {}) {
+        const labels = {
+            login: { label: 'Вход', title: 'Войти' },
+            register: { label: 'Регистрация', title: 'Создать дневник' },
+            'forgot-password': { label: 'Восстановление', title: 'Восстановить пароль' },
+            'verify-code': { label: 'Подтверждение', title: 'Введите код' },
+            'new-password': { label: 'Новый пароль', title: 'Новый пароль' },
+        };
+        const t = labels[initialMode] || labels.login;
         return `
             <div class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" tabindex="-1">
                 <div class="auth-modal__backdrop" data-action="close-auth-modal"></div>
@@ -2167,7 +2175,7 @@ return `
                         <div class="auth-modal__header-left">
                             <div class="auth-modal__title-group">
                                 <h2 id="auth-modal-title" class="auth-modal__title">
-                                    <span data-auth-mode-label="${initialMode === 'login' ? 'Вход' : 'Регистрация'}">${initialMode === 'login' ? 'Войти' : 'Создать дневник'}</span>
+                                    <span data-auth-mode-label="${t.label}">${t.title}</span>
                                 </h2>
                             </div>
                         </div>
@@ -2177,7 +2185,7 @@ return `
                     </div>
                     <div class="auth-modal__body">
                         <div class="auth-modal__form-container" data-auth-form-container>
-                            ${this.authForm(initialMode)}
+                            ${this.authForm(initialMode, ctx)}
                         </div>
                     </div>
                 </div>

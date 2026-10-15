@@ -420,6 +420,10 @@ export const Profile = {
                     <p class="text-sm text-surface-600 dark:text-zinc-300">
                         <span class="text-surface-500">Роль:</span> ${user.is_admin ? 'admin' : (user.role || 'user')}
                     </p>
+                    <button type="button" data-action="change-password"
+                            class="w-full mt-3 py-2.5 px-4 rounded-xl glass border border-surface-200/70 dark:border-white/10 text-sm font-medium hover:bg-surface-100 dark:hover:bg-white/5 transition-all text-surface-900 dark:text-white flex items-center justify-center">
+                        Сменить пароль
+                    </button>
                 </div>
 
                 ${renderPlan(usage)}
