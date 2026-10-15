@@ -1003,6 +1003,13 @@ const App = {
             case 'close-feedback-modal':
                 Profile.closeFeedbackModal();
                 break;
+            case 'submit-feedback':
+                // The submit button carries data-action="submit-feedback" and is
+                // therefore routed through this global router. Profile.submitFeedback
+                // resolves its own modal and per-instance state from
+                // Profile._feedbackModalState, so the router needs no payload.
+                Profile.submitFeedback();
+                break;
             case 'launch-ai-synergy':
                 this.launchAiSynergy();
                 break;

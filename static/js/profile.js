@@ -901,14 +901,24 @@ export const Profile = {
             });
         });
 
-        // Message character counter
+        // Message character counter and submit affordance. The button starts
+        // disabled and only lights up once there is something to send: either a
+        // message body or at least one attached image. Without this the button
+        // would sit greyed out on a guest who only pasted text.
         const messageTextarea = modalEl.querySelector('#feedback-message');
         const messageCounter = modalEl.querySelector('#feedback-message-count');
+        const submitBtn = modalEl.querySelector('[data-action="submit-feedback"]');
+        const enableSubmit = () => {
+            if (!submitBtn) return;
+            submitBtn.disabled = !(messageTextarea?.value?.trim() || state.selectedImages.length > 0);
+        };
         if (messageTextarea && messageCounter) {
             messageTextarea.addEventListener('input', () => {
                 messageCounter.textContent = `${messageTextarea.value.length}/5000`;
+                enableSubmit();
             });
         }
+        enableSubmit();
 
         // Image picker
         const fileInput = modalEl.querySelector('#feedback-images');
@@ -923,10 +933,9 @@ export const Profile = {
             });
         }
 
-        // Submit button
-        modalEl.querySelector('[data-action="submit-feedback"]')?.addEventListener('click', () => {
-            this.submitFeedback(modalEl, state);
-        });
+        // Submit button. Clicks are routed through the document-level data-action
+        // listener (handleAction in app.js), so there is no need to re-bind here -
+        // doing so would double-fire the submit.
     },
 
     handleFeedbackImages(files, modalEl, state) {
@@ -988,7 +997,15 @@ export const Profile = {
         });
     },
 
-    async submitFeedback(modalEl, state) {
+    async submitFeedback() {
+        // Clicks on the submit button are routed through the global data-action
+        // router (handleAction in app.js), which calls this with no arguments.
+        // The modal element and its per-instance state live on this._feedbackModalState,
+        // so the router does not need to know anything about the form.
+        const state = this._feedbackModalState;
+        if (!state) return;
+        const modalEl = state.modalEl;
+
         const message = modalEl.querySelector('#feedback-message')?.value?.trim();
         const email = modalEl.querySelector('#feedback-email')?.value?.trim();
         const submitBtn = modalEl.querySelector('[data-action="submit-feedback"]');
