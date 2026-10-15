@@ -663,9 +663,24 @@ export const Nutrition = {
         const container = this.app.elements.pageContent;
         const widget = container.querySelector('.ai-synergy-widget');
         if (!widget) return;
-        const start = widget.querySelector('[data-ai-synergy-date="start"]')?.value ?? '';
-        const end = widget.querySelector('[data-ai-synergy-date="end"]')?.value ?? '';
+        const startInput = widget.querySelector('[data-ai-synergy-date="start"]');
+        const endInput = widget.querySelector('[data-ai-synergy-date="end"]');
+        const start = startInput?.value ?? '';
+        const end = endInput?.value ?? '';
         this._aiSynergyCustomRange = { start, end };
+
+        // Client-side validation: show error if custom range exceeds 90 days
+        if (start && end) {
+            const startDate = new Date(start + 'T00:00:00Z');
+            const endDate = new Date(end + 'T00:00:00Z');
+            const diffDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
+            const isInvalid = diffDays > 90;
+            startInput?.classList.toggle('border-red-500', isInvalid);
+            endInput?.classList.toggle('border-red-500', isInvalid);
+        } else {
+            startInput?.classList.remove('border-red-500');
+            endInput?.classList.remove('border-red-500');
+        }
     },
 
     /** Swaps the widget into the running (spinner) state. */

@@ -1022,6 +1022,14 @@ const App = {
                 this.showToast('Укажите кастомный диапазон дат', 'info');
                 return;
             }
+            // Client-side validation: custom range cannot exceed 90 days
+            const start = new Date(data.start_date + 'T00:00:00Z');
+            const end = new Date(data.end_date + 'T00:00:00Z');
+            const diffDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24));
+            if (diffDays > 90) {
+                this.showToast('Пользовательский диапазон не может превышать 90 дней', 'error');
+                return;
+            }
         }
 
         const host = document.getElementById('modals') || document.body;

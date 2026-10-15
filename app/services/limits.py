@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import User, WorkoutTemplate
 
 FREE_MEAL_AI_DAILY_LIMIT = 5
-FREE_WORKOUT_TEMPLATE_LIMIT = 3
+FREE_WORKOUT_TEMPLATE_LIMIT = 5
 FREE_WEEKLY_AI_LIMIT = 1
 AI_ANALYSIS_COOLDOWN_DAYS = 7
 

@@ -33,7 +33,7 @@ from app.services.nutrition import utcnow
 logger = logging.getLogger(__name__)
 
 SYNERGY_TASK_TIMEOUT = 60.0
-SYNERGY_RATE_LIMIT_DAYS = 0
+SYNERGY_RATE_LIMIT_DAYS = 7
 
 REQUIRED_FIELDS = [
     "verdict_headline",
@@ -498,23 +498,19 @@ async def _get_latest_synergy(
     return result.scalar_one_or_none()
 
 
-def _check_synergy_rate_limit(latest: Optional[PeriodSummary]) -> None:
-    """Raise ValueError when the cooldown window has not elapsed.
+def _check_synergy_rate_limit(latest: Optional[PeriodSummary]) -> Optional[PeriodSummary]:
+    """Check if the cooldown window has elapsed.
 
-    In Dev/Testing mode ``SYNERGY_RATE_LIMIT_DAYS`` is 0, so the check is a
-    no-op and recalculations are always allowed. The message names the exact
-    date the next analysis becomes available, so the frontend can render it
-    verbatim instead of a generic error.
+    Returns the latest PeriodSummary if within cooldown (cached report should be returned),
+    None if cooldown has elapsed or no prior report exists (new analysis should run).
     """
     if latest is None:
-        return
+        return None
     now = utcnow()
     next_available = latest.created_at + timedelta(days=SYNERGY_RATE_LIMIT_DAYS)
     if now < next_available:
-        raise ValueError(
-            f"С момента последнего анализа прошло меньше {SYNERGY_RATE_LIMIT_DAYS} дней. "
-            f"Новый анализ станет доступен {next_available.strftime('%Y-%m-%d')}"
-        )
+        return latest
+    return None
 
 
 async def _persist_synergy(
@@ -560,6 +556,11 @@ async def run_ai_synergy(
     tz_offset_minutes: int = 0,
 ) -> Dict[str, Any]:
     now = utcnow()
+    # Validate custom date range: max 90 days
+    if start_date is not None and end_date is not None:
+        if (end_date - start_date).days > 90:
+            raise ValueError("Пользовательский диапазон дат не может превышать 90 дней")
+
     # A custom date range takes precedence over the preset day count; an
     # explicit period_days falls back to the preset, which itself defaults to 14.
     start_dt = end_dt = None
@@ -578,7 +579,14 @@ async def run_ai_synergy(
 
     period_type = _resolve_period_type(period_days, start_date, end_date)
     latest = await _get_latest_synergy(db, user.id, period_type)
-    _check_synergy_rate_limit(latest)
+    
+    # Check rate limit - returns cached report if within cooldown, None if new analysis needed
+    cached_report = _check_synergy_rate_limit(latest)
+    if cached_report is not None:
+        # Return cached report without running LLM
+        import json
+        payload = json.loads(cached_report.payload_json)
+        return payload
 
     aggregated = await _aggregate_period_data(
         db, user, period_days, tz_offset_minutes, start_dt=start_dt, end_dt=end_dt,

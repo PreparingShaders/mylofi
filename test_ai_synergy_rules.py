@@ -310,8 +310,8 @@ def test_validate_synergy_clamps_findings_to_ten():
 
 # --- rate limiting -----------------------------------------------------------
 
-def test_rate_limit_is_disabled_in_dev():
-    assert SYNERGY_RATE_LIMIT_DAYS == 0
+def test_rate_limit_is_seven_days():
+    assert SYNERGY_RATE_LIMIT_DAYS == 7
 
 
 def test_rate_limit_allows_when_disabled():

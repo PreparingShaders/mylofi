@@ -42,7 +42,7 @@ const MACRO_ICON_PATHS = {
     carbs: '<path d="M12 3.6c.7 4.3 1.9 5.5 6.1 6.2-4.2.7-5.4 1.9-6.1 6.2-.7-4.3-1.9-5.5-6.1-6.2 4.2-.7 5.4-1.9 6.1-6.2Z"/>',
 };
 
-const SYNERGY_COOLDOWN_DAYS = 0;
+const SYNERGY_COOLDOWN_DAYS = 7;
 
 /* Verdict personas. The label is deliberately short: the badge shares a line
    with the "Вердикт нутрициолога" heading on a 375px screen, so anything longer
@@ -1817,7 +1817,7 @@ export const Components = {
       * result lands, so there is no separate "idle" vs "result" markup
       * to keep in sync.
       */
-    aiSynergyWidget({
+aiSynergyWidget({
         period = '14',
         customStart = '',
         customEnd = '',
@@ -1840,8 +1840,8 @@ export const Components = {
                     aria-pressed="${active}"
                     class="ai-synergy__chip select-none px-3 py-1.5 rounded-full text-xs font-medium transition-colors btn-press
                            ${active
-                               ? 'is-active text-surface-900 dark:text-zinc-100'
-                               : 'glass text-surface-500 dark:text-surface-400 border border-surface-200 dark:border-white/10 hover:bg-surface-100 dark:hover:bg-zinc-800'}">
+                                ? 'is-active text-surface-900 dark:text-zinc-100'
+                                : 'glass text-surface-500 dark:text-surface-400 border border-surface-200 dark:border-white/10 hover:bg-surface-100 dark:hover:bg-zinc-800'}">
                     ${opt.label}
                 </button>`;
         }).join('');
@@ -1860,6 +1860,9 @@ export const Components = {
                    </div>
                </div>`
             : '';
+
+        // Explanatory note about 7-day update frequency
+        const cooldownNote = `<p class="ai-synergy__note text-[10px] text-surface-500 dark:text-surface-400 mt-2">Отчет за выбранный период обновляется раз в 7 дней</p>`;
 
         let scoreBadge = '';
         if (hasResult && result) {
@@ -1922,6 +1925,7 @@ export const Components = {
                         ${chips}
                     </div>
                     ${customInputs}
+                    ${cooldownNote}
                 </div>
 
                 <div class="ai-synergy__body" data-ai-synergy-body>
@@ -1998,11 +2002,15 @@ export const Components = {
       *
       * `result` is the /ai/synergy payload saved by `setAiSynergyResult`.
       */
-    aiSynergyModal(result) {
+aiSynergyModal(result) {
         const v = result?.verdict || {};
         const score = v.overall_score != null ? `${v.overall_score}` : '';
         const headline = v.headline || '';
         const analyzedAt = result?.analyzed_at || '';
+        const periodDays = result?.period_days || '';
+        const periodType = result?.period_type || '';
+        const startDate = result?.start_date || '';
+        const endDate = result?.end_date || '';
 
         // Cooldown: reanalyze is blocked for 7 days after the last analysis
         let isReanalyzeDisabled = false;
@@ -2016,6 +2024,16 @@ export const Components = {
                     reanalyzeCooldownDateStr = Utils.formatDate(cooldownEnd.toISOString());
                 }
             }
+        }
+
+        // Build period range label
+        let periodRangeLabel = '';
+        if (startDate && endDate) {
+            const startFmt = Utils.formatDate(startDate);
+            const endFmt = Utils.formatDate(endDate);
+            periodRangeLabel = startFmt === endFmt ? startFmt : `${startFmt} — ${endFmt}`;
+        } else if (periodDays) {
+            periodRangeLabel = `${periodDays} дней (${periodType})`;
         }
 
         // Metrics snapshot
@@ -2065,19 +2083,19 @@ export const Components = {
                         </div>
                         <ul>${keyFindings}</ul>
                     </div>` : ''}
-                     ${growthPoints ? `<div class="ai-synergy-modal__finding-group">
+                    ${growthPoints ? `<div class="ai-synergy-modal__finding-group">
                         <div class="ai-synergy-modal__section-title">
                             <span>ТОЧКИ РОСТА</span>
                         </div>
                         <ul>${growthPoints}</ul>
                     </div>` : ''}
-                     ${riskFactors ? `<div class="ai-synergy-modal__finding-group">
+                    ${riskFactors ? `<div class="ai-synergy-modal__finding-group">
                          <div class="ai-synergy-modal__section-title">
                              <span>ФАКТОРЫ РИСКА</span>
                         </div>
                         <ul>${riskFactors}</ul>
                      </div>` : ''}
-               </div>`
+             </div>`
             : '';
 
         const adjustmentsHtml = v.nutrition_adjustment || v.workout_adjustment
@@ -2097,6 +2115,7 @@ return `
                                 <h2 id="ai-synergy-modal-title" class="ai-synergy-modal__title">ИИ-Синергия</h2>
                                 <span class="ai-synergy-modal__subtitle">Питание + Спорт</span>
                                 ${analyzedAt ? `<span class="ai-synergy-modal__date">${escapeHtml(Utils.formatDate(analyzedAt))}</span>` : ''}
+                                ${periodRangeLabel ? `<span class="ai-synergy-modal__period-range text-[10px] text-surface-500 dark:text-surface-400 mt-1">${escapeHtml(periodRangeLabel)}</span>` : ''}
                             </div>
                         </div>
                         ${score
@@ -2139,9 +2158,9 @@ return `
                          ? `<button type="button" class="ai-synergy-modal__footer-btn ai-synergy-modal__footer-btn--primary ai-synergy-modal__footer-btn--disabled" disabled>
                                  <span>Доступно после ${reanalyzeCooldownDateStr}</span>
                               </button>`
-                             : `<button type="button" class="ai-synergy-modal__footer-btn ai-synergy-modal__footer-btn--primary" data-action="reanalyze-ai-synergy">
-                                   Пересчитать
-                               </button>`}
+                            : `<button type="button" class="ai-synergy-modal__footer-btn ai-synergy-modal__footer-btn--primary" data-action="reanalyze-ai-synergy">
+                                  Пересчитать
+                              </button>`}
                     </div>
                 </div>
             </div>
