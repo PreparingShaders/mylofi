@@ -11,6 +11,7 @@ const Admin = {
     state: {
         activeTab: 'users',
         search: '',
+        feedback_search: '',
         is_active: null,
         is_admin: null,
         feedback_status: null,
@@ -241,6 +242,13 @@ const Admin = {
         const usersBtn = this.container.querySelector('[data-tab="users"]');
         const feedbackBtn = this.container.querySelector('[data-tab="feedback"]');
 
+        // Clear the destination panel's rendered rows before switching, so a
+        // stale list never lingers behind the new tab's loading spinner.
+        const usersList = this.container.querySelector('#admin-users');
+        const feedbackList = this.container.querySelector('#admin-feedback-list');
+        const usersPagination = this.container.querySelector('#admin-pagination');
+        const feedbackPagination = this.container.querySelector('#admin-feedback-pagination');
+
         if (tab === 'users') {
             usersTab.classList.remove('hidden');
             feedbackTab.classList.add('hidden');
@@ -248,6 +256,8 @@ const Admin = {
             usersBtn.classList.remove('text-surface-500', 'dark:text-zinc-400', 'border-transparent');
             feedbackBtn.classList.remove('border-lime-500', 'text-lime-600', 'dark:text-lime-400');
             feedbackBtn.classList.add('text-surface-500', 'dark:text-zinc-400', 'border-transparent');
+            if (usersList) usersList.innerHTML = '';
+            if (usersPagination) usersPagination.innerHTML = '';
             await this.loadUsers();
         } else {
             usersTab.classList.add('hidden');
@@ -256,6 +266,8 @@ const Admin = {
             feedbackBtn.classList.remove('text-surface-500', 'dark:text-zinc-400', 'border-transparent');
             usersBtn.classList.remove('border-lime-500', 'text-lime-600', 'dark:text-lime-400');
             usersBtn.classList.add('text-surface-500', 'dark:text-zinc-400', 'border-transparent');
+            if (feedbackList) feedbackList.innerHTML = '';
+            if (feedbackPagination) feedbackPagination.innerHTML = '';
             await this.loadFeedback();
         }
     },
@@ -608,15 +620,35 @@ const Admin = {
                                             ` : '<span class="text-surface-400 dark:text-zinc-500">—</span>'}
                                         </td>
                                         <td class="px-4 py-3 text-surface-700 dark:text-zinc-300">${new Date(f.created_at).toLocaleString('ru-RU')}</td>
-                                        <td class="px-4 py-3">
+<td class="px-4 py-3">
                                             <div class="flex items-center gap-1">
                                                 <button data-action="view-feedback" data-feedback-id="${f.id}"
                                                         class="p-1 rounded-lg text-surface-600 dark:text-zinc-300 hover:text-primary-600 dark:hover:text-zinc-100 hover:bg-surface-100 dark:hover:bg-white/5 transition-colors"
-                                                        title="Подробнее" aria-label="Подробнее">
+                                                        title="查看详情" aria-label="查看详情">
                                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.25 11.25l.04.04M21 12c0 9-9 21-9 21S3 21 3 12a9 9 0 1118 0z"></path>
                                                     </svg>
                                                 </button>
+                                                ${f.status === 'new' ? `
+                                                    <button data-action="update-feedback-status" data-feedback-id="${f.id}" data-status="resolved"
+                                                            class="p-1 rounded-lg text-surface-600 dark:text-zinc-300 hover:text-lime-600 dark:hover:text-lime-400 hover:bg-surface-100 dark:hover:bg-white/5 transition-colors"
+                                                            title="Отметить решённым" aria-label="Отметить решённым">
+                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                                                    </button>
+                                                ` : `
+                                                    <button data-action="update-feedback-status" data-feedback-id="${f.id}" data-status="new"
+                                                            class="p-1 rounded-lg text-surface-600 dark:text-zinc-300 hover:text-lime-600 dark:hover:text-lime-400 hover:bg-surface-100 dark:hover:bg-white/5 transition-colors"
+                                                            title="Вернуть в новые" aria-label="Вернуть в новые">
+                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                                                    </button>
+                                                `}
+                                                ${f.user_id && f.category === 'pro_request' && f.status !== 'resolved' ? `
+                                                    <button data-action="grant-pro-from-feedback" data-feedback-id="${f.id}" data-user-id="${f.user_id}"
+                                                            class="p-1 rounded-lg text-surface-600 dark:text-zinc-300 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-surface-100 dark:hover:bg-white/5 transition-colors"
+                                                            title="Выдать PRO" aria-label="Выдать PRO">
+                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>
+                                                    </button>
+                                                ` : ''}
                                             </div>
                                         </td>
                                     </tr>
@@ -643,33 +675,54 @@ const Admin = {
                                 resolved: 'bg-surface-100 text-surface-600 dark:bg-white/5 dark:text-zinc-400',
                             };
                             return `
-                            <button data-action="view-feedback" data-feedback-id="${f.id}"
-                                    class="w-full text-left p-3 rounded-xl hover:bg-surface-100 dark:hover:bg-white/5 transition-colors group"
-                                    aria-label="Подробнее об обращении #${f.id}">
-                                <div class="flex items-start gap-3">
-                                    <div class="flex-1 min-w-0">
-                                        <div class="flex items-center gap-2">
-                                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColors[f.status] || 'bg-surface-100 text-surface-600'}">
-                                                ${statusLabels[f.status] || f.status}
-                                            </span>
-                                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-surface-100 text-surface-600 dark:bg-white/5 dark:text-zinc-400">
-                                                ${categoryLabels[f.category] || f.category}
-                                            </span>
+                            <div class="glass rounded-xl p-3 space-y-2">
+                                <button data-action="view-feedback" data-feedback-id="${f.id}"
+                                        class="w-full text-left p-3 rounded-xl hover:bg-surface-100 dark:hover:bg-white/5 transition-colors group"
+                                        aria-label="Подробнее об обращении #${f.id}">
+                                    <div class="flex items-start gap-3">
+                                        <div class="flex-1 min-w-0">
+                                            <div class="flex items-center gap-2">
+                                                <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColors[f.status] || 'bg-surface-100 text-surface-600'}">
+                                                    ${statusLabels[f.status] || f.status}
+                                                </span>
+                                                <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-surface-100 text-surface-600 dark:bg-white/5 dark:text-zinc-400">
+                                                    ${categoryLabels[f.category] || f.category}
+                                                </span>
+                                            </div>
+                                            <p class="text-sm font-semibold truncate text-surface-900 dark:text-zinc-100 mt-1">${escapeHtml(f.email)}</p>
+                                            <p class="text-xs text-surface-500 dark:text-surface-400 truncate mt-0.5">${escapeHtml(f.message).slice(0, 80)}${f.message.length > 80 ? '...' : ''}</p>
+                                            <p class="text-xs text-surface-400 dark:text-surface-500 mt-0.5">
+                                                ${f.user_email ? `${escapeHtml(f.user_email)} (ID: ${f.user_id})` : 'Гость'} · ${new Date(f.created_at).toLocaleString('ru-RU')}
+                                            </p>
+                                            ${images.length > 0 ? `
+                                            <p class="text-xs text-lime-600 dark:text-lime-400 mt-1">📎 ${images.length} фото</p>
+                                            ` : ''}
                                         </div>
-                                        <p class="text-sm font-semibold truncate text-surface-900 dark:text-zinc-100 mt-1">${escapeHtml(f.email)}</p>
-                                        <p class="text-xs text-surface-500 dark:text-surface-400 truncate mt-0.5">${escapeHtml(f.message).slice(0, 80)}${f.message.length > 80 ? '...' : ''}</p>
-                                        <p class="text-xs text-surface-400 dark:text-surface-500 mt-0.5">
-                                            ${f.user_email ? `${escapeHtml(f.user_email)} (ID: ${f.user_id})` : 'Гость'} · ${new Date(f.created_at).toLocaleString('ru-RU')}
-                                        </p>
-                                        ${images.length > 0 ? `
-                                        <p class="text-xs text-lime-600 dark:text-lime-400 mt-1">📎 ${images.length} фото</p>
-                                        ` : ''}
+                                        <svg class="w-4 h-4 text-surface-400 dark:text-surface-500 group-hover:text-primary-600 dark:group-hover:text-zinc-200 transition-colors shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                                        </svg>
                                     </div>
-                                    <svg class="w-4 h-4 text-surface-400 dark:text-surface-500 group-hover:text-primary-600 dark:group-hover:text-zinc-200 transition-colors shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
-                                    </svg>
+                                </button>
+                                <div class="flex items-center gap-1.5 pt-1 border-t border-surface-100 dark:border-white/5">
+                                    ${f.status === 'new' ? `
+                                        <button data-action="update-feedback-status" data-feedback-id="${f.id}" data-status="resolved"
+                                                class="flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-400 hover:bg-lime-200 dark:hover:bg-lime-900/50 transition-colors">
+                                            Решено
+                                        </button>
+                                    ` : `
+                                        <button data-action="update-feedback-status" data-feedback-id="${f.id}" data-status="new"
+                                                class="flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold bg-surface-100 text-surface-700 dark:bg-white/5 dark:text-zinc-300 hover:bg-surface-200 transition-colors">
+                                            В новые
+                                        </button>
+                                    `}
+                                    ${f.user_id && f.category === 'pro_request' && f.status !== 'resolved' ? `
+                                        <button data-action="grant-pro-from-feedback" data-feedback-id="${f.id}" data-user-id="${f.user_id}"
+                                                class="flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 hover:bg-amber-200 dark:hover:bg-amber-900/50 transition-colors">
+                                            PRO
+                                        </button>
+                                    ` : ''}
                                 </div>
-                            </button>
+                            </div>
                             `;
                         }).join('')}
                     </div>
@@ -1243,6 +1296,14 @@ function escapeHtml(text) {
 document.addEventListener('click', async (e) => {
     const action = e.target.closest('[data-action]')?.dataset.action;
     if (!action) return;
+    if (action === 'admin-tab') {
+        const btn = e.target.closest('[data-action="admin-tab"]');
+        const tab = btn.dataset.tab;
+        if (tab && tab !== Admin.state.activeTab) {
+            Admin.switchTab(tab);
+        }
+        return;
+    }
     if (action === 'toggle-active') {
         const btn = e.target.closest('[data-action="toggle-active"]');
         Admin.toggleActive(parseInt(btn.dataset.userId), btn.dataset.active === 'true');
