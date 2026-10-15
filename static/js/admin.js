@@ -6,29 +6,40 @@ const Admin = {
     app: null,
     container: null,
     userModal: null,
+    feedbackModal: null,
 
     state: {
+        activeTab: 'users',
         search: '',
         is_active: null,
         is_admin: null,
+        feedback_status: null,
+        feedback_category: null,
         page: 1,
         page_size: 20,
         total: 0,
         total_pages: 1,
+        feedback_total: 0,
+        feedback_page: 1,
+        feedback_total_pages: 1,
     },
 
     async render(container, app) {
         this.app = app;
         this.container = container;
 
+        this.state.activeTab = 'users';
         this.state.search = '';
         this.state.is_active = null;
         this.state.is_admin = null;
+        this.state.feedback_status = null;
+        this.state.feedback_category = null;
         this.state.page = 1;
+        this.state.feedback_page = 1;
 
         container.innerHTML = this.renderShell();
         await this.loadStats();
-        await this.loadUsers();
+        await this.loadTabData();
     },
 
     renderShell() {
@@ -36,38 +47,92 @@ const Admin = {
             <div class="admin-panel space-y-6">
                 <div id="admin-stats" class="space-y-4"></div>
 
-                <div class="flex flex-col sm:flex-row gap-2">
-                    <div class="relative flex-1">
-                        <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-400 dark:text-surface-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
-                        </svg>
-                        <input type="text" id="admin-search" data-action="admin-search"
-                               placeholder="Поиск по email или имени..."
-                               class="w-full pl-10 pr-4 py-2.5 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 placeholder-surface-400 dark:placeholder-surface-500 focus:outline-none focus:ring-2 focus:ring-lime-500/30">
-                    </div>
-                    <div class="flex gap-2">
-                        <select id="admin-filter-active" data-action="admin-filter" data-filter="is_active"
-                                class="px-3 py-2 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-lime-500/30">
-                            <option value="">Все статусы</option>
-                            <option value="true">Активные</option>
-                            <option value="false">Заблокированные</option>
-                        </select>
-                        <select id="admin-filter-admin" data-action="admin-filter" data-filter="is_admin"
-                                class="px-3 py-2 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-lime-500/30">
-                            <option value="">Все роли</option>
-                            <option value="true">Админы</option>
-                            <option value="false">Пользователи</option>
-                        </select>
-                        <button data-action="admin-reset-filters"
-                                class="px-3 py-2 rounded-xl glass text-xs font-semibold text-surface-600 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-white/5 transition-colors">
-                            Сбросить
-                        </button>
-                    </div>
+                <!-- Tab Navigation -->
+                <div class="flex gap-2 border-b border-surface-200 dark:border-white/10 pb-2">
+                    <button data-action="admin-tab" data-tab="users"
+                            class="admin-tab-btn px-4 py-2.5 text-sm font-medium rounded-t-xl transition-all
+                                   border-b-2 -mb-px">
+                        Пользователи
+                    </button>
+                    <button data-action="admin-tab" data-tab="feedback"
+                            class="admin-tab-btn px-4 py-2.5 text-sm font-medium rounded-t-xl transition-all
+                                   border-b-2 -mb-px">
+                        Обратная связь
+                    </button>
                 </div>
 
-                <div id="admin-users" class="min-h-[120px]"></div>
+                <!-- Users Tab Content -->
+                <div id="admin-users-tab" class="space-y-4">
+                    <div class="flex flex-col sm:flex-row gap-2">
+                        <div class="relative flex-1">
+                            <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-400 dark:text-surface-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                            </svg>
+                            <input type="text" id="admin-search" data-action="admin-search"
+                                   placeholder="Поиск по email или имени..."
+                                   class="w-full pl-10 pr-4 py-2.5 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 placeholder-surface-400 dark:placeholder-surface-500 focus:outline-none focus:ring-2 focus:ring-lime-500/30">
+                        </div>
+                        <div class="flex gap-2">
+                            <select id="admin-filter-active" data-action="admin-filter" data-filter="is_active"
+                                    class="px-3 py-2 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-lime-500/30">
+                                <option value="">Все статусы</option>
+                                <option value="true">Активные</option>
+                                <option value="false">Заблокированные</option>
+                            </select>
+                            <select id="admin-filter-admin" data-action="admin-filter" data-filter="is_admin"
+                                    class="px-3 py-2 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-lime-500/30">
+                                <option value="">Все роли</option>
+                                <option value="true">Админы</option>
+                                <option value="false">Пользователи</option>
+                            </select>
+                            <button data-action="admin-reset-filters"
+                                    class="px-3 py-2 rounded-xl glass text-xs font-semibold text-surface-600 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-white/5 transition-colors">
+                                Сбросить
+                            </button>
+                        </div>
+                    </div>
 
-                <div id="admin-pagination" class="flex justify-center"></div>
+                    <div id="admin-users" class="min-h-[120px]"></div>
+
+                    <div id="admin-pagination" class="flex justify-center"></div>
+                </div>
+
+                <!-- Feedback Tab Content -->
+                <div id="admin-feedback-tab" class="space-y-4 hidden">
+                    <div class="flex flex-col sm:flex-row gap-2">
+                        <div class="relative flex-1">
+                            <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-400 dark:text-surface-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                            </svg>
+                            <input type="text" id="admin-feedback-search" data-action="admin-feedback-search"
+                                   placeholder="Поиск по email или сообщению..."
+                                   class="w-full pl-10 pr-4 py-2.5 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 placeholder-surface-400 dark:placeholder-surface-500 focus:outline-none focus:ring-2 focus:ring-lime-500/30">
+                        </div>
+                        <div class="flex gap-2">
+                            <select id="admin-feedback-filter-status" data-action="admin-feedback-filter" data-filter="status"
+                                    class="px-3 py-2 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-lime-500/30">
+                                <option value="">Все статусы</option>
+                                <option value="new">Новые</option>
+                                <option value="resolved">Решённые</option>
+                            </select>
+                            <select id="admin-feedback-filter-category" data-action="admin-feedback-filter" data-filter="category"
+                                    class="px-3 py-2 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-lime-500/30">
+                                <option value="">Все категории</option>
+                                <option value="pro_request">PRO запрос</option>
+                                <option value="bug">Баг</option>
+                                <option value="question">Вопрос</option>
+                            </select>
+                            <button data-action="admin-feedback-reset-filters"
+                                    class="px-3 py-2 rounded-xl glass text-xs font-semibold text-surface-600 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-white/5 transition-colors">
+                                Сбросить
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="admin-feedback-list" class="min-h-[120px]"></div>
+
+                    <div id="admin-feedback-pagination" class="flex justify-center"></div>
+                </div>
             </div>
         `;
     },
@@ -82,6 +147,16 @@ const Admin = {
         return params.toString();
     },
 
+    buildFeedbackQuery() {
+        const params = new URLSearchParams();
+        if (this.state.feedback_search) params.set('search', this.state.feedback_search);
+        if (this.state.feedback_status) params.set('status', this.state.feedback_status);
+        if (this.state.feedback_category) params.set('category', this.state.feedback_category);
+        params.set('page', String(this.state.feedback_page));
+        params.set('page_size', String(this.state.page_size));
+        return params.toString();
+    },
+
     syncFilterUI() {
         const activeFilter = this.container.querySelector('#admin-filter-active');
         const adminFilter = this.container.querySelector('#admin-filter-admin');
@@ -89,6 +164,14 @@ const Admin = {
         if (activeFilter) activeFilter.value = this.state.is_active !== null ? String(this.state.is_active) : '';
         if (adminFilter) adminFilter.value = this.state.is_admin !== null ? String(this.state.is_admin) : '';
         if (searchInput) searchInput.value = this.state.search;
+
+        // Feedback tab filters
+        const feedbackStatusFilter = this.container.querySelector('#admin-feedback-filter-status');
+        const feedbackCategoryFilter = this.container.querySelector('#admin-feedback-filter-category');
+        const feedbackSearchInput = this.container.querySelector('#admin-feedback-search');
+        if (feedbackStatusFilter) feedbackStatusFilter.value = this.state.feedback_status || '';
+        if (feedbackCategoryFilter) feedbackCategoryFilter.value = this.state.feedback_category || '';
+        if (feedbackSearchInput) feedbackSearchInput.value = this.state.feedback_search || '';
     },
 
     async applySearch() {
@@ -96,6 +179,13 @@ const Admin = {
         this.state.search = searchInput ? searchInput.value.trim() : '';
         this.state.page = 1;
         await this.loadUsers();
+    },
+
+    async applyFeedbackSearch() {
+        const searchInput = this.container.querySelector('#admin-feedback-search');
+        this.state.feedback_search = searchInput ? searchInput.value.trim() : '';
+        this.state.feedback_page = 1;
+        await this.loadFeedback();
     },
 
     async applyFilter(filter, value) {
@@ -108,6 +198,16 @@ const Admin = {
         await this.loadUsers();
     },
 
+    async applyFeedbackFilter(filter, value) {
+        if (filter === 'status') {
+            this.state.feedback_status = value === '' ? null : value;
+        } else if (filter === 'category') {
+            this.state.feedback_category = value === '' ? null : value;
+        }
+        this.state.feedback_page = 1;
+        await this.loadFeedback();
+    },
+
     resetFilters() {
         this.state.search = '';
         this.state.is_active = null;
@@ -115,6 +215,49 @@ const Admin = {
         this.state.page = 1;
         this.syncFilterUI();
         this.loadUsers();
+    },
+
+    resetFeedbackFilters() {
+        this.state.feedback_search = '';
+        this.state.feedback_status = null;
+        this.state.feedback_category = null;
+        this.state.feedback_page = 1;
+        this.syncFilterUI();
+        this.loadFeedback();
+    },
+
+    async loadTabData() {
+        if (this.state.activeTab === 'users') {
+            await this.loadUsers();
+        } else if (this.state.activeTab === 'feedback') {
+            await this.loadFeedback();
+        }
+    },
+
+    async switchTab(tab) {
+        this.state.activeTab = tab;
+        const usersTab = this.container.querySelector('#admin-users-tab');
+        const feedbackTab = this.container.querySelector('#admin-feedback-tab');
+        const usersBtn = this.container.querySelector('[data-tab="users"]');
+        const feedbackBtn = this.container.querySelector('[data-tab="feedback"]');
+
+        if (tab === 'users') {
+            usersTab.classList.remove('hidden');
+            feedbackTab.classList.add('hidden');
+            usersBtn.classList.add('border-lime-500', 'text-lime-600', 'dark:text-lime-400');
+            usersBtn.classList.remove('text-surface-500', 'dark:text-zinc-400', 'border-transparent');
+            feedbackBtn.classList.remove('border-lime-500', 'text-lime-600', 'dark:text-lime-400');
+            feedbackBtn.classList.add('text-surface-500', 'dark:text-zinc-400', 'border-transparent');
+            await this.loadUsers();
+        } else {
+            usersTab.classList.add('hidden');
+            feedbackTab.classList.remove('hidden');
+            feedbackBtn.classList.add('border-lime-500', 'text-lime-600', 'dark:text-lime-400');
+            feedbackBtn.classList.remove('text-surface-500', 'dark:text-zinc-400', 'border-transparent');
+            usersBtn.classList.remove('border-lime-500', 'text-lime-600', 'dark:text-lime-400');
+            usersBtn.classList.add('text-surface-500', 'dark:text-zinc-400', 'border-transparent');
+            await this.loadFeedback();
+        }
     },
 
     prevPage() {
@@ -336,6 +479,214 @@ const Admin = {
                 </button>
             </div>
         `;
+    },
+
+    renderFeedbackPagination() {
+        const el = this.container.querySelector('#admin-feedback-pagination');
+        if (!el) return;
+
+        const total = this.state.feedback_total;
+        const pageSize = this.state.page_size;
+        const currentPage = this.state.feedback_page;
+        const totalPages = Math.ceil(total / pageSize) || 1;
+        const hasPrev = currentPage > 1;
+        const hasNext = currentPage < totalPages;
+
+        el.innerHTML = `
+            <div class="flex items-center gap-2">
+                <button data-action="admin-feedback-prev-page"
+                        class="px-3 py-1.5 rounded-xl text-sm font-semibold flex items-center gap-1 transition-all
+                               ${hasPrev
+                                   ? 'glass text-surface-900 dark:text-zinc-100 hover:bg-surface-100 dark:hover:bg-white/10'
+                                   : 'text-surface-400 dark:text-zinc-500 cursor-not-allowed opacity-50'}
+                               " ${!hasPrev ? 'disabled' : ''}>
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+                    </svg>
+                </button>
+                <span class="text-xs text-surface-500 dark:text-surface-400">Стр. ${currentPage} / ${totalPages}</span>
+                <button data-action="admin-feedback-next-page"
+                        class="px-3 py-1.5 rounded-xl text-sm font-semibold flex items-center gap-1 transition-all
+                               ${hasNext
+                                   ? 'glass text-surface-900 dark:text-zinc-100 hover:bg-surface-100 dark:hover:bg-white/10'
+                                   : 'text-surface-400 dark:text-zinc-500 cursor-not-allowed opacity-50'}
+                               " ${!hasNext ? 'disabled' : ''}>
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                    </svg>
+                </button>
+            </div>
+        `;
+    },
+
+    prevFeedbackPage() {
+        if (this.state.feedback_page > 1) {
+            this.state.feedback_page -= 1;
+            this.loadFeedback();
+        }
+    },
+
+    nextFeedbackPage() {
+        if (this.state.feedback_page < this.state.feedback_total_pages) {
+            this.state.feedback_page += 1;
+            this.loadFeedback();
+        }
+    },
+
+    async loadFeedback() {
+        const listEl = this.container.querySelector('#admin-feedback-list');
+        if (!listEl) return;
+        listEl.innerHTML = Components.loadingSpinner();
+
+        try {
+            const query = this.buildFeedbackQuery();
+            const data = await API.get(`/admin/feedback${query ? `?${query}` : ''}`, this.app.state.tokens.access);
+
+            this.syncFilterUI();
+
+            this.state.feedback_total = data.total;
+            this.state.feedback_total_pages = Math.ceil(data.total / data.page_size) || 1;
+
+            if (!data.items || data.items.length === 0) {
+                listEl.innerHTML = `<p class="text-sm text-surface-500 dark:text-surface-400 text-center py-8">Обращений не найдено</p>`;
+                this.renderFeedbackPagination();
+                return;
+            }
+
+            const categoryLabels = {
+                pro_request: 'PRO запрос',
+                bug: 'Баг',
+                question: 'Вопрос',
+            };
+            const statusLabels = {
+                new: 'Новый',
+                resolved: 'Решён',
+            };
+            const statusColors = {
+                new: 'bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-400',
+                resolved: 'bg-surface-100 text-surface-600 dark:bg-white/5 dark:text-zinc-400',
+            };
+
+            listEl.innerHTML = `
+                <div class="glass rounded-2xl overflow-hidden">
+                    <div class="w-full overflow-x-auto scrollbar-thin hidden md:block">
+                        <table class="w-full text-sm">
+                            <thead>
+                                <tr class="border-b border-surface-200 dark:border-white/10">
+                                    <th class="text-left px-4 py-3 text-xs font-semibold text-surface-500 dark:text-surface-400">ID</th>
+                                    <th class="text-left px-4 py-3 text-xs font-semibold text-surface-500 dark:text-surface-400">Email</th>
+                                    <th class="text-left px-4 py-3 text-xs font-semibold text-surface-500 dark:text-surface-400">Категория</th>
+                                    <th class="text-left px-4 py-3 text-xs font-semibold text-surface-500 dark:text-surface-400">Статус</th>
+                                    <th class="text-left px-4 py-3 text-xs font-semibold text-surface-500 dark:text-surface-400">Пользователь</th>
+                                    <th class="text-left px-4 py-3 text-xs font-semibold text-surface-500 dark:text-surface-400">Скриншоты</th>
+                                    <th class="text-left px-4 py-3 text-xs font-semibold text-surface-500 dark:text-surface-400">Создано</th>
+                                    <th class="text-left px-4 py-3 text-xs font-semibold text-surface-500 dark:text-surface-400">Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${data.items.map(f => {
+                                    const images = f.images || [];
+                                    return `
+                                    <tr class="border-b border-surface-100 dark:border-white/5 hover:bg-surface-50 dark:hover:bg-white/5">
+                                        <td class="px-4 py-3 text-surface-700 dark:text-zinc-300">${f.id}</td>
+                                        <td class="px-4 py-3 text-surface-700 dark:text-zinc-300 font-medium">${escapeHtml(f.email)}</td>
+                                        <td class="px-4 py-3 text-surface-700 dark:text-zinc-300">${categoryLabels[f.category] || f.category}</td>
+                                        <td class="px-4 py-3">
+                                            <span class="px-2 py-1 rounded-lg text-xs font-semibold ${statusColors[f.status] || 'bg-surface-100 text-surface-600'}">
+                                                ${statusLabels[f.status] || f.status}
+                                            </span>
+                                        </td>
+                                        <td class="px-4 py-3 text-surface-700 dark:text-zinc-300">
+                                            ${f.user_email ? `${escapeHtml(f.user_email)} (ID: ${f.user_id})` : 'Гость'}
+                                        </td>
+                                        <td class="px-4 py-3">
+                                            ${images.length > 0 ? `
+                                                <button data-action="view-feedback-images" data-images='${escapeHtml(JSON.stringify(images))}'
+                                                        class="text-xs font-medium text-lime-600 dark:text-lime-400 hover:text-lime-700 dark:hover:text-lime-300 transition-colors">
+                                                    Просмотр (${images.length})
+                                                </button>
+                                            ` : '<span class="text-surface-400 dark:text-zinc-500">—</span>'}
+                                        </td>
+                                        <td class="px-4 py-3 text-surface-700 dark:text-zinc-300">${new Date(f.created_at).toLocaleString('ru-RU')}</td>
+                                        <td class="px-4 py-3">
+                                            <div class="flex items-center gap-1">
+                                                <button data-action="view-feedback" data-feedback-id="${f.id}"
+                                                        class="p-1 rounded-lg text-surface-600 dark:text-zinc-300 hover:text-primary-600 dark:hover:text-zinc-100 hover:bg-surface-100 dark:hover:bg-white/5 transition-colors"
+                                                        title="Подробнее" aria-label="Подробнее">
+                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.25 11.25l.04.04M21 12c0 9-9 21-9 21S3 21 3 12a9 9 0 1118 0z"></path>
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    `;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="block md:hidden space-y-2 p-4">
+                        ${data.items.map(f => {
+                            const images = f.images || [];
+                            const categoryLabels = {
+                                pro_request: 'PRO запрос',
+                                bug: 'Баг',
+                                question: 'Вопрос',
+                            };
+                            const statusLabels = {
+                                new: 'Новый',
+                                resolved: 'Решён',
+                            };
+                            const statusColors = {
+                                new: 'bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-400',
+                                resolved: 'bg-surface-100 text-surface-600 dark:bg-white/5 dark:text-zinc-400',
+                            };
+                            return `
+                            <button data-action="view-feedback" data-feedback-id="${f.id}"
+                                    class="w-full text-left p-3 rounded-xl hover:bg-surface-100 dark:hover:bg-white/5 transition-colors group"
+                                    aria-label="Подробнее об обращении #${f.id}">
+                                <div class="flex items-start gap-3">
+                                    <div class="flex-1 min-w-0">
+                                        <div class="flex items-center gap-2">
+                                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColors[f.status] || 'bg-surface-100 text-surface-600'}">
+                                                ${statusLabels[f.status] || f.status}
+                                            </span>
+                                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-surface-100 text-surface-600 dark:bg-white/5 dark:text-zinc-400">
+                                                ${categoryLabels[f.category] || f.category}
+                                            </span>
+                                        </div>
+                                        <p class="text-sm font-semibold truncate text-surface-900 dark:text-zinc-100 mt-1">${escapeHtml(f.email)}</p>
+                                        <p class="text-xs text-surface-500 dark:text-surface-400 truncate mt-0.5">${escapeHtml(f.message).slice(0, 80)}${f.message.length > 80 ? '...' : ''}</p>
+                                        <p class="text-xs text-surface-400 dark:text-surface-500 mt-0.5">
+                                            ${f.user_email ? `${escapeHtml(f.user_email)} (ID: ${f.user_id})` : 'Гость'} · ${new Date(f.created_at).toLocaleString('ru-RU')}
+                                        </p>
+                                        ${images.length > 0 ? `
+                                        <p class="text-xs text-lime-600 dark:text-lime-400 mt-1">📎 ${images.length} фото</p>
+                                        ` : ''}
+                                    </div>
+                                    <svg class="w-4 h-4 text-surface-400 dark:text-surface-500 group-hover:text-primary-600 dark:group-hover:text-zinc-200 transition-colors shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                                    </svg>
+                                </div>
+                            </button>
+                            `;
+                        }).join('')}
+                    </div>
+
+                    <div class="px-4 py-3 border-t border-surface-200 dark:border-white/10 flex items-center justify-between">
+                        <span class="text-xs text-surface-500 dark:text-surface-400">Всего: ${data.total}</span>
+                        <span class="text-xs text-surface-500 dark:text-surface-400">Страница ${data.page} из ${this.state.feedback_total_pages}</span>
+                    </div>
+                </div>
+            `;
+
+            this.renderFeedbackPagination();
+        } catch (error) {
+            console.error('[Admin] Feedback load error:', error);
+            listEl.innerHTML = Components.errorState('Ошибка загрузки обращений');
+            this.renderFeedbackPagination();
+        }
     },
 
     async viewUser(userId) {
@@ -608,6 +959,279 @@ const Admin = {
             }
         }
     },
+
+    openFeedbackDetailModal(feedback) {
+        if (this.feedbackModal) {
+            this.feedbackModal.remove();
+        }
+
+        const host = document.getElementById('modals') || document.body;
+
+        const backdrop = document.createElement('div');
+        backdrop.className = 'fixed inset-0 z-50 bg-black/40 backdrop-blur-sm opacity-0 transition-opacity duration-200 pointer-events-auto';
+
+        const panel = document.createElement('div');
+        panel.className = 'fixed inset-x-0 bottom-0 z-[60] glass-strong rounded-t-2xl max-h-[85vh] overflow-y-auto transform transition-transform duration-200 translate-y-full pointer-events-auto';
+
+        const categoryLabels = {
+            pro_request: 'PRO запрос',
+            bug: 'Баг',
+            question: 'Вопрос',
+        };
+        const statusLabels = {
+            new: 'Новый',
+            resolved: 'Решён',
+        };
+        const statusColors = {
+            new: 'bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-400',
+            resolved: 'bg-surface-100 text-surface-600 dark:bg-white/5 dark:text-zinc-400',
+        };
+
+        const images = feedback.images || [];
+
+        panel.innerHTML = `
+            <div class="w-12 h-1.5 bg-zinc-700 rounded-full mx-auto my-3"></div>
+
+            <div class="flex items-center justify-between mb-4 px-4">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl flex items-center justify-center bg-lime-500/10 text-lime-600 dark:text-lime-400">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-surface-900 dark:text-zinc-100">Обращение #${feedback.id}</h3>
+                        <p class="text-sm text-surface-500 dark:text-surface-400">${escapeHtml(feedback.email)}</p>
+                    </div>
+                </div>
+                <button data-action="close-feedback-modal" class="min-w-[44px] min-h-[44px] p-2.5 rounded-lg flex items-center justify-center text-surface-500 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-white/5 transition-colors">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+
+            <div class="space-y-4 px-4">
+                <div class="flex items-center gap-2 flex-wrap">
+                    <span class="px-2 py-1 rounded-lg text-xs font-semibold ${statusColors[feedback.status] || 'bg-surface-100 text-surface-600'}">
+                        ${statusLabels[feedback.status] || feedback.status}
+                    </span>
+                    <span class="px-2 py-1 rounded-lg text-xs font-semibold bg-surface-100 text-surface-600 dark:bg-white/5 dark:text-zinc-400">
+                        ${categoryLabels[feedback.category] || feedback.category}
+                    </span>
+                </div>
+
+                <div class="space-y-2 text-sm">
+                    <div class="flex justify-between">
+                        <span class="text-surface-500 dark:text-surface-400">Пользователь</span>
+                        <span class="text-surface-900 dark:text-zinc-100 font-medium">${feedback.user_email ? `${escapeHtml(feedback.user_email)} (ID: ${feedback.user_id})` : 'Гость'}</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-surface-500 dark:text-surface-400">Создано</span>
+                        <span class="text-surface-900 dark:text-zinc-100 font-medium">${new Date(feedback.created_at).toLocaleString('ru-RU')}</span>
+                    </div>
+                </div>
+
+                <div class="pt-2 border-t border-surface-200 dark:border-white/10">
+                    <p class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider mb-2">Сообщение</p>
+                    <p class="text-sm text-surface-700 dark:text-zinc-300 whitespace-pre-wrap">${escapeHtml(feedback.message)}</p>
+                </div>
+
+                ${images.length > 0 ? `
+                <div class="pt-2 border-t border-surface-200 dark:border-white/10">
+                    <p class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider mb-2">Скриншоты (${images.length})</p>
+                    <div class="grid grid-cols-2 md:grid-cols-3 gap-2">
+                        ${images.map(img => `
+                            <button data-action="view-full-image" data-url="${img.url}"
+                                    class="aspect-square rounded-xl overflow-hidden bg-surface-100 dark:bg-white/5 hover:scale-[1.02] transition-transform cursor-zoom-in"
+                                    aria-label="Открыть изображение">
+                                <img src="${img.thumbnail_url || img.url}" alt="Screenshot" class="w-full h-full object-cover">
+                            </button>
+                        `).join('')}
+                    </div>
+                </div>
+                ` : ''}
+
+                <div class="pt-4 border-t border-surface-200 dark:border-white/10">
+                    <p class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider mb-3">Действия</p>
+                    <div class="space-y-2">
+                        <button data-action="update-feedback-status" data-feedback-id="${feedback.id}" data-status="resolved"
+                                class="w-full px-3 py-2 rounded-xl text-sm font-semibold transition-all
+                                       ${feedback.status === 'resolved' ? 'bg-surface-100 text-surface-500 dark:bg-white/5 dark:text-zinc-500 cursor-not-allowed opacity-50' : 'bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-400 hover:bg-lime-200 dark:hover:bg-lime-900/50'}"
+                                ${feedback.status === 'resolved' ? 'disabled' : ''}>
+                            Отметить как решённое
+                        </button>
+                        <button data-action="update-feedback-status" data-feedback-id="${feedback.id}" data-status="new"
+                                class="w-full px-3 py-2 rounded-xl text-sm font-semibold transition-all
+                                       ${feedback.status === 'new' ? 'bg-surface-100 text-surface-500 dark:bg-white/5 dark:text-zinc-500 cursor-not-allowed opacity-50' : 'bg-surface-100 text-surface-700 dark:bg-white/5 dark:text-zinc-300 hover:bg-surface-200'}"
+                                ${feedback.status === 'new' ? 'disabled' : ''}>
+                            Вернуть в новые
+                        </button>
+                        ${feedback.user_id && feedback.category === 'pro_request' && feedback.status !== 'resolved' ? `
+                        <button data-action="grant-pro-from-feedback" data-feedback-id="${feedback.id}" data-user-id="${feedback.user_id}"
+                                class="w-full px-3 py-2 rounded-xl text-sm font-semibold bg-primary-600 text-white hover:bg-primary-700 transition-colors flex items-center justify-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                            </svg>
+                            Выдать PRO и отметить решённым
+                        </button>
+                        ` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+
+        backdrop.appendChild(panel);
+        host.appendChild(backdrop);
+        this.feedbackModal = backdrop;
+
+        document.body.classList.add('overflow-hidden');
+
+        this._feedbackModalBackdropClick = (e) => {
+            if (e.target === backdrop) {
+                Admin.closeFeedbackModal();
+            }
+        };
+        backdrop.addEventListener('click', this._feedbackModalBackdropClick);
+
+        this._feedbackModalKeydown = (e) => {
+            if (e.key === 'Escape') Admin.closeFeedbackModal();
+        };
+        document.addEventListener('keydown', this._feedbackModalKeydown);
+
+        setTimeout(() => {
+            backdrop.classList.remove('opacity-0');
+            panel.classList.remove('translate-y-full');
+        }, 10);
+    },
+
+    closeFeedbackModal() {
+        const backdrop = this.feedbackModal;
+        if (!backdrop) return;
+        const panel = backdrop.firstElementChild;
+        backdrop.classList.add('opacity-0');
+        if (panel) panel.classList.add('translate-y-full');
+        setTimeout(() => {
+            if (this.feedbackModal === backdrop) {
+                backdrop.remove();
+                this.feedbackModal = null;
+            }
+            document.body.classList.remove('overflow-hidden');
+            if (this._feedbackModalKeydown) {
+                document.removeEventListener('keydown', this._feedbackModalKeydown);
+                this._feedbackModalKeydown = null;
+            }
+            if (this._feedbackModalBackdropClick) {
+                backdrop.removeEventListener('click', this._feedbackModalBackdropClick);
+                this._feedbackModalBackdropClick = null;
+            }
+        }, 200);
+    },
+
+    async updateFeedback(feedbackId, data) {
+        try {
+            await API.patch(`/admin/feedback/${feedbackId}`, data, this.app.state.tokens.access);
+            this.app.showToast('Обращение обновлено', 'success');
+            this.closeFeedbackModal();
+            await this.loadFeedback();
+        } catch (error) {
+            console.error('[Admin] Feedback update error:', error);
+            if (error?.status !== 401 && error?.status !== 403) {
+                this.app.showToast(error?.data?.detail || error?.message || 'Ошибка обновления обращения', 'error');
+            }
+        }
+    },
+
+    async grantProFromFeedback(feedbackId, userId) {
+        if (!await Components.confirmModal({
+            title: 'Выдать PRO?',
+            message: 'Пользователю будет выдан PRO статус, а обращение отмечено как решённое. Продолжить?',
+            confirmText: 'Выдать PRO',
+            confirmClass: 'bg-primary-600 hover:bg-primary-700 text-white shadow-md',
+            cancelText: 'Отмена'
+        })) return;
+
+        try {
+            await API.patch(`/admin/feedback/${feedbackId}`, { status: 'resolved', grant_pro: true }, this.app.state.tokens.access);
+            this.app.showToast('PRO выдан, обращение отмечено как решённое', 'success');
+            this.closeFeedbackModal();
+            await this.loadFeedback();
+        } catch (error) {
+            console.error('[Admin] Grant PRO from feedback error:', error);
+            if (error?.status !== 401 && error?.status !== 403) {
+                this.app.showToast(error?.data?.detail || error?.message || 'Ошибка выдачи PRO', 'error');
+            }
+        }
+    },
+
+    openFullScreenImage(url, images) {
+        const host = document.getElementById('modals') || document.body;
+
+        const backdrop = document.createElement('div');
+        backdrop.className = 'fixed inset-0 z-50 bg-black/90 opacity-0 transition-opacity duration-200 pointer-events-auto';
+
+        const panel = document.createElement('div');
+        panel.className = 'fixed inset-0 z-[60] flex items-center justify-center pointer-events-auto';
+        panel.style.maxWidth = '100%';
+        panel.style.maxHeight = '100%';
+
+        let currentIndex = images.findIndex(img => img.url === url);
+        if (currentIndex === -1) currentIndex = 0;
+
+        panel.innerHTML = `
+            <button data-action="close-fullscreen-image" class="absolute top-4 right-4 z-10 min-w-[44px] min-h-[44px] p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors flex items-center justify-center" aria-label="Закрыть">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+            ${images.length > 1 ? `
+            <button data-action="prev-fullscreen-image" class="absolute left-4 z-10 min-w-[44px] min-h-[44px] p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors flex items-center justify-center" aria-label="Предыдущее">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+            </button>
+            <button data-action="next-fullscreen-image" class="absolute right-4 z-10 min-w-[44px] min-h-[44px] p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors flex items-center justify-center" aria-label="Следующее">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+            </button>
+            ` : ''}
+            <img src="${url}" alt="Fullscreen image" class="max-w-[90vw] max-h-[90vh] object-contain">
+        `;
+
+        backdrop.appendChild(panel);
+        host.appendChild(backdrop);
+
+        document.body.classList.add('overflow-hidden');
+
+        const closeFn = () => {
+            backdrop.classList.add('opacity-0');
+            setTimeout(() => backdrop.remove(), 200);
+            document.body.classList.remove('overflow-hidden');
+            backdrop.removeEventListener('click', backdropClickFn);
+            document.removeEventListener('keydown', keydownFn);
+        };
+
+        const backdropClickFn = (e) => {
+            if (e.target === backdrop) closeFn();
+        };
+        backdrop.addEventListener('click', backdropClickFn);
+
+        const keydownFn = (e) => {
+            if (e.key === 'Escape') closeFn();
+            if (e.key === 'ArrowLeft' && images.length > 1) showImage((currentIndex - 1 + images.length) % images.length);
+            if (e.key === 'ArrowRight' && images.length > 1) showImage((currentIndex + 1) % images.length);
+        };
+        document.addEventListener('keydown', keydownFn);
+
+        const showImage = (index) => {
+            const img = panel.querySelector('img');
+            if (img) {
+                img.src = images[index].url;
+            }
+            currentIndex = index;
+        };
+
+        // Add click handlers for nav buttons
+        const prevBtn = panel.querySelector('[data-action="prev-fullscreen-image"]');
+        const nextBtn = panel.querySelector('[data-action="next-fullscreen-image"]');
+        if (prevBtn) prevBtn.addEventListener('click', () => showImage((currentIndex - 1 + images.length) % images.length));
+        if (nextBtn) nextBtn.addEventListener('click', () => showImage((currentIndex + 1) % images.length));
+
+        setTimeout(() => backdrop.classList.remove('opacity-0'), 10);
+    },
 };
 
 function escapeHtml(text) {
@@ -676,6 +1300,59 @@ document.addEventListener('click', async (e) => {
         const el = e.target.closest('[data-action="admin-next-page"]');
         if (!el.disabled) Admin.nextPage();
     }
+    if (action === 'admin-feedback-prev-page') {
+        const el = e.target.closest('[data-action="admin-feedback-prev-page"]');
+        if (!el.disabled) Admin.prevFeedbackPage();
+    }
+    if (action === 'admin-feedback-next-page') {
+        const el = e.target.closest('[data-action="admin-feedback-next-page"]');
+        if (!el.disabled) Admin.nextFeedbackPage();
+    }
+    if (action === 'view-feedback') {
+        e.preventDefault();
+        const btn = e.target.closest('[data-action="view-feedback"]');
+        const feedbackId = parseInt(btn.dataset.feedbackId);
+        try {
+            const feedback = await API.get(`/admin/feedback/${feedbackId}`, Admin.app.state.tokens.access);
+            Admin.openFeedbackDetailModal(feedback);
+        } catch (error) {
+            console.error('[Admin] Feedback load error:', error);
+            Admin.app.showToast(error?.data?.detail || error?.message || 'Ошибка загрузки обращения', 'error');
+        }
+    }
+    if (action === 'view-feedback-images') {
+        const btn = e.target.closest('[data-action="view-feedback-images"]');
+        const images = JSON.parse(btn.dataset.images);
+        // Open first image in full view
+        if (images.length > 0) {
+            Admin.openFullScreenImage(images[0].url, images);
+        }
+    }
+    if (action === 'view-full-image') {
+        const btn = e.target.closest('[data-action="view-full-image"]');
+        const url = btn.dataset.url;
+        const imagesAttr = btn.closest('[data-images]')?.dataset.images;
+        const images = imagesAttr ? JSON.parse(imagesAttr) : [{url}];
+        Admin.openFullScreenImage(url, images);
+    }
+    if (action === 'close-feedback-modal') {
+        Admin.closeFeedbackModal();
+    }
+    if (action === 'update-feedback-status') {
+        const btn = e.target.closest('[data-action="update-feedback-status"]');
+        const feedbackId = parseInt(btn.dataset.feedbackId);
+        const status = btn.dataset.status;
+        Admin.updateFeedback(feedbackId, { status });
+    }
+    if (action === 'grant-pro-from-feedback') {
+        const btn = e.target.closest('[data-action="grant-pro-from-feedback"]');
+        const feedbackId = parseInt(btn.dataset.feedbackId);
+        const userId = parseInt(btn.dataset.userId);
+        Admin.grantProFromFeedback(feedbackId, userId);
+    }
+    if (action === 'admin-feedback-reset-filters') {
+        Admin.resetFeedbackFilters();
+    }
 });
 
 document.addEventListener('keydown', (e) => {
@@ -683,12 +1360,20 @@ document.addEventListener('keydown', (e) => {
         e.preventDefault();
         Admin.applySearch();
     }
+    if (e.key === 'Enter' && e.target.closest('#admin-feedback-search')) {
+        e.preventDefault();
+        Admin.applyFeedbackSearch();
+    }
 });
 
 document.addEventListener('change', (e) => {
     const select = e.target.closest('[data-action="admin-filter"]');
     if (select) {
         Admin.applyFilter(select.dataset.filter, select.value);
+    }
+    const feedbackSelect = e.target.closest('[data-action="admin-feedback-filter"]');
+    if (feedbackSelect) {
+        Admin.applyFeedbackFilter(feedbackSelect.dataset.filter, feedbackSelect.value);
     }
 });
 

@@ -351,6 +351,66 @@ class AdminStats(BaseModel):
     ai_error_rate: float
 
 
+# Feedback schemas
+class FeedbackCategory(str, Enum):
+    PRO_REQUEST = "pro_request"
+    BUG = "bug"
+    QUESTION = "question"
+
+
+class FeedbackStatus(str, Enum):
+    NEW = "new"
+    RESOLVED = "resolved"
+
+
+class FeedbackCreate(BaseModel):
+    category: FeedbackCategory
+    message: str = Field(min_length=1, max_length=5000)
+    email: Optional[TestEmailStr] = None
+    # images are handled via multipart form data
+
+
+class FeedbackResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: TestEmailStr
+    category: FeedbackCategory
+    message: str
+    images: Optional[List[str]] = None
+    status: FeedbackStatus
+    created_at: UtcDateTime
+
+
+class AdminFeedbackItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    # Plain str, not TestEmailStr: guest submissions are stored verbatim and an
+    # admin listing must never 500 because one row predates server-side email
+    # validation.
+    email: str
+    category: FeedbackCategory
+    message: str
+    images: Optional[List[str]] = None
+    status: FeedbackStatus
+    user_id: Optional[int] = None
+    user_email: Optional[str] = None
+    created_at: UtcDateTime
+
+
+class AdminFeedbackListResponse(BaseModel):
+    items: List[AdminFeedbackItem]
+    total: int
+    page: int
+    page_size: int
+
+
+class AdminFeedbackUpdate(BaseModel):
+    status: Optional[FeedbackStatus] = None
+    grant_pro: Optional[bool] = None
+
+
 class AnthropometricsResponse(BaseModel):
     user: UserMe
     targets: MacroTargetsResponse
@@ -830,4 +890,11 @@ __all__ = [
     "AIWorkoutRecommendation",
     "WorkoutCompletionRequest",
     "WorkoutCompletionResponse",
+    "FeedbackCategory",
+    "FeedbackStatus",
+    "FeedbackCreate",
+    "FeedbackResponse",
+    "AdminFeedbackItem",
+    "AdminFeedbackListResponse",
+    "AdminFeedbackUpdate",
 ]

@@ -91,6 +91,19 @@ const AI_PERSONAS = [
     { value: 'custom', emoji: '🎭', label: 'Свой', hint: 'Опишите стиль общения сами' },
 ];
 
+const FEEDBACK_CATEGORIES = [
+    { value: 'pro_request', label: 'Получить PRO / Запрос на PRO', emoji: '⭐' },
+    { value: 'bug', label: 'Ошибка / Баг', emoji: '🐛' },
+    { value: 'question', label: 'Вопрос / Предложение', emoji: '❓' },
+];
+
+const FEEDBACK_CATEGORY_BASE = 'flex items-center gap-2 px-3 py-2 rounded-xl border text-left transition-all min-w-0';
+const FEEDBACK_CATEGORY_ACTIVE = 'bg-lime-500/10 border-lime-500/50 text-surface-900 dark:text-zinc-100 shadow-[0_0_0_1px_rgba(132,204,22,0.35)]';
+const FEEDBACK_CATEGORY_IDLE = 'bg-surface-100/70 dark:bg-white/5 border-surface-200 dark:border-white/10 text-surface-600 dark:text-zinc-300 hover:border-lime-500/40';
+
+const MAX_FEEDBACK_IMAGES = 3;
+const MAX_FEEDBACK_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
+
 const PERSONA_OPTION_BASE = 'flex flex-col items-start gap-0.5 px-2.5 py-2 rounded-xl border text-left transition-all min-w-0';
 const PERSONA_OPTION_ACTIVE = 'bg-lime-500/10 border-lime-500/50 text-surface-900 dark:text-zinc-100 shadow-[0_0_0_1px_rgba(132,204,22,0.35)]';
 const PERSONA_OPTION_IDLE = 'bg-surface-100/70 dark:bg-white/5 border-surface-200 dark:border-white/10 text-surface-600 dark:text-zinc-300 hover:border-lime-500/40';
@@ -141,6 +154,92 @@ function renderPersonaCard(user) {
                 <div class="flex items-baseline justify-between gap-2 mt-1">
                     <p id="persona-custom-hint" class="text-[11px] text-surface-500 dark:text-surface-400">Опишите тон, обращение и длину ответа</p>
                     <span id="persona-custom-count" class="text-[11px] tabular-nums text-surface-400 dark:text-zinc-500">${text.length}/${PERSONA_TEXT_MAX}</span>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderFeedbackModal({ category = 'question', isGuest = false, userEmail = '' } = {}) {
+    const categoryOptions = FEEDBACK_CATEGORIES.map(({ value, label, emoji }) => {
+        const active = value === category;
+        const cls = FEEDBACK_CATEGORY_BASE + ' ' + (active ? FEEDBACK_CATEGORY_ACTIVE : FEEDBACK_CATEGORY_IDLE);
+        return `
+            <button type="button" data-action="set-feedback-category" data-value="${value}" aria-pressed="${active}"
+                    class="${cls}">
+                <span class="text-[14px]">${emoji}</span>
+                <span class="text-sm font-medium leading-tight">${label}</span>
+            </button>
+        `;
+    }).join('');
+
+    return `
+        <div class="fixed inset-0 z-[120] pointer-events-none transition-opacity duration-200" id="feedback-modal-backdrop">
+            <div class="fixed inset-x-0 bottom-0 z-[130] glass-strong rounded-t-2xl max-h-[90vh] overflow-y-auto transform transition-transform duration-200 translate-y-full pointer-events-auto" id="feedback-modal-panel">
+                <div class="w-12 h-1.5 bg-zinc-700 rounded-full mx-auto my-3"></div>
+
+                <div class="flex items-center justify-between mb-4 px-4">
+                    <h3 class="text-lg font-bold text-surface-900 dark:text-zinc-100">Обратная связь</h3>
+                    <button type="button" data-action="close-feedback-modal" class="min-w-[44px] min-h-[44px] p-2.5 rounded-lg flex items-center justify-center text-surface-500 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-white/5 transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                </div>
+
+                <div class="space-y-4 px-4 pb-6">
+                    <p class="text-sm text-surface-600 dark:text-zinc-300">
+                        ${isGuest
+                            ? 'Напишите нам — мы ответим на email. Для авторизованных пользователей email подставится автоматически.'
+                            : 'Ваш email уже известен, просто выберите тему и напишите сообщение.'
+                        }
+                    </p>
+
+                    <div class="space-y-2">
+                        <label class="block text-xs font-semibold text-surface-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Категория</label>
+                        <div class="grid grid-cols-1 gap-1.5" role="group" aria-label="Категория обращения">
+                            ${categoryOptions}
+                        </div>
+                    </div>
+
+                    ${isGuest ? `
+                    <div class="space-y-2">
+                        <label for="feedback-email" class="block text-xs font-semibold text-surface-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Email *</label>
+                        <input type="email" id="feedback-email" data-field="email" autocomplete="email"
+                               value="${escapeHtml(userEmail)}" placeholder="your@email.com"
+                               class="w-full px-3 py-2.5 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 placeholder-surface-400 dark:placeholder-surface-500 focus:outline-none focus:ring-2 focus:ring-lime-500/30"
+                               required>
+                    </div>
+                    ` : ''}
+
+                    <div class="space-y-2">
+                        <label for="feedback-message" class="block text-xs font-semibold text-surface-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Сообщение *</label>
+                        <textarea id="feedback-message" data-field="message" rows="4" maxlength="5000"
+                                  placeholder="Опишите проблему, предложение или вопрос..."
+                                  class="w-full px-3 py-2.5 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 placeholder-surface-400 dark:placeholder-surface-500 focus:outline-none focus:ring-2 focus:ring-lime-500/30 resize-y"
+                                  required></textarea>
+                        <p class="text-[11px] text-surface-400 dark:text-surface-500 text-right" id="feedback-message-count">0/5000</p>
+                    </div>
+
+                    <div class="space-y-2">
+                        <label class="block text-xs font-semibold text-surface-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">
+                            Скриншоты (максимум ${MAX_FEEDBACK_IMAGES}, до 10 Мб каждый)
+                        </label>
+                        <input type="file" id="feedback-images" data-field="images" accept="image/*" multiple
+                               class="w-full px-3 py-2 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-lime-500 file:text-zinc-950"
+                               style="display: none;">
+                        <button type="button" data-action="pick-feedback-images" class="w-full px-3 py-2 rounded-xl glass border border-surface-200 dark:border-white/10 text-sm font-medium hover:bg-surface-100 dark:hover:bg-white/5 transition-all flex items-center justify-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                            <span>Прикрепить фото</span>
+                        </button>
+                        <div id="feedback-image-previews" class="flex flex-wrap gap-2 min-h-[48px]"></div>
+                        <p class="text-[11px] text-surface-400 dark:text-surface-500" id="feedback-image-count">0 / ${MAX_FEEDBACK_IMAGES}</p>
+                    </div>
+
+                    <button type="button" data-action="submit-feedback"
+                            class="w-full mt-4 py-3 rounded-xl bg-lime-500 hover:bg-lime-400 text-zinc-950 font-semibold text-sm transition-all btn-press flex items-center justify-center gap-2"
+                            disabled>
+                        <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+                        <span>Отправить</span>
+                    </button>
                 </div>
             </div>
         </div>
@@ -256,10 +355,10 @@ function renderFreePlan(usage) {
             </div>
             <div class="usage-list">${quotaRows}</div>
             ${gateRows ? `<ul class="flex flex-col gap-2 pt-1">${gateRows}</ul>` : ''}
-            <button type="button" data-action="activate-pro"
+            <button type="button" data-action="open-feedback-modal" data-category="pro_request"
                     class="w-full mt-4 flex items-center justify-center gap-2 py-3 rounded-xl bg-lime-500 hover:bg-lime-400 text-zinc-950 font-semibold text-sm transition-all btn-press">
-                <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16v2m-1-1h2m-7 6v4m-1-1h2m9-3v2m-1-1h2M9 14l6-6m-8 8l8-8"/></svg>
-                <span>Активировать PRO</span>
+                <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+                <span>Получить PRO / Написать в поддержку</span>
             </button>
         </div>
     `;
@@ -704,6 +803,246 @@ export const Profile = {
             // Re-enable the button so the user can retry without reopening.
             const retry = this._anthroState?.modalEl.querySelector('#anthro-submit');
             if (retry) retry.disabled = false;
+        }
+    },
+
+    _feedbackModalState: null,
+
+    openFeedbackModal({ category = 'question', isGuest = false } = {}) {
+        if (this._feedbackModalState) return;
+
+        const modalHtml = renderFeedbackModal({
+            category,
+            isGuest,
+            userEmail: this.user?.email || '',
+        });
+        const modalContainer = document.createElement('div');
+        modalContainer.innerHTML = modalHtml;
+        const modalEl = modalContainer.firstElementChild;
+        document.body.appendChild(modalEl);
+
+        // Add initial opacity-0 to backdrop for fade-in animation
+        const backdropEl = modalEl.querySelector('#feedback-modal-backdrop');
+        if (backdropEl) {
+            backdropEl.classList.add('opacity-0');
+        }
+
+        this._feedbackModalState = {
+            modalEl,
+            panelEl: modalEl.querySelector('#feedback-modal-panel'),
+            selectedCategory: category,
+            selectedImages: [],
+            bodyWasLocked: document.body.classList.contains('overflow-hidden'),
+        };
+        document.body.classList.add('overflow-hidden');
+
+        this.bindFeedbackModalEvents(modalEl);
+
+        // Animate in
+        setTimeout(() => {
+            backdropEl?.classList.remove('opacity-0');
+            this._feedbackModalState.panelEl?.classList.remove('translate-y-full');
+        }, 10);
+    },
+
+    closeFeedbackModal() {
+        if (!this._feedbackModalState) return;
+
+        const { modalEl, panelEl, onKeydown, bodyWasLocked } = this._feedbackModalState;
+        this._feedbackModalState = null;
+        if (onKeydown) {
+            document.removeEventListener('keydown', onKeydown);
+        }
+        if (!bodyWasLocked) {
+            document.body.classList.remove('overflow-hidden');
+        }
+
+        const backdropEl = modalEl.querySelector('#feedback-modal-backdrop');
+        backdropEl?.classList.add('opacity-0');
+        panelEl?.classList.add('translate-y-full');
+
+        setTimeout(() => {
+            modalEl.remove();
+        }, 220);
+    },
+
+    bindFeedbackModalEvents(modalEl) {
+        const state = this._feedbackModalState;
+
+        // Backdrop click to close
+        modalEl.querySelector('#feedback-modal-backdrop')?.addEventListener('click', (e) => {
+            if (e.target === modalEl.querySelector('#feedback-modal-backdrop')) {
+                this.closeFeedbackModal();
+            }
+        });
+
+        // Close button
+        modalEl.querySelector('[data-action="close-feedback-modal"]')?.addEventListener('click', () => {
+            this.closeFeedbackModal();
+        });
+
+        // Escape key
+        const onKeydown = (e) => {
+            if (e.key === 'Escape') this.closeFeedbackModal();
+        };
+        state.onKeydown = onKeydown;
+        document.addEventListener('keydown', onKeydown);
+
+        // Category selection
+        modalEl.querySelectorAll('[data-action="set-feedback-category"]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const value = btn.dataset.value;
+                state.selectedCategory = value;
+                modalEl.querySelectorAll('[data-action="set-feedback-category"]').forEach((other) => {
+                    const active = other === btn;
+                    other.setAttribute('aria-pressed', String(active));
+                    other.className = FEEDBACK_CATEGORY_BASE + ' ' + (active ? FEEDBACK_CATEGORY_ACTIVE : FEEDBACK_CATEGORY_IDLE);
+                });
+            });
+        });
+
+        // Message character counter
+        const messageTextarea = modalEl.querySelector('#feedback-message');
+        const messageCounter = modalEl.querySelector('#feedback-message-count');
+        if (messageTextarea && messageCounter) {
+            messageTextarea.addEventListener('input', () => {
+                messageCounter.textContent = `${messageTextarea.value.length}/5000`;
+            });
+        }
+
+        // Image picker
+        const fileInput = modalEl.querySelector('#feedback-images');
+        const pickButton = modalEl.querySelector('[data-action="pick-feedback-images"]');
+        if (pickButton && fileInput) {
+            pickButton.addEventListener('click', () => fileInput.click());
+        }
+        if (fileInput) {
+            fileInput.addEventListener('change', (e) => {
+                this.handleFeedbackImages(e.target.files, modalEl, state);
+                e.target.value = ''; // Allow re-selecting same file
+            });
+        }
+
+        // Submit button
+        modalEl.querySelector('[data-action="submit-feedback"]')?.addEventListener('click', () => {
+            this.submitFeedback(modalEl, state);
+        });
+    },
+
+    handleFeedbackImages(files, modalEl, state) {
+        const previewsContainer = modalEl.querySelector('#feedback-image-previews');
+        const counter = modalEl.querySelector('#feedback-image-count');
+        const submitBtn = modalEl.querySelector('[data-action="submit-feedback"]');
+
+        for (const file of Array.from(files)) {
+            if (state.selectedImages.length >= MAX_FEEDBACK_IMAGES) break;
+            if (!file.type.startsWith('image/')) continue;
+            if (file.size > MAX_FEEDBACK_IMAGE_SIZE) {
+                this.app.showToast(`Файл ${file.name} слишком большой (макс. 10 МБ)`, 'error');
+                continue;
+            }
+
+            state.selectedImages.push(file);
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const preview = document.createElement('div');
+                preview.className = 'relative w-20 h-20 rounded-xl overflow-hidden flex-shrink-0';
+                preview.innerHTML = `
+                    <img src="${e.target.result}" alt="Preview" class="w-full h-full object-cover">
+                    <button type="button" class="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/50 text-white flex items-center justify-center text-xs" data-action="remove-feedback-image" data-index="${state.selectedImages.length - 1}">
+                        ×
+                    </button>
+                `;
+                previewsContainer.appendChild(preview);
+                this.updateFeedbackImageCounter(modalEl, state);
+            };
+            reader.readAsDataURL(file);
+        }
+
+        if (submitBtn) {
+            submitBtn.disabled = state.selectedImages.length === 0 && !modalEl.querySelector('#feedback-message')?.value?.trim();
+        }
+    },
+
+    updateFeedbackImageCounter(modalEl, state) {
+        const counter = modalEl.querySelector('#feedback-image-count');
+        const previewsContainer = modalEl.querySelector('#feedback-image-previews');
+        if (counter) {
+            counter.textContent = `${state.selectedImages.length} / ${MAX_FEEDBACK_IMAGES}`;
+        }
+
+        // Bind remove buttons
+        previewsContainer?.querySelectorAll('[data-action="remove-feedback-image"]').forEach((btn) => {
+            btn.onclick = (e) => {
+                e.stopPropagation();
+                const index = parseInt(btn.dataset.index, 10);
+                state.selectedImages.splice(index, 1);
+                btn.closest('.relative').remove();
+                this.updateFeedbackImageCounter(modalEl, state);
+                const submitBtn = modalEl.querySelector('[data-action="submit-feedback"]');
+                const message = modalEl.querySelector('#feedback-message')?.value?.trim();
+                if (submitBtn) {
+                    submitBtn.disabled = state.selectedImages.length === 0 && !message;
+                }
+            };
+        });
+    },
+
+    async submitFeedback(modalEl, state) {
+        const message = modalEl.querySelector('#feedback-message')?.value?.trim();
+        const email = modalEl.querySelector('#feedback-email')?.value?.trim();
+        const submitBtn = modalEl.querySelector('[data-action="submit-feedback"]');
+
+        if (!message) {
+            this.app?.showToast?.('Введите сообщение', 'error') || window.App?.showToast?.('Введите сообщение', 'error');
+            return;
+        }
+
+        const appRef = this.app || window.App;
+        const isGuest = !appRef?.state?.tokens?.access;
+        if (isGuest && !email) {
+            appRef?.showToast?.('Укажите email для ответа', 'error');
+            return;
+        }
+
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = `
+                <div class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                <span>Отправка...</span>
+            `;
+        }
+
+        try {
+            const formData = new FormData();
+            formData.append('category', state.selectedCategory);
+            formData.append('message', message);
+            if (isGuest) {
+                formData.append('email', email);
+            }
+            for (const file of state.selectedImages) {
+                formData.append('images', file);
+            }
+
+            await API.post('/feedback', formData, appRef?.state?.tokens?.access || null, true);
+
+            appRef?.showToast?.('Сообщение отправлено! Мы ответим в ближайшее время.', 'success');
+            this.closeFeedbackModal();
+        } catch (error) {
+            if (error?.offlineQueued) {
+                appRef?.showToast?.('Нет связи. Сообщение будет отправлено при появлении сети', 'info');
+            } else {
+                console.error('[Profile] Feedback submit error:', error);
+                appRef?.showToast?.(error?.data?.detail || error?.message || 'Не удалось отправить сообщение', 'error');
+            }
+        } finally {
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = `
+                    <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+                    <span>Отправить</span>
+                `;
+            }
         }
     }
 };

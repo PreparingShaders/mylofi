@@ -430,6 +430,32 @@ class ExerciseCatalog(Base):
     __table_args__ = (Index("ix_exercise_catalog_muscle_equipment", "muscle_group", "equipment"),)
 
 
+class FeedbackStatus(str, enum.Enum):
+    NEW = "new"
+    RESOLVED = "resolved"
+
+
+class FeedbackCategory(str, enum.Enum):
+    PRO_REQUEST = "pro_request"
+    BUG = "bug"
+    QUESTION = "question"
+
+
+class Feedback(Base):
+    __tablename__ = "feedback"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    category: Mapped[str] = mapped_column(String(50), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    images: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(50), default="new", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    user: Mapped[Optional["User"]] = relationship("User", backref="feedback")
+
+
 __all__ = [
     "User",
     "RefreshToken",
@@ -446,4 +472,7 @@ __all__ = [
     "WorkoutSessionStatus",
     "UserRole",
     "ExerciseCatalog",
+    "Feedback",
+    "FeedbackStatus",
+    "FeedbackCategory",
 ]

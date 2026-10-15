@@ -486,6 +486,10 @@ const App = {
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
                                         </button>
                                     </div>
+                                    <button data-action="open-feedback-modal" data-category="question"
+                                            class="px-4 py-2.5 rounded-xl text-sm font-medium text-surface-500 dark:text-zinc-300 hover:text-lime-500 dark:hover:text-lime-400 hover:bg-surface-100 dark:hover:bg-zinc-900 transition-all">
+                                        Обратная связь
+                                    </button>
                                     <button data-action="show-auth" class="px-5 py-2.5 rounded-xl border border-surface-200 dark:border-zinc-800 text-sm font-medium text-surface-500 dark:text-zinc-300 hover:text-surface-900 dark:hover:text-zinc-100 hover:border-surface-300 dark:hover:border-zinc-700 hover:bg-surface-100 dark:hover:bg-zinc-900 transition-all">
                                         Войти
                                     </button>
@@ -523,6 +527,10 @@ const App = {
                                 <a data-action="close-landing-menu" href="#landing-nutrition" class="px-4 py-3 rounded-xl text-sm font-medium text-surface-500 dark:text-zinc-300 hover:text-surface-900 dark:hover:text-zinc-100 hover:bg-surface-100 dark:hover:bg-zinc-900 transition-colors">Питание</a>
                                 <a data-action="close-landing-menu" href="#landing-workouts" class="px-4 py-3 rounded-xl text-sm font-medium text-surface-500 dark:text-zinc-300 hover:text-surface-900 dark:hover:text-zinc-100 hover:bg-surface-100 dark:hover:bg-zinc-900 transition-colors">Тренировки</a>
                                 <a data-action="close-landing-menu" href="#landing-ai-synergy" class="px-4 py-3 rounded-xl text-sm font-medium text-surface-500 dark:text-zinc-300 hover:text-surface-900 dark:hover:text-zinc-100 hover:bg-surface-100 dark:hover:bg-zinc-900 transition-colors">ИИ-Синергия</a>
+                                <button data-action="open-feedback-modal" data-category="question"
+                                        class="px-4 py-3 rounded-xl text-sm font-medium text-surface-500 dark:text-zinc-300 hover:text-lime-500 dark:hover:text-lime-400 hover:bg-surface-100 dark:hover:bg-zinc-900 transition-colors text-left w-full">
+                                    Обратная связь
+                                </button>
                                 <div class="flex items-center justify-between gap-3 px-1 py-2">
                                     <span class="text-xs font-semibold uppercase tracking-wider text-surface-400 dark:text-zinc-500">Тема</span>
                                     <div id="landing-theme-mobile" class="flex items-center gap-1 p-1 rounded-xl bg-surface-100 dark:bg-zinc-800/60 border border-surface-200 dark:border-white/5">
@@ -610,7 +618,13 @@ const App = {
 
                     <!-- Footer -->
                     <footer class="relative z-10 text-center py-6 px-6 text-xs text-surface-600 dark:text-zinc-500">
-                        © mylofi.live
+                        <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
+                            <span>© mylofi.live</span>
+                            <button data-action="open-feedback-modal" data-category="question"
+                                    class="text-surface-400 dark:text-zinc-600 hover:text-lime-500 dark:hover:text-lime-400 transition-colors font-medium text-xs">
+                                Обратная связь
+                            </button>
+                        </div>
                     </footer>
                 </div>
             </div>
@@ -979,6 +993,15 @@ const App = {
                 break;
             case 'save-ai-persona':
                 await Profile.savePersona(this.elements.pageContent);
+                break;
+            case 'open-feedback-modal': {
+                const category = event.target.closest('[data-action="open-feedback-modal"]')?.dataset.category || 'question';
+                const isGuest = !this.state.tokens?.access;
+                Profile.openFeedbackModal({ category, isGuest });
+                break;
+            }
+            case 'close-feedback-modal':
+                Profile.closeFeedbackModal();
                 break;
             case 'launch-ai-synergy':
                 this.launchAiSynergy();

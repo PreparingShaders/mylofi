@@ -4,13 +4,16 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from app.db.session import get_db
-from app.models import User, VerificationCode
+from app.models import Feedback, User, VerificationCode
 from app.schemas import (
     AiPersona,
     AIWorkoutPreviewRequest,
     AIWorkoutPreviewResponse,
     AIWorkoutSummaryRequest,
     AIWorkoutSummaryResponse,
+    AdminFeedbackUpdate,
+    AdminFeedbackItem,
+    AdminFeedbackListResponse,
     AnthropometricsResponse,
     AnthropometricsUpdate,
     BuildWorkoutSessionRequest,
@@ -18,6 +21,10 @@ from app.schemas import (
     ExerciseCatalogCreate,
     ExerciseCatalogResponse,
     ExerciseCatalogUpdate,
+    FeedbackCategory,
+    FeedbackCreate,
+    FeedbackResponse,
+    FeedbackStatus,
     MealCreate,
     MealListResponse,
     MealResponse,
@@ -210,6 +217,31 @@ async def get_current_admin_user(
             detail="Admin access required",
         )
     return current_user
+
+
+async def get_optional_current_user(
+    db: AsyncSession = Depends(get_db),
+    authorization: str | None = Header(None),
+) -> User | None:
+    """Optional auth dependency - returns User if valid Bearer token, otherwise None."""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+
+    token = authorization.split(" ")[1]
+    payload = decode_token(token)
+
+    if not payload or payload.type != "access":
+        return None
+
+    try:
+        user_id = int(payload.sub)
+    except (ValueError, TypeError):
+        return None
+
+    result = await db.execute(
+        select(User).where(User.id == user_id, User.is_active == True)
+    )
+    return result.scalar_one_or_none()
 
 
 # Need to import select for the dependency
@@ -691,6 +723,135 @@ async def toggle_pro(
 
     template_count = await count_workout_templates(db, current_user.id)
     return build_usage_snapshot(current_user, template_count)
+
+
+# ===== Feedback Routes =====
+MAX_FEEDBACK_IMAGES = 3
+MAX_IMAGE_SIZE_MB = 10
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+
+
+async def validate_and_save_feedback_images(
+    images: list[UploadFile],
+) -> list[str]:
+    """Validate and save uploaded images, return list of saved paths."""
+    saved_paths = []
+    for image in images:
+        if not image.content_type or image.content_type not in ALLOWED_IMAGE_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid file type: {image.content_type}. Allowed: JPEG, PNG, WebP, GIF",
+            )
+
+        content = await image.read()
+        if len(content) > MAX_IMAGE_SIZE_MB * 1024 * 1024:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"File too large. Max size: {MAX_IMAGE_SIZE_MB}MB",
+            )
+
+        photo_path, _ = await save_uploaded_photo(content, image.filename or "photo.jpg")
+        saved_paths.append(photo_path)
+
+    return saved_paths
+
+
+@router.post("/feedback", response_model=FeedbackResponse, status_code=status.HTTP_201_CREATED)
+async def create_feedback(
+    category: str = Form(...),
+    message: str = Form(...),
+    email: str | None = Form(None),
+    images: list[UploadFile] = File(default=[]),
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_optional_current_user),
+):
+    """Create a feedback/support ticket from authenticated user or guest."""
+    # Validate category
+    try:
+        feedback_category = FeedbackCategory(category)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid category. Allowed: {[c.value for c in FeedbackCategory]}",
+        )
+
+    # Validate message length
+    if not message or len(message.strip()) < 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Message cannot be empty",
+        )
+    if len(message) > 5000:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Message too long (max 5000 characters)",
+        )
+
+    # Validate image count
+    if len(images) > MAX_FEEDBACK_IMAGES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Maximum {MAX_FEEDBACK_IMAGES} images allowed",
+        )
+
+    # Determine email
+    if current_user:
+        user_email = current_user.email
+        user_id = current_user.id
+    else:
+        if not email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email is required for guest submissions",
+            )
+        # Validate email format for guest submissions. The schema re-validates
+        # on the way out, so an invalid one must be rejected here with 400 rather
+        # than allowed to reach the response serializer and 500.
+        if "@" not in email or email.count("@") != 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid email format",
+            )
+        local, domain = email.split("@")
+        if not local or not domain or " " in email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid email format",
+            )
+        user_email = email
+        user_id = None
+
+    # Save images
+    image_paths = []
+    if images:
+        image_paths = await validate_and_save_feedback_images(images)
+
+    # Create feedback record
+    import json
+    feedback = Feedback(
+        user_id=user_id,
+        email=user_email,
+        category=feedback_category.value,
+        message=message.strip(),
+        images=json.dumps(image_paths) if image_paths else None,
+        status=FeedbackStatus.NEW.value,
+    )
+    db.add(feedback)
+    await db.commit()
+    # No refresh needed: the INSERT ... RETURNING already populated id and
+    # created_at, and the session uses expire_on_commit=False so the values
+    # stay loaded. Refreshing here would open a second transaction, which is
+    # impossible when the caller's session is already inside a closed one.
+
+    return FeedbackResponse(
+        id=feedback.id,
+        email=feedback.email,
+        category=FeedbackCategory(feedback.category),
+        message=feedback.message,
+        images=json.loads(feedback.images) if feedback.images else None,
+        status=FeedbackStatus(feedback.status),
+        created_at=feedback.created_at,
+    )
 
 
 # ===== Nutrition Routes =====

@@ -7,8 +7,11 @@ from sqlalchemy import select, func, or_
 from sqlalchemy import Date
 
 from app.db.session import get_db
-from app.models import User, Meal, WorkoutSession, WorkoutSessionStatus
+from app.models import Feedback, Meal, User, WorkoutSession, WorkoutSessionStatus
 from app.schemas import (
+    AdminFeedbackItem,
+    AdminFeedbackListResponse,
+    AdminFeedbackUpdate,
     AdminUserItem,
     AdminUserDetail,
     AdminUserListResponse,
@@ -314,3 +317,126 @@ async def get_admin_stats(
         total_meals=total_meals,
         ai_error_rate=round(ai_error_rate, 2),
     )
+
+
+# ===== Feedback Admin Routes =====
+async def _build_feedback_item(db: AsyncSession, f: Feedback) -> AdminFeedbackItem:
+    user_email = None
+    if f.user_id:
+        result = await db.execute(select(User).where(User.id == f.user_id))
+        user = result.scalar_one_or_none()
+        if user:
+            user_email = user.email
+    import json
+    return AdminFeedbackItem(
+        id=f.id,
+        email=f.email,
+        category=f.category,
+        message=f.message,
+        images=json.loads(f.images) if f.images else None,
+        status=f.status,
+        user_id=f.user_id,
+        user_email=user_email,
+        created_at=f.created_at,
+    )
+
+
+@router.get("/feedback", response_model=AdminFeedbackListResponse)
+async def list_feedback(
+    status: str | None = Query(None, description="Filter by status: new, resolved"),
+    category: str | None = Query(None, description="Filter by category"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """List feedback items with pagination and filters."""
+    stmt = select(Feedback)
+
+    if status:
+        stmt = stmt.where(Feedback.status == status)
+    if category:
+        stmt = stmt.where(Feedback.category == category)
+
+    total_result = await db.execute(select(func.count()).select_from(stmt.subquery()))
+    total = int(total_result.scalar() or 0)
+
+    stmt = (
+        stmt.order_by(Feedback.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    result = await db.execute(stmt)
+    feedback_items = result.scalars().all()
+
+    return AdminFeedbackListResponse(
+        items=[await _build_feedback_item(db, f) for f in feedback_items],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/feedback/{feedback_id}", response_model=AdminFeedbackItem)
+async def get_feedback(
+    feedback_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Get a single feedback item by id for the detail modal."""
+    result = await db.execute(select(Feedback).where(Feedback.id == feedback_id))
+    feedback = result.scalar_one_or_none()
+    if not feedback:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Feedback not found"
+        )
+    return await _build_feedback_item(db, feedback)
+
+
+@router.patch("/feedback/{feedback_id}", response_model=AdminFeedbackItem)
+async def update_feedback(
+    feedback_id: int,
+    payload: AdminFeedbackUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Update feedback status and optionally grant PRO to the associated user."""
+    result = await db.execute(select(Feedback).where(Feedback.id == feedback_id))
+    feedback = result.scalar_one_or_none()
+    if not feedback:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Feedback not found"
+        )
+
+    # Update status if provided
+    if payload.status is not None:
+        feedback.status = payload.status.value
+
+    # Grant PRO if requested
+    if payload.grant_pro:
+        target_user = None
+        if feedback.user_id:
+            result = await db.execute(select(User).where(User.id == feedback.user_id))
+            target_user = result.scalar_one_or_none()
+        elif feedback.email:
+            result = await db.execute(select(User).where(User.email == feedback.email))
+            target_user = result.scalar_one_or_none()
+
+        if target_user:
+            # Use existing premium grant logic: extend from max(now, existing_expiry)
+            now = datetime.now(timezone.utc)
+            base = now
+            if target_user.premium_expires_at is not None:
+                existing = target_user.premium_expires_at
+                if existing.tzinfo is None:
+                    existing = existing.replace(tzinfo=timezone.utc)
+                base = max(now, existing)
+
+            target_user.is_premium = True
+            target_user.premium_expires_at = base + timedelta(days=30)
+            target_user.updated_at = now
+
+    await db.commit()
+    await db.refresh(feedback)
+
+    return await _build_feedback_item(db, feedback)
