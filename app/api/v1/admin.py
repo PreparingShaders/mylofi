@@ -7,10 +7,11 @@ from sqlalchemy import select, func, or_
 from sqlalchemy import Date
 
 from app.db.session import get_db
-from app.models import Feedback, Meal, User, WorkoutSession, WorkoutSessionStatus
+from app.models import Feedback, FeedbackStatus, Meal, User, WorkoutSession, WorkoutSessionStatus
 from app.schemas import (
     AdminFeedbackItem,
     AdminFeedbackListResponse,
+    AdminFeedbackReply,
     AdminFeedbackUpdate,
     AdminUserItem,
     AdminUserDetail,
@@ -21,6 +22,7 @@ from app.schemas import (
     AdminStats,
 )
 from app.api.v1.routes import get_current_admin_user
+from app.services.email import send_feedback_reply_email
 
 router = APIRouter()
 
@@ -436,6 +438,46 @@ async def update_feedback(
             target_user.premium_expires_at = base + timedelta(days=30)
             target_user.updated_at = now
 
+    await db.commit()
+    await db.refresh(feedback)
+
+    return await _build_feedback_item(db, feedback)
+
+
+@router.post("/feedback/{feedback_id}/reply", response_model=AdminFeedbackItem)
+async def reply_feedback(
+    feedback_id: int,
+    payload: AdminFeedbackReply,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Send an email reply to a feedback item and mark it resolved."""
+    result = await db.execute(select(Feedback).where(Feedback.id == feedback_id))
+    feedback = result.scalar_one_or_none()
+    if not feedback:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Feedback not found"
+        )
+
+    # Recipient email: the feedback's own email takes precedence, falling back
+    # to the linked user's email (registered users vs landing guests).
+    recipient_email = feedback.email or None
+    if not recipient_email and feedback.user_id:
+        user_result = await db.execute(select(User).where(User.id == feedback.user_id))
+        user = user_result.scalar_one_or_none()
+        if user:
+            recipient_email = user.email
+
+    if not recipient_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No email address to reply to",
+        )
+
+    # Best-effort email delivery: a failure is logged but still resolves the ticket.
+    await send_feedback_reply_email(recipient_email, payload.reply_text)
+
+    feedback.status = FeedbackStatus.RESOLVED.value
     await db.commit()
     await db.refresh(feedback)
 

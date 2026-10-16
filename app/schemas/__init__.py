@@ -411,6 +411,10 @@ class AdminFeedbackUpdate(BaseModel):
     grant_pro: Optional[bool] = None
 
 
+class AdminFeedbackReply(BaseModel):
+    reply_text: str = Field(min_length=1, max_length=5000)
+
+
 class AnthropometricsResponse(BaseModel):
     user: UserMe
     targets: MacroTargetsResponse
@@ -897,4 +901,5 @@ __all__ = [
     "AdminFeedbackItem",
     "AdminFeedbackListResponse",
     "AdminFeedbackUpdate",
+    "AdminFeedbackReply",
 ]

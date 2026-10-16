@@ -8,13 +8,14 @@ import uuid
 
 import pytest
 from fastapi import UploadFile
+from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app.api.v1.routes import create_feedback, get_optional_current_user
+from app.api.v1.routes import create_feedback, get_current_admin_user, get_optional_current_user
+from app.db.session import get_db
+from app.main import app
 from app.models import Feedback, FeedbackStatus, User
 from app.schemas import FeedbackCategory, FeedbackResponse
-
-
 pytest_plugins = ["pytest_asyncio"]
 
 
@@ -155,3 +156,134 @@ async def test_optional_current_user_valid_token(db_session, normal_user):
     user = await get_optional_current_user(db=db_session, authorization=f"Bearer {access}")
     assert user is not None
     assert user.id == normal_user.id
+
+
+# ===== Admin feedback reply endpoint tests =====
+
+
+@pytest.fixture
+def admin_client(db_session, admin_user):
+    """TestClient with get_db bound to the test session and an admin user."""
+
+    async def override_get_db():
+        yield db_session
+
+    async def override_admin():
+        return admin_user
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_current_admin_user] = override_admin
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def normal_client(db_session, normal_user):
+    """TestClient bound to the test session with a non-admin user."""
+
+    async def override_get_db():
+        yield db_session
+
+    async def override_admin():
+        return normal_user
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_current_admin_user] = override_admin
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.clear()
+
+
+def _insert_feedback(db_session, email, user_id=None, status="new"):
+    fb = Feedback(
+        user_id=user_id,
+        email=email,
+        category=FeedbackCategory.QUESTION,
+        message="Помогите войти в аккаунт",
+        images=None,
+        status=status,
+    )
+    db_session.add(fb)
+    return fb
+
+
+@pytest.mark.asyncio
+async def test_admin_feedback_reply_resolves_ticket(db_session, admin_client):
+    fb = _insert_feedback(db_session, email="guest@example.com")
+    await db_session.flush()
+    await db_session.refresh(fb)
+
+    response = admin_client.post(
+        f"/api/v1/admin/feedback/{fb.id}/reply",
+        json={"reply_text": "Проверьте подключение к интернету и попробуйте снова."},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "resolved"
+
+    result = await db_session.execute(select(Feedback).where(Feedback.id == fb.id))
+    assert result.scalar_one().status == FeedbackStatus.RESOLVED
+
+
+@pytest.mark.asyncio
+async def test_admin_feedback_reply_uses_user_email(db_session, admin_client, normal_user):
+    fb = _insert_feedback(db_session, email="", user_id=normal_user.id)
+    await db_session.flush()
+    await db_session.refresh(fb)
+
+    response = admin_client.post(
+        f"/api/v1/admin/feedback/{fb.id}/reply",
+        json={"reply_text": "Ответ пользователю."},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "resolved"
+
+
+@pytest.mark.asyncio
+async def test_admin_feedback_reply_requires_admin(db_session, normal_client):
+    fb = _insert_feedback(db_session, email="user@example.com")
+    await db_session.flush()
+    await db_session.refresh(fb)
+
+    response = normal_client.post(
+        f"/api/v1/admin/feedback/{fb.id}/reply",
+        json={"reply_text": "Недостаточно прав."},
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_admin_feedback_reply_not_found(db_session, admin_client):
+    response = admin_client.post(
+        "/api/v1/admin/feedback/999999/reply",
+        json={"reply_text": "Текст."},
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_admin_feedback_reply_no_email(db_session, admin_client):
+    fb = _insert_feedback(db_session, email="", user_id=None)
+    await db_session.flush()
+    await db_session.refresh(fb)
+
+    response = admin_client.post(
+        f"/api/v1/admin/feedback/{fb.id}/reply",
+        json={"reply_text": "Текст."},
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_admin_feedback_reply_empty_text_rejected(db_session, admin_client):
+    fb = _insert_feedback(db_session, email="guest@example.com")
+    await db_session.flush()
+    await db_session.refresh(fb)
+
+    response = admin_client.post(
+        f"/api/v1/admin/feedback/{fb.id}/reply",
+        json={"reply_text": ""},
+    )
+    assert response.status_code == 422

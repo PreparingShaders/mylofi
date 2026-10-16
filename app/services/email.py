@@ -33,6 +33,72 @@ def _sender() -> dict:
     }
 
 
+async def send_feedback_reply_email(
+    email: str,
+    reply_text: str,
+) -> bool:
+    """Send a support reply email via the Brevo API.
+
+    Best-effort: returns True when the email was dispatched, False when the API
+    key is missing or the request failed. A failure to send must never block the
+    reply flow — the ticket is still marked resolved, and a logged error is
+    enough for an operator to notice.
+    """
+    api_key = _brevo_key()
+    if not api_key:
+        logger.warning(
+            "[Email] BREVO_API_KEY is not set or is a placeholder; "
+            "skipping feedback reply email delivery to %s. "
+            "Set a valid BREVO_API_KEY in the environment to enable email sending.",
+            email,
+        )
+        return False
+
+    subject = "Ответ по вашему обращению в MyLofi"
+    body = f"""
+    <html>
+    <body style="font-family: Inter, sans-serif; color: #18181b; line-height: 1.6;">
+        <h2>Ответ на ваше обращение</h2>
+        <p>Вы получили ответ от службы поддержки MyLofi:</p>
+        <blockquote style="border-left: 3px solid #d1d5db; padding-left: 12px; color: #374151; margin: 12px 0;">
+            {reply_text}
+        </blockquote>
+        <p>Если у вас остались вопросы, отвечайте на это письмо.</p>
+    </body>
+    </html>
+    """
+    text = f"Ответ на ваше обращение в MyLofi:\n\n{reply_text}\n\nЕсли у вас остались вопросы, отвечайте на это письмо."
+
+    payload = {
+        "sender": _sender(),
+        "to": [{"email": email}],
+        "subject": subject,
+        "htmlContent": body,
+        "textContent": text,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.post(
+                f"{BREVO_API_BASE}/smtp/email",
+                headers={
+                    "accept": "application/json",
+                    "content-type": "application/json",
+                    "api-key": api_key,
+                },
+                json=payload,
+            )
+        response.raise_for_status()
+        logger.info("[Email] Feedback reply email sent to %s", email)
+        return True
+    except httpx.HTTPStatusError as e:
+        logger.error("[Email] Brevo API error for %s: %s", email, e.response.text[:300])
+        return False
+    except Exception as e:
+        logger.error("[Email] Failed to send feedback reply email to %s: %s", email, e)
+        return False
+
+
 async def send_verification_email(
     email: str,
     code: str,

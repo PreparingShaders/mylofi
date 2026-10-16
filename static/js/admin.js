@@ -1064,7 +1064,7 @@ const Admin = {
 
             <div class="space-y-4 px-4">
                 <div class="flex items-center gap-2 flex-wrap">
-                    <span class="px-2 py-1 rounded-lg text-xs font-semibold ${statusColors[feedback.status] || 'bg-surface-100 text-surface-600'}">
+                    <span data-status-badge class="px-2 py-1 rounded-lg text-xs font-semibold ${statusColors[feedback.status] || 'bg-surface-100 text-surface-600'}">
                         ${statusLabels[feedback.status] || feedback.status}
                     </span>
                     <span class="px-2 py-1 rounded-lg text-xs font-semibold bg-surface-100 text-surface-600 dark:bg-white/5 dark:text-zinc-400">
@@ -1129,6 +1129,22 @@ const Admin = {
                         ` : ''}
                     </div>
                 </div>
+
+                <div class="pt-4 border-t border-surface-200 dark:border-white/10">
+                    <p class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider mb-3">Ответ по Email</p>
+                    <div class="space-y-2">
+                        <textarea id="admin-feedback-reply-text" rows="4"
+                                  class="w-full px-3 py-2 rounded-xl glass-input text-sm text-surface-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-lime-500/30"
+                                  placeholder="Напишите ответ пользователю..."></textarea>
+                        <button data-action="send-feedback-reply" data-feedback-id="${feedback.id}"
+                                class="w-full px-3 py-2 rounded-xl text-sm font-semibold bg-primary-600 text-white hover:bg-primary-700 transition-colors flex items-center justify-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M22 12c0 4.713-3.788 8.533-8.533 8.533S5 16.713 5 12 8.788 3.467 13.5 3.467 22 7.287 22 12zM5.51 7.51 12 14l6.49-6.49L18 12.51 12 18.51 6 12.51z"></path>
+                            </svg>
+                            Отправить ответ по Email
+                        </button>
+                    </div>
+                </div>
             </div>
         `;
 
@@ -1189,6 +1205,29 @@ const Admin = {
             console.error('[Admin] Feedback update error:', error);
             if (error?.status !== 401 && error?.status !== 403) {
                 this.app.showToast(error?.data?.detail || error?.message || 'Ошибка обновления обращения', 'error');
+            }
+        }
+    },
+
+    async sendFeedbackReply(feedbackId, replyText) {
+        try {
+            await API.post(`/admin/feedback/${feedbackId}/reply`, { reply_text: replyText }, this.app.state.tokens.access);
+            this.app.showToast('Ответ отправлен по email', 'success');
+
+            const textarea = this.feedbackModal?.querySelector('#admin-feedback-reply-text');
+            if (textarea) textarea.value = '';
+
+            const badge = this.feedbackModal?.querySelector('[data-status-badge]');
+            if (badge) {
+                badge.textContent = 'Решён';
+                badge.className = 'px-2 py-1 rounded-lg text-xs font-semibold bg-surface-100 text-surface-600 dark:bg-white/5 dark:text-zinc-400';
+            }
+
+            await this.loadFeedback();
+        } catch (error) {
+            console.error('[Admin] Feedback reply error:', error);
+            if (error?.status !== 401 && error?.status !== 403) {
+                this.app.showToast(error?.data?.detail || error?.message || 'Ошибка отправки ответа', 'error');
             }
         }
     },
@@ -1410,6 +1449,17 @@ document.addEventListener('click', async (e) => {
         const feedbackId = parseInt(btn.dataset.feedbackId);
         const userId = parseInt(btn.dataset.userId);
         Admin.grantProFromFeedback(feedbackId, userId);
+    }
+    if (action === 'send-feedback-reply') {
+        const btn = e.target.closest('[data-action="send-feedback-reply"]');
+        const feedbackId = parseInt(btn.dataset.feedbackId);
+        const textarea = Admin.feedbackModal?.querySelector('#admin-feedback-reply-text');
+        const replyText = textarea ? textarea.value.trim() : '';
+        if (!replyText) {
+            textarea?.focus();
+            return;
+        }
+        Admin.sendFeedbackReply(feedbackId, replyText);
     }
     if (action === 'admin-feedback-reset-filters') {
         Admin.resetFeedbackFilters();
