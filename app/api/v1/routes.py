@@ -1312,6 +1312,7 @@ async def quick_start_session(
         await db.commit()
         background_tasks.add_task(build_workout_preview_and_store, session.id)
 
+
     return QuickStartWorkoutResponse(session_id=session.id)
 
 
@@ -1496,6 +1497,7 @@ async def start_workout_from_template(
         session.ai_plan_status = AI_PLAN_STATUS_PENDING
         await db.commit()
         background_tasks.add_task(build_workout_preview_and_store, session.id)
+
         session = await get_workout_session(db, session.id, current_user.id)
         if session is None:
             raise HTTPException(

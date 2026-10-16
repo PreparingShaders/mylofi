@@ -1104,8 +1104,8 @@ async def build_workout_preview(
 
 
 async def build_workout_preview_and_store(
-    db: AsyncSession,
     session_id: int,
+    db: Optional[AsyncSession] = None,
 ) -> None:
     """Generate a preview plan for a session and persist it.
 
@@ -1114,6 +1114,11 @@ async def build_workout_preview_and_store(
     its exercises) and stored on `ai_plan_json` with the status on
     `ai_plan_status`. A failure sets the status to `failed` but never raises:
     the workout must start regardless of whether the coach answered.
+
+    `db` is accepted only for backward compatibility / test stubs; when omitted
+    (the normal background-task path), a fresh session is opened via
+    `async_session_maker()` so the request-scoped session is not shared across
+    the task boundary.
     """
     logger.info(f"[AI Workout Preview] Background task starting for session {session_id}")
     
@@ -1188,7 +1193,7 @@ async def build_workout_preview_and_store(
                 except Exception:
                     pass
     
-    is_test_stub = hasattr(db, 'results') or hasattr(db, 'statements') or hasattr(db, 'commits') or hasattr(db, 'rolled_back')
+    is_test_stub = db is not None
     if is_test_stub:
         await _use_session(db)
         return
@@ -1222,7 +1227,7 @@ async def wait_for_stored_ai_plan(
         # Expire all cached state so each poll reflects commits made by the
         # background task (SQLAlchemy identity map would otherwise return the
         # stale `PENDING` instance loaded earlier in this request).
-        await db.expire_all()
+        db.expire_all()
         session = await get_workout_session(db, session_id, user_id)
         if session is None:
             logger.debug(f"[AI Workout Preview] wait_for_stored_ai_plan: session {session_id} not found")

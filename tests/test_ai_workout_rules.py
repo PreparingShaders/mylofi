@@ -1066,7 +1066,7 @@ async def test_build_workout_preview_and_store_writes_a_successful_plan(monkeypa
         service, "build_workout_preview", _fake_preview_returning(stored_preview)
     )
 
-    await service.build_workout_preview_and_store(db, saved_session.id)
+    await service.build_workout_preview_and_store(saved_session.id, db)
 
     stored = json.loads(saved_session.ai_plan_json)
     assert stored["available"] is True
@@ -1090,7 +1090,7 @@ async def test_build_workout_preview_and_store_marks_failure_without_raising(mon
     monkeypatch.setattr(service, "build_workout_preview", _boom)
 
     # Must not raise: the workout starts regardless of the coach's answer.
-    await service.build_workout_preview_and_store(db, saved_session.id)
+    await service.build_workout_preview_and_store(saved_session.id, db)
 
     assert saved_session.ai_plan_status == AI_PLAN_STATUS_FAILED
     assert saved_session.ai_plan_json is None
@@ -1107,7 +1107,7 @@ async def test_build_workout_preview_and_store_skips_when_session_is_missing(mon
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not be called")),
     )
 
-    await service.build_workout_preview_and_store(db, 999)
+    await service.build_workout_preview_and_store(999, db)
 
     assert db.commits == 0
 
