@@ -15,10 +15,12 @@ from app.models import (
 )
 from app.services.exercise_data import EXERCISE_SEED
 from app.schemas import (
-    WorkoutTemplateCreate,
-    WorkoutTemplateUpdate,
+    WorkoutSessionExerciseCreate,
     WorkoutSessionCreate,
     WorkoutSessionUpdate,
+    WorkoutSetCreate,
+    WorkoutTemplateCreate,
+    WorkoutTemplateUpdate,
     ExerciseCatalogCreate,
     ExerciseCatalogUpdate,
     BuildWorkoutSessionRequest,
@@ -539,6 +541,53 @@ async def delete_exercise(
     return True
 
 
+async def build_session_exercises_from_template(
+    db: AsyncSession,
+    template: WorkoutTemplate,
+    user_id: int,
+) -> list[WorkoutSessionExerciseCreate]:
+    """Build ``WorkoutSessionExerciseCreate`` entries from a template.
+
+    For each template exercise, past completed sets are reused as the starting
+    weights/reps, and any remaining sets are filled with default targets.
+    """
+    session_exercises: list[WorkoutSessionExerciseCreate] = []
+    for ex in template.exercises:
+        past_sets = await get_last_exercise_sets(db, user_id, ex.name) or []
+        target_sets = ex.target_sets
+        sets_create: list[WorkoutSetCreate] = [
+            WorkoutSetCreate(
+                set_number=ps.set_number,
+                reps=ps.reps,
+                weight_kg=ps.weight_kg,
+                rest_seconds=ex.rest_seconds,
+            )
+            for ps in past_sets[:target_sets]
+        ]
+        if len(past_sets) < target_sets:
+            start_num = past_sets[-1].set_number + 1 if past_sets else 1
+            sets_create += [
+                WorkoutSetCreate(
+                    set_number=set_num,
+                    reps=ex.target_reps,
+                    weight_kg=0.0,
+                    rest_seconds=ex.rest_seconds,
+                )
+                for set_num in range(
+                    start_num, start_num + target_sets - len(past_sets)
+                )
+            ]
+        session_exercises.append(
+            WorkoutSessionExerciseCreate(
+                name=ex.name,
+                order=ex.order,
+                notes=ex.notes,
+                sets=sets_create,
+            )
+        )
+    return session_exercises
+
+
 async def build_workout_session(
     db: AsyncSession,
     user_id: int,
@@ -787,7 +836,7 @@ async def get_workout_statistics(
         .where(
             WorkoutSession.user_id == user_id,
             WorkoutSession.status == WorkoutSessionStatus.COMPLETED,
-            WorkoutSet.is_completed == True,
+            WorkoutSet.is_completed,
             WorkoutSet.weight_kg.isnot(None),
         )
     )
@@ -808,7 +857,7 @@ async def get_workout_statistics(
         .where(
             WorkoutSession.user_id == user_id,
             WorkoutSession.status == WorkoutSessionStatus.COMPLETED,
-            WorkoutSet.is_completed == True,
+            WorkoutSet.is_completed,
             WorkoutSet.weight_kg.isnot(None),
         )
         .group_by(WorkoutSessionExercise.name)

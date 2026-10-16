@@ -1,7 +1,6 @@
 from datetime import date, datetime, timezone
 from typing import Annotated, Optional, List
-from pydantic import BaseModel, EmailStr, Field, ConfigDict, PlainSerializer
-from pydantic.types import StringConstraints
+from pydantic import BaseModel, Field, ConfigDict, PlainSerializer
 from pydantic.functional_validators import BeforeValidator
 from typing_extensions import Annotated as TypingAnnotated
 from enum import Enum

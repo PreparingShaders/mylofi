@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 import hashlib
+import random
 import secrets
 from jose import jwt, JWTError
 import bcrypt
@@ -8,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.models import User, RefreshToken
+from app.models import User, RefreshToken, VerificationCode
 from app.schemas import TokenPayload
 
 settings = get_settings()
@@ -94,7 +95,9 @@ async def revoke_refresh_token(db: AsyncSession, refresh_token: str) -> bool:
 async def revoke_all_user_refresh_tokens(db: AsyncSession, user_id: int) -> None:
     """Revoke all refresh tokens for a user"""
     result = await db.execute(
-        select(RefreshToken).where(RefreshToken.user_id == user_id, RefreshToken.revoked == False)
+        select(RefreshToken).where(
+            RefreshToken.user_id == user_id, ~RefreshToken.revoked
+        )
     )
     tokens = result.scalars().all()
     for token in tokens:
@@ -109,7 +112,7 @@ async def validate_refresh_token(db: AsyncSession, refresh_token: str) -> Option
         select(RefreshToken)
         .where(
             RefreshToken.token_hash == token_hash,
-            RefreshToken.revoked == False,
+            ~RefreshToken.revoked,
             RefreshToken.expires_at > datetime.now(timezone.utc),
         )
     )
@@ -133,3 +136,52 @@ async def rotate_refresh_token(db: AsyncSession, refresh_token: str) -> tuple[st
 
     # Create new token pair
     return await create_user_tokens(db, user)
+
+
+VERIFICATION_CODE_TTL_MINUTES = 10
+VERIFICATION_CODE_LENGTH = 6
+
+
+def generate_verification_code() -> str:
+    """Generate a random numeric verification code."""
+    return "".join(random.choices("0123456789", k=VERIFICATION_CODE_LENGTH))
+
+
+async def store_verification_code(
+    db: AsyncSession,
+    email: str,
+    purpose: str,
+    password_hash: str | None = None,
+    full_name: str | None = None,
+) -> str:
+    """Create or replace a verification code for (email, purpose)."""
+    code = generate_verification_code()
+    expires_at = datetime.now(timezone.utc) + timedelta(
+        minutes=VERIFICATION_CODE_TTL_MINUTES
+    )
+
+    result = await db.execute(
+        select(VerificationCode).where(
+            VerificationCode.email == email,
+            VerificationCode.purpose == purpose,
+        )
+    )
+    existing = result.scalar_one_or_none()
+    if existing:
+        existing.code = code
+        existing.expires_at = expires_at
+        existing.password_hash = password_hash
+        existing.full_name = full_name
+    else:
+        db_code = VerificationCode(
+            email=email,
+            code=code,
+            purpose=purpose,
+            expires_at=expires_at,
+            password_hash=password_hash,
+            full_name=full_name,
+        )
+        db.add(db_code)
+
+    await db.commit()
+    return code

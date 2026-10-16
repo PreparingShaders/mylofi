@@ -1,8 +1,8 @@
 import logging
-import random
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
+from app.core.config import get_settings
 from app.db.session import get_db
 from app.models import Feedback, User, VerificationCode
 from app.schemas import (
@@ -11,9 +11,6 @@ from app.schemas import (
     AIWorkoutPreviewResponse,
     AIWorkoutSummaryRequest,
     AIWorkoutSummaryResponse,
-    AdminFeedbackUpdate,
-    AdminFeedbackItem,
-    AdminFeedbackListResponse,
     AnthropometricsResponse,
     AnthropometricsUpdate,
     BuildWorkoutSessionRequest,
@@ -22,7 +19,6 @@ from app.schemas import (
     ExerciseCatalogResponse,
     ExerciseCatalogUpdate,
     FeedbackCategory,
-    FeedbackCreate,
     FeedbackResponse,
     FeedbackStatus,
     MealCreate,
@@ -48,10 +44,8 @@ from app.schemas import (
     WorkoutCompletionResponse,
     WorkoutHistoryResponse,
     WorkoutSessionCreate,
-    WorkoutSessionExerciseCreate,
     WorkoutSessionResponse,
     WorkoutSessionUpdate,
-    WorkoutSetCreate,
     WorkoutSetUpdate,
     WorkoutTemplateCreate,
     WorkoutTemplateResponse,
@@ -78,6 +72,7 @@ from app.services.auth import (
     get_password_hash,
     revoke_all_user_refresh_tokens,
     rotate_refresh_token,
+    store_verification_code,
     verify_password,
 )
 from app.services.email import send_verification_email
@@ -111,6 +106,7 @@ from app.services.nutrition_targets import (
     normalize_goal,
 )
 from app.services.workout import (
+    build_session_exercises_from_template,
     build_workout_session,
     cancel_workout_session,
     complete_workout_session,
@@ -122,7 +118,6 @@ from app.services.workout import (
     get_active_workout_session,
     get_exercises,
     get_filtered_tonnage,
-    get_last_exercise_sets,
     get_workout_history,
     get_workout_session,
     get_workout_session_detail,
@@ -150,6 +145,7 @@ from fastapi import (
     status,
 )
 from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
@@ -187,7 +183,7 @@ async def get_current_user(
         )
 
     result = await db.execute(
-        select(User).where(User.id == user_id, User.is_active == True)
+        select(User).where(User.id == user_id, User.is_active)
     )
     user = result.scalar_one_or_none()
 
@@ -239,66 +235,18 @@ async def get_optional_current_user(
         return None
 
     result = await db.execute(
-        select(User).where(User.id == user_id, User.is_active == True)
+        select(User).where(User.id == user_id, User.is_active)
     )
     return result.scalar_one_or_none()
 
 
 # Need to import select for the dependency
-from sqlalchemy import func, select
+
 
 logger = logging.getLogger(__name__)
 
 
 # ===== Auth Routes =====
-
-VERIFICATION_CODE_TTL_MINUTES = 10
-VERIFICATION_CODE_LENGTH = 6
-
-
-def _generate_verification_code() -> str:
-    return "".join(random.choices("0123456789", k=VERIFICATION_CODE_LENGTH))
-
-
-async def _store_verification_code(
-    db: AsyncSession,
-    email: str,
-    purpose: str,
-    password_hash: str | None = None,
-    full_name: str | None = None,
-) -> str:
-    """Create or replace a verification code for (email, purpose)."""
-    code = _generate_verification_code()
-    expires_at = datetime.now(timezone.utc) + timedelta(
-        minutes=VERIFICATION_CODE_TTL_MINUTES
-    )
-
-    # Invalidate any previous code for this email + purpose
-    result = await db.execute(
-        select(VerificationCode).where(
-            VerificationCode.email == email,
-            VerificationCode.purpose == purpose,
-        )
-    )
-    existing = result.scalar_one_or_none()
-    if existing:
-        existing.code = code
-        existing.expires_at = expires_at
-        existing.password_hash = password_hash
-        existing.full_name = full_name
-    else:
-        db_code = VerificationCode(
-            email=email,
-            code=code,
-            purpose=purpose,
-            expires_at=expires_at,
-            password_hash=password_hash,
-            full_name=full_name,
-        )
-        db.add(db_code)
-
-    await db.commit()
-    return code
 
 
 @router.post("/auth/register", response_model=VerificationResponse)
@@ -316,7 +264,7 @@ async def register(user_data: UserRegister, db: AsyncSession = Depends(get_db)):
             detail="Email already registered",
         )
 
-    code = await _store_verification_code(
+    code = await store_verification_code(
         db,
         email=user_data.email,
         purpose="register",
@@ -404,7 +352,7 @@ async def resend_code(
     else:
         stored = None
 
-    code = await _store_verification_code(
+    code = await store_verification_code(
         db,
         email=resend_data.email,
         purpose=resend_data.purpose,
@@ -426,7 +374,7 @@ async def forgot_password(
     user = result.scalar_one_or_none()
 
     if user:
-        code = await _store_verification_code(
+        code = await store_verification_code(
             db, email=request.email, purpose="reset_password"
         )
         await send_verification_email(request.email, code, purpose="reset_password")
@@ -1142,7 +1090,7 @@ async def delete_meal_endpoint(
 
 
 # Need to import settings
-from app.core.config import get_settings
+
 
 settings = get_settings()
 
@@ -1530,40 +1478,9 @@ async def start_workout_from_template(
             status_code=status.HTTP_404_NOT_FOUND, detail="Template not found"
         )
 
-    session_exercises = []
-    for ex in template.exercises:
-        past_sets = await get_last_exercise_sets(db, current_user.id, ex.name) or []
-        target_sets = ex.target_sets
-        sets_create = [
-            WorkoutSetCreate(
-                set_number=ps.set_number,
-                reps=ps.reps,
-                weight_kg=ps.weight_kg,
-                rest_seconds=ex.rest_seconds,
-            )
-            for ps in past_sets[:target_sets]
-        ]
-        if len(past_sets) < target_sets:
-            start_num = past_sets[-1].set_number + 1 if past_sets else 1
-            sets_create += [
-                WorkoutSetCreate(
-                    set_number=set_num,
-                    reps=ex.target_reps,
-                    weight_kg=0.0,
-                    rest_seconds=ex.rest_seconds,
-                )
-                for set_num in range(
-                    start_num, start_num + target_sets - len(past_sets)
-                )
-            ]
-        session_exercises.append(
-            WorkoutSessionExerciseCreate(
-                name=ex.name,
-                order=ex.order,
-                notes=ex.notes,
-                sets=sets_create,
-            )
-        )
+    session_exercises = await build_session_exercises_from_template(
+        db, template, current_user.id
+    )
 
     # Create session from template
     session_data = WorkoutSessionCreate(

@@ -21,7 +21,6 @@ from app.models import (
     ExerciseCatalog,
 )
 from app.services.ai_vision import (
-    MAX_PERSONA_TEXT_CHARS,
     normalise_score,
     normalize_persona,
     run_text_cascade,
