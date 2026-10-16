@@ -97,6 +97,7 @@ export const Workouts = {
     // itself while the cascade is running, so a second tap cannot spend the
     // weekly allowance twice.
     _aiAnalysisLoading: false,
+    isGeneratingPreview: false,
     // Timestamp of the last verdict ask, per session id: the client-side
     // half of the anti-spam, so the trigger stays quiet for half a minute
     // after a press no matter which surface asked.
@@ -1119,8 +1120,18 @@ export const Workouts = {
         container.querySelectorAll('[data-action="start-template-ai"]').forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 e.stopPropagation();
+                // Guard before any state change: a second tap on another template
+                // while a preview is in flight must not disable and strand that button.
+                if (this.isGeneratingPreview) return;
                 const templateId = parseInt(btn.dataset.templateId);
-                await this.startTemplateWithAi(container, app, templateId);
+                btn.disabled = true;
+                try {
+                    await this.startTemplateWithAi(container, app, templateId, btn);
+                } finally {
+                    // The method also clears its own lock in its finally; this covers
+                    // the early-return paths (premium, offline, guard) that bypass it.
+                    if (btn) btn.disabled = false;
+                }
             });
         });
 
@@ -1269,12 +1280,15 @@ export const Workouts = {
      * exactly like the plain start - the plan needs a connection, the session
      * does not.
      */
-    async startTemplateWithAi(container, app, templateId) {
+    async startTemplateWithAi(container, app, templateId, btn) {
         if (isNaN(templateId) || templateId == null) return;
         if (!app.state.user?.is_premium) {
             app.showToast(AI_PREMIUM_REQUIRED_MESSAGE, 'info');
             return;
         }
+        if (this.isGeneratingPreview) return;
+        this.isGeneratingPreview = true;
+        if (btn) btn.disabled = true;
         const token = app.state.tokens.access;
         const startEndpoint = `/workouts/templates/${templateId}/start`;
 
@@ -1298,11 +1312,14 @@ export const Workouts = {
             Camera.hideLoadingOverlay(overlayState);
             app.showToast(err?.message || 'Ошибка запуска', 'error');
             await this.render(container, app);
+        } finally {
+            this.isGeneratingPreview = false;
+            if (btn) btn.disabled = false;
         }
     },
 
     /** The quick-start variants are chosen by goal, so the goal travels with the plan. */
-    async startQuickWorkoutWithAi(app, goal) {
+    async startQuickWorkoutWithAi(app, goal, btn) {
         if (navigator.onLine === false) {
             app.showToast(AI_OFFLINE_MESSAGE, 'info');
             return;
@@ -1311,6 +1328,9 @@ export const Workouts = {
             app.showToast(AI_PREMIUM_REQUIRED_MESSAGE, 'info');
             return;
         }
+        if (this.isGeneratingPreview) return;
+        this.isGeneratingPreview = true;
+        if (btn) btn.disabled = true;
         const token = app.state.tokens.access;
         const goalLabel = (QUICK_GOALS.find(g => g.value === goal) || {}).title;
 
@@ -1335,6 +1355,9 @@ export const Workouts = {
             Camera.hideLoadingOverlay(overlayState);
             app.showToast(err?.message || 'Ошибка быстрого старта', 'error');
             await this.render(app.elements.pageContent, app);
+        } finally {
+            this.isGeneratingPreview = false;
+            if (btn) btn.disabled = false;
         }
     },
 
@@ -2844,9 +2867,15 @@ showQuickStartModal(app) {
         });
         modal.querySelectorAll('[data-goal-ai]').forEach(btn => {
             btn.addEventListener('click', async () => {
+                if (this.isGeneratingPreview) return;
                 const goal = btn.dataset.goalAi;
+                btn.disabled = true;
                 close();
-                await this.startQuickWorkoutWithAi(app, goal);
+                try {
+                    await this.startQuickWorkoutWithAi(app, goal, btn);
+                } finally {
+                    if (btn) btn.disabled = false;
+                }
             });
         });
         document.addEventListener('keydown', onKeydown);
@@ -3012,8 +3041,14 @@ showQuickStartModal(app) {
         container.querySelectorAll('[data-action="start-template-ai"]').forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 e.stopPropagation();
+                if (this.isGeneratingPreview) return;
                 const templateId = parseInt(btn.dataset.templateId);
-                await this.startTemplateWithAi(container, app, templateId);
+                btn.disabled = true;
+                try {
+                    await this.startTemplateWithAi(container, app, templateId, btn);
+                } finally {
+                    if (btn) btn.disabled = false;
+                }
             });
         });
         } catch (err) {

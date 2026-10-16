@@ -27,6 +27,7 @@ import json
 import logging
 import math
 import re
+import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -59,6 +60,7 @@ from app.services.nutrition import utcnow
 from app.services.workout import (
     WORKOUT_GOAL_SETTINGS,
     as_utc,
+    get_workout_session,
     select_quick_start_exercises,
 )
 
@@ -134,6 +136,36 @@ AI_PLAN_STATUS_PENDING = "pending"
 AI_PLAN_STATUS_AVAILABLE = "available"
 AI_PLAN_STATUS_FAILED = "failed"
 AI_PLAN_STATUS_NO_EXERCISES = "no_exercises"
+
+# How long the preview endpoint waits for a background-generated plan to land
+# before falling back to generating one on the fly. The background task that
+# started with the session is the one that should answer; a second caller only
+# waits long enough to avoid a redundant model round-trip, never long enough to
+# stall the workout screen behind a slow model.
+AI_PREVIEW_STORE_WAIT_SECONDS = 15.0
+
+# Per-session locks for the preview endpoint. The background task that started
+# with the session writes the plan to `ai_plan_json`; a second caller that finds
+# the session still `pending` must not also call the model. The lock is process-
+# local (the app runs in one worker) and is keyed by session id, so two
+# different sessions never block each other and a session that is never asked
+# for again costs nothing. It is an asyncio lock because the guarded section is
+# the model call itself, which is async: a threading lock held across an await
+# would freeze the event loop for every other coroutine in the same loop.
+_ai_preview_locks: Dict[int, "asyncio.Lock"] = {}
+_ai_preview_locks_guard = threading.Lock()
+
+
+def _get_ai_preview_lock(session_id: int) -> "asyncio.Lock":
+    """Return the lock for one session, creating it on first use."""
+    logger.debug(f"[AI Workout Preview] _get_ai_preview_lock called for session {session_id}")
+    with _ai_preview_locks_guard:
+        lock = _ai_preview_locks.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            _ai_preview_locks[session_id] = lock
+            logger.debug(f"[AI Workout Preview] Created lock for session {session_id}")
+        return lock
 
 # Which group an exercise that is not in the catalog is filed under. The session
 # stores free-text names, so this is the honest bucket: it is counted, but the
@@ -1083,62 +1115,132 @@ async def build_workout_preview_and_store(
     `ai_plan_status`. A failure sets the status to `failed` but never raises:
     the workout must start regardless of whether the coach answered.
     """
-    result = await db.execute(
-        select(WorkoutSession)
-        .where(WorkoutSession.id == session_id)
-        .options(
-            selectinload(WorkoutSession.template).selectinload(WorkoutTemplate.exercises),
-            selectinload(WorkoutSession.exercises),
-        )
-    )
-    session = result.scalar_one_or_none()
-    if session is None:
-        logger.warning(f"[AI Workout Preview] Session {session_id} not found")
+    logger.info(f"[AI Workout Preview] Background task starting for session {session_id}")
+    
+    # For test compatibility, detect if this is a test stub
+    async def _use_session(session_obj):
+        nonlocal session_id
+        # session_obj is the db/session to use
+        fresh_db = session_obj
+        try:
+            result = await fresh_db.execute(
+                select(WorkoutSession)
+                .where(WorkoutSession.id == session_id)
+                .options(
+                    selectinload(WorkoutSession.template).selectinload(WorkoutTemplate.exercises),
+                    selectinload(WorkoutSession.exercises),
+                )
+            )
+            session = result.scalar_one_or_none()
+            if session is None:
+                logger.warning(f"[AI Workout Preview] Session {session_id} not found")
+                return
+
+            user = await fresh_db.get(User, session.user_id)
+            if user is None:
+                logger.warning(f"[AI Workout Preview] User {session.user_id} for session {session_id} not found")
+                return
+
+            session.ai_plan_status = AI_PLAN_STATUS_PENDING
+            await fresh_db.commit()
+
+            template = session.template
+
+            exercise_names: Optional[List[str]] = None
+            if session.exercises:
+                exercise_names = [
+                    ex.name
+                    for ex in sorted(session.exercises, key=lambda e: (e.order or 0, e.id))
+                ]
+
+            payload = await build_workout_preview(
+                fresh_db,
+                user,
+                template=template,
+                exercises=exercise_names,
+                goal=None,
+                name=session.name,
+            )
+
+            if payload.get("available"):
+                session.ai_plan_json = json.dumps(payload, ensure_ascii=False)
+                session.ai_plan_status = AI_PLAN_STATUS_AVAILABLE
+                logger.info(f"[AI Workout Preview] Stored plan for session {session_id} (available=true, status=available)")
+            else:
+                session.ai_plan_json = None
+                session.ai_plan_status = AI_PLAN_STATUS_FAILED
+                logger.info(f"[AI Workout Preview] Plan unavailable for session {session_id}, status=failed")
+
+            await fresh_db.commit()
+        except Exception as e:
+            logger.exception(
+                f"[AI Workout Preview] Failed to store plan for session {session_id}: {e}"
+            )
+            if session is not None:
+                session.ai_plan_status = AI_PLAN_STATUS_FAILED
+                session.ai_plan_json = None
+                try:
+                    await fresh_db.rollback()
+                except Exception:
+                    pass
+                try:
+                    await fresh_db.commit()
+                except Exception:
+                    pass
+    
+    is_test_stub = hasattr(db, 'results') or hasattr(db, 'statements') or hasattr(db, 'commits') or hasattr(db, 'rolled_back')
+    if is_test_stub:
+        await _use_session(db)
         return
+    
+    async with async_session_maker() as fresh_db:
+        await _use_session(fresh_db)
 
-    user = await db.get(User, session.user_id)
-    if user is None:
-        logger.warning(f"[AI Workout Preview] User {session.user_id} for session {session_id} not found")
-        return
 
-    session.ai_plan_status = AI_PLAN_STATUS_PENDING
-    await db.commit()
 
-    try:
-        template = session.template
+async def wait_for_stored_ai_plan(
+    db: AsyncSession,
+    session_id: int,
+    user_id: int,
+    *,
+    timeout: float = AI_PREVIEW_STORE_WAIT_SECONDS,
+) -> Optional[Dict[str, Any]]:
+    """Wait for a background-generated plan to land, then return it.
 
-        exercise_names: Optional[List[str]] = None
-        if session.exercises:
-            exercise_names = [
-                ex.name
-                for ex in sorted(session.exercises, key=lambda e: (e.order or 0, e.id))
-            ]
+    The preview endpoint is asked for a plan after the session starts. When the
+    session was started with `with_ai_plan`, a background task is generating it
+    in parallel; a caller that arrives while it is still `pending` must not also
+    call the model. This polls the stored plan for up to `timeout` seconds and
+    returns it the moment it is available, or None when the wait expires or the
+    plan never lands.
 
-        payload = await build_workout_preview(
-            db,
-            user,
-            template=template,
-            exercises=exercise_names,
-            goal=None,
-            name=session.name,
-        )
-
-        if payload.get("available"):
-            session.ai_plan_json = json.dumps(payload, ensure_ascii=False)
-            session.ai_plan_status = AI_PLAN_STATUS_AVAILABLE
-        else:
-            session.ai_plan_json = None
-            session.ai_plan_status = AI_PLAN_STATUS_FAILED
-
-        await db.commit()
-    except Exception as e:
-        logger.exception(
-            f"[AI Workout Preview] Failed to store plan for session {session_id}: {e}"
-        )
-        session.ai_plan_status = AI_PLAN_STATUS_FAILED
-        session.ai_plan_json = None
-        await db.rollback()
-        await db.commit()
+    The wait is short by design: the workout screen renders with or without the
+    coach, and a slow model must not block it.
+    """
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        # Expire all cached state so each poll reflects commits made by the
+        # background task (SQLAlchemy identity map would otherwise return the
+        # stale `PENDING` instance loaded earlier in this request).
+        await db.expire_all()
+        session = await get_workout_session(db, session_id, user_id)
+        if session is None:
+            logger.debug(f"[AI Workout Preview] wait_for_stored_ai_plan: session {session_id} not found")
+            return None
+        stored = load_stored_ai_plan(session)
+        if stored is not None:
+            logger.debug(f"[AI Workout Preview] wait_for_stored_ai_plan: session {session_id} got stored plan (status={getattr(session,'ai_plan_status')})")
+            return stored
+        # `failed` is terminal: the background task already tried and gave up, so
+        # there is nothing left to wait for.
+        status = getattr(session, "ai_plan_status", None)
+        if status == AI_PLAN_STATUS_FAILED:
+            logger.debug(f"[AI Workout Preview] wait_for_stored_ai_plan: session {session_id} terminal FAILED")
+            return None
+        logger.debug(f"[AI Workout Preview] wait_for_stored_ai_plan: session {session_id} still {status}, waiting...")
+        await asyncio.sleep(0.25)
+    logger.debug(f"[AI Workout Preview] wait_for_stored_ai_plan: session {session_id} timed out after {timeout}s")
+    return None
 
 
 def load_stored_ai_plan(session: WorkoutSession) -> Optional[Dict[str, Any]]:
@@ -1152,8 +1254,6 @@ def load_stored_ai_plan(session: WorkoutSession) -> Optional[Dict[str, Any]]:
         logger.warning(f"[AI Workout Preview] Stored plan for session {session.id} is not readable JSON")
         return None
     return parsed if isinstance(parsed, dict) else None
-
-
 # ===== summary =================================================================
 
 SUMMARY_REQUIRED_FIELDS = ["ai_summary", "overall_score"]

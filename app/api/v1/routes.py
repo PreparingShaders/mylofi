@@ -59,12 +59,14 @@ from app.schemas.ai_synergy import (
 from app.services.ai_summary import get_or_create_daily_summary
 from app.services.ai_workout_service import (
     AI_PLAN_STATUS_PENDING,
+    _get_ai_preview_lock,
     analyze_workout_session,
     analyze_workout_session_task,
     build_workout_preview,
     build_workout_preview_and_store,
     get_workout_analysis,
     load_stored_ai_plan,
+    wait_for_stored_ai_plan,
 )
 from app.services.auth import (
     create_user_tokens,
@@ -1308,7 +1310,7 @@ async def quick_start_session(
     if getattr(request, "with_ai_plan", False):
         session.ai_plan_status = AI_PLAN_STATUS_PENDING
         await db.commit()
-        background_tasks.add_task(build_workout_preview_and_store, db, session.id)
+        background_tasks.add_task(build_workout_preview_and_store, session.id)
 
     return QuickStartWorkoutResponse(session_id=session.id)
 
@@ -1493,7 +1495,7 @@ async def start_workout_from_template(
     if data.with_ai_plan:
         session.ai_plan_status = AI_PLAN_STATUS_PENDING
         await db.commit()
-        background_tasks.add_task(build_workout_preview_and_store, db, session.id)
+        background_tasks.add_task(build_workout_preview_and_store, session.id)
         session = await get_workout_session(db, session.id, current_user.id)
         if session is None:
             raise HTTPException(
@@ -1631,13 +1633,42 @@ async def ai_workout_preview(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Template not found"
             )
 
-    stored = None
+    session = None
     if request.session_id is not None:
         session = await get_workout_session(db, request.session_id, current_user.id)
-        if session is not None:
-            stored = load_stored_ai_plan(session)
-    if stored is not None:
-        return stored
+        stored = load_stored_ai_plan(session) if session is not None else None
+        if stored is not None:
+            return stored
+
+        # The session was started with `with_ai_plan`, so a background task is
+        # generating the plan right now. Wait for it instead of starting a second
+        # generation: two callers 31 ms apart used to both call the model.
+        if session is not None and getattr(session, "ai_plan_status", None) == AI_PLAN_STATUS_PENDING:
+            stored = await wait_for_stored_ai_plan(db, request.session_id, current_user.id)
+            if stored is not None:
+                return stored
+
+    # No stored plan and no background task that will produce one soon: generate
+    # on demand. The lock keeps two concurrent callers from both doing it.
+    if request.session_id is not None:
+        lock = _get_ai_preview_lock(request.session_id)
+        async with lock:
+            # Re-check under the lock: the background task may have landed while
+            # we waited for it, or a sibling caller may have just stored a plan.
+            session = await get_workout_session(db, request.session_id, current_user.id)
+            if session is not None:
+                stored = load_stored_ai_plan(session)
+                if stored is not None:
+                    return stored
+            return await build_workout_preview(
+                db,
+                current_user,
+                template=template,
+                exercises=request.exercises,
+                goal=request.goal,
+                name=request.name,
+                reduce=request.reduce,
+            )
 
     return await build_workout_preview(
         db,

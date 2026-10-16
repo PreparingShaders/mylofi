@@ -26,10 +26,9 @@ logging.basicConfig(
     force=True,
 )
 
-# httpx (and httpcore underneath it) logs every request line at INFO, and the
-# Gemini calls carry the API key in the query string: without this the console
-# echoes the credentials of every model attempt in the cascade.
-for _noisy_logger in ("httpx", "httpcore"):
+# httpx, httpcore, and sqlalchemy.engine log every request/query line at INFO or DEBUG:
+# without this the console echoes every SQL statement and parameter.
+for _noisy_logger in ("httpx", "httpcore", "sqlalchemy", "sqlalchemy.engine"):
     logging.getLogger(_noisy_logger).setLevel(logging.WARNING)
 
 
