@@ -5,95 +5,95 @@
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-3.x-38BDF8.svg)](https://tailwindcss.com/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15%2B-4169E1.svg)](https://www.postgresql.org/)
 
-A modern Progressive Web Application (PWA) and fitness/nutrition assistant featuring AI-powered meal analysis, custom workout planning, real-time logging, and an advanced administrative panel with tiered subscription management.
+Современное прогрессивное веб-приложение (PWA) и фитнес-пищевой помощник с ИИ-анализом питания, планированием тренировок, ведением логов в реальном времени и расширенной административной панелью с управлением подписками по тарифам.
 
 ---
 
-## 🚀 Tech Stack
+## 🚀 Технологический стек
 
-### Backend
-- **Framework:** Python 3.10+, FastAPI (async endpoints & dependency injection)
-- **Database & ORM:** PostgreSQL, SQLAlchemy 2 (AsyncSession), Alembic migrations
-- **Validation:** Pydantic v2
-- **Authentication:** JWT (python-jose) + bcrypt password hashing, refresh-token rotation
-- **AI & Vision:** Google Gemini API / OpenRouter cascading text-and-vision models (via Cloudflare Worker proxy) for meal photo recognition and workout coaching; Pillow for image processing
-- **Real-time:** WebSocket meal-status updates (websockets)
-- **Background tasks:** Redis + ARQ
-- **Email:** Brevo API (verification, feedback replies)
-- **Push notifications:** Web Push (VAPID)
-- **Server:** Uvicorn ASGI server
+### Бэкенд
+- **Фреймворк:** Python 3.10+, FastAPI (асинхронные эндпоинты и инъекция зависимостей)
+- **База данных и ORM:** PostgreSQL, SQLAlchemy 2 (AsyncSession), миграции Alembic
+- **Валидация:** Pydantic v2
+- **Аутентификация:** JWT (python-jose) + хеширование паролей bcrypt, ротация refresh-токенов
+- **ИИ и компьютерное зрение:** Google Gemini API / OpenRouter (каскад текстовых и визуальных моделей через прокси Cloudflare Worker) для распознавания фото еды и ИИ-анализа тренировок; Pillow для обработки изображений
+- **В реальном времени:** WebSocket-обновления статуса приёма пищи (websockets)
+- **Фоновые задачи:** Redis + ARQ
+- **Email:** Brevo API (верификация, ответы на обратную связь)
+- **Push-уведомления:** Web Push (VAPID)
+- **Сервер:** Uvicorn ASGI сервер
 
-### Frontend
-- **Architecture:** Progressive Web App (PWA) with offline support & service worker (`static/sw.js`)
-- **UI & Styling:** Tailwind CSS (CDN), Vanilla JavaScript SPA modules under `static/js/`
-- **UX:** Mobile-first responsive design, dark mode optimized (`[color-scheme:dark]`)
-- **Templates:** Static `index.html` entry point served by FastAPI
+### Фронтенд
+- **Архитектура:** Прогрессивное веб-приложение (PWA) с офлайн-поддержкой и сервис-воркером (`static/sw.js`)
+- **UI и стилизация:** Tailwind CSS (CDN), модули Vanilla JavaScript SPA в `static/js/`
+- **UX:** Мобильный адаптивный дизайн, тёмная тема, оптимизированная для `[color-scheme:dark]`
+- **Шаблоны:** Статический `index.html` как точка входа, отдаваемая FastAPI
 
-### Infrastructure & Deployment
-- **Reverse proxy:** Nginx
-- **Process management:** Systemd / Docker containerization
-- **Linting / types:** ruff, mypy
-
----
-
-## 📦 Core Modules & Functionality
-
-### 1. User Area (PWA)
-- **Workout Tracking:** Log sets, reps, weight, RPE, rest timers, and exercise catalog browsing. AI-generated workout plans and session verdicts.
-- **AI Nutrition Logging:** Upload meal photos for instant AI macro breakdown, quality scoring, and daily/period nutrition summaries.
-- **Activity Metrics:** Dashboard tracking workout consistency and nutrition targets.
-
-### 2. Admin Panel
-- **User Management:** Search, filter, paginate, activate/deactivate users, and toggle admin roles.
-- **AI Quota Resets:** Instant reset for daily meal AI and weekly workout AI quotas.
-- **Feedback Management:** List, view, update status, grant PRO, and send email replies to user feedback.
-- **Custom PRO Subscription Management:** Grant or revoke PRO status using quick presets (7d, 30d) or a **custom date range** (`start_date` to `end_date` with end-of-day UTC expiration). Grants extend from `max(now, existing_expiry)` so paid time is never overwritten.
-- **System Stats:** Total/active users, workouts, meals, AI error rate.
-
-### 3. Activity Tracking & Security
-- **Unified Activity Monitoring:** Throttled `last_seen_at` updates combined with latest meal and workout timestamps for accurate admin oversight.
-- **Role-Based Access Control:** JWT-based authentication and admin route guards.
+### Инфраструктура и развёртывание
+- **Обратный прокси:** Nginx
+- **Управление процессами:** Systemd / контейнеризация Docker
+- **Линтинг и типизация:** ruff, mypy
 
 ---
 
-## 🗂️ Project Structure
+## 📦 Основные модули и функционал
+
+### 1. Пользовательская область (PWA)
+- **Отслеживание тренировок:** ведение подходов, повторов, веса, RPE, таймеров отдыха и просмотр каталога упражнений. ИИ-планы тренировок и вердикты по сессиям.
+- **ИИ-ведение питания:** загрузка фото еды для мгновенного расчета БЖУ, оценки качества и дневных/периодных итогов питания.
+- **Метрики активности:** панель мониторинга регулярности тренировок и целей питания.
+
+### 2. Административная панель
+- **Управление пользователями:** поиск, фильтрация, пагинация, активация/деактивация пользователей, переключение прав администратора.
+- **Сброс квот ИИ:** мгновенный сброс дневной квоты анализа пищи и недельной квоты анализа тренировок.
+- **Управление обратной связью:** список, просмотр, изменение статуса, предоставление PRO и отправка email-ответов на обратную связь пользователей.
+- **Управление подпиской PRO:** предоставление или отзыв PRO-статуса через быстрые предустановки (7д, 30д) или **пользовательский диапазон дат** (`start_date` до `end_date` с истечением в конце дня по UTC). Предоставление продлевается от `max(now, existing_expiry)`, поэтому оплаченное время никогда не перезаписывается.
+- **Системная статистика:** общее/активное число пользователей, тренировки, приёмы пищи, процент ошибок ИИ.
+
+### 3. Отслеживание активности и безопасность
+- **Единый мониторинг активности:** дросселированные обновления `last_seen_at` в сочетании с последними отметками приёмов пищи и тренировок для точного надзора администратора.
+- **Управление доступом на основе ролей:** JWT-аутентификация и protection админ-маршрутов.
+
+---
+
+## 🗂️ Структура проекта
 
 ```
 mylofi/
-├── alembic/                # Database migration scripts
+├── alembic/                # Скрипты миграций базы данных
 ├── app/
-│   ├── api/v1/             # FastAPI routers (auth, workouts, nutrition, admin)
-│   ├── core/               # Application settings (pydantic-settings)
-│   ├── db/                 # Database session, base model, seed/clean scripts
-│   ├── models/             # SQLAlchemy ORM models (User, Meal, Workout, Feedback, …)
-│   ├── schemas/            # Pydantic v2 request/response schemas
-│   ├── services/           # Business logic (AI vision, workout coach, limits, auth, email)
-│   ├── ws/                 # WebSocket connection manager
-│   └── main.py             # FastAPI app entrypoint (lifespan, static, health)
+│   ├── api/v1/             # Роутеры FastAPI (auth, workouts, nutrition, admin)
+│   ├── core/               # Настройки приложения (pydantic-settings)
+│   ├── db/                 # Сессия БД, базовая модель, скрипты сидирования/очистки
+│   ├── models/             # SQLAlchemy ORM-модели (User, Meal, Workout, Feedback, …)
+│   ├── schemas/            # Схемы запросов/ответов Pydantic v2
+│   ├── services/           # Бизнес-логика (ИИ-зрение, coach-тренировки, лимиты, auth, email)
+│   ├── ws/                 # Менеджер соединений WebSocket
+│   └── main.py             # Точка входа FastAPI (жизненный цикл, статика, health)
 ├── static/
-│   ├── index.html          # PWA entry point (dark mode, Tailwind CDN config)
-│   ├── sw.js               # Service worker for offline support
-│   ├── js/                 # Modular Vanilla JS frontend (workouts.js, nutrition.js, admin.js, auth.js, …)
-│   └── uploads/            # User-uploaded meal photos & thumbnails
-├── tests/                  # Pytest async test suite (unit & Playwright e2e)
-├── scripts/                # Maintenance scripts (make_admin, reassign_user_id, …)
-├── alembic.ini             # Alembic configuration
-├── pytest.ini              # Pytest configuration
-├── requirements.txt        # Python dependencies
-└── .env.example            # Environment variable template
+│   ├── index.html          # Точка входа PWA (тёмная тема, конфиг Tailwind CDN)
+│   ├── sw.js               # Сервис-воркер для офлайн-поддержки
+│   ├── js/                 # Модульный Vanilla JS фронтенд (workouts.js, nutrition.js, admin.js, auth.js, …)
+│   └── uploads/            # Загруженные пользователями фото еды и миниатюры
+├── tests/                  # Набор тестов Pytest (unit + Playwright e2e)
+├── scripts/                # Скрипты обслуживания (make_admin, reassign_user_id, …)
+├── alembic.ini             # Конфигурация Alembic
+├── pytest.ini              # Конфигурация Pytest
+├── requirements.txt        # Зависимости Python
+└── .env.example            # Шаблон переменных окружения
 ```
 
 ---
 
-## 🛠️ Getting Started & Installation
+## 🛠️ Начало работы и установка
 
-### Prerequisites
+### Предварительные требования
 - Python 3.10+
 - PostgreSQL 15+
-- Redis (background tasks)
-- (Optional) Node.js/npm only if you self-host Tailwind instead of the CDN build
+- Redis (фоновые задачи)
+- (Опционально) Node.js/npm только если вы хотите самому хостить Tailwind вместо сборки через CDN
 
-### 1. Clone & Setup Environment
+### 1. Клонирование и настройка окружения
 
 ```bash
 git clone <repository-url>
@@ -103,32 +103,32 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Configure Environment Variables
+### 2. Настройка переменных окружения
 
-Copy `.env.example` to `.env` and configure your database URL, JWT secret, Redis, and AI API keys:
+Скопируйте `.env.example` в `.env` и настройте URL базы данных, JWT-секрет, Redis и ключи API для ИИ:
 
 ```bash
 cp .env.example .env
-# Edit .env with your credentials
+# Отредактируйте .env с вашими учётными данными
 ```
 
-Required variables: `DATABASE_URL`, `SECRET_KEY`. Optional but recommended: `GEMINI_API_KEY`, `OPEN_ROUTER_API_KEY`, `BREVO_API_KEY`, `REDIS_URL`.
+Обязательные переменные: `DATABASE_URL`, `SECRET_KEY`. Рекомендуемые (опционально): `GEMINI_API_KEY`, `OPEN_ROUTER_API_KEY`, `BREVO_API_KEY`, `REDIS_URL`.
 
-### 3. Run Database Migrations
+### 3. Применение миграций базы данных
 
 ```bash
 alembic upgrade head
 ```
 
-### 4. Start the Development Server
+### 4. Запуск сервера разработки
 
 ```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Access the application at `http://localhost:8000`. API docs are available at `/docs` when `DEBUG=true`.
+Приложение доступно по адресу `http://localhost:8000`. Документация API доступна по адресу `/docs` при `DEBUG=true`.
 
-### Make a User Admin (optional)
+### Сделать пользователя администратором (опционально)
 
 ```bash
 python scripts/make_admin.py <email>
@@ -136,18 +136,18 @@ python scripts/make_admin.py <email>
 
 ---
 
-## 🧪 Testing
+## 🧪 Тестирование
 
-Run the test suite using pytest:
+Запустите набор тестов с помощью pytest:
 
 ```bash
 pytest
 ```
 
-Unit tests live in `tests/`; Playwright end-to-end tests live in `tests/e2e/`.
+Юнит-тесты находятся в `tests/`; сквозные тесты Playwright находятся в `tests/e2e/`.
 
 ---
 
-## 📄 License
+## 📄 Лицензия
 
-MIT License.
+Лицензия MIT.
