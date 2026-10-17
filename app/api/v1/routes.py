@@ -548,9 +548,13 @@ async def logout_all(
 
 # ===== User Routes =====
 @router.get("/users/me", response_model=UserMe)
-async def get_current_user_info(current_user: User = Depends(get_current_user)):
+async def get_current_user_info(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Get current user profile"""
-    return current_user
+    await db.refresh(current_user)
+    return UserMe.model_validate(current_user)
 
 
 @router.patch("/users/me", response_model=UserMe)
@@ -585,7 +589,7 @@ async def update_current_user(
     current_user.updated_at = datetime.utcnow()
     await db.commit()
     await db.refresh(current_user)
-    return current_user
+    return UserMe.model_validate(current_user)
 
 
 @router.patch("/users/me/anthropometrics", response_model=AnthropometricsResponse)
@@ -633,7 +637,7 @@ async def update_anthropometrics(
     await db.refresh(current_user)
 
     return {
-        "user": current_user,
+        "user": UserMe.model_validate(current_user),
         "targets": {
             "bmr": targets.bmr,
             "tdee": targets.tdee,
