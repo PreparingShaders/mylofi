@@ -1,6 +1,6 @@
 from datetime import date, datetime, timezone
 from typing import Annotated, Optional, List
-from pydantic import BaseModel, Field, ConfigDict, PlainSerializer
+from pydantic import BaseModel, Field, ConfigDict, PlainSerializer, model_validator
 from pydantic.functional_validators import BeforeValidator
 from typing_extensions import Annotated as TypingAnnotated
 from enum import Enum
@@ -309,6 +309,13 @@ class AdminPremiumUpdate(BaseModel):
     days: Optional[int] = None
     start_date: Optional[date] = None
     end_date: Optional[date] = None
+
+    @model_validator(mode="after")
+    def validate_date_range(self) -> "AdminPremiumUpdate":
+        if self.start_date is not None and self.end_date is not None:
+            if self.start_date > self.end_date:
+                raise ValueError("start_date must not be after end_date")
+        return self
 
 
 class AdminQuotaResetResponse(BaseModel):

@@ -231,7 +231,11 @@ async def update_user_status(
         user.is_admin = payload.is_admin
 
     user.updated_at = datetime.now(timezone.utc)
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
     await db.refresh(user)
 
     return await _build_user_item(db, user)
@@ -328,7 +332,11 @@ async def reset_ai_quota(
     user.last_workout_ai_analysis_at = None
     user.last_nutrition_ai_analysis_at = None
     user.updated_at = datetime.now(timezone.utc)
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
     await db.refresh(user)
 
     return AdminQuotaResetResponse(
@@ -505,7 +513,11 @@ async def update_feedback(
             target_user.premium_expires_at = base + timedelta(days=30)
             target_user.updated_at = now
 
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
     await db.refresh(feedback)
 
     return await _build_feedback_item(db, feedback)
@@ -545,7 +557,11 @@ async def reply_feedback(
     await send_feedback_reply_email(recipient_email, payload.reply_text)
 
     feedback.status = FeedbackStatus.RESOLVED.value
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
     await db.refresh(feedback)
 
     return await _build_feedback_item(db, feedback)
