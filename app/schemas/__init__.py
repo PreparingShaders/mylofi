@@ -1,0 +1,914 @@
+from datetime import date, datetime, timezone
+from typing import Annotated, Optional, List
+from pydantic import BaseModel, Field, ConfigDict, PlainSerializer, model_validator
+from pydantic.functional_validators import BeforeValidator
+from typing_extensions import Annotated as TypingAnnotated
+from enum import Enum
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Read a naive datetime as the UTC instant it stands for.
+
+    Rows read back from the database arrive aware, but a datetime that never
+    left the process (a meal created by this very request) is naive and means
+    UTC, like every other naive stamp the app writes. Serialised without an
+    offset, `new Date()` in the browser reads it as *local* time and every card
+    shifts by the device's offset.
+    """
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+# JSON only: the Python object keeps whatever the row carried, and only the wire
+# format gains the offset the browser needs.
+UtcDateTime = Annotated[
+    datetime,
+    PlainSerializer(_as_utc, return_type=datetime, when_used="json"),
+]
+
+
+# Allow test domains (.test, .example, .invalid, .localhost) which are rejected by
+# standard EmailStr validation. These are commonly used in E2E tests.
+def _validate_test_email(v: str) -> str:
+    """Validate email but allow reserved test domains."""
+    # Basic email format check
+    if "@" not in v or v.count("@") != 1:
+        raise ValueError("Invalid email format")
+    local, domain = v.split("@")
+    if not local or not domain:
+        raise ValueError("Invalid email format")
+    # Allow reserved TLDs used in testing
+    reserved_tlds = {".test", ".example", ".invalid", ".localhost"}
+    # Also allow example.com which is reserved for documentation
+    if any(domain.endswith(tld) for tld in reserved_tlds) or domain == "example.com":
+        return v
+    # For other domains, use standard email validation
+    from email_validator import validate_email
+    try:
+        validate_email(v)
+    except Exception as e:
+        raise ValueError(str(e))
+    return v
+
+
+TestEmailStr = TypingAnnotated[str, BeforeValidator(_validate_test_email)]
+
+
+# Base schemas
+class UserRole(str, Enum):
+    USER = "user"
+    ADMIN = "admin"
+
+
+class MealStatus(str, Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class WorkoutSessionStatus(str, Enum):
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
+class Gender(str, Enum):
+    MALE = "male"
+    FEMALE = "female"
+
+
+class UserGoal(str, Enum):
+    LOSE = "lose"
+    MAINTAIN = "maintain"
+    GAIN = "gain"
+
+
+class AiPersona(str, Enum):
+    """Tone of voice the AI nutritionist answers in."""
+
+    KIND = "kind"
+    STRICT = "strict"
+    SARCASTIC = "sarcastic"
+    CUSTOM = "custom"
+
+
+# Auth schemas
+class TokenBase(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+
+
+class Token(TokenBase):
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TokenPayload(BaseModel):
+    sub: str
+    exp: int
+    type: str
+
+
+class UserRegister(BaseModel):
+    email: TestEmailStr
+    password: str = Field(min_length=8, max_length=128)
+    full_name: Optional[str] = Field(None, max_length=255)
+
+
+class UserLogin(BaseModel):
+    email: TestEmailStr
+    password: str
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+
+# Verification & password reset schemas
+class VerificationRequest(BaseModel):
+    email: TestEmailStr
+
+
+class VerificationVerify(BaseModel):
+    email: TestEmailStr
+    code: str = Field(min_length=6, max_length=6)
+
+
+class ResendCodeRequest(BaseModel):
+    email: TestEmailStr
+    purpose: str = Field(default="register", pattern="^(register|reset_password)$")
+
+
+class PasswordResetConfirm(BaseModel):
+    email: TestEmailStr
+    code: str = Field(min_length=6, max_length=6)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class VerificationResponse(BaseModel):
+    status: str
+    email: TestEmailStr
+
+
+# User schemas
+class UserBase(BaseModel):
+    email: TestEmailStr
+    full_name: Optional[str] = None
+    height_cm: Optional[float] = None
+    weight_kg: Optional[float] = None
+    birth_date: Optional[datetime] = None
+    gender: Optional[str] = None
+    age: Optional[int] = None
+    activity_level: Optional[str] = None
+    goal: Optional[str] = None
+    target_weight_kg: Optional[float] = None
+    target_calories: Optional[int] = None
+    target_protein_g: Optional[float] = None
+    target_fat_g: Optional[float] = None
+    target_carbs_g: Optional[float] = None
+
+
+class UserCreate(UserBase):
+    password: str = Field(min_length=8, max_length=128)
+
+
+class UserUpdate(BaseModel):
+    full_name: Optional[str] = Field(None, max_length=255)
+    height_cm: Optional[float] = None
+    weight_kg: Optional[float] = None
+    birth_date: Optional[datetime] = None
+    gender: Optional[str] = None
+    age: Optional[int] = None
+    activity_level: Optional[str] = None
+    goal: Optional[str] = None
+    target_weight_kg: Optional[float] = None
+    target_calories: Optional[int] = None
+    target_protein_g: Optional[float] = None
+    target_fat_g: Optional[float] = None
+    target_carbs_g: Optional[float] = None
+    push_subscription: Optional[str] = None
+    ai_persona: Optional[AiPersona] = None
+    ai_persona_custom_text: Optional[str] = Field(None, max_length=1000)
+
+
+class AnthropometricsUpdate(BaseModel):
+    """Full anthropometrics payload; target macros are recalculated from it."""
+
+    gender: Gender
+    age: int = Field(ge=10, le=100)
+    height_cm: float = Field(ge=100, le=250)
+    weight_kg: float = Field(ge=30, le=300)
+    activity_level: str = Field(default="moderate", max_length=50)
+    goal: UserGoal = UserGoal.MAINTAIN
+    target_weight_kg: Optional[float] = Field(None, ge=30, le=300)
+
+
+class MacroTargetsResponse(BaseModel):
+    bmr: int
+    tdee: int
+    calories: int
+    protein_g: float
+    fat_g: float
+    carbs_g: float
+
+
+class UserResponse(UserBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    role: UserRole
+    is_active: bool
+    is_admin: bool = False
+    is_premium: bool = False
+    # Plain strings, not the enum: a persona key that is no longer known must
+    # still serialise instead of turning /users/me into a 500.
+    ai_persona: Optional[str] = None
+    ai_persona_custom_text: Optional[str] = None
+    meal_ai_daily_count: int = 0
+    last_meal_ai_date: Optional[date] = None
+    last_workout_ai_analysis_at: Optional[datetime] = None
+    last_nutrition_ai_analysis_at: Optional[datetime] = None
+    created_workouts_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class UsageLimitEntry(BaseModel):
+    code: str
+    used: int
+    limit: Optional[int] = None
+    remaining: Optional[int] = None
+    percent_used: int = 0
+    allowed: bool = True
+    message: str
+    resets_at: Optional[datetime] = None
+
+
+class UsageLimits(BaseModel):
+    meal_ai: UsageLimitEntry
+    workout_templates: UsageLimitEntry
+    workout_ai: UsageLimitEntry
+    nutrition_ai: UsageLimitEntry
+    combined_ai: UsageLimitEntry
+
+
+class UsageResponse(BaseModel):
+    is_premium: bool
+    plan: str
+    meal_ai_daily_count: int
+    last_meal_ai_date: Optional[date] = None
+    created_workouts_count: int
+    limits: UsageLimits
+
+
+class UserMe(UserResponse):
+    pass
+
+
+class AdminUserItem(BaseModel):
+    id: int
+    email: TestEmailStr
+    full_name: Optional[str] = None
+    role: UserRole
+    is_active: bool
+    is_admin: bool
+    is_premium: bool
+    premium_expires_at: Optional[datetime] = None
+    meal_ai_daily_count: int = 0
+    created_workouts_count: int = 0
+    last_seen_at: Optional[datetime] = None
+    total_meals_count: int = 0
+    completed_workouts_count: int = 0
+    total_ai_requests: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AdminUserListResponse(BaseModel):
+    items: List[AdminUserItem]
+    total: int
+    page: int
+    page_size: int
+
+
+class AdminStatusUpdate(BaseModel):
+    is_active: Optional[bool] = None
+    is_admin: Optional[bool] = None
+
+
+class AdminPremiumUpdate(BaseModel):
+    """Premium management action: "grant_7", "grant_30", "revoke",
+    an explicit duration via `days`, or a custom date range via
+    `start_date`/`end_date`."""
+
+    action: str
+    days: Optional[int] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+
+    @model_validator(mode="after")
+    def validate_date_range(self) -> "AdminPremiumUpdate":
+        if self.start_date is not None and self.end_date is not None:
+            if self.start_date > self.end_date:
+                raise ValueError("start_date must not be after end_date")
+        return self
+
+
+class AdminQuotaResetResponse(BaseModel):
+    id: int
+    email: TestEmailStr
+    meal_ai_daily_count: int = 0
+    last_meal_ai_date: Optional[date] = None
+    last_workout_ai_analysis_at: Optional[datetime] = None
+    last_nutrition_ai_analysis_at: Optional[datetime] = None
+
+
+class AdminUserDetail(BaseModel):
+    id: int
+    email: TestEmailStr
+    full_name: Optional[str] = None
+    role: UserRole
+    is_active: bool
+    is_admin: bool
+    is_premium: bool
+    premium_expires_at: Optional[datetime] = None
+    meal_ai_daily_count: int = 0
+    last_meal_ai_date: Optional[date] = None
+    last_workout_ai_analysis_at: Optional[datetime] = None
+    last_nutrition_ai_analysis_at: Optional[datetime] = None
+    created_workouts_count: int = 0
+    last_seen_at: Optional[datetime] = None
+    total_meals_count: int = 0
+    completed_workouts_count: int = 0
+    total_ai_requests: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AdminStats(BaseModel):
+    total_users: int
+    active_users: int
+    total_workouts: int
+    active_today: int
+    total_meals: int
+    ai_error_rate: float
+
+
+# Feedback schemas
+class FeedbackCategory(str, Enum):
+    PRO_REQUEST = "pro_request"
+    BUG = "bug"
+    QUESTION = "question"
+
+
+class FeedbackStatus(str, Enum):
+    NEW = "new"
+    RESOLVED = "resolved"
+
+
+class FeedbackCreate(BaseModel):
+    category: FeedbackCategory
+    message: str = Field(min_length=1, max_length=5000)
+    email: Optional[TestEmailStr] = None
+    # images are handled via multipart form data
+
+
+class FeedbackResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: TestEmailStr
+    category: FeedbackCategory
+    message: str
+    images: Optional[List[str]] = None
+    status: FeedbackStatus
+    created_at: UtcDateTime
+
+
+class AdminFeedbackItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    # Plain str, not TestEmailStr: guest submissions are stored verbatim and an
+    # admin listing must never 500 because one row predates server-side email
+    # validation.
+    email: str
+    category: FeedbackCategory
+    message: str
+    images: Optional[List[str]] = None
+    status: FeedbackStatus
+    user_id: Optional[int] = None
+    user_email: Optional[str] = None
+    created_at: UtcDateTime
+
+
+class AdminFeedbackListResponse(BaseModel):
+    items: List[AdminFeedbackItem]
+    total: int
+    page: int
+    page_size: int
+
+
+class AdminFeedbackUpdate(BaseModel):
+    status: Optional[FeedbackStatus] = None
+    grant_pro: Optional[bool] = None
+
+
+class AdminFeedbackReply(BaseModel):
+    reply_text: str = Field(min_length=1, max_length=5000)
+
+
+class AnthropometricsResponse(BaseModel):
+    user: UserMe
+    targets: MacroTargetsResponse
+
+
+# Nutrition schemas
+class MealBase(BaseModel):
+    eaten_at: datetime
+    notes: Optional[str] = None
+
+
+class MealCreate(MealBase):
+    pass
+
+
+class MealUpdate(BaseModel):
+    calories: Optional[float] = None
+    protein_g: Optional[float] = None
+    fat_g: Optional[float] = None
+    carbs_g: Optional[float] = None
+    fiber_g: Optional[float] = None
+    sugar_g: Optional[float] = None
+    sodium_mg: Optional[float] = None
+    dish_name: Optional[str] = None
+    tags: Optional[List[str]] = None
+    notes: Optional[str] = None
+    eaten_at: Optional[datetime] = None
+    quality_score: Optional[float] = None
+    quality_reason: Optional[str] = None
+    ai_insight: Optional[str] = None
+
+
+class MealResponse(MealBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    # Overrides the inherited field so the wire format always carries an offset.
+    eaten_at: UtcDateTime
+
+    id: int
+    user_id: int
+    photo_path: Optional[str] = None
+    photo_thumbnail_path: Optional[str] = None
+    calories: Optional[float] = None
+    protein_g: Optional[float] = None
+    fat_g: Optional[float] = None
+    carbs_g: Optional[float] = None
+    fiber_g: Optional[float] = None
+    sugar_g: Optional[float] = None
+    sodium_mg: Optional[float] = None
+    dish_name: Optional[str] = None
+    tags: Optional[List[str]] = None
+    status: MealStatus
+    error_message: Optional[str] = None
+    quality_score: Optional[float] = None
+    quality_reason: Optional[str] = None
+    ai_insight: Optional[str] = None
+    ai_persona: Optional[str] = None
+    created_at: UtcDateTime
+    updated_at: UtcDateTime
+
+
+class MealListResponse(BaseModel):
+    meals: List[MealResponse]
+    total: int
+    date: UtcDateTime
+
+    # Aggregated nutrition for the day
+    total_calories: float = 0
+    total_protein_g: float = 0
+    total_fat_g: float = 0
+    total_carbs_g: float = 0
+
+    # Daily targets from the user profile
+    target_calories: Optional[float] = None
+    target_protein_g: Optional[float] = None
+    target_fat_g: Optional[float] = None
+    target_carbs_g: Optional[float] = None
+
+
+class PhotoUploadResponse(BaseModel):
+    meal_id: int
+    status: MealStatus
+    message: str
+
+
+class DailySummaryTotals(BaseModel):
+    """A day's KBZhU as the database summed it.
+
+    These are arithmetic, not text: the recap is only allowed to speak about the
+    day, never to state its figures, so the numbers the user sees are read from
+    here. `meals_count` counts analysed meals, which is why it can be 0 while the
+    day still has calendar days on either side of it.
+    """
+
+    meals_count: int = 0
+    calories: float = 0
+    protein_g: float = 0
+    fat_g: float = 0
+    carbs_g: float = 0
+    fiber_g: float = 0
+    sugar_g: float = 0
+    sodium_mg: float = 0
+
+
+class DailySummaryResponse(BaseModel):
+    """One day's AI recap, or the reason there is none.
+
+    `available` is the flag the card renders on: a missing recap is an empty
+    state with a reason, not an error, so the nutrition screen keeps its layout
+    whatever the upstream did. `regenerated` is set when a stored recap was
+    rewritten in place by the manual `force` trigger. `totals` is present on every
+    answer, recap or not, so a client never has to add the day up itself.
+    """
+
+    date: date
+    summary_text: Optional[str] = None
+    overall_score: Optional[float] = None
+    ai_persona: Optional[str] = None
+    totals: Optional[DailySummaryTotals] = None
+    available: bool = False
+    generated: bool = False
+    regenerated: bool = False
+    reason: Optional[str] = None
+
+
+# Workout schemas
+class WorkoutTemplateExerciseBase(BaseModel):
+    name: str = Field(max_length=255)
+    order: int = 0
+    target_sets: int = Field(default=3, ge=1)
+    target_reps: int = Field(default=10, ge=1)
+    target_weight_kg: Optional[float] = None
+    rest_seconds: int = Field(default=90, ge=0)
+    notes: Optional[str] = None
+
+
+class WorkoutTemplateExerciseCreate(WorkoutTemplateExerciseBase):
+    pass
+
+
+class WorkoutTemplateExerciseUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=255)
+    order: Optional[int] = None
+    target_sets: Optional[int] = Field(None, ge=1)
+    target_reps: Optional[int] = Field(None, ge=1)
+    target_weight_kg: Optional[float] = None
+    rest_seconds: Optional[int] = Field(None, ge=0)
+    notes: Optional[str] = None
+
+
+class WorkoutTemplateExerciseResponse(WorkoutTemplateExerciseBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    template_id: int
+
+
+class WorkoutTemplateBase(BaseModel):
+    name: str = Field(max_length=255)
+    description: Optional[str] = None
+    is_default: bool = False
+
+
+class WorkoutTemplateCreate(WorkoutTemplateBase):
+    exercises: List[WorkoutTemplateExerciseCreate] = []
+
+
+class WorkoutTemplateUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=255)
+    description: Optional[str] = None
+    is_default: Optional[bool] = None
+    exercises: Optional[List[WorkoutTemplateExerciseCreate]] = None
+
+
+class WorkoutTemplateResponse(WorkoutTemplateBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: int
+    exercises: List[WorkoutTemplateExerciseResponse] = []
+    created_at: datetime
+    updated_at: datetime
+
+
+class WorkoutSetBase(BaseModel):
+    set_number: int = Field(ge=1)
+    weight_kg: Optional[float] = None
+    reps: int = Field(ge=1)
+    rpe: Optional[float] = Field(None, ge=1, le=10)
+    is_completed: bool = False
+    # Rest target for this set (what the plan asked for) and rest measured after
+    # it (what the user actually took). Two fields, because the gap between them
+    # is the only thing a rest timer can tell us.
+    rest_seconds: Optional[int] = Field(None, ge=0)
+    rest_time_seconds: Optional[int] = Field(None, ge=0)
+
+
+class WorkoutSetCreate(WorkoutSetBase):
+    pass
+
+
+class WorkoutSetUpdate(BaseModel):
+    weight_kg: Optional[float] = None
+    reps: Optional[int] = Field(None, ge=1)
+    rpe: Optional[float] = Field(None, ge=1, le=10)
+    is_completed: Optional[bool] = None
+    rest_seconds: Optional[int] = Field(None, ge=0)
+    rest_time_seconds: Optional[int] = Field(None, ge=0)
+
+
+class WorkoutSetResponse(WorkoutSetBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    exercise_id: int
+    completed_at: Optional[datetime] = None
+    created_at: datetime
+
+
+class WorkoutSessionExerciseBase(BaseModel):
+    name: str = Field(max_length=255)
+    order: int = 0
+    notes: Optional[str] = None
+
+
+class WorkoutSessionExerciseCreate(WorkoutSessionExerciseBase):
+    sets: List[WorkoutSetCreate] = []
+
+
+class WorkoutSessionExerciseUpdate(BaseModel):
+    id: Optional[int] = None
+    name: Optional[str] = Field(None, max_length=255)
+    order: Optional[int] = None
+    notes: Optional[str] = None
+    sets: Optional[List[WorkoutSetCreate]] = None
+
+
+class WorkoutSessionExerciseResponse(WorkoutSessionExerciseBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    session_id: int
+    sets: List[WorkoutSetResponse] = []
+
+
+class WorkoutSessionBase(BaseModel):
+    name: str = Field(max_length=255)
+    template_id: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class WorkoutSessionCreate(WorkoutSessionBase):
+    exercises: List[WorkoutSessionExerciseCreate] = []
+
+
+class WorkoutSessionUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=255)
+    status: Optional[WorkoutSessionStatus] = None
+    notes: Optional[str] = None
+    exercises: Optional[List[WorkoutSessionExerciseUpdate]] = None
+
+
+class WorkoutSessionResponse(WorkoutSessionBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: int
+    status: WorkoutSessionStatus
+    started_at: datetime
+    completed_at: Optional[datetime] = None
+    duration_seconds: Optional[int] = None
+    exercises: List[WorkoutSessionExerciseResponse] = []
+    # Read from the model's property rather than the columns: the history list
+    # renders one row per session and only needs to know which ones carry a
+    # verdict, not the verdict itself.
+    has_ai_analysis: bool = False
+    # AI plan fields: stored when the session was started with `with_ai_plan=true`.
+    ai_plan_json: Optional[str] = None
+    ai_plan_status: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class WorkoutHistoryResponse(BaseModel):
+    sessions: List[WorkoutSessionResponse]
+    total: int
+
+
+# Exercise catalog schemas
+class WorkoutGoal(str, Enum):
+    STRENGTH = "strength"
+    HYPERTROPHY = "hypertrophy"
+    ENDURANCE = "endurance"
+
+
+class ExerciseCatalogResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: Optional[int] = None
+    name: str
+    muscle_group: str
+    equipment: str
+    is_compound: bool
+    description: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ExerciseCatalogCreate(BaseModel):
+    name: str = Field(max_length=255)
+    muscle_group: str = Field(max_length=50)
+    equipment: str = Field(max_length=50)
+    is_compound: bool = True
+    description: Optional[str] = None
+
+
+class ExerciseCatalogUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=255)
+    muscle_group: Optional[str] = Field(None, max_length=50)
+    equipment: Optional[str] = Field(None, max_length=50)
+    is_compound: Optional[bool] = None
+    description: Optional[str] = None
+
+
+class BuildWorkoutSessionRequest(BaseModel):
+    name: str = Field(max_length=255)
+    exercise_ids: List[int] = Field(min_length=1)
+    default_sets: int = Field(default=3, ge=1)
+    default_reps: int = Field(default=10, ge=1)
+    default_rest_seconds: int = Field(default=90, ge=0)
+    notes: Optional[str] = None
+
+
+class QuickStartWorkoutRequest(BaseModel):
+    goal: WorkoutGoal = Field(default=WorkoutGoal.STRENGTH)
+    with_ai_plan: bool = False
+    reduce: bool = Field(
+        default=False,
+        description="Ask for the lighter half of the catalogue picks (strength variant)",
+    )
+
+
+class TemplateStartRequest(BaseModel):
+    """Optional flags for starting a session from a template."""
+
+    with_ai_plan: bool = False
+
+
+class QuickStartWorkoutResponse(BaseModel):
+    session_id: int
+
+
+# WebSocket schemas
+class WSMessageType(str, Enum):
+    MEAL_UPDATE = "meal_update"
+    MEAL_COMPLETED = "meal_completed"
+    MEAL_FAILED = "meal_failed"
+    PING = "ping"
+    PONG = "pong"
+
+
+class WSMessage(BaseModel):
+    type: WSMessageType
+    payload: dict
+
+
+class WSMealUpdatePayload(BaseModel):
+    meal_id: int
+    status: MealStatus
+    calories: Optional[float] = None
+    protein_g: Optional[float] = None
+    fat_g: Optional[float] = None
+    carbs_g: Optional[float] = None
+    dish_name: Optional[str] = None
+    tags: Optional[List[str]] = None
+    error_message: Optional[str] = None
+
+
+# The AI workout coach keeps its contracts in their own module (they answer a
+# different question than everything above, and they are the only ones that carry
+# a quota block). Imported at the bottom because the module reuses the datetime
+# serializer defined at the top of this file.
+from app.schemas.ai_workout import (  # noqa: E402
+    AIWorkoutMuscleVolume,
+    AIWorkoutPreviewExercise,
+    AIWorkoutPreviewRequest,
+    AIWorkoutPreviewResponse,
+    AIWorkoutRecommendation,
+    AIWorkoutSummaryRequest,
+    AIWorkoutSummaryResponse,
+    WorkoutCompletionRequest,
+    WorkoutCompletionResponse,
+)
+
+__all__ = [
+    "UserRole",
+    "MealStatus",
+    "WorkoutSessionStatus",
+    "Gender",
+    "UserGoal",
+    "AiPersona",
+    "Token",
+    "TokenPayload",
+    "UserRegister",
+    "UserLogin",
+    "RefreshTokenRequest",
+    "VerificationRequest",
+    "VerificationVerify",
+    "ResendCodeRequest",
+    "PasswordResetConfirm",
+    "VerificationResponse",
+    "UserBase",
+    "UserCreate",
+    "UserUpdate",
+    "UserResponse",
+    "UserMe",
+    "AdminUserItem",
+    "AdminUserListResponse",
+    "AdminStatusUpdate",
+    "AdminPremiumUpdate",
+    "AdminQuotaResetResponse",
+    "AdminUserDetail",
+    "AdminStats",
+    "AnthropometricsUpdate",
+    "MacroTargetsResponse",
+    "AnthropometricsResponse",
+    "UsageLimitEntry",
+    "UsageLimits",
+    "UsageResponse",
+    "MealBase",
+    "MealCreate",
+    "MealUpdate",
+    "MealResponse",
+    "MealListResponse",
+    "PhotoUploadResponse",
+    "DailySummaryResponse",
+    "DailySummaryTotals",
+    "WorkoutTemplateExerciseBase",
+    "WorkoutTemplateExerciseCreate",
+    "WorkoutTemplateExerciseUpdate",
+    "WorkoutTemplateExerciseResponse",
+    "WorkoutTemplateBase",
+    "WorkoutTemplateCreate",
+    "WorkoutTemplateUpdate",
+    "WorkoutTemplateResponse",
+    "WorkoutSetBase",
+    "WorkoutSetCreate",
+    "WorkoutSetUpdate",
+    "WorkoutSetResponse",
+    "WorkoutSessionExerciseBase",
+    "WorkoutSessionExerciseCreate",
+    "WorkoutSessionExerciseUpdate",
+    "WorkoutSessionExerciseResponse",
+    "WorkoutSessionBase",
+    "WorkoutSessionCreate",
+    "WorkoutSessionUpdate",
+    "WorkoutSessionResponse",
+    "WorkoutHistoryResponse",
+    "WSMessageType",
+    "WSMessage",
+    "WSMealUpdatePayload",
+    "WorkoutGoal",
+    "ExerciseCatalogResponse",
+    "ExerciseCatalogCreate",
+    "ExerciseCatalogUpdate",
+    "BuildWorkoutSessionRequest",
+    "QuickStartWorkoutRequest",
+    "QuickStartWorkoutResponse",
+    "TemplateStartRequest",
+    "AIWorkoutPreviewExercise",
+    "AIWorkoutPreviewRequest",
+    "AIWorkoutPreviewResponse",
+    "AIWorkoutSummaryRequest",
+    "AIWorkoutSummaryResponse",
+    "AIWorkoutMuscleVolume",
+    "AIWorkoutRecommendation",
+    "WorkoutCompletionRequest",
+    "WorkoutCompletionResponse",
+    "FeedbackCategory",
+    "FeedbackStatus",
+    "FeedbackCreate",
+    "FeedbackResponse",
+    "AdminFeedbackItem",
+    "AdminFeedbackListResponse",
+    "AdminFeedbackUpdate",
+    "AdminFeedbackReply",
+]

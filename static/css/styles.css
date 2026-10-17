@@ -1,0 +1,3529 @@
+/* Custom styles */
+
+/* ============ App shell background (theme) ============ */
+/* The anti-flash bootstrap in index.html paints <html> before the first frame,
+   but everything below it used to be transparent and simply showed whatever
+   <body> declared through Tailwind utilities. That left the scroll container
+   (#page-content) and its screen (#screen-main) unpainted: the strip behind the
+   fixed bottom nav and the overscroll area fell back to the raw canvas, which
+   is where a light background leaked into the dark theme. One block paints the
+   whole chain, so light and dark can no longer disagree between layers. */
+html,
+body,
+#app,
+#screens,
+.screen,
+#screen-main,
+#page-content {
+    background-color: #fafafa;
+}
+html.dark,
+.dark body,
+.dark #app,
+.dark #screens,
+.dark .screen,
+.dark #screen-main,
+.dark #page-content {
+    background-color: #09090b;
+}
+
+/* Ambient graphite ambience. It used to sit on <body>, behind every screen; it
+   belongs to the layers that actually cover the viewport now, so the glow is
+   painted by the same elements as the themed background above and can never
+   show through a transparent one. #page-content is listed separately from
+   .screen because it is nested inside #screen-main and would otherwise cover
+   the glow with its own opaque background, and #app is there for the safe-area
+   strip above the screens. */
+.dark #app,
+.dark .screen,
+.dark #page-content {
+    background-image:
+        radial-gradient(60rem 40rem at 12% -8%, rgba(63, 63, 70, 0.30), transparent 60%),
+        radial-gradient(48rem 34rem at 92% 4%, rgba(82, 82, 91, 0.20), transparent 62%),
+        radial-gradient(52rem 40rem at 50% 108%, rgba(39, 39, 42, 0.55), transparent 60%);
+}
+
+.safe-area-inset-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+}
+.safe-area-inset-top {
+    padding-top: env(safe-area-inset-top);
+}
+
+/* Pulse animation for pending meals */
+@keyframes pulse-ring {
+    0% { transform: scale(0.8); opacity: 0.8; }
+    50% { transform: scale(1.2); opacity: 0.4; }
+    100% { transform: scale(0.8); opacity: 0.8; }
+}
+.pulse-ring::before {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: 50%;
+    border: 2px solid currentColor;
+    animation: pulse-ring 1.5s ease-out infinite;
+}
+
+/* Progress ring animation */
+.progress-ring {
+    transform: rotate(-90deg);
+}
+.progress-ring__circle {
+    transition: stroke-dashoffset 0.5s ease-out;
+}
+
+/* ============ Macro accent tokens ============ */
+/* Declared on the root, not on a card: the same accents are used by the dashboard
+   ring, the horizontal macro bars, the meal-card macro tiles and the composition
+   dots, and a token that only existed on one of those cards would have to be
+   redeclared for the others. Light theme = the defaults, dark theme = one
+   override. The palette is deliberately saturated - the three pills have to be
+    told apart at a glance on a 140px dial, so they are orange, cyan and a neutral
+   rather than three shades of the same grey.
+
+   Protein wears two accents. Until the day's protein target is reached it is the
+   neutral one (white on the dark graphite, a warm grey on the white card, where
+   pure white would be invisible); from the target onwards it switches to
+   `--macro-protein-goal`, the emerald that says "goal met". Protein surplus is
+   never a warning, so it never borrows `--macro-danger`: red belongs to a fat or
+   calorie overage only.
+
+   `--macro-*-ink` is what a glyph wears on top of an accent, so the dumbbell
+   flips with the pill it sits on instead of disappearing into it. The
+   `--macro-*-text` variants are the same hues darkened for type: a 12px number
+   has to survive being read as text on the card, which a fill-bright accent does
+   not. */
+:root {
+    --macro-protein: #6B6459;
+    --macro-protein-hi: #A8A096;
+    --macro-protein-ink: #FFFFFF;
+    --macro-protein-glow: rgba(107, 100, 89, 0.30);
+    --macro-protein-goal: #10B981;
+    --macro-protein-goal-hi: #6EE7B7;
+    --macro-protein-goal-ink: #04241A;
+    --macro-protein-goal-glow: rgba(16, 185, 129, 0.42);
+    --macro-protein-goal-text: #047857;
+    --macro-fat: #F97316;
+    --macro-fat-hi: #FDBA74;
+    --macro-fat-ink: #431407;
+    --macro-fat-glow: rgba(249, 115, 22, 0.42);
+    --macro-carbs: #06B6D4;
+    --macro-carbs-hi: #67E8F9;
+    --macro-carbs-ink: #04333C;
+    --macro-carbs-glow: rgba(6, 182, 212, 0.42);
+    --macro-danger: #EF4444;
+    --macro-danger-hi: #FCA5A5;
+    --macro-danger-ink: #FFFFFF;
+    --macro-danger-glow: rgba(239, 68, 68, 0.42);
+    --macro-danger-text: #DC2626;
+}
+.dark {
+    --macro-protein: #F8FAFC;
+    --macro-protein-hi: #FFFFFF;
+    --macro-protein-ink: #0F172A;
+    --macro-protein-glow: rgba(248, 250, 252, 0.45);
+    --macro-protein-goal: #34D399;
+    --macro-protein-goal-hi: #A7F3D0;
+    --macro-protein-goal-ink: #022C22;
+    --macro-protein-goal-glow: rgba(52, 211, 153, 0.48);
+    --macro-protein-goal-text: #6EE7B7;
+    --macro-fat: #FB923C;
+    --macro-fat-hi: #FED7AA;
+    --macro-fat-ink: #431407;
+    --macro-fat-glow: rgba(251, 146, 60, 0.46);
+    --macro-carbs: #22D3EE;
+    --macro-carbs-hi: #A5F3FC;
+    --macro-carbs-ink: #04333C;
+    --macro-carbs-glow: rgba(34, 211, 238, 0.46);
+    --macro-danger: #F87171;
+    --macro-danger-hi: #FECACA;
+    --macro-danger-ink: #3B0A0A;
+    --macro-danger-glow: rgba(248, 113, 113, 0.46);
+    --macro-danger-text: #FCA5A5;
+}
+
+/* Unified nutrition ring (single track + multi-segment arcs) */
+.nutrition-ring__track {
+    stroke: #e4e4e7;
+    opacity: 0.9;
+}
+.dark .nutrition-ring__track {
+    stroke: #ffffff;
+    opacity: 0.12;
+}
+.nutrition-ring__segment {
+    transition: stroke-dasharray 0.6s ease-out, stroke-dashoffset 0.6s ease-out;
+    stroke-linecap: round;
+}
+/* Filled macro pill: the geometry is baked into the path, so only the paint can
+   change between renders and the transition is kept on stroke alone.
+
+   The paint is a gradient (see the .nutrition-ring__gradient-* rules below) with
+   a drop-shadow glow in the macro's own colour, which is what gives the ring its
+   depth: the pill reads as a lit bar rather than a flat stroke. The glow is a
+   filter and not a second stroke, so it never changes the pill's width. */
+.nutrition-ring__pill {
+    stroke-linecap: round;
+    transition: stroke 0.6s ease-out;
+    filter: drop-shadow(0 0 var(--ring-glow-blur, 5px) var(--ring-glow-color, transparent));
+}
+.nutrition-ring__pill--protein { --ring-glow-color: var(--macro-protein-glow); }
+.nutrition-ring__pill--protein-goal { --ring-glow-color: var(--macro-protein-goal-glow); }
+.nutrition-ring__pill--fat { --ring-glow-color: var(--macro-fat-glow); }
+.nutrition-ring__pill--carbs { --ring-glow-color: var(--macro-carbs-glow); }
+.nutrition-ring__pill--danger { --ring-glow-color: var(--macro-danger-glow); }
+/* Gradient stops live in CSS rather than in the markup so a theme switch
+   recolours the ring without re-rendering it. `stop-color` is a CSS property,
+   which is also why the gradient is painted through a class and not through
+   stop-color attributes. Class selectors match whole tokens, so the
+   `--protein` stops never bleed onto the `--protein-goal` gradient. */
+.nutrition-ring__gradient--protein stop:nth-child(1) { stop-color: var(--macro-protein-hi); }
+.nutrition-ring__gradient--protein stop:nth-child(2) { stop-color: var(--macro-protein); }
+.nutrition-ring__gradient--protein-goal stop:nth-child(1) { stop-color: var(--macro-protein-goal-hi); }
+.nutrition-ring__gradient--protein-goal stop:nth-child(2) { stop-color: var(--macro-protein-goal); }
+.nutrition-ring__gradient--fat stop:nth-child(1) { stop-color: var(--macro-fat-hi); }
+.nutrition-ring__gradient--fat stop:nth-child(2) { stop-color: var(--macro-fat); }
+.nutrition-ring__gradient--carbs stop:nth-child(1) { stop-color: var(--macro-carbs-hi); }
+.nutrition-ring__gradient--carbs stop:nth-child(2) { stop-color: var(--macro-carbs); }
+.nutrition-ring__gradient--danger stop:nth-child(1) { stop-color: var(--macro-danger-hi); }
+.nutrition-ring__gradient--danger stop:nth-child(2) { stop-color: var(--macro-danger); }
+/* The glyph riding the pill is a line drawing, so its ink follows the accent it
+   sits on rather than a single fixed white. */
+.nutrition-ring__glyph { stroke: var(--macro-protein-ink); }
+.nutrition-ring__glyph--protein-goal { stroke: var(--macro-protein-goal-ink); }
+.nutrition-ring__glyph--fat { stroke: var(--macro-fat-ink); }
+.nutrition-ring__glyph--carbs { stroke: var(--macro-carbs-ink); }
+.nutrition-ring__glyph--danger { stroke: var(--macro-danger-ink); }
+
+/* Neon backdrop behind the ring: a soft radial that lifts the dial off the card
+   without touching the data. Purely decorative and behind the arcs, so it is
+   hidden from assistive tech along with the rest of the ring chrome. */
+.nutrition-ring__aura {
+    position: absolute;
+    inset: 6%;
+    border-radius: 9999px;
+    background: radial-gradient(circle at 50% 50%, rgba(168, 85, 247, 0.16), rgba(168, 85, 247, 0) 68%);
+    pointer-events: none;
+}
+.dark .nutrition-ring__aura {
+    background: radial-gradient(circle at 50% 50%, rgba(192, 132, 252, 0.22), rgba(192, 132, 252, 0) 68%);
+}
+
+/* Centre readout stacked inside the ring: AI score pill above the counter.
+   The readout is nudged a step below the geometric centre and kept tight
+   (smaller gap, padding and type), so the score pill and its glow stay
+   clear of the top arc band the 10:30 and 2:45 pills paint. */
+.nutrition-ring__center {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 2px 6px 0;
+    line-height: 1;
+    text-align: center;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+}
+/* The AI score sits on its own lit disc rather than a flat pill, so the middle of
+   the ring reads as the machine's own readout and not as another macro. */
+.nutrition-ring__score {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 6px;
+    border-radius: 9999px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    background: rgba(168, 85, 247, 0.12);
+    box-shadow: 0 0 10px rgba(168, 85, 247, 0.28), inset 0 0 8px rgba(168, 85, 247, 0.18);
+}
+.dark .nutrition-ring__score {
+    background: rgba(192, 132, 252, 0.16);
+    box-shadow: 0 0 12px rgba(192, 132, 252, 0.42), inset 0 0 10px rgba(192, 132, 252, 0.26);
+}
+/* Sparkle next to the score. It breathes rather than spins: a spinning sparkle on
+    a 140px dial reads as motion noise, and the score itself must stay readable.
+   Reduced motion drops the animation and leaves a static sparkle. */
+.nutrition-ring__spark {
+    width: 8px;
+    height: 8px;
+    flex-shrink: 0;
+    color: currentColor;
+    transform-origin: 50% 50%;
+    animation: ai-spark-pulse 2.6s ease-in-out infinite;
+}
+@keyframes ai-spark-pulse {
+    0%, 100% { opacity: 0.55; transform: scale(0.85); }
+    50% { opacity: 1; transform: scale(1.15); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .nutrition-ring__spark { animation: none; }
+}
+.nutrition-ring__calories {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+@media (min-width: 640px) {
+    .nutrition-ring__calories {
+        font-size: 24px;
+    }
+}
+.nutrition-ring__calories-target {
+    display: block;
+    margin-top: 1px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0;
+    color: #a1a1aa;
+    white-space: nowrap;
+}
+.dark .nutrition-ring__calories-target {
+    color: #71717a;
+}
+
+/* Meal photo card */
+/* The shadow is part of the theme: on white it has to be a soft lift, on the
+   dark graphite it is the only thing separating the card from the page. */
+.meal-card {
+    box-shadow: 0 8px 24px rgba(9, 9, 11, 0.10);
+}
+.dark .meal-card {
+    box-shadow: 0 8px 24px rgba(9, 9, 11, 0.28);
+}
+
+/* Date navigation: prevent crowding against arrows on narrow viewports (320px-375px) */
+#date-nav {
+    overflow: hidden;
+}
+#date-nav #date-picker-trigger {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    /* The label is centred in the space between the arrows, so a margin here is
+       what keeps the period string off both buttons on the narrowest screens. */
+    margin: 0 0.25rem;
+}
+#date-nav #date-picker-trigger > span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+/* Period sheet date inputs: two of them share the row, so each cell may shrink
+   (min-width: 0) and the value is centred in the field it gets, with the padding
+   trimmed so a full dd.mm.yyyy still fits on a 320px screen. Anything wider is
+   clipped by the field itself instead of pushing the neighbour out of the grid. */
+.period-sheet__date-grid > * {
+    min-width: 0;
+}
+.period-sheet__date-input {
+    min-width: 0;
+    font-size: 13px !important;
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Sheet close button: ensure it stays above overlapping inputs/flex elements */
+.sheet-close-btn {
+    position: relative;
+    z-index: 20;
+}
+
+/* Meals carousel: a browser only takes over a gesture when every element
+   between the finger and the scroller allows that direction, so the carousel and
+   the tiles inside it have to agree on both axes. The carousel asks for pan-x
+   pan-y: a horizontal drag walks the cards, a vertical drag is handed back to
+   whatever scrolls above it. Narrowing either side of the pair (pan-x on the
+   carousel, pan-y on the cards) intersects down to nothing and freezes both
+   directions, which is what used to trap the finger on the carousel. */
+.meal-carousel,
+.meal-card-slot,
+.meal-action-slot,
+.meal-empty-slot,
+.daily-summary-slot {
+    touch-action: pan-x pan-y !important;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Donut ring sub-label: the covered window and the day coverage are two separate
+   lines, so the box is pinned to a column flex of its own height and both lines
+   are taken out of any positioning context, which is what used to let them share
+   one line box and collide. The min-height reserves room for both lines, so the
+   card does not jump when a period without coverage (the single day) is
+   switched. */
+.nutrition-ring__caption {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    position: relative !important;
+    height: auto !important;
+    gap: 2px;
+    margin-top: 6px;
+    min-height: 28px;
+}
+.nutrition-ring__caption-range,
+.nutrition-ring__caption-coverage {
+    position: static !important;
+    line-height: 1.25 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+.nutrition-ring__caption-range {
+    font-size: 11px;
+    color: #9CA3AF;
+    white-space: nowrap;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.nutrition-ring__caption-coverage {
+    font-size: 10px;
+    color: #6B7280;
+    white-space: nowrap;
+}
+/* Floating badge on top of a photo: blurred glass pill that stays readable
+   on both very dark and very light food photography. */
+.glass-badge {
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+/* Adaptive contrast: a light bottom scrim keeps the readout legible on bright
+   photos (rice, bananas) without dimming the whole card. */
+.meal-card-gradient {
+    background: linear-gradient(
+        to top,
+        rgba(0, 0, 0, 0.82) 0%,
+        rgba(0, 0, 0, 0.45) 26%,
+        rgba(0, 0, 0, 0.14) 55%,
+        rgba(0, 0, 0, 0) 78%
+    );
+}
+/* Adaptive contrast on the hero photo: a light scrim at the top keeps the chip
+   row legible and a stronger one at the bottom keeps the dish name legible,
+   without dimming the plate in between. */
+.meal-card-scrim {
+    background:
+        linear-gradient(to bottom, rgba(0, 0, 0, 0.45) 0%, rgba(0, 0, 0, 0.14) 45%, rgba(0, 0, 0, 0) 100%),
+        linear-gradient(to top, rgba(0, 0, 0, 0.82) 0%, rgba(0, 0, 0, 0.45) 26%, rgba(0, 0, 0, 0.14) 55%, rgba(0, 0, 0, 0) 78%);
+}
+
+/* ============ Monolithic meal card ============ */
+/* One card carries the whole meal - photo, macros, composition and AI verdict -
+   so it reads as a single unit and screenshots as one. The layout is a strict
+   top-to-bottom column: every block sits in the flow at a 12px gap and nothing
+   but the photo overlay is taken out of it, so the composition and the verdict
+   can only ever stack, never overlap. The photo is the only elastic section and
+   it is sized by its own aspect ratio, so the card takes whatever height the
+   text underneath it needs and the page scrolls past it. Edit and delete sit on
+   the photo rather than in a row of their own, which keeps the bottom of the
+   card for the verdict. */
+.meal-card {
+    /* Photo floor, not photo size: the hero is sized by its aspect ratio, so
+       this only reserves room for it. The floor is kept low on purpose - a
+       high floor let the composition and the verdict be cut off at the bottom
+       edge of a card that was merely full, which is what read as the verdict
+       overlapping the composition. */
+    --meal-hero-h: 96px;
+    /* Four composition rows, which is exactly what the breakdown can print
+       (three ingredients plus the "Ещё N" overflow line) at its row height of
+       ~19.5px. A cap that landed mid-row sliced the last line in half, which
+       read as the composition colliding with the verdict below it. */
+    --meal-rows-h: 78px;
+    /* Theme tokens for the card and everything inside it. Every themed surface
+       below reads one of these instead of a literal, so the light theme is the
+       set of defaults here and the dark theme is one override further down -
+       no rule in between has to be written twice, and the two themes cannot
+       drift apart. Anything that sits on the photo (hero name, glass chips)
+       deliberately does not use them: a scrim, not the card background, is what
+       makes those readable. */
+    --meal-surface: #ffffff;
+    --meal-surface-soft: rgba(24, 24, 27, 0.03);
+    --meal-surface-tint: rgba(24, 24, 27, 0.05);
+    --meal-border: rgba(24, 24, 27, 0.08);
+    --meal-border-strong: rgba(24, 24, 27, 0.14);
+    --meal-text: #18181b;
+    --meal-text-soft: rgba(24, 24, 27, 0.85);
+    --meal-text-muted: #71717a;
+    --meal-text-faint: #a1a1aa;
+    --meal-skeleton: rgba(24, 24, 27, 0.12);
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 12px;
+    width: 100%;
+    /* Natural height: the card grows with the AI verdict instead of being cut
+       at a fixed box, so a long review is printed whole. */
+    height: auto;
+    padding: 16px;
+    border-radius: 1rem;
+    background: var(--meal-surface);
+    border: 1px solid var(--meal-border);
+    overflow: visible;
+    color: var(--meal-text);
+}
+/* Dark theme: same card, same tokens, the graphite values. */
+.dark .meal-card {
+    --meal-surface: #18181b;
+    --meal-surface-soft: rgba(255, 255, 255, 0.04);
+    --meal-surface-tint: rgba(255, 255, 255, 0.05);
+    --meal-border: rgba(255, 255, 255, 0.08);
+    --meal-border-strong: rgba(255, 255, 255, 0.16);
+    --meal-text: #fafafa;
+    --meal-text-soft: rgba(255, 255, 255, 0.85);
+    --meal-text-muted: #71717a;
+    --meal-text-faint: #a1a1aa;
+    --meal-skeleton: rgba(255, 255, 255, 0.16);
+}
+.meal-card--alert {
+    border-color: rgba(239, 68, 68, 0.45);
+}
+
+/* Photo hero: the eaten-at time and the edit/delete buttons sit on its top row,
+   the dish name and portion on its bottom overlay, and the plate keeps the space
+   between. The photo no longer absorbs the card's leftover height - the card has
+   none to spare, because the verdict below it prints in full - so it is sized by
+   its own aspect ratio from the card's width. That keeps the photo a real
+   photo-shaped block on every screen, from a 320px phone to a desktop card,
+   without the fixed pixel height it used to need to stay in a fixed card box. */
+.meal-card-hero {
+    position: relative;
+    flex: 0 0 auto;
+    aspect-ratio: 3 / 2;
+    min-height: var(--meal-hero-h);
+    overflow: hidden;
+    border-radius: 0.75rem;
+    background: #27272a;
+}
+.meal-card-hero__image {
+    position: absolute;
+    inset: 0;
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+}
+.meal-card-hero__fallback {
+    background: linear-gradient(135deg, #27272a 0%, #18181b 100%);
+}
+.meal-card-hero .meal-card-scrim {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+.meal-card-hero__top {
+    position: absolute;
+    inset: 6px 6px auto 6px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+/* Edit / delete on the photo: two icon-only glass circles in the hero's top
+   right corner. They carry their name in aria-label/title, so the pair costs
+   about 60px of overlay instead of a full-width row under the verdict, and
+   they stay over the scrim rather than on the card background. */
+.meal-card-hero__actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+.meal-card-hero__action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 9999px;
+    color: rgba(255, 255, 255, 0.9);
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+.meal-card-hero__action:hover {
+    background: rgba(0, 0, 0, 0.65);
+    color: #fafafa;
+}
+.meal-card-hero__action--danger:hover {
+    background: rgba(239, 68, 68, 0.6);
+    color: #fafafa;
+}
+.meal-card-hero__bottom {
+    position: absolute;
+    inset: auto 8px 7px 8px;
+}
+/* Dish name: two lines of the overlay are the budget, so a long dish name wraps
+   instead of being cut with an ellipsis. overflow-wrap matters because Russian
+   dish names carry single long words. */
+.meal-card-hero__name {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: #fafafa;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+    overflow-wrap: break-word;
+}
+.meal-card-hero__note {
+    margin-top: 1px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.2;
+    color: rgba(255, 255, 255, 0.7);
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+.meal-card-hero__note--error {
+    color: #fca5a5;
+}
+.meal-card-hero__shimmer {
+    padding-top: 2px;
+}
+
+/* Macro bar: four equal tiles, calories leading. The accents are fixed brand
+   colours so the bar reads the same in either theme. */
+.meal-card-macros {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    flex-shrink: 0;
+}
+.meal-card-macro {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+    min-width: 0;
+    padding: 5px 3px;
+    border-radius: 0.625rem;
+    background: var(--meal-surface-tint);
+    border: 1px solid var(--meal-border);
+}
+.meal-card-macro__value {
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+}
+.meal-card-macro__unit {
+    font-size: 9px;
+    font-weight: 700;
+    opacity: 0.7;
+}
+.meal-card-macro__label {
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 1.1;
+    color: var(--meal-text-faint);
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.meal-card-macro--calories .meal-card-macro__value { color: var(--meal-text); }
+.meal-card-macro--protein .meal-card-macro__value { color: var(--macro-protein); }
+.meal-card-macro--fat .meal-card-macro__value { color: var(--macro-fat); }
+.meal-card-macro--carbs .meal-card-macro__value { color: var(--macro-carbs); }
+
+/* Composition: a short label over either a two-column list or a row of tags.
+   The body is capped in rows rather than allowed to collapse, so a squeezed
+   card trims entries instead of leaving a bare heading. The three caps are
+   variables because the short-card steps below retune them together. The
+   section is the one that gives way last: the label holds, the body shrinks. */
+.meal-card-section {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    flex: 0 1 auto;
+    min-height: 0;
+}
+.meal-card-section__label {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--meal-text-muted);
+    flex-shrink: 0;
+}
+.meal-card-rows {
+    display: flex;
+    flex-direction: column;
+    max-height: var(--meal-rows-h);
+    overflow: hidden;
+}
+/* Expanded composition: the row cap exists so a full card keeps its height, but
+   it must not clip the very items the user asked to see, so the cap is dropped
+   and the card grows instead. */
+.meal-card-rows[data-expanded="true"] {
+    max-height: none;
+}
+.meal-card-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 2px 0;
+    border-bottom: 1px solid var(--meal-border);
+    font-size: 11px;
+    line-height: 1.3;
+}
+.meal-card-row:last-child {
+    border-bottom: 0;
+}
+.meal-card-row__name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--meal-text-soft);
+}
+.meal-card-row__more {
+    color: var(--meal-text-muted);
+}
+.meal-card-row__value {
+    flex-shrink: 0;
+    font-family: 'Inter', ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+    color: var(--meal-text-muted);
+}
+.meal-card-tags {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+.meal-card-tag {
+    max-width: 100%;
+    padding: 2px 7px;
+    border-radius: 9999px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--meal-text-soft);
+    background: var(--meal-surface-soft);
+    border: 1px solid var(--meal-border);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.meal-card-tag--more {
+    color: var(--meal-text-faint);
+    background: transparent;
+}
+/* Composition overflow. The tail of a long list is rendered but hidden until the
+   `+N` control is pressed; the list attribute is the whole state, so the same
+   rules also pick which wording the control shows. */
+.meal-card-rows[data-expanded="false"] .meal-card-row--overflow,
+.meal-card-tags[data-expanded="false"] .meal-card-tag--overflow {
+    display: none;
+}
+.composition-label--expanded {
+    display: none;
+}
+[data-composition][data-expanded="true"] .composition-label--collapsed {
+    display: none;
+}
+[data-composition][data-expanded="true"] .composition-label--expanded {
+    display: inline;
+}
+/* The controls are buttons, so the UA button styling is undone: each one keeps
+   the geometry of the row or the pill it stands in for (font-size and border
+   already come from those classes, which outrank the UA type-based rules). */
+.meal-card-row--toggle,
+.meal-card-tag--toggle {
+    -webkit-appearance: none;
+    appearance: none;
+    background: none;
+    color: inherit;
+    font-family: inherit;
+    cursor: pointer;
+    /* No double-tap delay and no accidental zoom on a tap this small. */
+    touch-action: manipulation;
+}
+.meal-card-row--toggle {
+    width: 100%;
+    border: 0;
+    text-align: left;
+}
+/* User note: printed in full. The card is height-capped, so the note block is
+   allowed to shrink and scroll rather than cutting the sentence in half. */
+.meal-card-note {
+    font-size: 11px;
+    line-height: 1.35;
+    color: var(--meal-text-soft);
+    overflow-y: auto;
+    min-height: 0;
+}
+.meal-card-note--empty {
+    color: var(--meal-text-faint);
+}
+
+/* AI verdict: a quiet slate block holding either the insight text or the
+   per-metric score pills. */
+.meal-card-ai {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    flex-shrink: 0;
+    padding: 6px 8px;
+    border-radius: 0.625rem;
+    background: var(--meal-surface-soft);
+    border: 1px solid var(--meal-border);
+}
+.meal-card-ai__icon {
+    flex-shrink: 0;
+    width: 13px;
+    height: 13px;
+    margin-top: 1px;
+    color: #a3e635;
+}
+/* AI verdict text: printed whole. There is no line clamp and no height budget:
+   the card grows with the review and the page scrolls, so a two-line answer and
+   a ten-line one both read in full instead of the long one ending in an
+   ellipsis at the card edge. */
+.meal-card-ai__text {
+    min-width: 0;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--meal-text-soft);
+    overflow-wrap: break-word;
+}
+.meal-card-ai__text--error {
+    color: #fca5a5;
+}
+.meal-card-metrics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    min-width: 0;
+}
+.meal-card-metric {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    max-width: 100%;
+    padding: 1px 6px;
+    border-radius: 9999px;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1.5;
+    white-space: nowrap;
+}
+.meal-card-metric__name {
+    font-weight: 600;
+    opacity: 0.75;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.meal-card-metric__score {
+    font-family: 'Inter', ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+}
+/* Metric pills. The accents are the same three bands in both themes, but the
+   shade has to move with the theme: the dark-theme tints (a pale lime on a 12%
+   wash) sit on a white card at roughly 1.9:1, so the light theme steps the text
+   down to the 600/700 shade and deepens the wash with it. The band itself never
+   changes, only the pair of shades that draws it. */
+.meal-card-metric--good { color: #4d7c0f; background: rgba(163, 230, 53, 0.22); }
+.meal-card-metric--mid { color: #b45309; background: rgba(251, 191, 36, 0.22); }
+.meal-card-metric--low { color: #be123c; background: rgba(251, 113, 133, 0.20); }
+.dark .meal-card-metric--good { color: #a3e635; background: rgba(163, 230, 53, 0.12); }
+.dark .meal-card-metric--mid { color: #fbbf24; background: rgba(251, 191, 36, 0.12); }
+.dark .meal-card-metric--low { color: #fb7185; background: rgba(251, 113, 133, 0.12); }
+.meal-card-metric--more { color: var(--meal-text-faint); background: var(--meal-surface-soft); }
+
+/* Tall hero for spacious meal card. It shares the card's responsive minimum
+   and buys its extra height from its own aspect ratio, so a taller photo never
+   has to come out of the verdict's space. */
+.meal-card-hero--tall {
+    min-height: var(--meal-hero-h);
+    aspect-ratio: 4 / 3;
+}
+.meal-card-scrim--heavy {
+    background:
+        linear-gradient(to bottom, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0.18) 50%, rgba(0, 0, 0, 0.75) 100%),
+        linear-gradient(to top, rgba(0, 0, 0, 0.82) 0%, rgba(0, 0, 0, 0.45) 26%, rgba(0, 0, 0, 0.14) 55%, rgba(0, 0, 0, 0) 78%);
+}
+
+/* Macro pill row: four soft tiles that carry the figures of the meal. */
+.meal-card-pills {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+.meal-card-pill {
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+    min-width: 0;
+    padding: 6px 4px;
+    border-radius: 0.625rem;
+    background: var(--meal-surface-tint);
+    border: 1px solid var(--meal-border);
+}
+.meal-card-pill__value {
+    font-size: 14px;
+    font-weight: 800;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+    color: var(--meal-text);
+}
+.meal-card-pill__label {
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1.1;
+    color: var(--meal-text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.meal-card-pill--pending .meal-card-pill__value {
+    opacity: 0;
+}
+.meal-card-pill--pending .meal-card-pill__label {
+    opacity: 0.5;
+}
+
+/* Nutritionist verdict box. It takes its natural height and never shrinks, so
+   the whole review is printed: the card grows to fit it and the page scrolls,
+   and nothing in the card is trimmed to make room for the text. */
+/* The persona chip and the box are one unit: the wrapper carries the tight 4px
+   gap so the card's 12px section rhythm does not push the persona label away
+   from the verdict it names. With no chip the wrapper is a plain single-child
+   column and the box sits exactly where it did before. */
+.meal-card-verdict-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 0 0 auto;
+    min-width: 0;
+}
+/* Persona chip: which voice wrote the verdict below it. Themed from the card
+   tokens, so it is a quiet chip in either theme rather than a badge that only
+   worked on the dark one. */
+.meal-card-persona {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    align-self: flex-start;
+    max-width: 100%;
+    min-width: 0;
+    padding: 2px 8px 2px 6px;
+    border-radius: 9999px;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.5;
+    color: var(--meal-text-muted);
+    background: var(--meal-surface-soft);
+    border: 1px solid var(--meal-border);
+}
+.meal-card-persona__emoji {
+    flex-shrink: 0;
+    font-size: 11px;
+    line-height: 1;
+}
+.meal-card-verdict {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 0 0 auto;
+    padding: 10px;
+    border-radius: 0.75rem;
+    background: var(--meal-surface-soft);
+    /* The verdict is the one inset panel on the card, so it takes the stronger
+       border: on a white card the wash alone is not enough to read as a box. */
+    border: 1px solid var(--meal-border-strong);
+}
+.meal-card-verdict__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-shrink: 0;
+}
+.meal-card-verdict__title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--meal-text-muted);
+}
+/* AI score chip in the verdict header: a soft tinted pill from the card tokens,
+   because it sits on the card background and not on a photo. */
+.meal-card-quality {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    color: var(--meal-text);
+    background: var(--meal-surface-tint);
+    border: 1px solid var(--meal-border);
+}
+/* Verdict body: the text takes whatever height it needs and the score pills
+   wrap inside the same box. Nothing here scrolls or clamps - the body grows to
+   the length of the review, which is what keeps the block whole instead of cut
+   at the bottom edge of the card. */
+.meal-card-verdict__body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+.meal-card-verdict__body .meal-card-ai__text {
+    color: var(--meal-text);
+}
+.meal-card-verdict__body .meal-card-metrics {
+    flex-wrap: wrap;
+}
+
+/* Shimmer placeholder for a meal that is still being analysed */
+.meal-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    padding: 0.125rem 0;
+}
+.meal-skeleton__line {
+    display: block;
+    height: 0.75rem;
+    border-radius: 9999px;
+    background: var(--meal-skeleton, rgba(24, 24, 27, 0.12));
+    animation: meal-skeleton-pulse 1.4s ease-in-out infinite;
+}
+.meal-skeleton__line:first-child {
+    height: 1.125rem;
+}
+@keyframes meal-skeleton-pulse {
+    0%, 100% { opacity: 0.35; }
+    50% { opacity: 0.7; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .meal-skeleton__line {
+        animation: none;
+        opacity: 0.5;
+    }
+}
+
+/* No height-based card steps: the card is not a fixed box any more, so there is
+   no granted height to squeeze sections into. What used to live here - a ladder
+   of container queries that cut the verdict's line budget, trimmed composition
+   rows, tightened the padding and finally hid the verdict box outright on a
+   short screen - had the opposite effect to the one it was written for: it
+   dropped AI text rather than let the page scroll. Sizing is now decided by the
+   viewport instead, so the review prints whole at any height. */
+
+/* Card sizing: a slot is as tall as the card in it. Nothing clamps it any more -
+   the card grows with its AI verdict and the page scrolls, which is what lets the
+   whole review print. The action tile and the empty-state tile have no verdict
+   to grow for, so they keep a floor that makes them read as full snap targets
+   next to a meal card instead of short stubs. */
+.meal-card-slot,
+.meal-action-slot,
+.meal-empty-slot,
+.daily-summary-slot,
+.ai-synergy-stack-slot {
+    width: min(85vw, 340px);
+    align-self: start;
+}
+.meal-action-slot,
+.meal-empty-slot,
+.daily-summary-slot,
+.ai-synergy-stack-slot {
+    min-height: 360px;
+}
+@media (min-width: 640px) {
+.meal-card-slot,
+.meal-action-slot,
+.meal-empty-slot,
+.daily-summary-slot,
+.ai-synergy-stack-slot {
+    width: 380px;
+}
+}
+
+/* Meal carousel: a horizontal strip that is as tall as its tallest card. The cap
+   that used to sit here (max-height: clamp(468px, 75dvh, 663px)) silently became
+   the shorter of the two heights and cut the verdict off the bottom of every
+   card, so it is gone: the strip takes the height the cards ask for, tiles are
+   aligned to the top edge so cards of different heights line up, and the page
+   scrolls past the whole strip. */
+.meal-carousel {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x pan-y;
+    /* The strip is laid out inside the page's px-4 gutter (the same one the
+       summary card above is aligned to), so it cancels that gutter and puts the
+       padding back inside: the first card then starts exactly on the summary
+       card's left edge instead of a further 16px in, and the strip still runs to
+       the screen edge so there is room to scroll the last card to centre. */
+    margin-left: -1rem;
+    margin-right: -1rem;
+    padding-left: 1rem;
+    padding-right: 1rem;
+    padding-bottom: 0.5rem;
+    flex: 0 0 auto;
+}
+.meal-carousel::-webkit-scrollbar {
+    display: none;
+}
+.meal-carousel {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
+.meal-carousel > * {
+    scroll-snap-align: center;
+    flex-shrink: 0;
+}
+
+/* Period switcher in the nutrition dashboard title row: presets plus the icon
+   tab that opens the custom range sheet. Sizing stays compact (11px text, 4x8px
+   padding, 2px gaps) so it fits next to the title on a 375px screen, and the
+   row itself may shrink and pan horizontally, so a narrower screen scrolls the
+   tabs instead of spilling them past the card border. */
+.period-tabs {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    border-radius: 9999px;
+    background: rgba(113, 113, 122, 0.12);
+    min-width: 0;
+    flex: 0 1 auto;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    -webkit-overflow-scrolling: touch;
+}
+.period-tabs::-webkit-scrollbar {
+    display: none;
+}
+.period-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+    color: #71717a;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+.period-tab:hover {
+    color: #18181b;
+}
+.period-tab--icon {
+    padding: 0.3125rem;
+}
+.period-tab[aria-pressed="true"] {
+    background: #18181b;
+    color: #fafafa;
+}
+.dark .period-tab {
+    color: #a1a1aa;
+}
+.dark .period-tab:hover {
+    color: #fafafa;
+}
+.dark .period-tab[aria-pressed="true"] {
+    background: #fafafa;
+    color: #09090b;
+}
+
+/* Smooth transitions */
+.screen {
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.screen.hidden {
+    display: none !important;
+}
+
+/* Bottom nav active state */
+.nav-item.active {
+    color: #18181b;
+}
+.nav-item.active svg {
+    stroke: #18181b;
+}
+.dark .nav-item.active {
+    color: #f4f4f5;
+}
+.dark .nav-item.active svg {
+    stroke: #f4f4f5;
+}
+
+/* Toast notifications */
+.toast-enter {
+    animation: slideUp 0.3s ease-out;
+}
+.toast-exit {
+    animation: slideDown 0.2s ease-in;
+}
+@keyframes slideUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+@keyframes slideDown {
+    from { opacity: 1; transform: translateY(0); }
+    to { opacity: 0; transform: translateY(20px); }
+}
+
+/* Camera preview */
+.camera-preview {
+    background: #000;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+/* ============ Camera upload / analysis loading overlay ============ */
+/* The pulsing ring behind the spinner: it breathes rather than spins, so the
+   rotating arc carries the motion and the ring reads as a soft glow. */
+@keyframes camera-loading-pulse {
+    0%, 100% { opacity: 0.5; transform: scale(0.85); }
+    50% { opacity: 1; transform: scale(1.15); }
+}
+.camera-loading-pulse {
+    animation: camera-loading-pulse 1.6s ease-in-out infinite;
+}
+/* Green checkmark pops in once the server answers 200 OK. */
+@keyframes camera-check-pop {
+    0% { transform: scale(0); opacity: 0; }
+    60% { transform: scale(1.15); opacity: 1; }
+    100% { transform: scale(1); }
+}
+.camera-loading-check-pop {
+    animation: camera-check-pop 0.4s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+    .camera-loading-pulse,
+    .camera-loading-check-pop {
+        animation: none;
+    }
+}
+
+/* Workout timer */
+.timer-display {
+    font-variant-numeric: tabular-nums;
+    font-family: 'Inter', monospace;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: #71717a;
+    border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #a1a1aa;
+}
+
+/* Input focus */
+input, select, textarea:focus {
+    outline: none;
+    ring: 2px;
+    ring-color: #52525b;
+}
+
+/* Button press state */
+.btn-press:active {
+    transform: scale(0.98);
+}
+
+/* Modal backdrop */
+.modal-backdrop {
+    backdrop-filter: blur(4px);
+    background: rgba(9, 9, 11, 0.4);
+}
+
+/* Auth Modal - styled to match AI Synergy modal */
+.auth-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    pointer-events: auto;
+    padding: 16px;
+}
+.auth-modal__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(9, 9, 11, 0.55);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    animation: auth-modal-fade-in 0.2s ease-out;
+}
+.auth-modal__panel {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 420px;
+    max-height: calc(100vh - 32px);
+    height: auto;
+    display: flex;
+    flex-direction: column;
+    background: #fafafa;
+    border-radius: 24px;
+    overflow: hidden;
+    animation: auth-modal-scale-in 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+    box-shadow: 0 24px 60px -12px rgba(0, 0, 0, 0.4);
+}
+.dark .auth-modal__panel {
+    background: #09090b;
+}
+@keyframes auth-modal-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+@keyframes auth-modal-scale-in {
+    from { opacity: 0; transform: scale(0.96) translateY(8px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.auth-modal__header {
+    flex-shrink: 0;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 20px 12px;
+    background: inherit;
+    border-bottom: 1px solid rgba(24, 24, 27, 0.08);
+    flex-wrap: wrap;
+}
+.dark .auth-modal__header {
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+.auth-modal__header-left {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    min-width: 0;
+    flex: 1;
+}
+.auth-modal__title-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.auth-modal__title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #18181b;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.dark .auth-modal__title {
+    color: #fafafa;
+}
+.auth-modal__close {
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    background: rgba(24, 24, 27, 0.06);
+    color: #52525b;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+.auth-modal__close:hover {
+    background: rgba(24, 24, 27, 0.12);
+    color: #18181b;
+}
+.dark .auth-modal__close {
+    background: rgba(255, 255, 255, 0.06);
+    color: #a1a1aa;
+}
+.dark .auth-modal__close:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fafafa;
+}
+.auth-modal__body {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 12px 16px 16px;
+    min-height: 0;
+}
+.auth-modal__form-container {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.auth-modal__form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.auth-modal__field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.auth-modal__field-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #3f3f46;
+    margin-left: 2px;
+}
+.dark .auth-modal__field-label {
+    color: #d4d4d8;
+}
+.auth-modal__input {
+    width: 100%;
+    padding: 9px 12px;
+    border-radius: 11px;
+    font-size: 14px;
+    font-weight: 500;
+    background: rgba(244, 244, 245, 0.8);
+    border: 1px solid rgba(24, 24, 27, 0.08);
+    color: #18181b;
+    transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+.auth-modal__input::placeholder {
+    color: #a1a1aa;
+}
+.auth-modal__input:focus {
+    outline: none;
+    border-color: #84cc16;
+    box-shadow: 0 0 0 3px rgba(132, 204, 22, 0.2);
+    background: #fff;
+}
+.dark .auth-modal__input {
+    background: rgba(63, 63, 70, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    color: #fafafa;
+}
+.dark .auth-modal__input::placeholder {
+    color: #71717a;
+}
+.dark .auth-modal__input:focus {
+    border-color: #84cc16;
+    box-shadow: 0 0 0 3px rgba(132, 204, 22, 0.3);
+    background: #18181b;
+}
+
+/* Inline auth error banner — populated by Auth.showError() when the server
+   rejects the credentials. Hidden by default via the .hidden class. */
+.auth-modal__error {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    color: #b91c1c;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1.4;
+}
+.auth-modal__error.hidden {
+    display: none;
+}
+.dark .auth-modal__error {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
+}
+.auth-modal__footer {
+    flex-shrink: 0;
+    display: flex;
+    gap: 10px;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+    background: inherit;
+    border-top: 1px solid rgba(24, 24, 27, 0.08);
+}
+.dark .auth-modal__footer {
+    border-top-color: rgba(255, 255, 255, 0.08);
+}
+.auth-modal__footer-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 9px 12px;
+    border-radius: 12px;
+    font-size: 13px;
+    font-weight: 600;
+    transition: all 0.15s ease;
+}
+.auth-modal__footer-btn--primary {
+    background: #18181b;
+    border: 1px solid #3f3f46;
+    color: #f4f4f5;
+}
+.dark .auth-modal__footer-btn--primary {
+    background: #27272a;
+    border-color: #4b4b55;
+}
+.auth-modal__footer-btn--primary:hover {
+    background: #27272a;
+}
+.dark .auth-modal__footer-btn--primary:hover {
+    background: #3f3f46;
+}
+.auth-modal__footer-btn--secondary {
+    background: #f4f4f5;
+    border: 1px solid #e4e4e7;
+    color: #18181b;
+}
+.auth-modal__footer-btn--secondary:hover {
+    background: #e4e4e7;
+}
+.dark .auth-modal__footer-btn--secondary {
+    background: #27272a;
+    border-color: #3f3f46;
+    color: #f4f4f5;
+}
+.dark .auth-modal__footer-btn--secondary:hover {
+    background: #3f3f46;
+}
+
+/* Password strength meter — shown under the registration password field. */
+.auth-modal__password-meter {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 2px;
+    min-width: 0;
+    max-width: 100%;
+    width: 100%;
+}
+.auth-modal__meter-bar {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 6px;
+    border-radius: 999px;
+    background: rgba(24, 24, 27, 0.1);
+    overflow: hidden;
+}
+.dark .auth-modal__meter-bar {
+    background: rgba(255, 255, 255, 0.08);
+}
+.auth-modal__meter-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 999px;
+    background: #71717a;
+    transition: width 0.2s ease, background-color 0.2s ease;
+}
+.auth-modal__meter-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    max-width: 100%;
+}
+.auth-modal__meter-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: #71717a;
+    white-space: nowrap;
+}
+.auth-modal__meter-req {
+    font-size: 10px;
+    font-weight: 500;
+    color: #a1a1aa;
+    white-space: normal;
+    break-words: keep-all;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    max-width: 100%;
+    line-height: 1.35;
+}
+.auth-modal__match {
+    font-size: 12px;
+    font-weight: 600;
+    margin-top: 2px;
+    min-height: 0;
+}
+
+.auth-modal__hint {
+    line-height: 1.4;
+}
+
+.auth-modal__forgot-link {
+    font-size: 12px;
+    color: #9ca3af;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    text-decoration: underline;
+    transition: color 0.15s ease;
+}
+.auth-modal__forgot-link:hover {
+    color: #d1d5db;
+}
+.dark .auth-modal__forgot-link:hover {
+    color: #f3f4f6;
+}
+
+.auth-modal__code-inputs {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 6px;
+    margin-top: 4px;
+}
+
+.auth-modal__code-cell {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    padding: 0;
+    text-align: center;
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    background: rgba(24, 24, 27, 0.04);
+    border: 1px solid rgba(156, 163, 175, 0.4);
+    border-radius: 8px;
+    color: #18181b;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+.auth-modal__code-cell::placeholder {
+    color: #d1d5db;
+}
+.auth-modal__code-cell:focus {
+    outline: none;
+    border-color: #84cc16;
+    background: rgba(132, 204, 24, 0.04);
+    box-shadow: 0 0 0 2px rgba(132, 204, 24, 0.15);
+}
+.auth-modal__code-cell:focus::placeholder {
+    opacity: 0;
+}
+.dark .auth-modal__code-cell {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(161, 161, 170, 0.4);
+    color: #f4f4f5;
+}
+.dark .auth-modal__code-cell:focus {
+    border-color: #84cc16;
+    background: rgba(132, 204, 24, 0.06);
+}
+
+.auth-modal__resend-btn {
+    font-size: 12px;
+    padding: 4px 8px;
+    min-width: auto;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.auth-modal__resend-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+.auth-modal__resend-timer {
+    margin-left: 4px;
+    font-size: 12px;
+    opacity: 0.7;
+}
+
+/* Desktop modal: centered with max-width */
+@media (min-width: 640px) {
+    .auth-modal__panel {
+        margin: auto;
+        width: 90%;
+        max-width: 440px;
+        max-height: 90vh;
+        border-radius: 24px;
+        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.2);
+    }
+    .auth-modal__header {
+        border-radius: 24px 24px 0 0;
+    }
+    .auth-modal__footer {
+        border-radius: 0 0 24px 24px;
+    }
+}
+
+/* ============ Landing showcase carousel (per-chapter phone) ============ */
+/* Each chapter renders its own autonomous phone: the slides are stacked inside
+   the frame and cross-faded with a pure opacity toggle. Arrows sit outside the
+   phone frame (-left-12 / -right-12) so they never overlap the screen. */
+.landing-showcase-screen {
+    background: #fafafa;
+}
+.dark .landing-showcase-screen {
+    background: #09090b;
+}
+
+/* Glassmorphism arrows overlaid on the phone frame. Positioned absolutely by
+   the markup at -left-12 / -right-12 relative to the phone wrapper so they sit
+   strictly outside the bezel on every breakpoint. */
+.landing-carousel-arrow {
+    background: rgba(24, 24, 27, 0.06);
+    backdrop-filter: blur(8px) saturate(150%);
+    -webkit-backdrop-filter: blur(8px) saturate(150%);
+    border: 1px solid rgba(24, 24, 27, 0.12);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
+    transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+}
+.dark .landing-carousel-arrow {
+    background: rgba(24, 24, 27, 0.55);
+    backdrop-filter: blur(8px) saturate(140%);
+    -webkit-backdrop-filter: blur(8px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+.landing-carousel-arrow:hover:not(:disabled) {
+    background: rgba(24, 24, 27, 0.12);
+    color: #a3e635;
+    border-color: rgba(163, 230, 53, 0.35);
+}
+.dark .landing-carousel-arrow:hover:not(:disabled) {
+    background: rgba(24, 24, 27, 0.8);
+}
+.landing-carousel-arrow:disabled {
+    cursor: not-allowed;
+    opacity: 0.35;
+    pointer-events: none;
+}
+
+/* The per-chapter dots wrapper is pointer-events-none so the dots opt back in,
+   keeping them clickable without stealing scroll from the page. */
+.landing-carousel-dots {
+    z-index: 5;
+}
+.landing-carousel-dot {
+    pointer-events: auto;
+    background: rgba(24, 24, 27, 0.08);
+    border: 1px solid rgba(24, 24, 27, 0.12);
+    transition: all 0.2s ease;
+}
+.dark .landing-carousel-dot {
+    background: rgba(24, 24, 27, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.landing-carousel-dot:hover {
+    transform: scale(1.25);
+}
+.landing-carousel-dot.is-active-dot {
+    opacity: 1;
+    background: rgba(163, 230, 53, 0.9);
+    border-color: rgba(163, 230, 53, 0.5);
+    box-shadow: 0 0 10px rgba(163, 230, 53, 0.4);
+}
+
+/* Public theme switcher in the landing header (Light / Dark / System). The
+   active icon is lifted onto a contrasting chip so it stays legible in both
+   themes; the inactive icons fade to the current text-sec color. */
+.landing-theme-btn {
+    color: #71717a;
+    background: rgba(24, 24, 27, 0.06);
+    border: 1px solid transparent;
+    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.dark .landing-theme-btn {
+    color: #a1a1aa;
+    background: rgba(255, 255, 255, 0.06);
+}
+.landing-theme-btn:hover:not(.landing-theme-btn-active) {
+    background: rgba(24, 24, 27, 0.12);
+}
+.dark .landing-theme-btn:hover:not(.landing-theme-btn-active) {
+    background: rgba(255, 255, 255, 0.12);
+}
+
+/* Active state: explicit theme-aware background so the active chip is
+   always clearly highlighted without a glaring white square in dark mode.
+   This backs up the Tailwind classes applied in updateLandingThemeControls
+   and updateThemeControls. */
+.landing-theme-btn-active {
+    background-color: #e4e4e7;
+    color: #18181b;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+}
+.dark .landing-theme-btn-active {
+    background-color: #27272a;
+    color: #f4f4f5;
+}
+
+/* ============ Compact Nutrition Dashboard ============ */
+/* The ring is centred in a full-width box that reserves room under it, so the
+   carbs label can hang below the circle without pushing the card taller.
+   Side labels are anchored to the box edges and their vertical offsets track the
+   pill middles the JS rotation lands them on (10:30, ~2:45, ~6:45), so each
+   label stays outside the ring and beside its own pill at every card width. */
+.nutrition-ring-container {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    padding-bottom: 26px;
+}
+.nutrition-ring-container .macro-label {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    line-height: 1;
+    max-width: 46%;
+    overflow: hidden;
+}
+.macro-label__value {
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    white-space: nowrap;
+}
+.macro-label__target {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0;
+    opacity: 0.6;
+}
+.macro-label__name {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 8px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+}
+.macro-label__dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 9999px;
+    flex-shrink: 0;
+}
+/* A label and its dot take the accent of the pill they describe, from the same
+   tokens the arc is painted with - so a macro is one colour across the ring, the
+   number and the legend. Protein switches to the goal accent the moment its
+   target is reached (the `protein-goal` tone), and a fat overage is the only
+   macro that turns crimson: a carb figure above target and any protein surplus
+   stay in their own colour. */
+.macro-label__value--protein { color: var(--macro-protein); }
+.macro-label__value--protein-goal { color: var(--macro-protein-goal-text); }
+.macro-label__value--fat { color: var(--macro-fat); }
+.macro-label__value--carbs { color: var(--macro-carbs); }
+.macro-label__value--danger { color: var(--macro-danger-text); }
+.macro-label__dot--protein { background: var(--macro-protein); }
+.macro-label__dot--protein-goal { background: var(--macro-protein-goal); }
+.macro-label__dot--fat { background: var(--macro-fat); }
+.macro-label__dot--carbs { background: var(--macro-carbs); }
+.macro-label__dot--danger { background: var(--macro-danger); }
+/* Horizontal macro bars share the same tokens as the ring pills, so a bar and
+   the ring agree on whether protein has hit its target. */
+.macro-bar__fill--protein { background: var(--macro-protein); }
+.macro-bar__fill--protein-goal { background: var(--macro-protein-goal); }
+.macro-bar__fill--fat { background: var(--macro-fat); }
+.macro-bar__fill--carbs { background: var(--macro-carbs); }
+.macro-bar__fill--danger { background: var(--macro-danger); }
+/* The figure beside a bar is coloured only where colour carries meaning:
+   protein green once it is at or above its target, a fat overage red. The other
+   rows keep the neutral text colour, so three rows still read as one quiet list
+   of numbers instead of a traffic light. */
+.macro-bar__value--protein-goal { color: var(--macro-protein-goal-text); }
+.macro-bar__value--danger { color: var(--macro-danger-text); }
+/* Side labels get their vertical anchor from the JS pill geometry and are pulled
+   back by half their own height, so they stay centred on their pill whatever the
+   label ends up measuring. The carbs label anchors to the bottom of the box. */
+.macro-label-protein {
+    left: 0;
+    transform: translateY(-50%);
+    align-items: flex-start;
+    text-align: left;
+}
+.macro-label-fat {
+    right: 0;
+    transform: translateY(-50%);
+    align-items: flex-end;
+    text-align: right;
+}
+.macro-label-carbs {
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: 70%;
+    align-items: center;
+    text-align: center;
+}
+
+/* Progress bar in metric columns */
+.grid-cols-5 .h-1 > div {
+    transition: width 0.5s ease-out;
+}
+
+/* ============ Daily AI recap ============ */
+/* First snap slot of the meal carousel in the day view: the title and the
+   date on the first line, the AI score on the right of that same line, the
+   recap underneath as a collapsible banner (two lines, a tap to expand). The
+   score badge wears the same neon disc as the ring's centre score, so the
+   two AI readouts on the screen are recognisably the same voice. */
+.daily-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px;
+}
+/* In the carousel slot the recap no longer follows the dashboard ring, so
+   the top margin that used to separate the two is dropped. */
+.daily-summary-slot .daily-summary {
+    margin-top: 0;
+}
+.daily-summary__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+.daily-summary__title {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #52525b;
+}
+.dark .daily-summary__title {
+    color: #a1a1aa;
+}
+.daily-summary__date {
+    min-width: 0;
+    font-size: 11px;
+    font-weight: 600;
+    color: #71717a;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.daily-summary__score {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: auto;
+    flex-shrink: 0;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    color: #7e22ce;
+    background: rgba(168, 85, 247, 0.12);
+    box-shadow: 0 0 10px rgba(168, 85, 247, 0.26);
+}
+.dark .daily-summary__score {
+    color: #d8b4fe;
+    background: rgba(192, 132, 252, 0.16);
+    box-shadow: 0 0 12px rgba(192, 132, 252, 0.38);
+}
+/* Verdict prose: two clamped lines by default, the full paragraph
+   once expanded. The clamp carries the ellipsis; max-height is what
+   actually animates, so the reveal is a smooth height transition
+   rather than a jump. The expanded state scrolls internally
+   (overflow-y-auto) within a 300px cap so a long recap does not
+   stretch the carousel slot past the other cards. */
+.daily-summary__text {
+    font-size: 13px;
+    line-height: 1.45;
+    color: #3f3f46;
+    overflow-y: auto;
+    max-height: 300px;
+    transition: max-height 0.28s ease;
+}
+.daily-summary__text.is-collapsed {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    max-height: 2.9em; /* two lines at the 1.45 line-height */
+    overflow: hidden;
+}
+.dark .daily-summary__text {
+    color: #d4d4d8;
+}
+/* Collapsible banner: the prose wrapper and the expand/collapse link
+   under it. The wrapper is plain; the clamp and its animation live
+   on the text itself. */
+.daily-summary__content {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+/* The toggle's colours, size and press feedback come from the utility
+   classes on the button (text-purple-400 et al.); the one rule needed
+   here makes the `hidden` attribute win over those utilities when a
+   short verdict has nothing to expand. */
+.daily-summary__toggle[hidden] {
+    display: none;
+}
+/* Empty state: same card, one quiet line. It keeps the slot so the meal carousel
+   below does not jump once a recap arrives. */
+.daily-summary__empty {
+    font-size: 12px;
+    line-height: 1.4;
+    color: #71717a;
+}
+/* Manual recap trigger on the empty card: a quiet lime action, the same
+   accent the sheet chips use, so the one thing the card can do reads
+   as an action rather than as another reason line. */
+.daily-summary__generate {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    color: #4d7c0f;
+    background: rgba(132, 204, 22, 0.14);
+    border: 1px solid rgba(132, 204, 22, 0.32);
+    box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.12);
+    transition: opacity 0.15s ease;
+}
+.daily-summary__generate:disabled {
+    opacity: 0.55;
+}
+.daily-summary__generate-icon {
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+}
+.dark .daily-summary__generate {
+    color: #d9f99d;
+    background: rgba(132, 204, 22, 0.16);
+    border-color: rgba(132, 204, 22, 0.3);
+    box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.2);
+}
+/* Regeneration glyph on a stored recap: small, quiet, right of the score. */
+.daily-summary__refresh {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 9999px;
+    flex-shrink: 0;
+    color: #a1a1aa;
+    transition: color 0.15s ease, opacity 0.15s ease;
+}
+.daily-summary__refresh:hover {
+    color: #71717a;
+}
+.daily-summary__refresh:disabled {
+    opacity: 0.55;
+}
+.daily-summary__refresh svg {
+    width: 13px;
+    height: 13px;
+}
+.dark .daily-summary__refresh {
+    color: #71717a;
+}
+.dark .daily-summary__refresh:hover {
+    color: #a1a1aa;
+}
+
+/* ============ AI workout coach ============ */
+/* The verdict on a session, with the same two states as the daily recap: the
+   verdict or the reason there is none. It is a sibling of .daily-summary on
+   purpose - same slot, same empty line, same accent - so the history screen does
+   not read as two different kinds of card depending on which feature answered. */
+.ai-workout {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 10px;
+    padding: 12px 14px;
+}
+.ai-workout__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+.ai-workout__title {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #52525b;
+}
+.dark .ai-workout__title {
+    color: #a1a1aa;
+}
+.ai-workout__icon {
+    width: 11px;
+    height: 11px;
+    color: #7c3aed;
+}
+.dark .ai-workout__icon {
+    color: #c084fc;
+}
+.ai-workout__date {
+    min-width: 0;
+    font-size: 11px;
+    font-weight: 600;
+    color: #71717a;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.ai-workout__score {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: auto;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    color: #6d28d9;
+    background: rgba(139, 92, 246, 0.12);
+    box-shadow: 0 0 10px rgba(139, 92, 246, 0.26);
+}
+.dark .ai-workout__score {
+    color: #d8b4fe;
+    background: rgba(192, 132, 252, 0.16);
+    box-shadow: 0 0 12px rgba(192, 132, 252, 0.38);
+}
+.ai-workout__text {
+    font-size: 13px;
+    line-height: 1.45;
+    color: #3f3f46;
+}
+.dark .ai-workout__text {
+    color: #d4d4d8;
+}
+.ai-workout__empty {
+    font-size: 12px;
+    line-height: 1.4;
+    color: #71717a;
+}
+/* Quota note under an empty card: why the verdict is missing when the tier is
+   the reason. Same voice as .daily-summary__empty, one line darker. */
+.ai-workout__quota {
+    font-size: 11px;
+    line-height: 1.4;
+    color: #a16207;
+}
+.dark .ai-workout__quota {
+    color: #fbbf24;
+}
+/* Muscle group volume: a row of compact pills under the verdict, one per group.
+   The pill carries the group name, the tonnage and the set count in a single
+   inline line, so the whole distribution reads at a glance without the bars
+   that used to sit under each group. */
+.ai-workout__pills {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin: 4px 0 6px;
+}
+.ai-workout__pills-label {
+    flex: 1 1 100%;
+    min-width: 0;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #71717a;
+}
+.dark .ai-workout__pills-label {
+    color: #a1a1aa;
+}
+.ai-workout__pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    line-height: 1.3;
+    color: #52525b;
+    background: rgba(124, 58, 237, 0.08);
+    border: 1px solid rgba(124, 58, 237, 0.18);
+    white-space: nowrap;
+    max-width: 100%;
+}
+.dark .ai-workout__pill {
+    color: #c4b5fd;
+    background: rgba(124, 58, 237, 0.16);
+    border-color: rgba(124, 58, 237, 0.28);
+}
+.ai-workout__pill-name {
+    font-weight: 700;
+    text-transform: capitalize;
+}
+.ai-workout__pill-value {
+    font-variant-numeric: tabular-nums;
+    color: #71717a;
+    font-weight: 500;
+}
+.dark .ai-workout__pill-value {
+    color: #a1a1aa;
+}
+.ai-workout__highlights {
+    margin: 0 0 6px;
+    padding-left: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #3f3f46;
+}
+.dark .ai-workout__highlights {
+    color: #d4d4d8;
+}
+/* Recovery advice: the same quiet surface as the callouts, lime-accented via the
+   shared left-border token, so it reads as a section of the card rather than a
+   separate colored panel. */
+.ai-workout__recovery {
+    margin: 0 0 6px;
+    padding: 8px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #3f3f46;
+    background: var(--ai-callout-bg, rgba(24, 24, 27, 0.03));
+    border-left: 2px solid var(--ai-callout-accent, rgba(132, 204, 22, 0.5));
+    border-top: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
+    border-right: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
+    border-bottom: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
+    --ai-callout-accent: rgba(132, 204, 22, 0.5);
+}
+.dark .ai-workout__recovery {
+    color: #d4d4d8;
+    --ai-callout-bg: rgba(255, 255, 255, 0.03);
+    --ai-callout-border: rgba(255, 255, 255, 0.06);
+    --ai-callout-accent: rgba(132, 204, 22, 0.45);
+}
+/* Callout boxes: a quiet observation that deserves its own block. The verdict
+   text is the glance, these are the supporting detail. All three share one
+   surface - the card's own glass - and differ only in a 2px left border, so
+   they read as sections of one card rather than three colored panels dropped
+   into it. Intensity keeps the amber accent, balance the indigo, recovery
+   the lime; the fill is never a second color. */
+.ai-workout__callout {
+    margin: 0 0 6px;
+    padding: 8px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #3f3f46;
+    background: var(--ai-callout-bg, rgba(24, 24, 27, 0.03));
+    border-left: 2px solid var(--ai-callout-accent, rgba(124, 58, 237, 0.4));
+    border-top: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
+    border-right: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
+    border-bottom: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
+}
+.ai-workout__callout--amber {
+    --ai-callout-accent: rgba(251, 146, 6, 0.55);
+}
+.ai-workout__callout--indigo {
+    --ai-callout-accent: rgba(124, 58, 237, 0.55);
+}
+.dark .ai-workout__callout {
+    color: #d4d4d8;
+    --ai-callout-bg: rgba(255, 255, 255, 0.03);
+    --ai-callout-border: rgba(255, 255, 255, 0.06);
+}
+.dark .ai-workout__callout--amber {
+    --ai-callout-accent: rgba(251, 191, 36, 0.5);
+}
+.dark .ai-workout__callout--indigo {
+    --ai-callout-accent: rgba(192, 132, 252, 0.5);
+}
+.ai-workout__focus-wrap {
+    margin: 6px 0;
+}
+.ai-workout__focus-label {
+    display: block;
+    font-size: 11px;
+    font-weight: 700;
+    color: #71717a;
+    margin-bottom: 4px;
+}
+.dark .ai-workout__focus-label {
+    color: #a1a1aa;
+}
+/* Unified action checklist: the next-workout focus and the recommendations are
+   the same kind of thing - things to do - so they share one look. Each item is a
+   row with a checkmark marker on the left and its text on the right; the focus
+   items are single-line and the recommendations carry a title line plus their
+   own body, which is what makes a recommendation different from a bullet. */
+.ai-workout__checklist {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.ai-workout__checklist-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #3f3f46;
+    background: var(--ai-callout-bg, rgba(24, 24, 27, 0.03));
+    border-left: 2px solid var(--ai-callout-accent, rgba(251, 146, 6, 0.5));
+    border-top: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
+    border-right: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
+    border-bottom: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
+    --ai-callout-accent: rgba(251, 146, 6, 0.5);
+}
+.dark .ai-workout__checklist-item {
+    color: #d4d4d8;
+    --ai-callout-bg: rgba(255, 255, 255, 0.03);
+    --ai-callout-border: rgba(255, 255, 255, 0.06);
+    --ai-callout-accent: rgba(251, 191, 36, 0.45);
+}
+.ai-workout__checklist-marker {
+    display: inline-flex;
+    flex-shrink:0;
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    color: #fb9206;
+    background: rgba(251, 146, 6, 0.14);
+}
+.dark .ai-workout__checklist-marker {
+    color: #fbbf24;
+    background: rgba(251, 146, 6, 0.2);
+}
+.ai-workout__checklist-body {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+.ai-workout__checklist-text {
+    font-size: 12px;
+    line-height: 1.4;
+    color: #3f3f46;
+}
+.dark .ai-workout__checklist-text {
+    color: #d4d4d8;
+}
+.ai-workout__checklist-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: #52525b;
+}
+.dark .ai-workout__checklist-title {
+    color: #e4e4e7;
+}
+/* Analysis trigger on the workout card, the same lime action the daily recap
+   uses: the card always has exactly one thing it can do, and it reads as a
+   button rather than as another line of prose. */
+.ai-workout__analyze {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+    padding: 7px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    color: #4d7c0f;
+    background: rgba(132, 204, 22, 0.14);
+    border: 1px solid rgba(132, 204, 22, 0.32);
+    box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.12);
+    transition: opacity 0.15s ease;
+}
+.ai-workout__analyze:disabled {
+    opacity: 0.55;
+}
+.ai-workout__analyze-icon {
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+}
+.dark .ai-workout__analyze {
+    color: #d9f99d;
+    background: rgba(132, 204, 22, 0.16);
+    border-color: rgba(132, 204, 22, 0.3);
+    box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.2);
+}
+/* The coach's plan on an active exercise card. One soft row: the targets in the
+   accent, the focus line beside them, the motivation line underneath in the
+   quietest text on the card. It must not compete with the set rows below it. */
+.ai-plan {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
+    padding: 7px 10px;
+    border-radius: 14px;
+    font-size: 11px;
+    line-height: 1.35;
+    background: rgba(168, 85, 247, 0.08);
+    border: 1px solid rgba(168, 85, 247, 0.22);
+}
+.dark .ai-plan {
+    background: rgba(192, 132, 252, 0.1);
+    border-color: rgba(192, 132, 252, 0.2);
+}
+.ai-plan__targets {
+    flex-shrink: 0;
+    padding: 2px 7px;
+    border-radius: 9999px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: #7e22ce;
+    background: rgba(168, 85, 247, 0.14);
+}
+.dark .ai-plan__targets {
+    color: #d8b4fe;
+    background: rgba(192, 132, 252, 0.16);
+}
+.ai-plan__focus {
+    flex: 1 1 100%;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: #52525b;
+    font-size: 0.75rem;
+    line-height: 1.5rem;
+    font-family: ui-serif, system-ui, sans-serif;
+}
+.dark .ai-plan__focus {
+    color: #d4d4d8;
+}
+.ai-plan__motivation {
+    flex-basis: 100%;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: #71717a;
+    font-size: 0.75rem;
+    line-height: 1.5rem;
+    font-family: ui-serif, system-ui, sans-serif;
+}
+
+/* ============ AI Synergy widget (Nutrition tab) ============ */
+/* Rendered in the carousel's first snap slot, directly under the
+   Daily Summary card. Same glass surface and geometry as the
+   daily-summary card above it, so the pair reads as one stacked
+   column: the recap on top, the cross-analysis below it. The
+   action buttons are flat solid zinc (no purple or blue gradient),
+   matching the Profile page tiles. */
+.ai-synergy-widget {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.ai-synergy__title {
+    flex-shrink: 1;
+    min-width: 0;
+}
+.ai-synergy__badge {
+    flex-shrink: 0;
+}
+.ai-synergy__badge--purple {
+    color: #7e22ce;
+}
+.dark .ai-synergy__badge--purple {
+    color: #d8b4fe;
+}
+.ai-synergy__chip {
+    border: 1px solid rgba(113, 113, 122, 0.2);
+    background: rgba(113, 113, 122, 0.06);
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+.ai-synergy__chip[aria-pressed="true"],
+.ai-synergy__chip.is-active {
+    background: rgba(113, 113, 122, 0.10);
+    border-color: rgba(255, 255, 255, 0.10);
+}
+.dark .ai-synergy__chip[aria-pressed="true"],
+.dark .ai-synergy__chip.is-active {
+    background: rgba(113, 113, 122, 0.14);
+    border-color: rgba(255, 255, 255, 0.10);
+}
+.ai-synergy__body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+/* Verdict display inside the widget: full-width, so the headline
+   reads as one block rather than a centred snippet. */
+.ai-synergy__verdict {
+    margin: 0;
+}
+.ai-synergy__footer {
+    flex-shrink: 0;
+}
+
+/* ============ AI Synergy stack slot (first carousel slot) ============ */
+/* The day view's first snap slot holds two stacked blocks: the daily
+   recap card on top and the AI Synergy widget directly below it.
+   Both flow in normal flex column order, so collapsing or expanding
+   the recap simply reflows the widget underneath - no absolute
+   positioning, no swapped panes, no layout shift. */
+.ai-synergy-stack-slot {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    align-self: start;
+}
+
+/* ============ AI Synergy Full-Screen Modal ============ */
+/* Full-screen overlay for the detailed AI Synergy report. Opens as a
+   bottom-sheet on mobile and a centered modal on desktop. The body scrolls
+   independently while the header (score + close) and footer (actions) stay
+   sticky. */
+.ai-synergy-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    background: transparent;
+    pointer-events: auto;
+}
+.ai-synergy-modal__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(9, 9, 11, 0.55);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    animation: ai-synergy-modal-fade-in 0.2s ease-out;
+}
+.ai-synergy-modal__panel {
+    position: relative;
+    z-index: 1;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: #fafafa;
+    border-radius: 24px 24px 0 0;
+    max-height: 100%;
+    overflow: hidden;
+    animation: ai-synergy-modal-slide-up 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+    box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.15);
+}
+.dark .ai-synergy-modal__panel {
+    background: #09090b;
+}
+@keyframes ai-synergy-modal-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+@keyframes ai-synergy-modal-slide-up {
+    from { opacity: 0; transform: translateY(100%); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.ai-synergy-modal__header {
+    flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: calc(16px + env(safe-area-inset-top, 0px)) 20px 16px;
+    background: inherit;
+    border-bottom: 1px solid rgba(24, 24, 27, 0.08);
+    flex-wrap: wrap;
+}
+.dark .ai-synergy-modal__header {
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+.ai-synergy-modal__header-left {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    min-width: 0;
+    flex: 1;
+}
+.ai-synergy-modal__title-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.ai-synergy-modal__title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #18181b;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.dark .ai-synergy-modal__title {
+    color: #fafafa;
+}
+.ai-synergy-modal__subtitle {
+    font-size: 12px;
+    font-weight: 500;
+    color: #71717a;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.dark .ai-synergy-modal__subtitle {
+    color: #a1a1aa;
+}
+.ai-synergy-modal__period {
+    font-size: 12px;
+    font-weight: 500;
+    color: #71717a;
+}
+.dark .ai-synergy-modal__period {
+    color: #a1a1aa;
+}
+.ai-synergy-modal__date {
+    font-size: 11px;
+    font-weight: 600;
+    color: #71717a;
+}
+.dark .ai-synergy-modal__date {
+    color: #a1a1aa;
+}
+.ai-synergy-modal__close {
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    background: rgba(24, 24, 27, 0.06);
+    color: #52525b;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+.ai-synergy-modal__close:hover {
+    background: rgba(24, 24, 27, 0.12);
+    color: #18181b;
+}
+.dark .ai-synergy-modal__close {
+    background: rgba(255, 255, 255, 0.06);
+    color: #a1a1aa;
+}
+.dark .ai-synergy-modal__close:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fafafa;
+}
+.ai-synergy-modal__body {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 16px 20px 24px;
+    min-height: 0;
+}
+.ai-synergy-modal__section {
+    margin-bottom: 16px;
+}
+.ai-synergy-modal__section-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.025em;
+    text-transform: uppercase;
+    color: #9ca3af;
+}
+.dark .ai-synergy-modal__section-title {
+    color: #a1a1aa;
+}
+.ai-synergy-modal__score {
+    flex-shrink: 0;
+}
+.ai-synergy-modal__verdict-headline {
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.5;
+    color: #4b5563;
+}
+.dark .ai-synergy-modal__verdict-headline {
+    color: #a1a1aa;
+}
+.ai-synergy-modal__findings-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.ai-synergy-modal__finding {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #3f3f46;
+    background: var(--ai-callout-bg, rgba(24, 24, 27, 0.03));
+    border-left: 2px solid var(--ai-callout-accent, rgba(124, 58, 237, 0.4));
+    border-top: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
+    border-right: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
+    border-bottom: 1px solid var(--ai-callout-border, rgba(24, 24, 27, 0.06));
+}
+.dark .ai-synergy-modal__finding {
+    color: #d4d4d8;
+    --ai-callout-bg: rgba(255, 255, 255, 0.03);
+    --ai-callout-border: rgba(255, 255, 255, 0.06);
+}
+.ai-synergy-modal__finding--success {
+    --ai-callout-accent: rgba(16, 185, 129, 0.5);
+}
+.ai-synergy-modal__finding--warning {
+    --ai-callout-accent: rgba(251, 146, 6, 0.5);
+}
+.ai-synergy-modal__finding--risk {
+    --ai-callout-accent: rgba(239, 68, 68, 0.5);
+}
+.dark .ai-synergy-modal__finding--success {
+    --ai-callout-accent: rgba(6, 146, 108, 0.45);
+}
+.dark .ai-synergy-modal__finding--warning {
+    --ai-callout-accent: rgba(251, 191, 36, 0.45);
+}
+.dark .ai-synergy-modal__finding--risk {
+    --ai-callout-accent: rgba(248, 79, 79, 0.45);
+}
+.ai-synergy-modal__finding-icon {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+}
+.ai-synergy-modal__finding--success .ai-synergy-modal__finding-icon {
+    background: rgba(16, 185, 129, 0.2);
+    color: #10b981;
+}
+.ai-synergy-modal__finding--warning .ai-synergy-modal__finding-icon {
+    background: rgba(245, 158, 11, 0.2);
+    color: #f59e0b;
+}
+.ai-synergy-modal__finding--risk .ai-synergy-modal__finding-icon {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+}
+.dark .ai-synergy-modal__finding--success .ai-synergy-modal__finding-icon {
+    background: rgba(16, 185, 129, 0.3);
+    color: #6ee7b7;
+}
+.dark .ai-synergy-modal__finding--warning .ai-synergy-modal__finding-icon {
+    background: rgba(245, 158, 11, 0.3);
+    color: #fbbf24;
+}
+.dark .ai-synergy-modal__finding--risk .ai-synergy-modal__finding-icon {
+    background: rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
+}
+.ai-synergy-modal__finding-dot {
+    flex-shrink: 0;
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    margin-top: 4px;
+}
+.ai-synergy-modal__finding--success .ai-synergy-modal__finding-dot {
+    background: #10b981;
+    box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+}
+.ai-synergy-modal__finding--warning .ai-synergy-modal__finding-dot {
+    background: #f59e0b;
+    box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+}
+.ai-synergy-modal__finding--risk .ai-synergy-modal__finding-dot {
+    background: #ef4444;
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+}
+.dark .ai-synergy-modal__finding--success .ai-synergy-modal__finding-dot {
+    background: #34d399;
+    box-shadow: 0 0 6px rgba(52, 211, 153, 0.6);
+}
+.dark .ai-synergy-modal__finding--warning .ai-synergy-modal__finding-dot {
+    background: #fbbf24;
+    box-shadow: 0 0 6px rgba(251, 191, 36, 0.6);
+}
+.dark .ai-synergy-modal__finding--risk .ai-synergy-modal__finding-dot {
+    background: #f87171;
+    box-shadow: 0 0 6px rgba(248, 113, 113, 0.6);
+}
+.ai-synergy-modal__finding-text {
+    flex: 1;
+    min-width: 0;
+}
+.ai-synergy-modal__metrics {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+}
+.ai-synergy-modal__metric {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 6px;
+    border-radius: 8px;
+    background: rgba(24, 24, 27, 0.04);
+    border: 1px solid rgba(24, 24, 27, 0.08);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+.dark .ai-synergy-modal__metric {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.08);
+}
+.ai-synergy-modal__metric-label {
+    font-size: 9px;
+    font-weight: 600;
+    color: #71717a;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.dark .ai-synergy-modal__metric-label {
+    color: #a1a1aa;
+}
+.ai-synergy-modal__metric-value {
+    font-size: 12px;
+    font-weight: 700;
+    color: #18181b;
+}
+.dark .ai-synergy-modal__metric-value {
+    color: #fafafa;
+}
+.ai-synergy-modal__adjustment {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.ai-synergy-modal__adjustment-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px;
+    border-radius: 12px;
+    background: rgba(24, 24, 27, 0.03);
+    border: 1px solid rgba(24, 24, 27, 0.08);
+}
+.dark .ai-synergy-modal__adjustment-item {
+    background: rgba(255, 255, 255, 0.03);
+    border-color: rgba(255, 255, 255, 0.08);
+}
+.ai-synergy-modal__adjustment-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #71717a;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.dark .ai-synergy-modal__adjustment-label {
+    color: #a1a1aa;
+}
+.ai-synergy-modal__adjustment-text {
+    font-size: 14px;
+    line-height: 1.5;
+    color: #3f3f46;
+}
+.dark .ai-synergy-modal__adjustment-text {
+    color: #d4d4d8;
+}
+.ai-synergy-modal__footer {
+    flex-shrink: 0;
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+    display: flex;
+    gap: 12px;
+    padding: 16px 20px calc(16px + env(safe-area-inset-bottom, 0px));
+    background: inherit;
+    border-top: 1px solid rgba(24, 24, 27, 0.08);
+}
+.dark .ai-synergy-modal__footer {
+    border-top-color: rgba(255, 255, 255, 0.08);
+}
+.ai-synergy-modal__footer-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 8px 16px;
+    border-radius: 14px;
+    font-size: 12px;
+    font-weight: 600;
+    transition: all 0.15s ease;
+}
+.ai-synergy-modal__footer-btn--primary {
+    background: #18181b;
+    border: 1px solid #3f3f46;
+    color: #f4f4f5;
+}
+.dark .ai-synergy-modal__footer-btn--primary {
+    background: #27272a;
+    border-color: #4b4b55;
+}
+.ai-synergy-modal__footer-btn--primary:hover {
+    background: #27272a;
+}
+.dark .ai-synergy-modal__footer-btn--primary:hover {
+    background: #3f3f46;
+}
+.ai-synergy-modal__footer-btn--disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+.ai-synergy-modal__footer-btn--disabled:hover {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.ai-synergy-modal__footer-btn--secondary {
+    background: #18181b;
+    border: 1px solid #3f3f46;
+    color: #f4f4f5;
+}
+.ai-synergy-modal__footer-btn--secondary:hover {
+    background: #27272a;
+}
+.dark .ai-synergy-modal__footer-btn--secondary {
+    background: #27272a;
+    border-color: #4b4b55;
+}
+.dark .ai-synergy-modal__footer-btn--secondary:hover {
+    background: #3f3f46;
+}
+
+/* Desktop modal: centered with max-width */
+@media (min-width: 640px) {
+    .ai-synergy-modal__panel {
+        margin: auto;
+        width: 90%;
+        max-width: 520px;
+        max-height: 90vh;
+        border-radius: 24px;
+        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.2);
+    }
+    .ai-synergy-modal__header {
+        border-radius: 24px 24px 0 0;
+    }
+    .ai-synergy-modal__footer {
+        border-radius: 0 0 24px 24px;
+    }
+}
+
+/* ============ Nutrition page layout (iPhone 13 mini and up) ============ */
+/* The nutrition page is a scrolling document, not a fixed one-screen shell: the
+   dashboard plus the meal cards are taller than any phone, and a card that has to
+   fit in one screen is a card whose AI verdict gets cut. #page-content is the
+   scroll container, so this block only has to let its own height grow - it no
+   longer pins itself to the viewport height nor hides what does not fit. */
+#page-content {
+    height: 100%;
+    min-height: 100%;
+    max-height: 100%;
+}
+.single-viewport {
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: visible;
+}
+.single-viewport .viewport-content {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0;
+}
+.single-viewport .viewport-header {
+    flex-shrink: 0;
+}
+.single-viewport .viewport-footer {
+    flex-shrink: 0;
+}
+
+/* New meal modal type chip active state (neon lime) */
+.new-meal-type-chip.active {
+    background: rgba(132, 204, 22, 0.14);
+    color: #4d7c0f;
+    border-color: #84cc16;
+    box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.25);
+}
+.dark .new-meal-type-chip.active {
+    background: rgba(132, 204, 22, 0.16);
+    color: #d9f99d;
+    border-color: #84cc16;
+    box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.3);
+}
+
+/* Anthropometrics sheet: selected chip (neon lime) and the live KBZhU preview */
+.anthro-chip[aria-pressed="true"] {
+    background: rgba(132, 204, 22, 0.14);
+    color: #4d7c0f;
+    border-color: #84cc16;
+    box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.25);
+}
+.dark .anthro-chip[aria-pressed="true"] {
+    background: rgba(132, 204, 22, 0.16);
+    color: #d9f99d;
+    border-color: #84cc16;
+    box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.3);
+}
+.anthro-preview {
+    background: rgba(113, 113, 122, 0.07);
+    border: 1px solid rgba(113, 113, 122, 0.14);
+}
+.dark .anthro-preview {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.08);
+}
+/* PRO status card: a quiet lime wash so the tier reads at a glance without
+   repeating the per-limit bars, which carry no meaning without a quota. */
+.tariff-pro-card {
+    background: linear-gradient(135deg, rgba(132, 204, 22, 0.12), rgba(132, 204, 22, 0.03));
+    border: 1px solid rgba(132, 204, 22, 0.32);
+}
+.dark .tariff-pro-card {
+    background: linear-gradient(135deg, rgba(132, 204, 22, 0.14), rgba(132, 204, 22, 0.03));
+    border-color: rgba(132, 204, 22, 0.28);
+}
+
+/* ============ Subscription Plan & Usage (Profile) ============ */
+.plan-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.625rem;
+    border-radius: 9999px;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+}
+.plan-badge--free {
+    background: rgba(113, 113, 122, 0.14);
+    color: #52525b;
+    border: 1px solid rgba(113, 113, 122, 0.25);
+}
+.dark .plan-badge--free {
+    background: rgba(161, 161, 170, 0.16);
+    color: #a1a1aa;
+    border-color: rgba(161, 161, 170, 0.28);
+}
+.plan-badge--pro {
+    background: rgba(132, 204, 22, 0.14);
+    color: #4d7c0f;
+    border: 1px solid rgba(132, 204, 22, 0.45);
+}
+.dark .plan-badge--pro {
+    background: rgba(132, 204, 22, 0.16);
+    color: #d9f99d;
+    border-color: rgba(132, 204, 22, 0.5);
+}
+.usage-bar {
+    height: 0.375rem;
+    width: 100%;
+    border-radius: 9999px;
+    background: rgba(113, 113, 122, 0.16);
+    overflow: hidden;
+}
+.dark .usage-bar {
+    background: rgba(255, 255, 255, 0.08);
+}
+.usage-bar__fill {
+    height: 100%;
+    border-radius: 9999px;
+    background: #84cc16;
+    transition: width 0.5s ease-out;
+}
+.usage-bar__fill--warn {
+    background: #eab308;
+}
+.usage-bar__fill--limit {
+    background: #ef4444;
+}
+
+/* ============ Drum Picker Bottom Sheet (workout weight/reps) ============ */
+/* Item height and half-viewport padding are mirrored in JS (DRUM_ITEM_HEIGHT),
+   so index math and scroll-snap stay in sync. Compact viewports shrink the item
+   height to 36px; JS reads the live value from --drum-item-height.
+   --drum-sheet-bg(+-fade) track the panel surface (white / zinc-900) so the
+   picker fade masks stay invisible against the active theme. */
+.drum-sheet-panel {
+    --drum-sheet-bg: #ffffff;
+    --drum-sheet-bg-fade: rgba(255, 255, 255, 0);
+    max-height: 88dvh;
+    overflow-y: auto;
+    animation: drum-sheet-in 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.dark .drum-sheet-panel {
+    --drum-sheet-bg: #18181b;
+    --drum-sheet-bg-fade: rgba(24, 24, 27, 0);
+}
+.drum-sheet-safe {
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+}
+.drum-sheet-handle {
+    margin-top: 0.5rem;
+    margin-bottom: 0.25rem;
+}
+.drum-sheet-backdrop {
+    animation: drum-fade-in 0.2s ease-out;
+}
+/* Slide-out on close, applied by the new meal sheet before removal */
+.drum-sheet-panel.is-closing {
+    animation: drum-sheet-out 0.22s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+.drum-sheet-backdrop.is-closing {
+    animation: drum-fade-out 0.22s ease-in forwards;
+    pointer-events: none;
+}
+@keyframes drum-sheet-in {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+}
+@keyframes drum-sheet-out {
+    from { transform: translateY(0); }
+    to { transform: translateY(100%); }
+}
+@keyframes drum-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+@keyframes drum-fade-out {
+    from { opacity: 1; }
+    to { opacity: 0; }
+}
+.drum {
+    --drum-item-height: 40px;
+    --drum-viewport: 200px;
+    height: var(--drum-viewport);
+    padding: 80px 0;
+    overflow-y: auto;
+    scroll-snap-type: y mandatory;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+.drum::-webkit-scrollbar {
+    display: none;
+}
+.drum-item {
+    height: var(--drum-item-height);
+    line-height: var(--drum-item-height);
+    scroll-snap-align: center;
+    text-align: center;
+    font-weight: 600;
+    color: #71717a;
+    will-change: transform, opacity;
+}
+.dark .drum-item {
+    color: #a1a1aa;
+}
+.drum-item.is-selected {
+    color: #09090b;
+}
+.dark .drum-item.is-selected {
+    color: #f4f4f5;
+}
+.drum-value {
+    font-variant-numeric: tabular-nums;
+}
+.drum-group-dim {
+    opacity: 0.35;
+}
+.drum-overlay-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 40px;
+    margin-top: -20px;
+    border-top: 2px solid #84cc16;
+    border-bottom: 2px solid #84cc16;
+    border-radius: 12px;
+    background: rgba(132, 204, 22, 0.08);
+    box-shadow: 0 0 16px rgba(132, 204, 22, 0.18);
+    pointer-events: none;
+}
+.drum-mask {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 56px;
+    pointer-events: none;
+}
+.drum-mask-top {
+    top: 0;
+    background: linear-gradient(to bottom, var(--drum-sheet-bg) 10%, var(--drum-sheet-bg-fade));
+}
+.drum-mask-bottom {
+    bottom: 0;
+    background: linear-gradient(to top, var(--drum-sheet-bg) 10%, var(--drum-sheet-bg-fade));
+}
+/* Neon highlight for the input currently owned by the picker */
+.drum-source-active {
+    border-color: #84cc16 !important;
+    box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.3);
+}
+/* Set inputs are picker triggers, not text fields: no tap flash, no double-tap zoom */
+input[data-field="weight"],
+input[data-field="reps"] {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* Compact viewports (iPhone Mini/SE, short Android, split screen): tighten the
+   sheet so header, presets, picker and save button always stay visible without
+   scrolling. Selectors are scoped to .drum-sheet to outrank the Tailwind
+   utilities used in the markup. */
+@media (max-height: 720px) {
+    .drum-sheet .drum-sheet-panel {
+        max-height: 92dvh;
+    }
+    .drum-sheet .drum-sheet-safe {
+        padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
+    }
+    .drum-sheet .drum-sheet-handle {
+        margin-top: 0.25rem;
+        margin-bottom: 0;
+    }
+    .drum-sheet .drum-sheet-header {
+        padding-top: 0;
+        padding-bottom: 0.375rem;
+    }
+    .drum-sheet .drum-sheet-eyebrow {
+        font-size: 10px;
+    }
+    .drum-sheet .drum-sheet-title {
+        font-size: 0.9375rem;
+        line-height: 1.25rem;
+    }
+    .drum-sheet .drum-sheet-presets {
+        padding-left: 0.75rem;
+        padding-right: 0.75rem;
+    }
+    .drum-sheet .drum-preset-btn {
+        flex: 1 1 0;
+        min-width: 0;
+        padding-top: 0.375rem;
+        padding-bottom: 0.375rem;
+        font-size: 0.75rem;
+    }
+    .drum-sheet .drum-sheet-labels {
+        margin-top: 0.375rem;
+        margin-bottom: 0.125rem;
+    }
+    .drum-sheet .drum-sheet-picker {
+        padding-left: 0.75rem;
+        padding-right: 0.75rem;
+    }
+    .drum-sheet .drum-sheet-actions {
+        margin-top: 0.375rem;
+        padding-left: 0.75rem;
+        padding-right: 0.75rem;
+    }
+    .drum-sheet .drum-save-btn {
+        padding-top: 0.5rem;
+        padding-bottom: 0.5rem;
+    }
+    .drum-sheet .drum {
+        --drum-item-height: 36px;
+        --drum-viewport: 180px;
+        /* (viewport - itemHeight) / 2 keeps the snap offset linear */
+        padding: 72px 0;
+    }
+    .drum-sheet .drum.drum-value {
+        font-size: 1.25rem;
+    }
+    .drum-sheet .drum-overlay-line {
+        height: 36px;
+        margin-top: -18px;
+    }
+    .drum-sheet .drum-mask {
+        height: 48px;
+    }
+}
+
+/* ============ Active Workout Set Rows ============ */
+/* Lime pulse confirming that a set was saved. Only the 1px border and the outer
+   glow animate — the glass surface and the completed (dimmed) text styling of
+   the row children are never touched, so nothing shifts or fades to a hole.
+   JS drops .set-row--saved after SET_SAVED_FLASH_MS, so the row returns to the
+   plain glass look on its own. */
+@keyframes set-saved-pulse {
+    0% {
+        border-color: rgba(132, 204, 22, 0.9);
+        box-shadow: 0 0 0 3px rgba(132, 204, 22, 0.35);
+    }
+    60% {
+        border-color: rgba(132, 204, 22, 0.5);
+        box-shadow: 0 0 14px 4px rgba(132, 204, 22, 0.22);
+    }
+    100% {
+        border-color: rgba(132, 204, 22, 0.35);
+        box-shadow: 0 0 0 0 rgba(132, 204, 22, 0);
+    }
+}
+.set-row--saved {
+    animation: set-saved-pulse 1s ease-out;
+}
+/* No motion requested: hold a static lime border for the flash window */
+@media (prefers-reduced-motion: reduce) {
+    .set-row--saved {
+        animation: none;
+        border-color: rgba(132, 204, 22, 0.85);
+    }
+}
+
+/* ============ Landing Page (Graphite + Neon Lime) ============ */
+
+/* Matte dark graphite canvas (zinc-950) and smooth in-page anchor scrolling */
+.landing-page {
+    background: #fafafa;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+}
+.dark .landing-page {
+    background: #09090b;
+}
+
+/* Safe top padding (notebook/phone notch) on the landing mobile sheet */
+.pt-safe-top {
+    padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Ambient glow blobs (rendered as absolutely positioned divs) */
+.landing-glow {
+    filter: blur(96px);
+}
+
+/* Pulsing service indicator dot */
+@keyframes pulse-lime {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.35;
+        transform: scale(1.25);
+    }
+}
+.animate-pulse-lime {
+    animation: pulse-lime 2s ease-in-out infinite;
+}
+
+/* Graphite surface for feature cards (zinc-900 at 90%). Light theme uses a
+   white glass surface so cards read as clean surfaces over the light grey page. */
+.landing-glass-strong {
+    background: rgba(255, 255, 255, 0.9);
+    -webkit-backdrop-filter: blur(8px) saturate(150%);
+    backdrop-filter: blur(8px) saturate(150%);
+    border: 1px solid rgba(228, 228, 231, 0.8);
+}
+.dark .landing-glass-strong {
+    background: rgba(24, 24, 27, 0.9);
+    border: 1px solid rgba(39, 39, 42, 1);
+}
+
+/* Slightly deeper graphite surface for banners and the final CTA block */
+.landing-glass {
+    background: rgba(255, 255, 255, 0.7);
+    -webkit-backdrop-filter: blur(12px) saturate(150%);
+    backdrop-filter: blur(12px) saturate(150%);
+    border: 1px solid rgba(228, 228, 231, 0.8);
+}
+.dark .landing-glass {
+    background: rgba(24, 24, 27, 0.6);
+    border: 1px solid rgba(39, 39, 42, 1);
+}
+
+/* Neon lime halo used behind primary CTAs and glow accents */
+.landing-lime-glow {
+    box-shadow: 0 0 20px rgba(132, 204, 22, 0.25);
+}
+
+/* ============ Landing: Apple-style Sticky Scroll Showcase ============ */
+
+/* Realistic phone shell: ALWAYS graphite-black. The bezel is hardware, not
+   UI, so it must not react to the active theme — only the screenshot content
+   inside the screen does. Keeping it dark in both themes makes the mockup
+   read as a physical device on any background. */
+.landing-phone-frame {
+    position: relative;
+    overflow: hidden;
+    border-radius: 42px;
+    padding: 9px;
+    background: linear-gradient(155deg, #18181b 0%, #09090b 32%, #000000 72%, #000000 100%);
+    box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.6),
+        0 30px 60px -25px rgba(0, 0, 0, 0.95),
+        0 0 70px -18px rgba(132, 204, 22, 0.18);
+}
+/* Keep the frame dark even when the page itself switches to light mode:
+   the default rule already renders it dark, and the old light-bezel rule is
+   removed so nothing can lighten the bezel again. */
+
+/* Screenshots fill the rounded screen and never bleed past the bezel */
+.landing-phone-frame img {
+    display: block;
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+}
+
+/* Cross-fade between the in-app screens inside the phone mockup */
+.landing-showcase-screen {
+    transition: opacity 0.5s ease-in-out;
+}
+
+/* No desktop-only dimming: every chapter is always fully lit. */
+@media (prefers-reduced-motion: reduce) {
+    .landing-showcase-screen {
+        transition: none;
+    }
+}
+
+/* ============ Landing Mobile Menu ============ */
+
+.landing-menu-backdrop,
+.landing-menu {
+    display: none;
+}
+.landing-menu-backdrop.is-open {
+    display: block;
+    animation: landing-fade-in 0.2s ease-out;
+}
+.landing-menu.is-open {
+    display: block;
+    animation: landing-slide-down 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes landing-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+@keyframes landing-slide-down {
+    from { opacity: 0; transform: translateY(-12px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Hamburger <-> cross icon swap driven by the toggle button's open state */
+.landing-menu-icon-close {
+    display: none;
+}
+.is-open > .landing-menu-icon-bars {
+    display: none;
+}
+.is-open > .landing-menu-icon-close {
+    display: block;
+}
+
+/* ============ Active Workout Carousel ============ */
+/* One card width for every viewport. The markup asked for `98vw` capped at
+   500px, which means a desktop card was a fifth of the window with the rest of
+   the row empty, while the first `92vw` cards on a phone never reached the cap.
+   The card is viewport-relative until there is room for the full 500px, and
+   exactly 500px from there on - so the set rows, the AI tip and the drum picker
+   inside it are laid out identically on a phone and on a desktop. */
+.workout-card {
+    width: min(92vw, 500px);
+    flex-shrink: 0;
+}
+@media (min-width: 560px) {
+    .workout-card {
+        width: 500px;
+    }
+}
+/* The row of cards scrolls; the header above it must not inherit that scroll. */
+.workout-carousel {
+    scroll-snap-type: x mandatory;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Spinner inside the "Finish & Analyze" button while the verdict is generated */
+.btn-spinner {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    animation: btn-spinner-turn 0.7s linear infinite;
+}
+@keyframes btn-spinner-turn {
+    to {
+        transform: rotate(360deg);
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .btn-spinner {
+        animation-duration: 2.4s;
+    }
+}

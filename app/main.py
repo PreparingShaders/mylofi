@@ -1,0 +1,117 @@
+import os
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
+
+from app.core.config import get_settings
+from app.db.session import init_db, close_db, async_session_maker
+from app.services.ai_summary import generate_pending_daily_summaries
+from app.services.nutrition import fail_stale_meals
+from app.services.workout import seed_exercise_catalog
+from app.api.v1.routes import router as api_router
+from app.api.v1.admin import router as admin_router
+
+settings = get_settings()
+
+# Uvicorn only configures its own loggers, so service modules (background
+# tasks, services) would otherwise never reach the console. Keep uvicorn's own
+# formatting but at one consistent level.
+logging.basicConfig(
+    level=settings.LOG_LEVEL.upper(),
+    format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+    force=True,
+)
+
+# httpx, httpcore, and sqlalchemy.engine log every request/query line at INFO or DEBUG:
+# without this the console echoes every SQL statement and parameter.
+for _noisy_logger in ("httpx", "httpcore", "sqlalchemy", "sqlalchemy.engine"):
+    logging.getLogger(_noisy_logger).setLevel(logging.WARNING)
+
+
+# Handle on the startup recap task. A bare `create_task` result can be garbage
+# collected mid-flight, which would kill the run halfway through its users.
+_daily_summary_task: asyncio.Task | None = None
+
+
+async def _write_yesterday_summaries() -> None:
+    """Best-effort daily recap for the day that just ended.
+
+    Runs in the background: it is one model call per user, and startup must not
+    wait for the upstream. A failure here is logged and nothing else - the recap
+    is also generated on demand when the user opens that day.
+    """
+    try:
+        async with async_session_maker() as session:
+            written = await generate_pending_daily_summaries(session)
+        if written:
+            logging.getLogger(__name__).info(f"[Startup] Wrote {written} daily summary/summaries")
+    except Exception:
+        logging.getLogger(__name__).exception("[Startup] Daily summary pass failed")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    await init_db()
+    global _daily_summary_task
+    async with async_session_maker() as session:
+        # A restart is the usual reason a meal never left pending/processing:
+        # the analysis task died with the previous process and cannot report
+        # back, so those rows are failed before anyone can poll them.
+        healed = await fail_stale_meals(session)
+        if healed:
+            logging.getLogger(__name__).info(f"[Startup] Failed {healed} stuck meal(s)")
+        await seed_exercise_catalog(session)
+    _daily_summary_task = asyncio.create_task(_write_yesterday_summaries())
+    yield
+    # Shutdown
+    if _daily_summary_task is not None:
+        _daily_summary_task.cancel()
+        _daily_summary_task = None
+    await close_db()
+
+
+app = FastAPI(
+    title=settings.APP_NAME,
+    version=settings.APP_VERSION,
+    lifespan=lifespan,
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
+)
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# API routes
+app.include_router(api_router, prefix="/api/v1")
+app.include_router(admin_router, prefix="/api/v1/admin")
+
+# Static files (for PWA frontend)
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Uploaded meal photos (stored under UPLOAD_DIR and referenced by
+# photo_path / photo_thumbnail_path in meal responses)
+os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+os.makedirs(os.path.join(settings.UPLOAD_DIR, "thumbnails"), exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
+
+
+@app.get("/health")
+async def health_check():
+    return {"status": "ok", "version": settings.APP_VERSION}
+
+
+@app.get("/")
+async def serve_index():
+    with open("static/index.html", "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
