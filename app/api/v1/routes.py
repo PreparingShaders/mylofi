@@ -196,6 +196,19 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    now = datetime.now(timezone.utc)
+    last = user.last_seen_at
+    needs_update = False
+    if last is None:
+        needs_update = True
+    else:
+        last_utc = last if last.tzinfo is not None else last.replace(tzinfo=timezone.utc)
+        if last_utc < now - timedelta(minutes=5):
+            needs_update = True
+    if needs_update:
+        user.last_seen_at = now
+        await db.commit()
+
     return user
 
 

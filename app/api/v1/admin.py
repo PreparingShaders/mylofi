@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, time, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,8 +47,57 @@ async def _user_counts(db: AsyncSession, user_id: int) -> tuple[int, int]:
     return total_meals, completed_workouts
 
 
+async def _effective_last_seen(db: AsyncSession, u: User) -> Optional[datetime]:
+    candidates = []
+    if u.last_seen_at is not None:
+        ls = u.last_seen_at
+        if ls.tzinfo is None:
+            ls = ls.replace(tzinfo=timezone.utc)
+        candidates.append(ls)
+    if u.last_workout_ai_analysis_at is not None:
+        v = u.last_workout_ai_analysis_at
+        if v.tzinfo is None:
+            v = v.replace(tzinfo=timezone.utc)
+        candidates.append(v)
+    if u.last_nutrition_ai_analysis_at is not None:
+        v = u.last_nutrition_ai_analysis_at
+        if v.tzinfo is None:
+            v = v.replace(tzinfo=timezone.utc)
+        candidates.append(v)
+
+    # latest workout session timestamp
+    ws_result = await db.execute(
+        select(func.max(WorkoutSession.updated_at)).where(WorkoutSession.user_id == u.id)
+    )
+    ws_ts = ws_result.scalar()
+    if ws_ts is None:
+        ws_result = await db.execute(
+            select(func.max(WorkoutSession.created_at)).where(WorkoutSession.user_id == u.id)
+        )
+        ws_ts = ws_result.scalar()
+    if ws_ts is not None:
+        if ws_ts.tzinfo is None:
+            ws_ts = ws_ts.replace(tzinfo=timezone.utc)
+        candidates.append(ws_ts)
+
+    # latest meal timestamp
+    meal_result = await db.execute(
+        select(func.max(Meal.created_at)).where(Meal.user_id == u.id)
+    )
+    meal_ts = meal_result.scalar()
+    if meal_ts is not None:
+        if meal_ts.tzinfo is None:
+            meal_ts = meal_ts.replace(tzinfo=timezone.utc)
+        candidates.append(meal_ts)
+
+    if not candidates:
+        return None
+    return max(candidates)
+
+
 async def _build_user_item(db: AsyncSession, u: User) -> AdminUserItem:
     total_meals, completed_workouts = await _user_counts(db, u.id)
+    effective = await _effective_last_seen(db, u)
     return AdminUserItem(
         id=u.id,
         email=u.email,
@@ -60,7 +109,7 @@ async def _build_user_item(db: AsyncSession, u: User) -> AdminUserItem:
         premium_expires_at=u.premium_expires_at,
         meal_ai_daily_count=u.meal_ai_daily_count,
         created_workouts_count=u.created_workouts_count,
-        last_seen_at=u.last_seen_at,
+        last_seen_at=effective,
         total_meals_count=total_meals,
         completed_workouts_count=completed_workouts,
         total_ai_requests=u.total_ai_requests or 0,
@@ -71,6 +120,7 @@ async def _build_user_item(db: AsyncSession, u: User) -> AdminUserItem:
 
 async def _build_user_detail(db: AsyncSession, u: User) -> AdminUserDetail:
     total_meals, completed_workouts = await _user_counts(db, u.id)
+    effective = await _effective_last_seen(db, u)
     return AdminUserDetail(
         id=u.id,
         email=u.email,
@@ -85,7 +135,7 @@ async def _build_user_detail(db: AsyncSession, u: User) -> AdminUserDetail:
         last_workout_ai_analysis_at=u.last_workout_ai_analysis_at,
         last_nutrition_ai_analysis_at=u.last_nutrition_ai_analysis_at,
         created_workouts_count=u.created_workouts_count,
-        last_seen_at=u.last_seen_at,
+        last_seen_at=effective,
         total_meals_count=total_meals,
         completed_workouts_count=completed_workouts,
         total_ai_requests=u.total_ai_requests or 0,
@@ -213,6 +263,23 @@ async def update_user_premium(
     if action == "revoke":
         user.is_premium = False
         user.premium_expires_at = None
+    elif action == "grant_custom" or payload.start_date is not None or payload.end_date is not None:
+        start_date = payload.start_date
+        end_date = payload.end_date
+        if start_date is None or end_date is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Start date and end date are both required",
+            )
+        if start_date > end_date:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid date range: start_date must not be after end_date",
+            )
+
+        user.is_premium = True
+        # End of day in UTC: access stays valid throughout the entire end date.
+        user.premium_expires_at = datetime.combine(end_date, time.max, tzinfo=timezone.utc)
     else:
         days = payload.days
         if action == "grant_7":

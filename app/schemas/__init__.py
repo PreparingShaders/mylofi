@@ -302,10 +302,13 @@ class AdminStatusUpdate(BaseModel):
 
 class AdminPremiumUpdate(BaseModel):
     """Premium management action: "grant_7", "grant_30", "revoke",
-    or an explicit duration via `days`."""
+    an explicit duration via `days`, or a custom date range via
+    `start_date`/`end_date`."""
 
     action: str
     days: Optional[int] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
 
 
 class AdminQuotaResetResponse(BaseModel):

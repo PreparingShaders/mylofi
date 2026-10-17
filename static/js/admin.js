@@ -771,6 +771,8 @@ const Admin = {
             : 'bg-primary-600/10 text-primary-600 dark:text-zinc-200';
 
         const fmtDate = (v) => v ? new Date(v).toLocaleDateString('ru-RU') : null;
+        const defaultStart = new Date().toISOString().split('T')[0];
+        const defaultEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
         panel.innerHTML = `
             <div class="w-12 h-1.5 bg-zinc-700 rounded-full mx-auto my-3"></div>
@@ -863,7 +865,7 @@ const Admin = {
             </div>
 
             ${!isCurrentUser ? `
-            <div class="flex flex-col gap-2 mt-6 pt-4 border-t border-surface-200 dark:border-white/10 px-4 pb-6">
+            <div class="flex flex-col gap-2 mt-6 pt-4 border-t border-surface-200 dark:border-white/10 px-4 pb-16">
                 <button data-action="modal-toggle-active" data-user-id="${user.id}" data-active="${user.is_active}"
                         class="w-full px-3 py-2 rounded-xl text-sm font-semibold transition-all
                                ${user.is_active
@@ -897,6 +899,27 @@ const Admin = {
                                 class="px-2 py-2 rounded-xl text-xs font-semibold bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors">
                             Отозвать премиум
                         </button>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-surface-200/20 dark:border-white/10 space-y-2.5">
+                        <p class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider">Кастомный период PRO</p>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2 items-end">
+                            <div class="md:col-span-2">
+                                <label class="block text-xs text-surface-400 dark:text-surface-500 mb-1">Дата начала</label>
+                                <input type="date" id="custom-premium-start" value="${defaultStart}"
+                                       class="bg-surface-800 text-surface-100 border border-surface-700/80 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-amber-500/80 [color-scheme:dark]">
+                            </div>
+                            <div class="md:col-span-2">
+                                <label class="block text-xs text-surface-400 dark:text-surface-500 mb-1">Дата окончания</label>
+                                <input type="date" id="custom-premium-end" value="${defaultEnd}"
+                                       class="bg-surface-800 text-surface-100 border border-surface-700/80 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-amber-500/80 [color-scheme:dark]">
+                            </div>
+                            <div class="sm:col-span-2 md:col-span-1">
+                                <button data-action="modal-premium-grant-custom" data-user-id="${user.id}"
+                                        class="w-full h-[34px] px-3 py-2 rounded-xl text-xs font-semibold bg-amber-600/90 hover:bg-amber-600 text-white transition-colors">
+                                    Применить
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>` : ''}
@@ -1007,6 +1030,19 @@ const Admin = {
             await this.loadUsers();
         } catch (error) {
             console.error('[Admin] Premium update error:', error);
+            if (error?.status !== 401 && error?.status !== 403) {
+                this.app.showToast(error?.data?.detail || error?.message || 'Ошибка обновления подписки', 'error');
+            }
+        }
+    },
+
+    async updatePremiumCustom(userId, startDate, endDate) {
+        try {
+            await API.patch(`/admin/users/${userId}/premium`, { action: 'grant_custom', start_date: startDate, end_date: endDate }, this.app.state.tokens.access);
+            this.app.showToast(`Премиум выдан до ${endDate}`, 'success');
+            await this.loadUsers();
+        } catch (error) {
+            console.error('[Admin] Premium custom update error:', error);
             if (error?.status !== 401 && error?.status !== 403) {
                 this.app.showToast(error?.data?.detail || error?.message || 'Ошибка обновления подписки', 'error');
             }
@@ -1383,6 +1419,24 @@ document.addEventListener('click', async (e) => {
         const days = parseInt(btn.dataset.days);
         Admin.closeUserModal();
         Admin.updatePremium(parseInt(btn.dataset.userId), `grant_${days}`, days);
+    }
+    if (action === 'modal-premium-grant-custom') {
+        const btn = e.target.closest('[data-action="modal-premium-grant-custom"]');
+        const userId = parseInt(btn.dataset.userId);
+        const startInput = document.getElementById('custom-premium-start');
+        const endInput = document.getElementById('custom-premium-end');
+        const startDate = startInput ? startInput.value : '';
+        const endDate = endInput ? endInput.value : '';
+        if (!startDate || !endDate) {
+            Admin.app.showToast('Укажите начальную и конечную даты', 'error');
+            return;
+        }
+        if (startDate > endDate) {
+            Admin.app.showToast('Начальная дата не может быть позже конечной', 'error');
+            return;
+        }
+        Admin.closeUserModal();
+        Admin.updatePremiumCustom(userId, startDate, endDate);
     }
     if (action === 'modal-premium-revoke') {
         const btn = e.target.closest('[data-action="modal-premium-revoke"]');
