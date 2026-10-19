@@ -264,7 +264,7 @@ uploadBtn.addEventListener('click', async () => {
 
             // Short-circuit offline: check before any UI work. The overlay
             // must never appear when we are about to queue locally.
-            const isOffline = (this.app?.state?.isOnline === false) || !navigator.onLine;
+            const isOffline = !window.App?.state?.isOnline || !navigator.onLine;
             if (isOffline) {
                 let compressedBlob = null;
                 try {
