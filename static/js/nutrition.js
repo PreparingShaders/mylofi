@@ -1695,6 +1695,27 @@ export const Nutrition = {
             return;
         }
 
+        const isOffline = !window.App?.state?.isOnline || !navigator.onLine;
+        if (isOffline) {
+            const notesInput = modalEl.querySelector('#new-meal-notes');
+            const notes = notesInput ? notesInput.value.trim() || null : null;
+            let compressedBlob = state.selectedFile;
+            try {
+                const compressed = await Utils.compressImage(state.selectedFile);
+                if (compressed) {
+                    compressedBlob = compressed;
+                }
+            } catch (compressError) {
+                console.warn('[Nutrition] Compression failed, using original:', compressError);
+            }
+            await Camera.queueOfflineMeal(compressedBlob, notes, state.selectedMealType);
+            this.app.showToast('Сохранено локально. Отправим при появлении связи', 'info');
+            this.closeNewMealModal();
+            this._scrollTargetMealId = null;
+            await this.render(this.app.elements.pageContent, this.app, this.selectedDate);
+            return;
+        }
+
         // Show the blurred loading overlay synchronously before compression to
         // eliminate UI jumping and lock the modal during the upload.
         const overlayState = Camera.showLoadingOverlay(modalEl);

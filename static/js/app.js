@@ -115,8 +115,14 @@ const App = {
                     await this.initSyncEngine();
                 } catch (e) {
                     console.error('[App] Token validation failed:', e);
-                    this.showScreen('landing');
-                    this.renderLanding();
+                    if (e?.isNetworkError || !navigator.onLine || !this.state.isOnline) {
+                        console.warn('[App] Network error during init token validation; retaining offline session.');
+                        this.showScreen('main');
+                        this.showPage('nutrition');
+                    } else {
+                        this.showScreen('landing');
+                        this.renderLanding();
+                    }
                 }
             }
 
@@ -356,14 +362,18 @@ const App = {
             this.showPage('nutrition');
         } catch (error) {
             console.error('[App] Token validation error:', error);
-            if (error?.isNetworkError || !navigator.onLine) {
-                // Temporary network drop on wake/resume: keep user logged in using cached state
+            if (error?.isNetworkError || !navigator.onLine || !this.state.isOnline) {
+                // Temporary network drop on wake/resume: keep user logged in using cached state or tokens
                 console.warn('[App] Network error during token validation; retaining offline session.');
-                if (this.state.user) {
-                    this.showScreen('main');
-                    this.showPage('nutrition');
-                    return;
+                if (!this.state.user) {
+                    const cachedUser = localStorage.getItem('user');
+                    if (cachedUser) {
+                        try { this.state.user = JSON.parse(cachedUser); } catch(e) {}
+                    }
                 }
+                this.showScreen('main');
+                this.showPage('nutrition');
+                return;
             }
             // Definite auth failure (401/403 or invalid session)
             this.clearTokens();

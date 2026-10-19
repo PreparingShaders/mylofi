@@ -246,7 +246,42 @@ export const Camera = {
         const uploadBtn = container.querySelector('#upload-btn');
         let selectedFile = null;
 
-        input.addEventListener('change', (e) => {
+        input.addEventListener('change', async (e) => {
+            const isOffline = !window.App?.state?.isOnline || !navigator.onLine;
+            if (isOffline) {
+                e.preventDefault();
+                e.stopPropagation();
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const notes = container.querySelector('#photo-notes')?.value || null;
+                let compressedBlob = null;
+                try {
+                    compressedBlob = await Utils.compressImage(file);
+                    if (compressedBlob) {
+                        const originalSize = Utils.fileSizeLabel(file.size);
+                        const compressedSize = Utils.fileSizeLabel(compressedBlob.size);
+                        console.log(`[Camera] Compressed ${originalSize} → ${compressedSize}`);
+                    }
+                } catch (compressError) {
+                    console.warn('[Camera] Compression failed, using original:', compressError);
+                    compressedBlob = file;
+                }
+
+                await this.queueOfflineMeal(compressedBlob, notes);
+                this.app.showToast('Сохранено локально. Отправим при появлении связи.', 'info');
+                input.value = '';
+                selectedFile = null;
+                uploadBtn.disabled = true;
+                uploadBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                uploadBtn.classList.remove('bg-primary-600', 'dark:bg-white');
+                uploadBtn.classList.add('bg-surface-400', 'dark:bg-surface-700');
+                if (window.App && window.App.showPage) {
+                    window.App.showPage('nutrition');
+                }
+                return;
+            }
+
             selectedFile = e.target.files[0];
             uploadBtn.disabled = !selectedFile;
             uploadBtn.classList.toggle('opacity-50', !selectedFile);
@@ -257,15 +292,14 @@ export const Camera = {
             uploadBtn.classList.toggle('dark:bg-surface-700', !selectedFile);
         });
 
-uploadBtn.addEventListener('click', async () => {
-            if (!selectedFile) return;
-
-            const notes = container.querySelector('#photo-notes')?.value || null;
-
-            // Short-circuit offline: check before any UI work. The overlay
-            // must never appear when we are about to queue locally.
+        uploadBtn.addEventListener('click', async (e) => {
             const isOffline = !window.App?.state?.isOnline || !navigator.onLine;
             if (isOffline) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!selectedFile) return;
+
+                const notes = container.querySelector('#photo-notes')?.value || null;
                 let compressedBlob = null;
                 try {
                     compressedBlob = await Utils.compressImage(selectedFile);
@@ -282,21 +316,20 @@ uploadBtn.addEventListener('click', async () => {
                 this.app.showToast('Сохранено локально. Отправим при появлении связи.', 'info');
                 input.value = '';
                 selectedFile = null;
-                uploadBtn.disabled = false;
+                uploadBtn.disabled = true;
+                uploadBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                uploadBtn.classList.remove('bg-primary-600', 'dark:bg-white');
+                uploadBtn.classList.add('bg-surface-400', 'dark:bg-surface-700');
                 uploadBtn.textContent = 'Готово — загрузить';
+                if (window.App && window.App.showPage) {
+                    window.App.showPage('nutrition');
+                }
                 return;
             }
 
-            const token = this.app.state.tokens.access;
-            uploadBtn.disabled = true;
-            uploadBtn.textContent = 'Сжатие...';
+            if (!selectedFile) return;
 
-            // Show the overlay synchronously before compression to eliminate
-            // UI jumping and layout shift on click.
-            const overlayState = this.showLoadingOverlay(container);
-
-            // Online path: compress, check host reachability, upload, poll.
-            uploadBtn.textContent = 'Загрузка...';
+            const notes = container.querySelector('#photo-notes')?.value || null;
             let compressedBlob = null;
             try {
                 compressedBlob = await Utils.compressImage(selectedFile);
@@ -414,12 +447,14 @@ uploadBtn.addEventListener('click', async () => {
             },
             tempId,
             store: 'meals',
-            accessToken: this.app.state.tokens.access || null,
+            accessToken: this.app?.state?.tokens?.access || window.App?.state?.tokens?.access || localStorage.getItem('access_token') || null,
         };
 
         await DB.atomicWrite('meals', meal, syncItem);
 
-        if (window.App && typeof window.App.updateNetworkBanner === 'function') {
+        if (this.app?.updateNetworkBanner && typeof this.app.updateNetworkBanner === 'function') {
+            this.app.updateNetworkBanner();
+        } else if (window.App && typeof window.App.updateNetworkBanner === 'function') {
             window.App.updateNetworkBanner();
         }
 
