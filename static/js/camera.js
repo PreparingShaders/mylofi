@@ -196,18 +196,24 @@ export const Camera = {
 
     async handleSyncedMeal(item, response, { failed = false } = {}) {
         if (failed || !item || item.store !== 'meals') return;
-        if (!item.tempId || !response || !response.id) return;
+        if (!item.tempId || !response) return;
+        const realId = response.id ?? response.meal_id;
+        if (!realId) return;
         try {
-            const existing = await DB.getMeal(response.id) || await DB.getMeal(item.tempId);
+            const existing = await DB.getMeal(realId) || await DB.getMeal(item.tempId);
             const merged = {
                 ...(existing || {}),
                 ...response,
+                id: realId,
                 blob: existing?.blob ?? null,
                 sync_status: DB.SYNC_STATUS.SYNCED,
                 updated_at: Date.now(),
             };
             await DB.saveMeal(merged);
-            window.dispatchEvent(new CustomEvent('mylofi:meal-synced', { detail: { mealId: response.id } }));
+            if (item.tempId !== realId) {
+                await DB.deleteMeal(item.tempId);
+            }
+            window.dispatchEvent(new CustomEvent('mylofi:meal-synced', { detail: { mealId: realId } }));
         } catch (error) {
             console.error('[Camera] Failed to merge synced meal:', error);
         }

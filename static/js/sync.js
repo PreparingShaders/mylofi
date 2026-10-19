@@ -308,6 +308,9 @@ export const SyncEngine = {
                     app.showToast(`Синхронизировано изменений: ${synced}`, 'success');
                 }
                 window.dispatchEvent(new CustomEvent('mylofi:offline-sync', { detail: { synced } }));
+                if (window.App?.state?.currentPage === 'nutrition') {
+                    window.App.renderPage('nutrition');
+                }
             }
 
             return synced > 0;
