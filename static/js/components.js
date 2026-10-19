@@ -1059,8 +1059,7 @@ export const Components = {
       * photo was the same number twice.
       *
       * A meal that is still being analysed swaps its figures for shimmer lines
-      * instead of printing zeroes, and `analysisTimedOut` stops the shimmer to
-      * state the failure: nothing will come along to replace those placeholders.
+      * instead of printing zeroes, while keeping a neutral "Анализируем..." status.
       *
       * `showDate` adds the eaten date in front of the time, which is what makes
       * the same card readable across a week or month carousel. The chip carries
@@ -1068,13 +1067,13 @@ export const Components = {
       * sit in front of it read as a stray `#` at 10px, and the spelled-out label
       * made the header read like a sentence and pushed the time out of view.
       */
-    mealCardPhoto(meal, { showDate = false, analysisTimedOut = false } = {}) {
+    mealCardPhoto(meal, { showDate = false } = {}) {
         const isPending = meal.status === 'pending' || meal.status === 'processing' || meal.sync_status === DB.SYNC_STATUS.PENDING;
         const isFailed = meal.sync_status === DB.SYNC_STATUS.FAILED;
-        const isStuck = isPending && analysisTimedOut;
+        const isStuck = false;
         const day = meal.eaten_at ? new Date(meal.eaten_at) : (meal.created_at ? new Date(meal.created_at) : null);
 
-        const dishName = meal.dish_name || (isStuck ? 'Не распознано' : (isPending ? '' : 'Блюдо'));
+        const dishName = meal.dish_name || (isPending ? '' : 'Блюдо');
         const timeLabel = day ? Utils.formatTime(day) : '';
         const dateLabel = showDate && day ? Utils.formatDayMonth(day) : '';
         const chipLabel = [dateLabel, timeLabel]
@@ -1097,9 +1096,7 @@ export const Components = {
             carbs: meal.carbs_g ?? meal.carbs,
         });
         const hasAIScore = meal.quality_score !== undefined && meal.quality_score !== null;
-        const qualityScore = isStuck
-            ? null
-            : Utils.qualityScoreFromAI(hasAIScore ? meal.quality_score : (macroScore === null ? null : macroScore / 10));
+        const qualityScore = Utils.qualityScoreFromAI(hasAIScore ? meal.quality_score : (macroScore === null ? null : macroScore / 10));
 
         const photoSrc = this.mealPhotoUrl(meal);
         const safeSrc = photoSrc ? String(photoSrc).replace(/'/g, '%27').replace(/"/g, '%22') : null;
@@ -1112,19 +1109,19 @@ export const Components = {
             ? `style="background-image: url('${safeSrc}');"`
             : 'class="meal-card-hero__fallback"';
 
-        const heroOverlay = isStuck
+        const heroOverlay = isPending
             ? `
-                <h3 class="meal-card-hero__name">Не распознано</h3>
-                <p class="meal-card-hero__note meal-card-hero__note--error">Анализ не завершился</p>
+                <div class="flex flex-col items-center justify-center gap-2">
+                    <div class="w-7 h-7 rounded-full border-2 border-white/20 border-t-lime-400 animate-spin"></div>
+                    <span class="text-xs font-semibold text-white bg-black/50 px-3 py-1 rounded-full backdrop-blur-sm">Анализируем...</span>
+                </div>
             `
-            : isPending
-                ? `<div class="meal-card-hero__shimmer">${this.mealSkeleton(2)}</div>`
-                : `
-                    <h3 class="meal-card-hero__name">${escName}</h3>
-                    ${breakdown?.portion
-                        ? `<p class="meal-card-hero__note">${escapeHtml(String(breakdown.portion))} г</p>`
-                        : ''}
-                `;
+            : `
+                <h3 class="meal-card-hero__name">${escName}</h3>
+                ${breakdown?.portion
+                    ? `<p class="meal-card-hero__note">${escapeHtml(String(breakdown.portion))} г</p>`
+                    : ''}
+            `;
 
         const macroPill = (label, value, pending) => `
             <div class="meal-card-pill ${pending ? 'meal-card-pill--pending' : ''}">
@@ -1154,13 +1151,11 @@ export const Components = {
             : '';
 
         const insight = typeof meal.ai_insight === 'string' ? meal.ai_insight.trim() : '';
-        const verdictContent = isStuck
-            ? `<p class="meal-card-ai__text meal-card-ai__text--error">Таймаут анализа или сбой сервера. Попробуйте загрузить фото ещё раз.</p>`
-            : isPending
-                ? this.mealSkeleton(2)
-                : insight
-                    ? `<p class="meal-card-ai__text">${escapeHtml(insight)}</p>`
-                    : this.qualityMetrics(meal.quality_reason);
+        const verdictContent = isPending
+            ? `<div class="flex items-center gap-2"><div class="w-4 h-4 rounded-full border-2 border-white/20 border-t-lime-400 animate-spin"></div><span class="text-xs text-surface-500 dark:text-surface-400">Анализируем...</span></div>`
+            : insight
+                ? `<p class="meal-card-ai__text">${escapeHtml(insight)}</p>`
+                : this.qualityMetrics(meal.quality_reason);
 
         // The persona chip sits directly above the verdict box and inside the same
         // wrapper, so the pair keeps one 4px gap whatever the card's own 12px

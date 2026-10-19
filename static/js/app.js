@@ -149,6 +149,16 @@ const App = {
         const onOnline = () => {
             this.state.isOnline = true;
             this.updateNetworkBanner(true);
+            // Event-driven refresh: when network returns, flush the sync queue
+            // and re-render the active page so pending meals show real results.
+            this.checkHostConnectivity().then((reachable) => {
+                if (reachable && this.state.tokens.access) {
+                    this.flushOfflineQueue().catch(() => {});
+                    if (this.state.currentScreen === 'main') {
+                        this.renderPage(this.state.currentPage);
+                    }
+                }
+            });
         };
         SyncEngine.setReplayFn((item) => API.replayQueuedItem(item));
         SyncEngine.setHooks({

@@ -134,10 +134,6 @@ export const SyncEngine = {
             console.log(`[SyncEngine] Enqueued ${entry.method} ${entry.endpoint}`);
         }
 
-        if (navigator.onLine && !this.processing) {
-            setTimeout(() => this.processQueue().catch(() => {}), 0);
-        }
-
         return item;
     },
 

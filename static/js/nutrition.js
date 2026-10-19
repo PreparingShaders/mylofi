@@ -7,12 +7,7 @@ import { Camera } from './camera.js';
 
 const PERIODS = ['day', 'week', 'month', 'custom'];
 
-// How long the dashboard watches a pending/processing meal before it gives up.
-// The server bounds a single analysis, so a batch that outlives the budget is
-// stuck rather than slow: without this the poll loop re-renders the page every
-// 3s forever and the cards shimmer until the tab is closed.
-const POLL_INTERVAL_MS = 3000;
-const MAX_POLL_ATTEMPTS = 20; // 20 x 3s = 1 minute
+
 
 // Day / 7 days / month are one-tap presets; the custom period is opened as a
 // range sheet by the icon tab.
@@ -34,19 +29,12 @@ export const Nutrition = {
     _periodSheetClosing: null,
     _editMealModalState: null,
     _editMealModalClosing: null,
-    _pollingTimer: null,
     // Recap generation in flight: the manual trigger on the daily-summary
     // card disables itself while the day is being re-read.
     _dailySummaryLoading: false,
     // Meals indexed by id, refreshed every render so the edit modal can pull
     // the current record without a dedicated single-meal endpoint.
     _mealsCache: new Map(),
-    // Polling budget of the batch currently on screen: attempts spent so far,
-    // whether it already timed out, and whether the render in flight was
-    // triggered by the poll loop (a timed-out batch must not renew its own).
-    _pollingAttempts: 0,
-    _pollingTimedOut: false,
-    _pollingRender: false,
     // Meal the carousel has to bring into view on the next render: the id is
     // only known after the upload answered, while the card arrives with it.
     _scrollTargetMealId: null,
@@ -1115,13 +1103,6 @@ export const Nutrition = {
             this.selectedPeriod = 'day';
         }
 
-        // Every render the user asked for (page switch, date step, retry) opens a
-        // fresh polling window; a render from the poll loop only spends the
-        // budget of the window it belongs to.
-        if (!this._pollingRender) {
-            this.resetPolling();
-        }
-
         // Close any open modal before re-rendering
         this.closeNewMealModal();
         this.closePeriodSheet();
@@ -1143,7 +1124,6 @@ export const Nutrition = {
             const periodDataPromise = this.loadPeriodData();
             const dailySummaryPromise = this.loadDailySummary();
             const synergyReportPromise = (this.selectedPeriod === 'day'
-                && !this._pollingRender
                 && !this._aiSynergyRunning)
                 ? this.loadAiSynergyReport()
                 : Promise.resolve(null);
@@ -1193,10 +1173,7 @@ export const Nutrition = {
             // from different days are indistinguishable in the carousel.
             const showDate = this.selectedPeriod !== 'day';
 
-            // A meal still being analysed can sit in either list: server-side
-            // ones come back in sortedMeals, locally queued ones in
-            // pendingSorted. Both must learn that the polling window ran out.
-            const cardOptions = { showDate, analysisTimedOut: this._pollingTimedOut };
+            const cardOptions = { showDate };
 
             const period = this.periodAverage(periodData);
             // The day ring reads the day totals; wider periods read the per-day
@@ -1285,8 +1262,8 @@ export const Nutrition = {
                         `
                         : ''}
 
-                    <!-- STUCK ANALYSIS BANNER (polling budget spent) -->
-                    ${this._pollingTimedOut ? this.renderAnalysisTimeoutBanner() : ''}
+                    <!-- PENDING ANALYSIS: meals still being processed show a neutral badge -->
+                    ${pendingSorted.some(m => m.status === 'pending' || m.status === 'processing' || m.sync_status === DB.SYNC_STATUS.PENDING) ? '' : ''}
 
 <!-- SNAP CAROUSEL: daily summary + synergy stack first (day only),
                            then the action tile, pending meals, logged meals (LIFO) -->
@@ -1361,113 +1338,6 @@ export const Nutrition = {
                 timestamp: new Date().toISOString()
             });
             container.innerHTML = Components.errorState(errorMessage);
-        }
-
-        // Start/stop polling for pending/processing meals
-        this.managePolling(serverMeals, pendingMeals);
-    },
-
-    /**
-     * Notice shown once the polling budget is spent while meals are still
-     * pending. The dashboard stops refreshing itself at this point, so the user
-     * has to be told why the numbers stopped moving.
-     */
-    renderAnalysisTimeoutBanner() {
-        return `
-            <div class="shrink-0 mb-1 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2" id="analysis-timeout-banner">
-                <div class="flex items-start gap-2">
-                    <svg class="w-4 h-4 mt-0.5 shrink-0 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
-                    <div class="min-w-0">
-                        <p class="text-xs font-semibold text-red-500">Анализ фото не завершился</p>
-                        <p class="text-[11px] text-surface-600 dark:text-surface-300 leading-snug">
-                            Автообновление остановлено. Вернитесь позже или загрузите это фото ещё раз.
-                        </p>
-                    </div>
-                </div>
-            </div>
-        `;
-    },
-
-    /**
-     * Stop the poll loop. Split out from managePolling because a timeout has to
-     * end the loop too, not just the absence of pending meals.
-     */
-    stopPolling() {
-        if (!this._pollingTimer) return;
-        clearInterval(this._pollingTimer);
-        this._pollingTimer = null;
-    },
-
-    /**
-     * Forget the current polling window: no timer, full budget, no timeout
-     * notice. A window belongs to one batch of pending meals, so it must not
-     * leak into the next upload.
-     */
-    resetPolling() {
-        this.stopPolling();
-        this._pollingAttempts = 0;
-        this._pollingTimedOut = false;
-    },
-
-    /**
-     * Manage polling for meals that are being analyzed.
-     * Polls every 3s while any meal has status 'pending' or 'processing', for at
-     * most MAX_POLL_ATTEMPTS ticks.
-     */
-    managePolling(serverMeals, pendingMeals) {
-        this.stopPolling();
-
-        // Check if any meal needs polling (pending or processing)
-        const hasPendingOrProcessing =
-            serverMeals.some(m => m.status === 'pending' || m.status === 'processing') ||
-            pendingMeals.some(m => m.status === 'pending' || m.status === 'processing' || m.sync_status === 'pending');
-
-        if (!hasPendingOrProcessing) {
-            // Nothing left to watch: the batch reached a terminal status, so its
-            // window and its timeout notice are both spent.
-            this.resetPolling();
-            return;
-        }
-
-        // A batch that already timed out stays unpolled until the user opens a
-        // new window, otherwise the timeout render would restart the loop it
-        // has just ended.
-        if (this._pollingTimedOut) return;
-
-        this._pollingTimer = setInterval(() => this.pollPendingMeals(), POLL_INTERVAL_MS);
-    },
-
-    /**
-     * Poll for updated meal data when pending/processing meals exist.
-     * Only refreshes if we're still on the nutrition page, and gives up once the
-     * polling budget is spent.
-     */
-    async pollPendingMeals() {
-        // Only poll if nutrition page is currently active
-        if (this.app?.state?.currentPage !== 'nutrition') {
-            this.managePolling([], []);
-            return;
-        }
-
-        this._pollingAttempts += 1;
-        if (this._pollingAttempts >= MAX_POLL_ATTEMPTS) {
-            // Out of budget: end the loop and let the still-pending cards show
-            // the timeout instead of shimmering forever.
-            this._pollingTimedOut = true;
-            this.stopPolling();
-            console.warn(
-                `[Nutrition] Polling stopped after ${MAX_POLL_ATTEMPTS} attempts, ` +
-                'some meals are still pending'
-            );
-        }
-
-        this._pollingRender = true;
-        try {
-            await this.render(this.app.elements.pageContent, this.app);
-        } catch (error) {
-            console.warn('[Nutrition] Polling error:', error);
-        } finally {
-            this._pollingRender = false;
         }
     },
 
@@ -1785,10 +1655,10 @@ export const Nutrition = {
         }
 
         // The overlay stays up through the whole analysis: the meal status
-        // is polled until the background task lands a terminal status (or
-        // the polling budget runs out), and only then does the checkmark
-        // appear. An offline-queued meal has nothing to poll yet - it
-        // syncs later - and a failed upload leaves nothing to wait for.
+        // is polled until the background task lands a terminal status, and
+        // only then does the checkmark appear. An offline-queued meal has
+        // nothing to poll yet - it syncs later - and a failed upload leaves
+        // nothing to wait for.
         if (uploadedOnline) {
             const outcome = await Camera.pollMealAnalysisStatus(newMealId, token);
             if (outcome === 'completed') {
