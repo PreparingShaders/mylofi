@@ -1579,6 +1579,7 @@ export const Nutrition = {
     },
 
     async handleNewMealSubmit(modalEl, state) {
+        try {
         if (!state.selectedFile || !state.selectedMealType) {
             return;
         }
@@ -1657,11 +1658,18 @@ export const Nutrition = {
             // background analysis started, not that it finished.
         } catch (error) {
             if (error?.isNetworkError || error?.offlineQueued) {
-                newMealId = await Camera.queueOfflineMeal(compressedBlob, notes, state.selectedMealType);
-                this.app.showToast('Нет связи. Фото сохранено локально и будет загружено при появлении связи', 'info');
+                try {
+                    newMealId = await Camera.queueOfflineMeal(compressedBlob, notes, state.selectedMealType);
+                    this.app.showToast('Нет связи. Фото сохранено локально и будет загружено при появлении связи', 'info');
+                } catch (qerr) {
+                    console.error('[Nutrition] Offline queue failed:', qerr);
+                    this.app.showToast(qerr?.message || 'Не удалось сохранить оффлайн', 'error');
+                    newMealId = null;
+                    uploadedOnline = false;
+                }
             } else {
                 console.error('[Nutrition] Upload error:', error);
-                this.app.showToast(error.data?.detail || 'Ошибка загрузки', 'error');
+                this.app.showToast(error.data?.detail || error.message || 'Ошибка загрузки', 'error');
             }
         } finally {
             this.removeAnalyzingSkeleton();
@@ -1695,6 +1703,17 @@ export const Nutrition = {
         // is handed over instead of scrolled to here.
         this._scrollTargetMealId = newMealId;
         await this.render(this.app.elements.pageContent, this.app, this.selectedDate);
+        } catch (err) {
+            console.error('[Nutrition] handleNewMealSubmit error:', err);
+            try { this.removeAnalyzingSkeleton(); } catch (_) {}
+            const submitBtn = modalEl && modalEl.querySelector('#new-meal-submit');
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<span class="text-sm font-semibold">Создать</span>';
+            }
+            try { Camera.hideLoadingOverlay(modalEl); } catch (_) {}
+            this.app.showToast(err?.message || 'Не удалось сохранить блюдо', 'error');
+        }
     },
 
     /**
