@@ -268,6 +268,24 @@ export const Nutrition = {
         let pendingMeals = [];
         try {
             pendingMeals = await DB.getMealsByStatus(DB.SYNC_STATUS.PENDING);
+            // Deduplicate: filter out pending meals that have already been
+            // resolved by the sync engine (i.e. their temp id was replaced
+            // with a real server id and a matching server meal exists).
+            // This prevents showing both the "Анализируем..." pending card
+            // and the final processed card side-by-side after a successful
+            // offline queue flush.
+            if (Array.isArray(serverMeals) && serverMeals.length > 0) {
+                const serverIds = new Set(
+                    serverMeals.map(m => String(m.id)).filter(Boolean)
+                );
+                pendingMeals = pendingMeals.filter(pm => {
+                    const mealId = String(pm.id ?? '');
+                    const tempId = pm.tempId ? String(pm.tempId) : null;
+                    if (tempId && serverIds.has(tempId)) return false;
+                    if (pm.resolved && serverIds.has(mealId)) return false;
+                    return true;
+                });
+            }
         } catch (error) {
             console.warn('[Nutrition] Failed to read pending meals:', error);
         }

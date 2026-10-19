@@ -194,7 +194,7 @@ export const DB = {
         const record = await this.get(storeName, tempId);
         if (!record) return null;
 
-        const updated = { ...record, id: realId, sync_status: SYNC_STATUS.SYNCED, updated_at: Date.now() };
+        const updated = { ...record, id: realId, tempId: null, sync_status: SYNC_STATUS.SYNCED, updated_at: Date.now(), resolved: true };
         const db = await openDB();
         const tx = db.transaction([storeName, 'sync_queue'], 'readwrite');
         const store = tx.objectStore(storeName);
