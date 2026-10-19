@@ -323,7 +323,7 @@ async def complete_workout_session(
     completed_at = datetime.now(timezone.utc)
     session.completed_at = completed_at
     if duration_seconds is not None:
-        session.duration_seconds = max(0, duration_seconds)
+        session.duration_seconds = max(0, min(86400, duration_seconds))
     else:
         session.duration_seconds = resolve_duration_seconds(session.started_at, completed_at)
     session.updated_at = datetime.now(timezone.utc)
@@ -838,6 +838,8 @@ async def get_workout_statistics(
             WorkoutSession.status == WorkoutSessionStatus.COMPLETED,
             WorkoutSet.is_completed,
             WorkoutSet.weight_kg.isnot(None),
+            WorkoutSession.duration_seconds > 0,
+            WorkoutSession.duration_seconds <= 86400,
         )
     )
     volume_data = volume_result.first()
@@ -947,7 +949,8 @@ def resolve_duration_seconds(started_at: Optional[datetime], completed_at: Optio
     end = as_utc(completed_at)
     if start is None or end is None:
         return 0
-    return abs(int((end - start).total_seconds()))
+    seconds = abs(int((end - start).total_seconds()))
+    return max(0, min(86400, seconds))
 
 
 def parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:

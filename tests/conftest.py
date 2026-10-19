@@ -1,5 +1,6 @@
 """Pytest configuration for E2E tests."""
 
+import asyncio
 import uuid
 
 import pytest
@@ -98,10 +99,25 @@ async def normal_user(db_session):
     yield user
 
 
-@pytest_asyncio.fixture(scope="session", autouse=True)
-async def cleanup_test_users():
-    """Session-level teardown to clean up test users after all tests complete."""
+@pytest.fixture(scope="session", autouse=True)
+def cleanup_test_users():
+    """Session-level teardown to clean up test users after all tests complete.
+
+    Implemented as a sync (non-async) session-scoped fixture so it does not
+    collide with the function-scoped event loop that pytest-asyncio 0.21
+    assigns to every async test; an async session-scoped fixture would raise
+    ``ScopeMismatch`` because pytest-asyncio's default ``event_loop`` fixture is
+    function-scoped. The DB teardown runs on its own throwaway event loop.
+    """
     yield
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_cleanup())
+    finally:
+        loop.close()
+
+
+async def _cleanup():
     engine = _engine()
     maker = _maker(engine)
     async with maker() as db:
@@ -115,7 +131,11 @@ async def cleanup_test_users():
         )
         await db.execute(delete(User).where(User.email.like("test_%@example.com")))
         await db.execute(delete(User).where(User.email.like("test_%@%.com")))
-        await db.execute(delete(User).where(User.email.like("admin_test_%@example.com")))
-        await db.execute(delete(User).where(User.email.like("user_test_%@example.com")))
+        await db.execute(
+            delete(User).where(User.email.like("admin_test_%@example.com"))
+        )
+        await db.execute(
+            delete(User).where(User.email.like("user_test_%@example.com"))
+        )
         await db.commit()
     await engine.dispose()
