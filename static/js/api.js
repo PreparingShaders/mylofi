@@ -7,6 +7,10 @@ const OFFLINE_QUEUE_KEY = 'offline_sync_queue';
 const OFFLINE_MESSAGE = 'Сеть недоступна. Изменения сохранены локально и будут отправлены при появлении связи';
 const QUEUEABLE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
+const HOST_CHECK_TIMEOUT_MS = 3000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
+const UPLOAD_TIMEOUT_MS = 8000;
+
 const READ_CACHE_PREFIX = 'offline_read_cache:';
 const READ_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const READ_CACHE_MAX_ENTRY_BYTES = 300 * 1024;
@@ -112,6 +116,28 @@ class APIClient {
             return networkError;
         }
         return error;
+    }
+
+    isTimeoutError(error) {
+        return error?.name === 'AbortError' || error?.isNetworkError === true && error?.status === 0 && error?.cause?.name === 'AbortError';
+    }
+
+    async checkHostReachable(accessToken = null) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), HOST_CHECK_TIMEOUT_MS);
+        try {
+            const response = await fetch(`${window.location.origin}/health`, {
+                method: 'GET',
+                headers: this.getHeaders(accessToken, false),
+                credentials: 'include',
+                signal: controller.signal,
+            });
+            return response.ok;
+        } catch (error) {
+            return false;
+        } finally {
+            clearTimeout(timeoutId);
+        }
     }
     
     readQueue() {
@@ -282,20 +308,42 @@ class APIClient {
         return SyncEngine.processQueue();
     }
 
-    async request(method, endpoint, data = null, accessToken = null, isFormData = false, skipEnqueue = false) {
+    async request(method, endpoint, data = null, accessToken = null, isFormData = false, skipEnqueue = false, timeoutMs = null) {
+        // Photo uploads are the most fragile path on mobile: a large blob
+        // crossing a saturated or L3-blocked link can hang forever. Form
+        // uploads therefore default to the strict 8s budget; everything else
+        // keeps the roomier 10s default. Callers can still override.
+        if (timeoutMs === null) {
+            timeoutMs = isFormData ? UPLOAD_TIMEOUT_MS : DEFAULT_REQUEST_TIMEOUT_MS;
+        }
         const url = `${this.baseURL}${endpoint}`;
         const headers = this.getHeaders(accessToken, isFormData);
-        
-        const options = { method, headers, credentials: 'include' };
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+        const options = { method, headers, credentials: 'include', signal: controller.signal };
         if (data) {
             options.body = isFormData ? data : JSON.stringify(data);
         }
-        
+
         let response;
         try {
             response = await fetch(url, options);
         } catch (error) {
-            const normalized = this.normalizeError(error, method, url);
+            clearTimeout(timeoutId);
+            let normalized;
+            if (error?.name === 'AbortError') {
+                normalized = new Error(
+                    `Сеть недоступна (таймаут ${method} ${endpoint}). Проверьте подключение к интернету.`
+                );
+                normalized.status = 0;
+                normalized.isNetworkError = true;
+                normalized.isTimeout = true;
+                normalized.cause = error;
+            } else {
+                normalized = this.normalizeError(error, method, url);
+            }
             if (normalized?.isNetworkError && !skipEnqueue && this.isQueueable(method, data, isFormData)) {
                 try {
                     await this.enqueueRequest(method, endpoint, data, accessToken);
@@ -306,6 +354,7 @@ class APIClient {
                 offlineError.status = 0;
                 offlineError.isNetworkError = true;
                 offlineError.offlineQueued = true;
+                offlineError.isTimeout = normalized.isTimeout;
                 offlineError.cause = normalized;
                 console.error(`[API] Request failed and queued: ${method} ${url}`);
                 throw offlineError;
@@ -313,6 +362,8 @@ class APIClient {
             console.error(`[API] Request failed: ${method} ${url}`, normalized);
             throw normalized;
         }
+
+        clearTimeout(timeoutId);
         
         // Try token refresh for 401 responses
         if (response.status === 401 && accessToken && window.App) {
@@ -384,7 +435,7 @@ class APIClient {
     }
     
     get(endpoint, accessToken = null) { return this.getWithReadCache(endpoint, accessToken); }
-    post(endpoint, data, accessToken = null, isFormData = false) { return this.request('POST', endpoint, data, accessToken, isFormData); }
+    post(endpoint, data, accessToken = null, isFormData = false, timeoutMs = null) { return this.request('POST', endpoint, data, accessToken, isFormData, false, timeoutMs); }
     /**
      * A POST that must never enter the offline queue.
      *

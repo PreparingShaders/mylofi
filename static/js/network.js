@@ -1,17 +1,18 @@
 console.log("[DEBUG] Loaded network.js");
+import { API } from './api.js';
 import { SyncEngine } from './sync.js';
 
-const OFFLINE_MESSAGE = 'Нет тырнета, а он нам и не нужон (работаем оффлайн)';
+const OFFLINE_MESSAGE = 'Офлайн-режим: данные сохранятся локально';
 const RESTORED_MESSAGE = 'Связь восстановлена. Синхронизируем...';
 const HIDE_DELAY_MS = 3000;
 
 const OFFLINE_ICON = `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true">
-    <line x1="2" y1="2" x2="22" y2="22"></line>
-    <path d="M8.5 16.5a5 5 0 017 0"></path>
     <path d="M5 12.9a10 10 0 015.2-2.7"></path>
     <path d="M2 8.8a15 15 0 013.9-2.2"></path>
     <path d="M13.4 10.6a10 10 0 015.6 2.3"></path>
+    <path d="M8.5 16.5a5 5 0 017 0"></path>
     <path d="M8.5 19.5a.5.5 0 001 0"></path>
+    <line x1="2" y1="2" x2="22" y2="22"></line>
 </svg>`;
 
 const RESTORED_ICON = `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true">
@@ -34,9 +35,8 @@ export const NetworkBanner = {
         this.mount();
 
         window.addEventListener('offline', () => this.showOffline());
-        window.addEventListener('online', () => this.showRestored());
 
-        if (navigator.onLine === false) this.showOffline();
+        this.refresh();
     },
 
     mount() {
@@ -108,9 +108,31 @@ export const NetworkBanner = {
     },
 
     // Re-evaluate state without interrupting a freshly shown "restored" message.
-    refresh() {
+    // When online, performs an explicit host reachability check to detect L3
+    // blocks and captive portals where navigator.onLine is unreliable.
+    async refresh(skipHostCheck = false) {
         if (navigator.onLine === false) {
-            this.showOffline();
+            if (this.state !== 'offline') {
+                this.showOffline();
+            }
+            return this.state;
         }
+
+        if (skipHostCheck) {
+            if (this.state !== 'hidden') {
+                this.showRestored();
+            }
+            return this.state;
+        }
+
+        const reachable = await API.checkHostReachable();
+        if (!reachable) {
+            if (this.state !== 'offline') {
+                this.showOffline();
+            }
+        } else if (this.state !== 'hidden') {
+            this.showRestored();
+        }
+        return this.state;
     },
 };

@@ -78,7 +78,7 @@ const App = {
     
     elements: {},
     
-    async init() {
+     async init() {
         console.log('[App] Initializing...');
         Theme.init();
         this.cacheElements();
@@ -120,7 +120,11 @@ const App = {
                 }
             }
 
-            await this.flushOfflineQueue();
+            // Host reachability check on warm init: navigator.onLine is
+            // unreliable under L3 blocks and captive portals, so probe the
+            // backend /health endpoint and flush any queued mutations if the
+            // host is actually reachable.
+            await this.checkHostConnectivity();
         } finally {
             // Hide splash screen after auth determination — always, even if
             // rendering or auth check threw an error. Otherwise a UI exception
@@ -138,7 +142,7 @@ const App = {
         };
         const onOnline = () => {
             this.state.isOnline = true;
-            this.updateNetworkBanner();
+            this.updateNetworkBanner(true);
         };
         SyncEngine.setReplayFn((item) => API.replayQueuedItem(item));
         SyncEngine.setHooks({
@@ -162,10 +166,9 @@ const App = {
         });
 
         window.addEventListener('online', async () => {
-            this.state.isOnline = true;
-            this.updateNetworkBanner();
             console.log('[App] Network regained, revalidating session');
-            if (this.state.tokens.access) {
+            const reachable = await this.checkHostConnectivity();
+            if (reachable && this.state.tokens.access) {
                 try {
                     await this.validateToken();
                     if (this.state.currentScreen === 'main') {
@@ -180,7 +183,8 @@ const App = {
         document.addEventListener('visibilitychange', async () => {
             if (document.visibilityState === 'visible') {
                 console.log('[App] App resumed, revalidating session');
-                if (this.state.tokens.access) {
+                const reachable = await this.checkHostConnectivity();
+                if (reachable && this.state.tokens.access) {
                     try {
                         await this.validateToken();
                         if (this.state.currentScreen === 'main') {
@@ -195,7 +199,7 @@ const App = {
 
         // Lists rendered from the read cache are stale right after a sync
         window.addEventListener('mylofi:offline-sync', () => {
-            this.updateNetworkBanner();
+            this.updateNetworkBanner(true);
             if (this.state.currentScreen !== 'main') return;
             if (['nutrition', 'workouts', 'history', 'statistics', 'templates'].includes(this.state.currentPage)) {
                 this.renderPage(this.state.currentPage);
@@ -215,7 +219,7 @@ const App = {
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.addEventListener('message', (event) => {
                 if (event.data?.type === 'SYNC_COMPLETE') {
-                    this.updateNetworkBanner();
+                    this.updateNetworkBanner(true);
                     if (this.state.currentScreen === 'main' && ['nutrition', 'workouts', 'history'].includes(this.state.currentPage)) {
                         this.renderPage(this.state.currentPage);
                     }
@@ -251,11 +255,49 @@ const App = {
     },
 
     setupNetworkBanner() {
+        this.state.isOnline = navigator.onLine;
         NetworkBanner.init();
     },
 
-    updateNetworkBanner() {
-        NetworkBanner.refresh();
+    updateNetworkBanner(skipHostCheck = false) {
+        NetworkBanner.refresh(skipHostCheck);
+    },
+
+    /**
+     * Explicit backend host reachability check using a short AbortController
+     * timeout. navigator.onLine is unreliable under L3 blocks and captive
+     * portals (the interface reports online while HTTP requests time out), so
+     * a lightweight GET /health probe is the source of truth.
+     *
+     * When the host is reachable and the offline banner was visible, this
+     * flushes the IndexedDB sync queue and transitions to the clean hidden
+     * state. When unreachable, it shows the offline banner immediately.
+     */
+    async checkHostConnectivity() {
+        if (!navigator.onLine) {
+            this.state.isOnline = false;
+            NetworkBanner.showOffline();
+            return false;
+        }
+
+        let reachable = false;
+        try {
+            reachable = await API.checkHostReachable();
+        } catch (error) {
+            console.warn('[App] Host reachability check failed:', error);
+            reachable = false;
+        }
+
+        if (reachable) {
+            this.state.isOnline = true;
+            await NetworkBanner.refresh(true);
+            await this.flushOfflineQueue();
+        } else {
+            this.state.isOnline = false;
+            NetworkBanner.showOffline();
+        }
+
+        return reachable;
     },
 
     isAIOnline() {
@@ -896,6 +938,11 @@ const App = {
         console.log(`[App] Showing page: ${pageName}`);
         this.state.currentPage = pageName;
         this.elements.navItems.forEach(item => item.classList.toggle('active', item.dataset.page === pageName));
+        // navigator.onLine is unreliable under L3 blocks and captive portals
+        // (the interface reports online while HTTP requests time out), so
+        // every page navigation re-probes the backend host and shows the
+        // offline banner immediately when the host is unreachable.
+        this.checkHostConnectivity().catch(() => {});
         this.renderPage(pageName);
     },
     

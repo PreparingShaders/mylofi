@@ -257,10 +257,36 @@ export const Camera = {
             uploadBtn.classList.toggle('dark:bg-surface-700', !selectedFile);
         });
 
-        uploadBtn.addEventListener('click', async () => {
+uploadBtn.addEventListener('click', async () => {
             if (!selectedFile) return;
 
             const notes = container.querySelector('#photo-notes')?.value || null;
+
+            // Short-circuit offline: check before any UI work. The overlay
+            // must never appear when we are about to queue locally.
+            const isOffline = (this.app?.state?.isOnline === false) || !navigator.onLine;
+            if (isOffline) {
+                let compressedBlob = null;
+                try {
+                    compressedBlob = await Utils.compressImage(selectedFile);
+                    if (compressedBlob) {
+                        const originalSize = Utils.fileSizeLabel(selectedFile.size);
+                        const compressedSize = Utils.fileSizeLabel(compressedBlob.size);
+                        console.log(`[Camera] Compressed ${originalSize} → ${compressedSize}`);
+                    }
+                } catch (compressError) {
+                    console.warn('[Camera] Compression failed, using original:', compressError);
+                    compressedBlob = selectedFile;
+                }
+                await this.queueOfflineMeal(compressedBlob, notes);
+                this.app.showToast('Сохранено локально. Отправим при появлении связи.', 'info');
+                input.value = '';
+                selectedFile = null;
+                uploadBtn.disabled = false;
+                uploadBtn.textContent = 'Готово — загрузить';
+                return;
+            }
+
             const token = this.app.state.tokens.access;
             uploadBtn.disabled = true;
             uploadBtn.textContent = 'Сжатие...';
@@ -269,6 +295,8 @@ export const Camera = {
             // UI jumping and layout shift on click.
             const overlayState = this.showLoadingOverlay(container);
 
+            // Online path: compress, check host reachability, upload, poll.
+            uploadBtn.textContent = 'Загрузка...';
             let compressedBlob = null;
             try {
                 compressedBlob = await Utils.compressImage(selectedFile);
@@ -282,71 +310,70 @@ export const Camera = {
                 compressedBlob = selectedFile;
             }
 
-            if (navigator.onLine) {
-                uploadBtn.textContent = 'Загрузка...';
-                // The overlay takes over the form while the upload and analysis
-                // run, so the user sees a live timer and rotating hints instead
-                // of a frozen button. It is torn down only once the analysis
-                // reaches a terminal status, not when the upload answers.
-                try {
-                    const formData = new FormData();
-                    formData.append('file', compressedBlob, 'photo.webp');
-                    if (notes) formData.append('notes', notes);
-                    for (const [key, value] of Object.entries(this.mealTimeFields())) {
-                        formData.append(key, value);
-                    }
-
-                    const response = await API.post('/nutrition/photos', formData, token, true);
-                    const mealId = response?.meal_id ?? null;
-
-                    this.app.showToast('Фото загружено, идёт анализ', 'success');
-                    input.value = '';
-                    selectedFile = null;
-                    uploadBtn.disabled = false;
-                    uploadBtn.textContent = 'Готово — загрузить';
-
-                    // The 201 only means the background analysis started: keep
-                    // the overlay up and poll the meal until it is completed
-                    // (or failed), so the checkmark marks the finished analysis.
-                    if (mealId) {
-                        const outcome = await this.pollMealAnalysisStatus(mealId, token);
-                        if (outcome === 'completed') {
-                            this.markLoadingComplete(overlayState.overlay);
-                            await new Promise((resolve) => setTimeout(resolve, 500));
-                        } else {
-                            this.reportAnalysisOutcome(outcome, this.app);
-                        }
-                    }
-
-                    this.hideLoadingOverlay(overlayState);
-
-                    if (window.App && window.App.showPage) {
-                        window.App.showPage('nutrition');
-                    }
-                } catch (error) {
-                    this.hideLoadingOverlay(overlayState);
-                    if (error?.isNetworkError || error?.offlineQueued) {
-                        await this.queueOfflineMeal(compressedBlob, notes);
-                        this.app.showToast('Нет связи. Фото сохранено локально и будет загружено при появлении связи', 'info');
-                        input.value = '';
-                        selectedFile = null;
-                        uploadBtn.disabled = false;
-                        uploadBtn.textContent = 'Готово — загрузить';
-                    } else {
-                        console.error('[Camera] Upload error:', error);
-                        this.app.showToast(error.data?.detail || 'Ошибка загрузки', 'error');
-                        uploadBtn.disabled = false;
-                        uploadBtn.textContent = 'Готово — загрузить';
-                    }
+            // The overlay takes over the form while the upload and analysis
+            // run, so the user sees a live timer and rotating hints instead
+            // of a frozen button. It is torn down only once the analysis
+            // reaches a terminal status, not when the upload answers.
+            try {
+                // Proactive host reachability probe. navigator.onLine stays
+                // true under L3 blocks and silent DNS/SNI drops, so a
+                // lightweight GET /health with a short timeout is the only
+                // reliable pre-flight check before we commit to an 8s
+                // upload that would otherwise hang on mobile Safari.
+                const hostReachable = await API.checkHostReachable(token);
+                if (!hostReachable) {
+                    throw Object.assign(new Error('Сеть недоступна'), { isNetworkError: true, status: 0 });
                 }
-            } else {
-                this.hideLoadingOverlay(overlayState);
-                await this.queueOfflineMeal(compressedBlob, notes);
-                this.app.showToast('Оффлайн режим — фото сохранено локально и будет загружено при появлении связи', 'info');
+
+                const formData = new FormData();
+                formData.append('file', compressedBlob, 'photo.webp');
+                if (notes) formData.append('notes', notes);
+                for (const [key, value] of Object.entries(this.mealTimeFields())) {
+                    formData.append(key, value);
+                }
+
+                const response = await API.post('/nutrition/photos', formData, token, true);
+                const mealId = response?.meal_id ?? null;
+
+                this.app.showToast('Фото загружено, идёт анализ', 'success');
                 input.value = '';
                 selectedFile = null;
                 uploadBtn.disabled = false;
                 uploadBtn.textContent = 'Готово — загрузить';
+
+                // The 201 only means the background analysis started: keep
+                // the overlay up and poll the meal until it is completed
+                // (or failed), so the checkmark marks the finished analysis.
+                if (mealId) {
+                    const outcome = await this.pollMealAnalysisStatus(mealId, token);
+                    if (outcome === 'completed') {
+                        this.markLoadingComplete(overlayState.overlay);
+                        await new Promise((resolve) => setTimeout(resolve, 500));
+                    } else {
+                        this.reportAnalysisOutcome(outcome, this.app);
+                    }
+                }
+
+                this.hideLoadingOverlay(overlayState);
+
+                if (window.App && window.App.showPage) {
+                    window.App.showPage('nutrition');
+                }
+            } catch (error) {
+                this.hideLoadingOverlay(overlayState);
+                if (error?.isNetworkError || error?.offlineQueued) {
+                    await this.queueOfflineMeal(compressedBlob, notes);
+                    this.app.showToast('Сохранено локально. Отправим при появлении связи.', 'info');
+                    input.value = '';
+                    selectedFile = null;
+                    uploadBtn.disabled = false;
+                    uploadBtn.textContent = 'Готово — загрузить';
+                } else {
+                    console.error('[Camera] Upload error:', error);
+                    this.app.showToast(error.data?.detail || 'Ошибка загрузки', 'error');
+                    uploadBtn.disabled = false;
+                    uploadBtn.textContent = 'Готово — загрузить';
+                }
             }
         });
     },
