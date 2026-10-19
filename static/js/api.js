@@ -357,7 +357,7 @@ class APIClient {
             const newToken = window.App.state.tokens.access;
             const response = await this.request(method, endpoint, data, newToken, isFormData);
             
-            this.refreshQueue.forEach(({ resolve, method: m, endpoint: e, data: d, isFormData: f }) => {
+            this.refreshQueue.forEach(({ resolve, reject, method: m, endpoint: e, data: d, isFormData: f }) => {
                 this.request(m, e, d, newToken, f).then(resolve).catch(reject);
             });
             this.refreshQueue = [];

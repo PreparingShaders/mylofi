@@ -161,6 +161,38 @@ const App = {
             console.log('[App] Network lost, requests will be queued locally');
         });
 
+        window.addEventListener('online', async () => {
+            this.state.isOnline = true;
+            this.updateNetworkBanner();
+            console.log('[App] Network regained, revalidating session');
+            if (this.state.tokens.access) {
+                try {
+                    await this.validateToken();
+                    if (this.state.currentScreen === 'main') {
+                        this.renderPage(this.state.currentPage);
+                    }
+                } catch (e) {
+                    console.warn('[App] Online revalidation failed:', e);
+                }
+            }
+        });
+
+        document.addEventListener('visibilitychange', async () => {
+            if (document.visibilityState === 'visible') {
+                console.log('[App] App resumed, revalidating session');
+                if (this.state.tokens.access) {
+                    try {
+                        await this.validateToken();
+                        if (this.state.currentScreen === 'main') {
+                            this.renderPage(this.state.currentPage);
+                        }
+                    } catch (e) {
+                        console.warn('[App] Visibility revalidation failed:', e);
+                    }
+                }
+            }
+        });
+
         // Lists rendered from the read cache are stale right after a sync
         window.addEventListener('mylofi:offline-sync', () => {
             this.updateNetworkBanner();
@@ -281,7 +313,18 @@ const App = {
             this.showScreen('main');
             this.showPage('nutrition');
         } catch (error) {
-            console.error('[App] Token validation failed:', error);
+            console.error('[App] Token validation error:', error);
+            if (error?.isNetworkError || !navigator.onLine) {
+                // Temporary network drop on wake/resume: keep user logged in using cached state
+                console.warn('[App] Network error during token validation; retaining offline session.');
+                if (this.state.user) {
+                    this.showScreen('main');
+                    this.showPage('nutrition');
+                    return;
+                }
+            }
+            // Definite auth failure (401/403 or invalid session)
+            this.clearTokens();
             this.showScreen('landing');
             this.renderLanding();
         }
