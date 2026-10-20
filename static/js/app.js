@@ -130,8 +130,21 @@ const App = {
             if (this.state.tokens.access) {
                 console.log('[App] Token found, validating...');
                 try {
-                    await this.validateToken();
-                    await this.initSyncEngine();
+                    // Defer validation to background to allow cache-first render
+                    this.validateToken().then(() => this.initSyncEngine()).catch((e) => {
+                        console.error('[App] Token validation failed:', e);
+                        if (e?.isNetworkError || !navigator.onLine || !this.state.isOnline) {
+                            console.warn('[App] Network error during init token validation; retaining offline session.');
+                            this.showScreen('main');
+                            this.showPage('nutrition');
+                        } else {
+                            this.showScreen('landing');
+                            this.renderLanding();
+                        }
+                    });
+                    // Also proactively show main screen if we have cached session
+                    this.showScreen('main');
+                    this.showPage('nutrition');
                 } catch (e) {
                     console.error('[App] Token validation failed:', e);
                     if (e?.isNetworkError || !navigator.onLine || !this.state.isOnline) {
@@ -1051,7 +1064,28 @@ const App = {
             this.realtime.on('status', (status) => {
                 // A channel that came up has proved its token, so a later
                 // refusal is allowed to start the retry budget over.
-                if (status === 'open') this._realtimeAuthRetries = 0;
+                if (status === 'open') {
+                    this._realtimeAuthRetries = 0;
+                    this.state.isOnline = true;
+                    NetworkBanner.hide();
+                } else if (status === 'closed') {
+                    this.state.isOnline = false;
+                    NetworkBanner.showOffline();
+                }
+            });
+            window.addEventListener('mylofi:realtime-status', (e) => {
+                const status = e?.detail?.status;
+                if (status === 'open') {
+                    this.state.isOnline = true;
+                    NetworkBanner.hide();
+                    if (this.state.tokens?.access && this.state.currentScreen === 'main') {
+                        this.flushOfflineQueue().catch(() => {});
+                        this.renderPage(this.state.currentPage).catch(() => {});
+                    }
+                } else if (status === 'closed') {
+                    this.state.isOnline = false;
+                    NetworkBanner.showOffline();
+                }
             });
             this.realtime.on('unauthorized', () => {
                 // The server refused the token the handshake carried. A
