@@ -70,10 +70,14 @@ export const Camera = {
             </div>
         `;
 
-        // Lock the underlying form so taps land on the overlay instead.
+        // Lock the underlying form so taps land on the overlay instead. The
+        // previous state is remembered so the controls can be released again
+        // when the overlay comes down.
         const formRoot = container.querySelector('.p-4');
+        const locked = [];
         if (formRoot) {
             formRoot.querySelectorAll('input, textarea, button').forEach((el) => {
+                locked.push({ el, disabled: el.disabled });
                 el.disabled = true;
                 el.classList.add('pointer-events-none');
             });
@@ -102,7 +106,7 @@ export const Camera = {
             if (hintEl) hintEl.textContent = hints[hintIndex];
         }, 2500);
 
-        return { overlay, timerId, hintId };
+        return { overlay, timerId, hintId, locked };
     },
 
     /**
@@ -127,21 +131,103 @@ export const Camera = {
      */
     hideLoadingOverlay(state, onDone = null) {
         if (!state) return;
-        const { overlay, timerId, hintId } = state;
+        const { overlay, timerId, hintId, locked } = state;
         clearInterval(timerId);
         clearInterval(hintId);
         if (overlay) overlay.remove();
+        // The controls the overlay locked are released again: on the camera
+        // page the form stays on screen, and a permanently disabled upload
+        // button would block the next photo.
+        (locked || []).forEach(({ el, disabled }) => {
+            el.disabled = disabled;
+            el.classList.remove('pointer-events-none');
+        });
         if (onDone) onDone();
     },
 
     /**
-     * Poll a meal's analysis status until it reaches a terminal state.
+     * A one-shot waiter for the server's push about a single meal.
      *
-     * The POST /nutrition/photos answer only means the background task
-     * started, so the caller keeps its loading overlay up and polls here
-     * every 800ms until the meal is `completed` or `failed`. A hard
-     * deadline bounds the wait, and a dropped connection is retried on
-     * the next tick; only a persistent failure ends the loop early.
+     * The live channel delivers `meal_update` events on the window, so the
+     * waiter only filters them by meal id. It never touches the socket
+     * itself, which keeps it working across a reconnect.
+     *
+     * The outcome is remembered, so a push that arrives between two waits is
+     * not lost.
+     */
+    createAnalysisWaiter(mealId) {
+        let outcome = null;
+        let settle = null;
+        let timer = null;
+        let done = false;
+
+        const cleanup = () => {
+            window.removeEventListener('mylofi:meal-update', onUpdate);
+            if (timer) {
+                clearTimeout(timer);
+                timer = null;
+            }
+        };
+
+        const finish = (result) => {
+            if (done) return;
+            done = true;
+            outcome = result;
+            cleanup();
+            settle?.(result);
+            settle = null;
+        };
+
+        const onUpdate = (event) => {
+            const payload = event?.detail;
+            if (!payload) return;
+            if (Number(payload.meal_id) !== Number(mealId)) return;
+            const status = payload.status;
+            if (status !== 'completed' && status !== 'failed') return;
+            finish(status);
+        };
+
+        window.addEventListener('mylofi:meal-update', onUpdate);
+
+        return {
+            /**
+             * Resolve with 'completed' / 'failed' as soon as the push
+             * arrives, or with null when the wait window runs out.
+             */
+            wait(ms) {
+                if (outcome) return Promise.resolve(outcome);
+                if (done) return Promise.resolve(null);
+                return new Promise((resolve) => {
+                    settle = resolve;
+                    if (timer) clearTimeout(timer);
+                    timer = setTimeout(() => {
+                        timer = null;
+                        settle = null;
+                        resolve(null);
+                    }, ms);
+                });
+            },
+            cancel() {
+                done = true;
+                cleanup();
+                settle?.(null);
+                settle = null;
+            },
+        };
+    },
+
+    /**
+     * Wait for a meal's analysis to reach a terminal status.
+     *
+     * The server pushes the outcome over the live channel, so the common
+     * case is a single event instead of a poll loop. The loop stays as the
+     * fallback for a client without a live socket (or one that lost it
+     * mid-wait), because the meal status endpoint remains the source of
+     * truth either way.
+     *
+     * While the socket is up the loop slows down to a backstop rate, so a
+     * push that never arrives costs a handful of requests instead of one
+     * every 800ms.
      *
      * Returns 'completed' | 'failed' | 'timeout' | 'error'.
      */
@@ -149,31 +235,51 @@ export const Camera = {
         const POLL_INTERVAL_MS = 800;
         const POLL_TIMEOUT_MS = 45000;
         const MAX_CONSECUTIVE_ERRORS = 3;
+        // How long a live push is awaited before the poll backstop runs.
+        const LIVE_PUSH_WAIT_MS = 8000;
         const deadline = Date.now() + POLL_TIMEOUT_MS;
         let consecutiveErrors = 0;
 
-        while (Date.now() < deadline) {
-            let meal = null;
-            try {
-                meal = await API.get(`/nutrition/meals/${mealId}`, accessToken);
-            } catch (error) {
-                consecutiveErrors += 1;
-                console.warn('[Camera] Meal status poll failed:', error?.message);
-                if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-                    return 'error';
+        const waiter = this.createAnalysisWaiter(mealId);
+
+        try {
+            while (Date.now() < deadline) {
+                if (window.App?.realtime?.isConnected()) {
+                    const pushed = await waiter.wait(LIVE_PUSH_WAIT_MS);
+                    if (pushed === 'completed') return 'completed';
+                    if (pushed === 'failed') return 'failed';
+                }
+
+                let meal = null;
+                try {
+                    // The read cache is skipped on purpose: a stale
+                    // "processing" answer would keep this loop spinning
+                    // until its deadline instead of reporting the outage.
+                    meal = await API.getFresh(`/nutrition/meals/${mealId}`, accessToken);
+                } catch (error) {
+                    consecutiveErrors += 1;
+                    console.warn('[Camera] Meal status poll failed:', error?.message);
+                    if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+                        return 'error';
+                    }
+                }
+
+                if (meal) {
+                    consecutiveErrors = 0;
+                    if (meal.status === 'completed') return 'completed';
+                    if (meal.status === 'failed') return 'failed';
+                }
+
+                if (Date.now() >= deadline) break;
+                if (!window.App?.realtime?.isConnected()) {
+                    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
                 }
             }
 
-            if (meal) {
-                consecutiveErrors = 0;
-                if (meal.status === 'completed') return 'completed';
-                if (meal.status === 'failed') return 'failed';
-            }
-
-            await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+            return 'timeout';
+        } finally {
+            waiter.cancel();
         }
-
-        return 'timeout';
     },
 
     /**
@@ -353,6 +459,8 @@ export const Camera = {
             // run, so the user sees a live timer and rotating hints instead
             // of a frozen button. It is torn down only once the analysis
             // reaches a terminal status, not when the upload answers.
+            const overlayState = this.showLoadingOverlay(container);
+            const token = this.app?.state?.tokens?.access || window.App?.state?.tokens?.access || null;
             try {
                 // Proactive host reachability probe. navigator.onLine stays
                 // true under L3 blocks and silent DNS/SNI drops, so a
@@ -381,8 +489,9 @@ export const Camera = {
                 uploadBtn.textContent = 'Готово — загрузить';
 
                 // The 201 only means the background analysis started: keep
-                // the overlay up and poll the meal until it is completed
-                // (or failed), so the checkmark marks the finished analysis.
+                // the overlay up until the meal reaches a terminal status
+                // (pushed over the live channel, polled as a fallback), so
+                // the checkmark marks the finished analysis.
                 if (mealId) {
                     const outcome = await this.pollMealAnalysisStatus(mealId, token);
                     if (outcome === 'completed') {

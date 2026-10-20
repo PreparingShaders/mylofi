@@ -57,7 +57,61 @@ export const Nutrition = {
     _aiSynergyCustomRange: { start: '', end: '' },
     _aiSynergyResult: null,          // last /ai/synergy payload
     _aiSynergyRunning: false,        // analysis in flight
-    _aiSynergyModalEl: null,         // full-screen modal element, if open
+
+    // True while the "new meal" sheet is being submitted. A full render
+    // closes that sheet, so the live updates are held back until the
+    // submission is done - it re-renders the page itself when it finishes.
+    _mealSubmitInFlight: false,
+
+    /**
+     * Whether a sheet or a modal currently covers the page.
+     *
+     * A render tears those down, so a live update that arrives while one is
+     * open has to wait: the user is in the middle of something, and closing
+     * their sheet would throw away what they typed.
+     */
+    hasOpenOverlay() {
+        return Boolean(
+            this._newMealModalState || this._newMealModalClosing
+            || this._periodSheetState || this._periodSheetClosing
+            || this._editMealModalState || this._editMealModalClosing
+            || this._aiSynergyModalEl
+        );
+    },
+
+    init(app) {
+        this.app = app;
+        window.addEventListener('mylofi:sync-completed', async (event) => {
+            try {
+                if (this.app?.state?.currentPage !== 'nutrition') return;
+                if (this._mealSubmitInFlight) return;
+                if (this.hasOpenOverlay()) return;
+                const container = this.app.elements?.pageContent;
+                if (!container) return;
+                await this.render(container, this.app, this.selectedDate);
+            } catch (error) {
+                console.error('[Nutrition] sync-completed handler error:', error);
+            }
+        });
+
+        // The server pushes the moment a background analysis lands. The card
+        // in the carousel is still the "analysing" one at that point, so the
+        // page is re-rendered to show the real result.
+        window.addEventListener('mylofi:meal-update', async (event) => {
+            try {
+                const status = event?.detail?.status;
+                if (status !== 'completed' && status !== 'failed') return;
+                if (this.app?.state?.currentPage !== 'nutrition') return;
+                if (this._mealSubmitInFlight) return;
+                if (this.hasOpenOverlay()) return;
+                const container = this.app.elements?.pageContent;
+                if (!container) return;
+                await this.render(container, this.app, this.selectedDate);
+            } catch (error) {
+                console.error('[Nutrition] meal-update handler error:', error);
+            }
+        });
+    },
 
     /**
      * Fetch the latest saved synergy report so state survives page reloads.
@@ -1579,6 +1633,10 @@ export const Nutrition = {
     },
 
     async handleNewMealSubmit(modalEl, state) {
+        // A render closes this sheet, so the live "analysis landed" updates
+        // are held back until the submission is through - it re-renders the
+        // page itself when it finishes.
+        this._mealSubmitInFlight = true;
         try {
         if (!state.selectedFile || !state.selectedMealType) {
             return;
@@ -1713,6 +1771,8 @@ export const Nutrition = {
             }
             try { Camera.hideLoadingOverlay(modalEl); } catch (_) {}
             this.app.showToast(err?.message || 'Не удалось сохранить блюдо', 'error');
+        } finally {
+            this._mealSubmitInFlight = false;
         }
     },
 

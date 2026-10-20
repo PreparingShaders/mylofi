@@ -497,7 +497,48 @@ async def mark_meal_failed(
 
     await db.commit()
     await db.refresh(meal)
+    await notify_meal_analysis_update(
+        db,
+        meal_id,
+        MealStatus.FAILED,
+        user_id=meal.user_id,
+        error_message=error_message,
+    )
     return meal
+
+
+async def notify_meal_analysis_update(
+    db: AsyncSession,
+    meal_id: int,
+    status: MealStatus,
+    *,
+    user_id: Optional[int] = None,
+    **payload,
+) -> None:
+    """Push the analysis outcome to the sockets the user has open.
+
+    Best-effort by design: the meal status in the database stays the source
+    of truth and the client polls it as a fallback, so a socket that is
+    missing, closed or broken costs the client an instant update and nothing
+    else. It must therefore never raise into the analysis task.
+    """
+    try:
+        from app.ws.manager import manager
+
+        await manager.notify_meal_update(
+            db,
+            meal_id,
+            status,
+            user_id=user_id,
+            **payload,
+        )
+    except Exception:
+        logger.warning(
+            "[AI Task] Failed to push meal %s update (user_id=%s)",
+            meal_id,
+            user_id,
+            exc_info=True,
+        )
 
 
 async def fail_stale_meals(
@@ -529,19 +570,30 @@ async def fail_stale_meals(
             quality_reason=STUCK_MEAL_REASON,
             updated_at=datetime.now(timezone.utc),
         )
-        .returning(Meal.id)
+        .returning(Meal.id, Meal.user_id)
         .execution_options(synchronize_session="fetch")
     )
-    stale_ids = list(result.scalars().all())
-    if not stale_ids:
+    stale = list(result.all())
+    if not stale:
         return 0
 
     await db.commit()
     logger.warning(
-        f"[Meal Cleanup] Marked {len(stale_ids)} stuck meal(s) as FAILED "
-        f"(pending/processing older than {stale_after}): {stale_ids}"
+        f"[Meal Cleanup] Marked {len(stale)} stuck meal(s) as FAILED "
+        f"(pending/processing older than {stale_after}): {[meal_id for meal_id, _ in stale]}"
     )
-    return len(stale_ids)
+
+    # A client may be waiting on one of these meals right now: tell it the
+    # analysis is over instead of letting it poll until its deadline.
+    for meal_id, owner_id in stale:
+        await notify_meal_analysis_update(
+            db,
+            meal_id,
+            MealStatus.FAILED,
+            user_id=owner_id,
+            error_message=STUCK_MEAL_ERROR,
+        )
+    return len(stale)
 
 
 async def get_daily_nutrition_summary(
@@ -913,6 +965,20 @@ async def process_meal_photo_task(meal_id: int, tz_offset_minutes: int = 0) -> N
             logger.info(
                 f"[AI Task] Meal {meal_id} analysis completed successfully "
                 f"in {elapsed:.1f}s: {meal.dish_name}"
+            )
+
+            # The client is waiting on this meal: tell it the analysis is done
+            # instead of letting it poll the status endpoint.
+            await notify_meal_analysis_update(
+                db,
+                meal_id,
+                MealStatus.COMPLETED,
+                user_id=meal.user_id,
+                dish_name=meal.dish_name,
+                calories=meal.calories,
+                protein_g=meal.protein_g,
+                fat_g=meal.fat_g,
+                carbs_g=meal.carbs_g,
             )
 
         except Exception as e:

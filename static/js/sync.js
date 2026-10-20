@@ -308,8 +308,15 @@ export const SyncEngine = {
                     app.showToast(`Синхронизировано изменений: ${synced}`, 'success');
                 }
                 window.dispatchEvent(new CustomEvent('mylofi:offline-sync', { detail: { synced } }));
-                if (window.App?.state?.currentPage === 'nutrition') {
-                    window.App.renderPage('nutrition');
+                window.dispatchEvent(new CustomEvent('mylofi:sync-completed', { detail: { syncedCount: synced } }));
+                try {
+                    if (app?.state?.currentScreen === 'main' && app?.state?.currentPage === 'nutrition') {
+                        if (typeof app.renderPage === 'function') {
+                            await app.renderPage('nutrition');
+                        }
+                    }
+                } catch (e) {
+                    console.error('[SyncEngine] Direct nutrition refresh failed:', e);
                 }
             }
 

@@ -77,6 +77,24 @@ const App = {
     },
     
     elements: {},
+
+    /**
+     * The live channel to the backend (see RealtimeSocket).
+     *
+     * It only carries notifications - "this analysis is done" - and never
+     * data the REST endpoints do not also serve, so a socket that is down
+     * costs the app an instant update and nothing else.
+     */
+    realtime: null,
+
+    // How often the live channel may renew its token after a refused
+    // handshake. One is enough: a second refusal with a fresh token means
+    // the session itself is gone.
+    _realtimeAuthRetries: 0,
+
+    // The renewal that is currently running, so two callers cannot spend
+    // the same refresh token twice.
+    _realtimeConnectPromise: null,
     
      async init() {
         console.log('[App] Initializing...');
@@ -99,6 +117,7 @@ const App = {
             this.setupOfflineSync();
             this.loadTokens();
             this.setupNetworkBanner();
+            Nutrition.init(this);
 
             // DB init is non-critical
             try {
@@ -183,6 +202,8 @@ const App = {
 
         window.addEventListener('online', async () => {
             console.log('[App] Network regained, revalidating session');
+            // The socket was waiting for exactly this moment.
+            this.connectRealtime();
             const reachable = await this.checkHostConnectivity();
             if (reachable && this.state.tokens.access) {
                 try {
@@ -199,6 +220,10 @@ const App = {
         document.addEventListener('visibilitychange', async () => {
             if (document.visibilityState === 'visible') {
                 console.log('[App] App resumed, revalidating session');
+                // A backgrounded tab can have its socket suspended or dropped
+                // by the mobile browser; reconnecting is cheap and the
+                // channel heals itself.
+                this.connectRealtime();
                 const reachable = await this.checkHostConnectivity();
                 if (reachable && this.state.tokens.access) {
                     try {
@@ -339,6 +364,9 @@ const App = {
         localStorage.removeItem('user');
         this.state.tokens = { access: null, refresh: null };
         this.state.user = null;
+        // The live channel is authenticated with the access token, so it
+        // goes down with it.
+        this.disconnectRealtime();
     },
 
     async refreshAccessToken() {
@@ -351,6 +379,9 @@ const App = {
             this.state.tokens.access = response.access_token;
             this.state.tokens.refresh = response.refresh_token;
             this.saveTokens();
+            // The live channel authenticates with the access token, so the
+            // socket has to hand the renewed one to its next handshake.
+            this.realtime?.setToken(response.access_token);
             return true;
         } catch (error) {
             console.error('[App] Token refresh failed:', error);
@@ -932,17 +963,125 @@ const App = {
             console.error(`[App] Screen ${screenName} not found!`);
             return;
         }
-        
+
         Object.values(this.elements.screens).forEach(screen => {
             if (screen) screen.classList.add('hidden');
         });
-        
+
         this.elements.screens[screenName].classList.remove('hidden');
         this.state.currentScreen = screenName;
-        
+
+        // The live channel is authenticated with the access token, so it
+        // lives exactly as long as the signed-in shell does.
+        if (screenName === 'main') {
+            this.connectRealtime();
+        } else if (screenName === 'landing') {
+            this.disconnectRealtime();
+        }
+
         if (this.elements.bottomNav) {
             this.elements.bottomNav.style.display = (screenName === 'main') ? 'block' : 'none';
         }
+    },
+
+    /**
+     * Open the live channel used for background-analysis updates.
+     *
+     * The handshake is authenticated with the access token, so the token is
+     * renewed first when it is about to expire: the server checks the token
+     * once, during the handshake, and refuses it with a close the socket
+     * cannot recover from on its own.
+     */
+    connectRealtime() {
+        // Only one renewal at a time: the server rotates the refresh token,
+        // so two parallel renewals would spend the same one twice and the
+        // loser would sign the user out.
+        if (this._realtimeConnectPromise) return;
+        this._realtimeConnectPromise = this.ensureRealtimeToken()
+            .then((token) => {
+                if (!token) return;
+                this.openRealtime(token);
+            })
+            .catch((error) => {
+                console.warn('[App] Live channel could not be opened:', error);
+            })
+            .finally(() => {
+                this._realtimeConnectPromise = null;
+            });
+    },
+
+    /**
+     * The access token the live channel should authenticate with.
+     *
+     * Returns null when there is no session. A token that is expired or
+     * about to expire is refreshed first; `forceRefresh` does it even when
+     * the token still looks alive, which is what a refused handshake needs.
+     */
+    async ensureRealtimeToken(forceRefresh = false) {
+        const token = this.state.tokens?.access;
+        if (!token) return null;
+        if (!forceRefresh && !API.isTokenExpiring(token)) return token;
+
+        console.log('[App] Renewing the access token for the live channel');
+        try {
+            const refreshed = await this.refreshAccessToken();
+            if (!refreshed) return null;
+        } catch (error) {
+            console.warn('[App] Token renewal for the live channel failed:', error);
+            return null;
+        }
+        return this.state.tokens?.access || null;
+    },
+
+    /**
+     * Put the socket on the given token and open it.
+     *
+     * The socket instance is kept across token changes: it carries the
+     * reconnect and the heartbeat, and only the token it hands to the
+     * handshake has to be current.
+     */
+    openRealtime(token) {
+        // The session can be gone by the time the renewal answers - a
+        // logout, a 403 - and a socket opened for it would linger behind
+        // for a session that no longer exists.
+        if (this.state.tokens?.access !== token) return;
+
+        if (!this.realtime) {
+            this.realtime = API.createWebSocket(token);
+            this.realtime.on('status', (status) => {
+                // A channel that came up has proved its token, so a later
+                // refusal is allowed to start the retry budget over.
+                if (status === 'open') this._realtimeAuthRetries = 0;
+            });
+            this.realtime.on('unauthorized', () => {
+                // The server refused the token the handshake carried. A
+                // renewed one is worth one more attempt; the same one would
+                // be refused again.
+                if (this._realtimeAuthRetries >= 1) {
+                    console.warn('[App] Live channel refused the access token, giving up');
+                    this._realtimeAuthRetries = 0;
+                    return;
+                }
+                this._realtimeAuthRetries += 1;
+                this.ensureRealtimeToken(true)
+                    .then((fresh) => {
+                        if (!fresh) return;
+                        this.realtime?.setToken(fresh);
+                        this.realtime?.connect();
+                    })
+                    .catch((error) => {
+                        console.warn('[App] Live channel re-authentication failed:', error);
+                    });
+            });
+        }
+
+        this.realtime.setToken(token);
+        this.realtime.connect();
+    },
+
+    disconnectRealtime() {
+        this.realtime?.close();
+        this.realtime = null;
     },
 
     hideSplash() {
