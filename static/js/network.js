@@ -5,6 +5,7 @@ import { SyncEngine } from './sync.js';
 const OFFLINE_MESSAGE = 'Офлайн-режим: данные сохранятся локально';
 const RESTORED_MESSAGE = 'Связь восстановлена. Синхронизируем...';
 const HIDE_DELAY_MS = 3000;
+const SAFE_AREA_PROBE_ID = 'network-banner-safe-area-probe';
 
 const OFFLINE_ICON = `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true">
     <path d="M5 12.9a10 10 0 015.2-2.7"></path>
@@ -35,16 +36,24 @@ export const NetworkBanner = {
         this.mount();
 
         window.addEventListener('offline', () => this.showOffline());
+        // The safe-area inset follows the orientation, so the banner's own
+        // height has to be re-measured when the viewport changes.
+        window.addEventListener('resize', () => this.syncHeight());
+        window.addEventListener('orientationchange', () => this.syncHeight());
 
         this.refresh();
     },
 
     mount() {
-        if (this.el && document.body.contains(this.el)) return;
+        if (this.el && document.body.contains(this.el)) {
+            this.syncHeight();
+            return;
+        }
 
         const existing = document.getElementById('network-banner');
         if (existing) {
             this.el = existing;
+            this.syncHeight();
             return;
         }
 
@@ -56,6 +65,45 @@ export const NetworkBanner = {
         el.innerHTML = '<span class="network-status-banner__icon"></span><span class="network-status-banner__text"></span>';
         document.body.appendChild(el);
         this.el = el;
+        this.syncHeight();
+    },
+
+    /**
+     * env(safe-area-inset-top) in pixels - no API exposes it, so it is read
+     * from a hidden probe that carries the very same padding declaration.
+     */
+    safeAreaTop() {
+        let probe = document.getElementById(SAFE_AREA_PROBE_ID);
+        if (!probe) {
+            probe = document.createElement('div');
+            probe.id = SAFE_AREA_PROBE_ID;
+            probe.setAttribute('aria-hidden', 'true');
+            probe.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;visibility:hidden;pointer-events:none;padding-top:env(safe-area-inset-top,0px);';
+            document.body.appendChild(probe);
+        }
+        return parseFloat(getComputedStyle(probe).paddingTop) || 0;
+    },
+
+    /**
+     * Height of the banner WITHOUT the safe-area inset it already carries,
+     * published as --network-banner-height for the page layout.
+     *
+     * The app shell reserves that inset with its own spacer, so the page
+     * content only has to clear the banner's own box; counting the inset a
+     * second time is what pushed the page header far down the screen. The
+     * measured value keeps the layout honest when the message wraps onto a
+     * second line or the font size changes.
+     */
+    syncHeight() {
+        const el = this.el;
+        if (!el || !document.body.contains(el)) return;
+        // An empty banner has no content row yet - measuring it would publish
+        // a height that is smaller than the one it grows into.
+        const text = el.querySelector('.network-status-banner__text');
+        if (text && !text.textContent.trim()) return;
+        const height = Math.max(0, el.offsetHeight - this.safeAreaTop());
+        if (!height) return;
+        document.documentElement.style.setProperty('--network-banner-height', `${height}px`);
     },
 
     clearTimers() {
@@ -74,6 +122,9 @@ export const NetworkBanner = {
         this.el.querySelector('.network-status-banner__text').textContent = isOffline
             ? OFFLINE_MESSAGE
             : RESTORED_MESSAGE;
+        // A different message can take another line, so the height the page
+        // layout has to clear is re-measured.
+        this.syncHeight();
     },
 
     showOffline() {

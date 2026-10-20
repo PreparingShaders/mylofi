@@ -3529,6 +3529,22 @@ input[data-field="reps"] {
 }
 
 /* ============ Global Network Status Banner ============ */
+/* Geometry of the banner, shared with the page layout below.
+   --network-banner-height is the banner's own box WITHOUT the safe-area
+   inset it already carries (NetworkBanner measures it and publishes it here;
+   the 32px fallback is what the banner takes on a 16px text row: 8px padding
+   + 16px row + 8px padding).
+   --network-banner-gap is the breathing room between the banner's bottom edge
+   and the first header of the page.
+   --network-banner-page-pad is the top padding the page roots carry
+   themselves (Tailwind p-4 / pt-4) - it is what forms the visible gap under
+   the banner, so the layout below must not count it twice. */
+:root {
+    --network-banner-height: 32px;
+    --network-banner-gap: 12px;
+    --network-banner-page-pad: 16px;
+}
+
 /* The banner is mounted once on document.body by NetworkBanner.init() and must
    stay visible across every screen (landing, auth, nutrition, workouts,
    profile) whenever the host is unreachable. Fixed positioning + z-[99999]
@@ -3590,11 +3606,27 @@ input[data-field="reps"] {
     white-space: nowrap;
 }
 
-/* The body class is toggled alongside the banner so page layouts that want to
-   reserve space (e.g. pushing the main scroll container down) can react. */
+/* The body class is toggled alongside the banner so the page content can step
+   down far enough to clear it.
+
+   The geometry: the banner is fixed at the top of the viewport and its own
+   padding-top carries env(safe-area-inset-top) - it has to paint under the
+   notch. The app shell reserves that very same inset with the .h-safe-top
+   spacer in index.html, so #page-content already starts BELOW the safe area.
+   Adding env(safe-area-inset-top) to the padding here as well counted the
+   inset twice and opened a huge gap between the banner and the page header.
+
+   So the offset is the banner's own box only: --network-banner-height (the
+   height without the safe-area inset) plus the gap that is wanted under the
+   banner, minus the top padding the pages bring themselves - that padding is
+   what creates the visible gap, so it is subtracted instead of stacked. */
 body.has-network-banner #page-content,
 body.has-network-banner main {
-    padding-top: calc(44px + env(safe-area-inset-top, 0px));
+    padding-top: calc(
+        var(--network-banner-height, 32px)
+        + var(--network-banner-gap, 12px)
+        - var(--network-banner-page-pad, 16px)
+    );
 }
 
 /* On wide screens the message has room to breathe — no ellipsis, full text. */
