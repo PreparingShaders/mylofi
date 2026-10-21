@@ -356,6 +356,17 @@ async def cancel_workout_session(db: AsyncSession, session_id: int, user_id: int
     return await get_workout_session(db, session.id, user_id)
 
 
+async def delete_workout_session(db: AsyncSession, session_id: int, user_id: int) -> bool:
+    """Delete a workout session and all related data"""
+    session = await get_workout_session(db, session_id, user_id)
+    if not session:
+        return False
+
+    await db.delete(session)
+    await db.commit()
+    return True
+
+
 async def get_workout_history(
     db: AsyncSession,
     user_id: int,
@@ -365,14 +376,20 @@ async def get_workout_history(
     """Get workout history with pagination"""
     # Get total count
     count_result = await db.execute(
-        select(func.count(WorkoutSession.id)).where(WorkoutSession.user_id == user_id)
+        select(func.count(WorkoutSession.id)).where(
+            WorkoutSession.user_id == user_id,
+            WorkoutSession.status != WorkoutSessionStatus.CANCELLED,
+        )
     )
     total = count_result.scalar()
 
     # Get sessions
     result = await db.execute(
         select(WorkoutSession)
-        .where(WorkoutSession.user_id == user_id)
+        .where(
+            WorkoutSession.user_id == user_id,
+            WorkoutSession.status != WorkoutSessionStatus.CANCELLED,
+        )
         .options(
             selectinload(WorkoutSession.exercises).selectinload(WorkoutSessionExercise.sets)
         )

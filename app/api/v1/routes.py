@@ -117,6 +117,7 @@ from app.services.workout import (
     create_workout_session,
     create_workout_template,
     delete_exercise,
+    delete_workout_session,
     delete_workout_template,
     get_active_workout_session,
     get_exercises,
@@ -1473,6 +1474,21 @@ async def cancel_workout_session_endpoint(
             status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
         )
     return session
+
+
+@router.delete("/workouts/sessions/{session_id}")
+async def delete_workout_session_endpoint(
+    session_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete a workout session"""
+    success = await delete_workout_session(db, session_id, current_user.id)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+    return {"message": "Session deleted"}
 
 
 @router.post(

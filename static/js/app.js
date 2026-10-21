@@ -2020,6 +2020,7 @@ const App = {
                 durationSeconds !== null ? { duration_seconds: durationSeconds } : null,
                 this.state.tokens.access,
             );
+            Workouts.forgetAiPlan(sessionId);
             this.showToast('Тренировка завершена!', 'success');
         } catch (e) {
             if (e?.offlineQueued) {
@@ -2072,6 +2073,7 @@ const App = {
         }
         try {
             await API.post(`/workouts/sessions/${sessionId}/cancel`, null, this.state.tokens.access);
+            Workouts.forgetAiPlan(sessionId);
             this.showToast('Тренировка отменена', 'info');
         } catch (e) {
             if (e?.offlineQueued) {
