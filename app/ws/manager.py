@@ -52,15 +52,26 @@ class ConnectionManager:
         db: AsyncSession,
         meal_id: int,
         status: MealStatus,
+        user_id: Optional[int] = None,
         **kwargs
     ):
-        """Notify user about meal status update"""
-        # Get meal with user_id
-        from sqlalchemy import select
-        result = await db.execute(select(Meal).where(Meal.id == meal_id))
-        meal = result.scalar_one_or_none()
-        if not meal:
-            return
+        """Notify user about meal status update.
+
+        `user_id` short-circuits the meal lookup. The caller that writes the
+        status normally already holds the row it just changed, and the push
+        should not cost an extra query on the analysis path.
+
+        The message is a notification, never the payload of record: the client
+        still reads the meal over REST, so a push that is lost costs one
+        update and nothing else.
+        """
+        if user_id is None:
+            from sqlalchemy import select
+            result = await db.execute(select(Meal).where(Meal.id == meal_id))
+            meal = result.scalar_one_or_none()
+            if not meal:
+                return
+            user_id = meal.user_id
 
         payload = WSMealUpdatePayload(
             meal_id=meal_id,
@@ -68,8 +79,17 @@ class ConnectionManager:
             **kwargs
         )
 
-        message = WSMessage(type=WSMessageType.MEAL_UPDATE, payload=payload.model_dump())
-        await self.send_personal_message(message, meal.user_id)
+        message = WSMessage(
+            type=WSMessageType.MEAL_UPDATE,
+            # JSON mode so the status arrives as its plain string value
+            # instead of an enum member.
+            payload=payload.model_dump(mode="json"),
+        )
+        await self.send_personal_message(message, user_id)
+
+    def has_connections(self, user_id: int) -> bool:
+        """Whether the user currently has at least one live socket."""
+        return bool(self.active_connections.get(user_id))
 
 
 manager = ConnectionManager()

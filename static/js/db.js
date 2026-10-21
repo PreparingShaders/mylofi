@@ -156,15 +156,66 @@ export const DB = {
     // Writes a local record and enqueues a sync_queue entry in a single
     // transaction so the queue is always consistent with the local state.
     async atomicWrite(storeName, record, syncItem) {
-        const db = await openDB();
-        const tx = db.transaction([storeName, 'sync_queue'], 'readwrite');
-        const store = tx.objectStore(storeName);
-        const queue = tx.objectStore('sync_queue');
+        const attempt = async () => {
+            const db = await openDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction([storeName, 'sync_queue'], 'readwrite');
+                let requestError = null;
 
-        if (record) store.put(record);
-        if (syncItem) queue.add(this._normalizeSyncItem(syncItem));
+                const fail = (fallback) => {
+                    const msg = requestError instanceof Error
+                        ? requestError.message
+                        : (tx.error && tx.error.message)
+                        ? tx.error.message
+                        : fallback;
+                    const name = (requestError && requestError.name) || (tx.error && tx.error.name) || 'UnknownError';
+                    console.error('[DB] atomicWrite transaction failure:', { storeName, requestError, txError: tx.error, msg, name });
+                    if (requestError instanceof Error) reject(requestError);
+                    else if (tx.error) reject(tx.error instanceof Error ? tx.error : new Error(msg || name));
+                    else reject(new Error(fallback));
+                };
 
-        return txDone(tx);
+                tx.oncomplete = () => {
+                    if (requestError) {
+                        fail('Transaction completed with a request error');
+                    } else {
+                        resolve();
+                    }
+                };
+                tx.onerror = () => fail('Transaction error');
+                tx.onabort = () => fail('Transaction aborted');
+
+                const store = tx.objectStore(storeName);
+                const queue = tx.objectStore('sync_queue');
+
+                if (record) {
+                    const putReq = store.put(record);
+                    putReq.onerror = () => {
+                        requestError = putReq.error || requestError;
+                    };
+                }
+                if (syncItem) {
+                    const item = this._normalizeSyncItem(syncItem);
+                    const addReq = queue.add(item);
+                    addReq.onerror = () => {
+                        requestError = addReq.error || requestError;
+                    };
+                }
+            });
+        };
+
+        try {
+            return await attempt();
+        } catch (firstErr) {
+            // Safari occasionally aborts otherwise-healthy IndexedDB
+            // transactions (with tx.error === null) during contention or
+            // upgrades. Retry once before giving up.
+            if (!(firstErr instanceof Error)) {
+                throw new Error(firstErr?.message || String(firstErr) || 'Unknown offline error');
+            }
+            console.warn('[DB] atomicWrite retrying after error:', firstErr.message);
+            return attempt();
+        }
     },
 
     _normalizeSyncItem(item) {
@@ -194,7 +245,7 @@ export const DB = {
         const record = await this.get(storeName, tempId);
         if (!record) return null;
 
-        const updated = { ...record, id: realId, sync_status: SYNC_STATUS.SYNCED, updated_at: Date.now() };
+        const updated = { ...record, id: realId, tempId: null, sync_status: SYNC_STATUS.SYNCED, updated_at: Date.now(), resolved: true };
         const db = await openDB();
         const tx = db.transaction([storeName, 'sync_queue'], 'readwrite');
         const store = tx.objectStore(storeName);
@@ -424,7 +475,35 @@ export const DB = {
 function txDone(tx) {
     return new Promise((resolve, reject) => {
         tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-        tx.onabort = () => reject(tx.error);
+        tx.onerror = () => {
+            let e = tx.error;
+            if (!e) {
+                e = new Error('Transaction error');
+            }
+            if (e instanceof Error) {
+                reject(e);
+            } else {
+                try {
+                    reject(new Error(String(e)));
+                } catch (_) {
+                    reject(new Error('Transaction error'));
+                }
+            }
+        };
+        tx.onabort = () => {
+            let e = tx.error;
+            if (!e) {
+                e = new Error('Transaction aborted');
+            }
+            if (e instanceof Error) {
+                reject(e);
+            } else {
+                try {
+                    reject(new Error(String(e)));
+                } catch (_) {
+                    reject(new Error('Transaction aborted'));
+                }
+            }
+        };
     });
 }

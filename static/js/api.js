@@ -3,14 +3,41 @@ import { SyncEngine } from './sync.js';
 
 const API_BASE = `${window.location.origin}/api/v1`;
 
+// The live channel sits next to the REST API, but it is NOT the API prefix:
+// the websocket route is /api/v1/ws, and a handshake to /api/v1 matches no
+// websocket route at all - the server answers it with a close before the
+// handshake, which the browser reports as "403 Forbidden".
+const WS_PATH = '/api/v1/ws';
+
+// How long before the expiry the access token is renewed for the handshake.
+// The server checks the token once, at the handshake, so a token that dies
+// a second later would leave the channel dead without a word.
+const TOKEN_EXPIRY_SKEW_MS = 30000;
+
 const OFFLINE_QUEUE_KEY = 'offline_sync_queue';
 const OFFLINE_MESSAGE = 'Сеть недоступна. Изменения сохранены локально и будут отправлены при появлении связи';
 const QUEUEABLE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+const HOST_CHECK_TIMEOUT_MS = 3000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
+const UPLOAD_TIMEOUT_MS = 8000;
 
 const READ_CACHE_PREFIX = 'offline_read_cache:';
 const READ_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const READ_CACHE_MAX_ENTRY_BYTES = 300 * 1024;
 const READ_CACHE_TOTAL_BYTES = 2 * 1024 * 1024;
+
+// The live socket pings often enough that no middlebox in the path can drop
+// the connection as idle, and it gives up on a link that stopped answering
+// long before the TCP stack would notice.
+const REALTIME_PING_INTERVAL_MS = 25000;
+const REALTIME_PONG_TIMEOUT_MS = 10000;
+const REALTIME_RECONNECT_BASE_MS = 1000;
+const REALTIME_RECONNECT_MAX_MS = 30000;
+
+// Close code the server sends when the handshake carried an invalid or
+// expired token. Reconnecting with the same token cannot succeed.
+const REALTIME_CLOSE_UNAUTHORIZED = 4001;
 
 // Every nutrition read the dashboard can be showing: the day log, the period
 // summaries, the custom-range endpoints and the daily recap.
@@ -38,6 +65,285 @@ const READ_CACHE_RELATIONSHIPS = {
     // nutrition readout the dashboard renders.
     'users/me': ['users/me', 'users/me/usage', ...NUTRITION_READS],
 };
+
+/**
+ * A managed WebSocket connection to the live channel.
+ *
+ * The channel is a notification bus, not a data source: it tells the app
+ * that a background analysis landed, and everything else is still read over
+ * REST. That is what makes the lifecycle below safe - a socket that never
+ * opens, dies or is refused only removes the instant update, and the
+ * polling fallback covers the rest.
+ *
+ * Responsibilities:
+ *  - reconnect with backoff after a drop, so a backgrounded tab or a
+ *    cellular handover recovers on its own;
+ *  - ping the server and give up on a link that stopped answering, which
+ *    detects an L3 block long before the TCP timeout would;
+ *  - re-broadcast incoming messages as window events, so the views can
+ *    subscribe without holding a reference to the socket.
+ */
+class RealtimeSocket {
+    constructor(token) {
+        this.token = token;
+        this.socket = null;
+        this.status = 'idle';
+        this.listeners = new Map();
+        this.reconnectAttempt = 0;
+        this.reconnectTimer = null;
+        this.pingTimer = null;
+        this.pongTimer = null;
+        this.closedByUser = false;
+        this.waitingForOnline = false;
+
+        // An outage stops the reconnect loop until the browser says the
+        // network is back; without this the socket would hammer a link that
+        // is known to be down.
+        this.onlineHandler = () => {
+            if (!this.waitingForOnline) return;
+            this.resume();
+        };
+        window.addEventListener('online', this.onlineHandler);
+    }
+
+    isConnected() {
+        return this.status === 'open';
+    }
+
+    on(type, handler) {
+        if (!this.listeners.has(type)) {
+            this.listeners.set(type, new Set());
+        }
+        this.listeners.get(type).add(handler);
+        return () => this.off(type, handler);
+    }
+
+    off(type, handler) {
+        this.listeners.get(type)?.delete(handler);
+    }
+
+    emit(type, payload) {
+        this.listeners.get(type)?.forEach((handler) => {
+            try {
+                handler(payload);
+            } catch (error) {
+                console.error('[Realtime] handler failed:', error);
+            }
+        });
+    }
+
+    setStatus(status) {
+        if (this.status === status) return;
+        this.status = status;
+        this.emit('status', status);
+        window.dispatchEvent(new CustomEvent('mylofi:realtime-status', { detail: { status } }));
+    }
+
+    buildSocket() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const url = `${protocol}//${window.location.host}${WS_PATH}?token=${encodeURIComponent(this.token)}`;
+        return new WebSocket(url);
+    }
+
+    /**
+     * Point the socket at a newer access token.
+     *
+     * The token is only checked during the handshake, so the one the next
+     * reconnect would use has to be the current one - otherwise the socket
+     * would come back with a token the server no longer accepts.
+     */
+    setToken(token) {
+        if (!token || token === this.token) return;
+        this.token = token;
+    }
+
+    connect() {
+        if (!this.token) return;
+        if (this.socket) {
+            const readyState = this.socket.readyState;
+            if (readyState === WebSocket.OPEN || readyState === WebSocket.CONNECTING) return;
+        }
+
+        this.closedByUser = false;
+        this.setStatus('connecting');
+
+        let socket;
+        try {
+            socket = this.buildSocket();
+        } catch (error) {
+            console.warn('[Realtime] Could not open the socket:', error);
+            this.scheduleReconnect();
+            return;
+        }
+        this.socket = socket;
+
+        socket.onopen = () => {
+            // A newer socket may have taken over while this one was
+            // connecting; the stale one must not touch the shared state.
+            if (this.socket !== socket) return;
+            this.reconnectAttempt = 0;
+            this.setStatus('open');
+            this.startHeartbeat();
+        };
+
+        socket.onmessage = (event) => {
+            if (this.socket !== socket) return;
+            this.handleMessage(event);
+        };
+
+        socket.onerror = () => {
+            // onclose always follows, and that is where the reconnect lives.
+        };
+
+        socket.onclose = (event) => {
+            if (this.socket !== socket) return;
+            this.stopHeartbeat();
+            this.socket = null;
+            this.setStatus('closed');
+
+            if (event?.code === REALTIME_CLOSE_UNAUTHORIZED) {
+                // The token was rejected. Retrying with it cannot succeed, so
+                // the owner decides whether a fresher token exists.
+                this.closedByUser = true;
+                this.emit('unauthorized', event);
+                return;
+            }
+
+            if (!this.closedByUser) {
+                this.scheduleReconnect();
+            }
+        };
+    }
+
+    handleMessage(event) {
+        let message = null;
+        try {
+            message = JSON.parse(event?.data);
+        } catch (error) {
+            return;
+        }
+        if (!message || typeof message !== 'object') return;
+
+        const type = message.type;
+        if (type === 'pong') {
+            this.clearPongTimer();
+            return;
+        }
+        if (type === 'ping') {
+            this.send({ type: 'pong' });
+            return;
+        }
+
+        this.emit(type, message.payload);
+        // The window event follows the naming the rest of the app uses
+        // ("mylofi:meal-update"), so the underscore of the wire type becomes
+        // a hyphen here.
+        window.dispatchEvent(new CustomEvent(`mylofi:${String(type).replace(/_/g, '-')}`, { detail: message.payload }));
+    }
+
+    send(data) {
+        if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return false;
+        try {
+            this.socket.send(JSON.stringify(data));
+            return true;
+        } catch (error) {
+            console.warn('[Realtime] Send failed:', error);
+            return false;
+        }
+    }
+
+    startHeartbeat() {
+        this.stopHeartbeat();
+        this.pingTimer = setInterval(() => {
+            if (!this.send({ type: 'ping' })) return;
+            // A ping that is never answered means the link is gone even
+            // though the socket still believes it is open.
+            this.clearPongTimer();
+            this.pongTimer = setTimeout(() => {
+                console.warn('[Realtime] Heartbeat timed out, dropping the socket');
+                this.dropSocket();
+            }, REALTIME_PONG_TIMEOUT_MS);
+        }, REALTIME_PING_INTERVAL_MS);
+    }
+
+    clearPongTimer() {
+        if (this.pongTimer) {
+            clearTimeout(this.pongTimer);
+            this.pongTimer = null;
+        }
+    }
+
+    stopHeartbeat() {
+        if (this.pingTimer) {
+            clearInterval(this.pingTimer);
+            this.pingTimer = null;
+        }
+        this.clearPongTimer();
+    }
+
+    dropSocket() {
+        if (!this.socket) return;
+        try {
+            this.socket.close(4000, 'heartbeat timeout');
+        } catch (error) {
+            // The socket is already gone; onclose still runs the reconnect.
+        }
+    }
+
+    scheduleReconnect() {
+        if (this.closedByUser) return;
+        if (this.reconnectTimer) return;
+
+        // Under a real outage every attempt would fail the same way, so the
+        // reconnect waits for the browser to report the network back instead.
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+            this.waitingForOnline = true;
+            return;
+        }
+
+        const delay = Math.min(
+            REALTIME_RECONNECT_BASE_MS * Math.pow(2, this.reconnectAttempt),
+            REALTIME_RECONNECT_MAX_MS
+        );
+        this.reconnectAttempt += 1;
+        this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            this.connect();
+        }, delay);
+    }
+
+    /** Reconnect as soon as the browser reports the network is back. */
+    resume() {
+        this.waitingForOnline = false;
+        if (this.reconnectAttempt > 0) {
+            this.reconnectAttempt = 0;
+        }
+        this.connect();
+    }
+
+    close() {
+        this.closedByUser = true;
+        this.waitingForOnline = false;
+        this.stopHeartbeat();
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+        if (this.onlineHandler) {
+            window.removeEventListener('online', this.onlineHandler);
+            this.onlineHandler = null;
+        }
+        if (this.socket) {
+            try {
+                this.socket.close(1000, 'client closed');
+            } catch (error) {
+                // Already closing.
+            }
+            this.socket = null;
+        }
+        this.setStatus('closed');
+    }
+}
 
 class APIClient {
     constructor() {
@@ -112,6 +418,28 @@ class APIClient {
             return networkError;
         }
         return error;
+    }
+
+    isTimeoutError(error) {
+        return error?.name === 'AbortError' || error?.isNetworkError === true && error?.status === 0 && error?.cause?.name === 'AbortError';
+    }
+
+    async checkHostReachable(accessToken = null) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), HOST_CHECK_TIMEOUT_MS);
+        try {
+            const response = await fetch(`${window.location.origin}/health`, {
+                method: 'GET',
+                headers: this.getHeaders(accessToken, false),
+                credentials: 'include',
+                signal: controller.signal,
+            });
+            return response.ok;
+        } catch (error) {
+            return false;
+        } finally {
+            clearTimeout(timeoutId);
+        }
     }
     
     readQueue() {
@@ -282,20 +610,42 @@ class APIClient {
         return SyncEngine.processQueue();
     }
 
-    async request(method, endpoint, data = null, accessToken = null, isFormData = false, skipEnqueue = false) {
+    async request(method, endpoint, data = null, accessToken = null, isFormData = false, skipEnqueue = false, timeoutMs = null) {
+        // Photo uploads are the most fragile path on mobile: a large blob
+        // crossing a saturated or L3-blocked link can hang forever. Form
+        // uploads therefore default to the strict 8s budget; everything else
+        // keeps the roomier 10s default. Callers can still override.
+        if (timeoutMs === null) {
+            timeoutMs = isFormData ? UPLOAD_TIMEOUT_MS : DEFAULT_REQUEST_TIMEOUT_MS;
+        }
         const url = `${this.baseURL}${endpoint}`;
         const headers = this.getHeaders(accessToken, isFormData);
-        
-        const options = { method, headers, credentials: 'include' };
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+        const options = { method, headers, credentials: 'include', signal: controller.signal };
         if (data) {
             options.body = isFormData ? data : JSON.stringify(data);
         }
-        
+
         let response;
         try {
             response = await fetch(url, options);
         } catch (error) {
-            const normalized = this.normalizeError(error, method, url);
+            clearTimeout(timeoutId);
+            let normalized;
+            if (error?.name === 'AbortError') {
+                normalized = new Error(
+                    `Сеть недоступна (таймаут ${method} ${endpoint}). Проверьте подключение к интернету.`
+                );
+                normalized.status = 0;
+                normalized.isNetworkError = true;
+                normalized.isTimeout = true;
+                normalized.cause = error;
+            } else {
+                normalized = this.normalizeError(error, method, url);
+            }
             if (normalized?.isNetworkError && !skipEnqueue && this.isQueueable(method, data, isFormData)) {
                 try {
                     await this.enqueueRequest(method, endpoint, data, accessToken);
@@ -306,6 +656,7 @@ class APIClient {
                 offlineError.status = 0;
                 offlineError.isNetworkError = true;
                 offlineError.offlineQueued = true;
+                offlineError.isTimeout = normalized.isTimeout;
                 offlineError.cause = normalized;
                 console.error(`[API] Request failed and queued: ${method} ${url}`);
                 throw offlineError;
@@ -313,6 +664,8 @@ class APIClient {
             console.error(`[API] Request failed: ${method} ${url}`, normalized);
             throw normalized;
         }
+
+        clearTimeout(timeoutId);
         
         // Try token refresh for 401 responses
         if (response.status === 401 && accessToken && window.App) {
@@ -384,7 +737,42 @@ class APIClient {
     }
     
     get(endpoint, accessToken = null) { return this.getWithReadCache(endpoint, accessToken); }
-    post(endpoint, data, accessToken = null, isFormData = false) { return this.request('POST', endpoint, data, accessToken, isFormData); }
+    /**
+     * Whether an access token is expired or about to expire.
+     *
+     * The JWT payload is read, not verified - only the server can verify the
+     * signature - but the expiry claim is enough to know whether a handshake
+     * would be accepted. It matters because a refused handshake is not
+     * something the socket retries on its own: the server answers it with a
+     * close before the connection is established.
+     */
+    isTokenExpiring(token, skewMs = TOKEN_EXPIRY_SKEW_MS) {
+        if (!token) return true;
+        try {
+            const segment = String(token).split('.')[1];
+            if (!segment) return false;
+            const base64 = segment.replace(/-/g, '+').replace(/_/g, '/');
+            const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+            const bytes = Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
+            const payload = JSON.parse(new TextDecoder().decode(bytes));
+            const exp = Number(payload?.exp);
+            if (!Number.isFinite(exp)) return false;
+            return exp * 1000 - Date.now() <= skewMs;
+        } catch (error) {
+            // A token the client cannot read is left for the server to judge.
+            return false;
+        }
+    }
+    /**
+     * A GET that bypasses the offline read cache.
+     *
+     * The cache exists to paint a screen while the network is gone, but a
+     * status poll needs the truth: a stale "still processing" answer would
+     * keep the loop spinning until its deadline instead of surfacing the
+     * outage, and it would hide a meal that is actually finished.
+     */
+    getFresh(endpoint, accessToken = null) { return this.request('GET', endpoint, null, accessToken); }
+    post(endpoint, data, accessToken = null, isFormData = false, timeoutMs = null) { return this.request('POST', endpoint, data, accessToken, isFormData, false, timeoutMs); }
     /**
      * A POST that must never enter the offline queue.
      *
@@ -398,10 +786,15 @@ class APIClient {
     delete(endpoint, accessToken = null) { return this.request('DELETE', endpoint, null, accessToken); }
     deleteMeal(mealId, accessToken = null) { return this.request('DELETE', `/nutrition/meals/${mealId}`, null, accessToken); }
     
+    /**
+     * Open a managed live channel to the backend.
+     *
+     * The returned socket owns its own lifecycle - it reconnects, it
+     * heartbeats and it turns incoming messages into window events - so the
+     * caller only has to keep it alive for as long as the session lasts.
+     */
     createWebSocket(token) {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}${this.baseURL}/ws?token=${token}`;
-        return new WebSocket(wsUrl);
+        return new RealtimeSocket(token);
     }
 }
 

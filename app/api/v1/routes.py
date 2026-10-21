@@ -1,3 +1,4 @@
+import json
 import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
@@ -144,6 +145,7 @@ from fastapi import (
     Query,
     UploadFile,
     WebSocket,
+    WebSocketDisconnect,
     status,
 )
 from fastapi.security import OAuth2PasswordRequestForm
@@ -259,6 +261,12 @@ async def get_optional_current_user(
 
 
 logger = logging.getLogger(__name__)
+
+
+# Close code sent when the handshake carries an invalid or expired token.
+# The client treats it as final: reconnecting with the same token would only
+# produce the same rejection.
+WS_CLOSE_UNAUTHORIZED = 4001
 
 
 # ===== Auth Routes =====
@@ -1769,28 +1777,42 @@ async def websocket_endpoint(
     token: str = Query(...),
     db: AsyncSession = Depends(get_db),
 ):
-    """WebSocket endpoint for real-time meal analysis updates"""
+    """Live channel for background-analysis updates.
+
+    The socket only carries notifications - "meal 42 is analysed" - and never
+    data the REST endpoints do not also serve. A client that loses the socket
+    therefore falls back to polling the meal status and misses nothing, which
+    is why the handshake is deliberately cheap and the ping/pong exchange is
+    the only traffic it expects.
+    """
     user_id = await get_websocket_user(websocket, db, token)
     if not user_id:
-        await websocket.close(code=4001, reason="Invalid or expired token")
+        # Accepted first, closed second: a browser can only report a close
+        # code when the handshake succeeded, and 4001 tells the client that
+        # retrying with this token is pointless.
+        await websocket.accept()
+        await websocket.close(code=WS_CLOSE_UNAUTHORIZED, reason="Invalid or expired token")
         return
 
     await manager.connect(websocket, user_id)
     try:
         while True:
-            # Keep connection alive, handle incoming messages if needed
             data = await websocket.receive_text()
-            # Echo ping/pong for keepalive
-            import json
-
             try:
                 msg = json.loads(data)
-                if msg.get("type") == "ping":
-                    await websocket.send_text(json.dumps({"type": "pong"}))
-            except json.JSONDecodeError:
-                pass
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            msg_type = msg.get("type") if isinstance(msg, dict) else None
+            if msg_type == "ping":
+                await websocket.send_text(json.dumps({"type": "pong"}))
+            elif msg_type == "pong":
+                # Answer to the server's own keepalive - nothing to do.
+                continue
+    except WebSocketDisconnect:
+        logger.debug("[WS] Client disconnected (user_id=%s)", user_id)
     except Exception:
-        pass
+        logger.exception("[WS] Connection error (user_id=%s)", user_id)
     finally:
         manager.disconnect(websocket)
 

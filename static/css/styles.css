@@ -3527,3 +3527,123 @@ input[data-field="reps"] {
         animation-duration: 2.4s;
     }
 }
+
+/* ============ Global Network Status Banner ============ */
+/* Geometry of the banner, shared with the page layout below.
+   --network-banner-height is the banner's own box WITHOUT the safe-area
+   inset it already carries (NetworkBanner measures it and publishes it here;
+   the 32px fallback is what the banner takes on a 16px text row: 8px padding
+   + 16px row + 8px padding).
+   --network-banner-gap is the breathing room between the banner's bottom edge
+   and the first header of the page.
+   --network-banner-page-pad is the top padding the page roots carry
+   themselves (Tailwind p-4 / pt-4) - it is what forms the visible gap under
+   the banner, so the layout below must not count it twice. */
+:root {
+    --network-banner-height: 32px;
+    --network-banner-gap: 12px;
+    --network-banner-page-pad: 16px;
+}
+
+/* The banner is mounted once on document.body by NetworkBanner.init() and must
+   stay visible across every screen (landing, auth, nutrition, workouts,
+   profile) whenever the host is unreachable. Fixed positioning + z-[99999]
+   keeps it above the splash screen, the bottom nav (z-50), the modal host
+   (z-[120]) and the toast layer (z-[130]); it is intentionally the topmost
+   element on the page so an L3 block can never be missed. Safe-area insets
+   move it below the iOS notch on iPhone and below the Android status bar. */
+#network-banner {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 99999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    padding-top: calc(0.5rem + env(safe-area-inset-top, 0px));
+    font-size: 0.8125rem;
+    font-weight: 600;
+    line-height: 1.2;
+    text-align: center;
+    color: #fafafa;
+    background: linear-gradient(135deg, #b91c1c 0%, #dc2626 50%, #ef4444 100%);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+    transform: translateY(-100%);
+    transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.3s ease;
+    opacity: 0;
+    pointer-events: none;
+    will-change: transform, opacity;
+}
+
+/* Slide the banner down from the top edge when visible. The class is toggled
+   directly by NetworkBanner.showOffline() / showRestored(). */
+#network-banner.is-visible {
+    transform: translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* Restore state: a green gradient instead of red — the queue is syncing. */
+#network-banner.network-status-banner--restored {
+    background: linear-gradient(135deg, #047857 0%, #059669 50%, #10b981 100%);
+}
+
+/* Icon + text layout: the SVG is flex-shrink-0 so a long Russian message
+   never pushes the icon off-screen on a 320px phone. */
+#network-banner .network-status-banner__icon {
+    display: flex;
+    flex-shrink: 0;
+    width: 1rem;
+    height: 1rem;
+}
+#network-banner .network-status-banner__text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* The body class is toggled alongside the banner so the page content can step
+   down far enough to clear it.
+
+   The geometry: the banner is fixed at the top of the viewport and its own
+   padding-top carries env(safe-area-inset-top) - it has to paint under the
+   notch. The app shell reserves that very same inset with the .h-safe-top
+   spacer in index.html, so #page-content already starts BELOW the safe area.
+   Adding env(safe-area-inset-top) to the padding here as well counted the
+   inset twice and opened a huge gap between the banner and the page header.
+
+   So the offset is the banner's own box only: --network-banner-height (the
+   height without the safe-area inset) plus the gap that is wanted under the
+   banner, minus the top padding the pages bring themselves - that padding is
+   what creates the visible gap, so it is subtracted instead of stacked. */
+body.has-network-banner #page-content,
+body.has-network-banner main {
+    padding-top: calc(
+        var(--network-banner-height, 32px)
+        + var(--network-banner-gap, 12px)
+        - var(--network-banner-page-pad, 16px)
+    );
+}
+
+/* On wide screens the message has room to breathe — no ellipsis, full text. */
+@media (min-width: 480px) {
+    #network-banner .network-status-banner__text {
+        white-space: normal;
+        text-overflow: clip;
+    }
+}
+
+/* Reduced motion: drop the slide transition, just toggle opacity. */
+@media (prefers-reduced-motion: reduce) {
+    #network-banner {
+        transition: opacity 0.15s ease;
+        transform: none;
+    }
+    #network-banner.is-visible {
+        transform: none;
+    }
+}

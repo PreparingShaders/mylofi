@@ -7,12 +7,7 @@ import { Camera } from './camera.js';
 
 const PERIODS = ['day', 'week', 'month', 'custom'];
 
-// How long the dashboard watches a pending/processing meal before it gives up.
-// The server bounds a single analysis, so a batch that outlives the budget is
-// stuck rather than slow: without this the poll loop re-renders the page every
-// 3s forever and the cards shimmer until the tab is closed.
-const POLL_INTERVAL_MS = 3000;
-const MAX_POLL_ATTEMPTS = 20; // 20 x 3s = 1 minute
+
 
 // Day / 7 days / month are one-tap presets; the custom period is opened as a
 // range sheet by the icon tab.
@@ -34,19 +29,12 @@ export const Nutrition = {
     _periodSheetClosing: null,
     _editMealModalState: null,
     _editMealModalClosing: null,
-    _pollingTimer: null,
     // Recap generation in flight: the manual trigger on the daily-summary
     // card disables itself while the day is being re-read.
     _dailySummaryLoading: false,
     // Meals indexed by id, refreshed every render so the edit modal can pull
     // the current record without a dedicated single-meal endpoint.
     _mealsCache: new Map(),
-    // Polling budget of the batch currently on screen: attempts spent so far,
-    // whether it already timed out, and whether the render in flight was
-    // triggered by the poll loop (a timed-out batch must not renew its own).
-    _pollingAttempts: 0,
-    _pollingTimedOut: false,
-    _pollingRender: false,
     // Meal the carousel has to bring into view on the next render: the id is
     // only known after the upload answered, while the card arrives with it.
     _scrollTargetMealId: null,
@@ -69,7 +57,61 @@ export const Nutrition = {
     _aiSynergyCustomRange: { start: '', end: '' },
     _aiSynergyResult: null,          // last /ai/synergy payload
     _aiSynergyRunning: false,        // analysis in flight
-    _aiSynergyModalEl: null,         // full-screen modal element, if open
+
+    // True while the "new meal" sheet is being submitted. A full render
+    // closes that sheet, so the live updates are held back until the
+    // submission is done - it re-renders the page itself when it finishes.
+    _mealSubmitInFlight: false,
+
+    /**
+     * Whether a sheet or a modal currently covers the page.
+     *
+     * A render tears those down, so a live update that arrives while one is
+     * open has to wait: the user is in the middle of something, and closing
+     * their sheet would throw away what they typed.
+     */
+    hasOpenOverlay() {
+        return Boolean(
+            this._newMealModalState || this._newMealModalClosing
+            || this._periodSheetState || this._periodSheetClosing
+            || this._editMealModalState || this._editMealModalClosing
+            || this._aiSynergyModalEl
+        );
+    },
+
+    init(app) {
+        this.app = app;
+        window.addEventListener('mylofi:sync-completed', async (event) => {
+            try {
+                if (this.app?.state?.currentPage !== 'nutrition') return;
+                if (this._mealSubmitInFlight) return;
+                if (this.hasOpenOverlay()) return;
+                const container = this.app.elements?.pageContent;
+                if (!container) return;
+                await this.render(container, this.app, this.selectedDate);
+            } catch (error) {
+                console.error('[Nutrition] sync-completed handler error:', error);
+            }
+        });
+
+        // The server pushes the moment a background analysis lands. The card
+        // in the carousel is still the "analysing" one at that point, so the
+        // page is re-rendered to show the real result.
+        window.addEventListener('mylofi:meal-update', async (event) => {
+            try {
+                const status = event?.detail?.status;
+                if (status !== 'completed' && status !== 'failed') return;
+                if (this.app?.state?.currentPage !== 'nutrition') return;
+                if (this._mealSubmitInFlight) return;
+                if (this.hasOpenOverlay()) return;
+                const container = this.app.elements?.pageContent;
+                if (!container) return;
+                await this.render(container, this.app, this.selectedDate);
+            } catch (error) {
+                console.error('[Nutrition] meal-update handler error:', error);
+            }
+        });
+    },
 
     /**
      * Fetch the latest saved synergy report so state survives page reloads.
@@ -277,19 +319,36 @@ export const Nutrition = {
               }
             : { target_calories: null, target_protein: null, target_fat: null, target_carbs: null };
 
-        let pendingMeals = [];
-        try {
-            pendingMeals = await DB.getMealsByStatus(DB.SYNC_STATUS.PENDING);
-        } catch (error) {
-            console.warn('[Nutrition] Failed to read pending meals:', error);
-        }
-
-        let failedItems = [];
-        try {
-            failedItems = await SyncEngine.getFailedItems();
-        } catch (error) {
-            console.warn('[Nutrition] Failed to read failed items:', error);
-        }
+let pendingMeals = [];
+let failedItems = [];
+try {
+    const [pm, fi] = await Promise.all([
+        DB.getMealsByStatus(DB.SYNC_STATUS.PENDING).catch(() => []),
+        SyncEngine.getFailedItems().catch(() => []),
+    ]);
+    pendingMeals = pm || [];
+    failedItems = fi || [];
+    // Deduplicate: filter out pending meals that have already been
+    // resolved by the sync engine (i.e. their temp id was replaced
+    // with a real server id and a matching server meal exists).
+    // This prevents showing both the "Анализируем..." pending card
+    // and the final processed card side-by-side after a successful
+    // offline queue flush.
+    if (Array.isArray(serverMeals) && serverMeals.length > 0) {
+        const serverIds = new Set(
+            serverMeals.map(m => String(m.id)).filter(Boolean)
+        );
+        pendingMeals = pendingMeals.filter(pm => {
+            const mealId = String(pm.id ?? '');
+            const tempId = pm.tempId ? String(pm.tempId) : null;
+            if (tempId && serverIds.has(tempId)) return false;
+            if (pm.resolved && serverIds.has(mealId)) return false;
+            return true;
+        });
+    }
+} catch (error) {
+    console.warn('[Nutrition] Failed to read pending/failed items:', error);
+}
 
         return { serverMeals, summary, targets, pendingMeals, failedItems, fromCache };
     },
@@ -1115,13 +1174,6 @@ export const Nutrition = {
             this.selectedPeriod = 'day';
         }
 
-        // Every render the user asked for (page switch, date step, retry) opens a
-        // fresh polling window; a render from the poll loop only spends the
-        // budget of the window it belongs to.
-        if (!this._pollingRender) {
-            this.resetPolling();
-        }
-
         // Close any open modal before re-rendering
         this.closeNewMealModal();
         this.closePeriodSheet();
@@ -1143,7 +1195,6 @@ export const Nutrition = {
             const periodDataPromise = this.loadPeriodData();
             const dailySummaryPromise = this.loadDailySummary();
             const synergyReportPromise = (this.selectedPeriod === 'day'
-                && !this._pollingRender
                 && !this._aiSynergyRunning)
                 ? this.loadAiSynergyReport()
                 : Promise.resolve(null);
@@ -1193,10 +1244,7 @@ export const Nutrition = {
             // from different days are indistinguishable in the carousel.
             const showDate = this.selectedPeriod !== 'day';
 
-            // A meal still being analysed can sit in either list: server-side
-            // ones come back in sortedMeals, locally queued ones in
-            // pendingSorted. Both must learn that the polling window ran out.
-            const cardOptions = { showDate, analysisTimedOut: this._pollingTimedOut };
+            const cardOptions = { showDate };
 
             const period = this.periodAverage(periodData);
             // The day ring reads the day totals; wider periods read the per-day
@@ -1285,8 +1333,8 @@ export const Nutrition = {
                         `
                         : ''}
 
-                    <!-- STUCK ANALYSIS BANNER (polling budget spent) -->
-                    ${this._pollingTimedOut ? this.renderAnalysisTimeoutBanner() : ''}
+                    <!-- PENDING ANALYSIS: meals still being processed show a neutral badge -->
+                    ${pendingSorted.some(m => m.status === 'pending' || m.status === 'processing' || m.sync_status === DB.SYNC_STATUS.PENDING) ? '' : ''}
 
 <!-- SNAP CAROUSEL: daily summary + synergy stack first (day only),
                            then the action tile, pending meals, logged meals (LIFO) -->
@@ -1361,113 +1409,6 @@ export const Nutrition = {
                 timestamp: new Date().toISOString()
             });
             container.innerHTML = Components.errorState(errorMessage);
-        }
-
-        // Start/stop polling for pending/processing meals
-        this.managePolling(serverMeals, pendingMeals);
-    },
-
-    /**
-     * Notice shown once the polling budget is spent while meals are still
-     * pending. The dashboard stops refreshing itself at this point, so the user
-     * has to be told why the numbers stopped moving.
-     */
-    renderAnalysisTimeoutBanner() {
-        return `
-            <div class="shrink-0 mb-1 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2" id="analysis-timeout-banner">
-                <div class="flex items-start gap-2">
-                    <svg class="w-4 h-4 mt-0.5 shrink-0 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
-                    <div class="min-w-0">
-                        <p class="text-xs font-semibold text-red-500">Анализ фото не завершился</p>
-                        <p class="text-[11px] text-surface-600 dark:text-surface-300 leading-snug">
-                            Автообновление остановлено. Вернитесь позже или загрузите это фото ещё раз.
-                        </p>
-                    </div>
-                </div>
-            </div>
-        `;
-    },
-
-    /**
-     * Stop the poll loop. Split out from managePolling because a timeout has to
-     * end the loop too, not just the absence of pending meals.
-     */
-    stopPolling() {
-        if (!this._pollingTimer) return;
-        clearInterval(this._pollingTimer);
-        this._pollingTimer = null;
-    },
-
-    /**
-     * Forget the current polling window: no timer, full budget, no timeout
-     * notice. A window belongs to one batch of pending meals, so it must not
-     * leak into the next upload.
-     */
-    resetPolling() {
-        this.stopPolling();
-        this._pollingAttempts = 0;
-        this._pollingTimedOut = false;
-    },
-
-    /**
-     * Manage polling for meals that are being analyzed.
-     * Polls every 3s while any meal has status 'pending' or 'processing', for at
-     * most MAX_POLL_ATTEMPTS ticks.
-     */
-    managePolling(serverMeals, pendingMeals) {
-        this.stopPolling();
-
-        // Check if any meal needs polling (pending or processing)
-        const hasPendingOrProcessing =
-            serverMeals.some(m => m.status === 'pending' || m.status === 'processing') ||
-            pendingMeals.some(m => m.status === 'pending' || m.status === 'processing' || m.sync_status === 'pending');
-
-        if (!hasPendingOrProcessing) {
-            // Nothing left to watch: the batch reached a terminal status, so its
-            // window and its timeout notice are both spent.
-            this.resetPolling();
-            return;
-        }
-
-        // A batch that already timed out stays unpolled until the user opens a
-        // new window, otherwise the timeout render would restart the loop it
-        // has just ended.
-        if (this._pollingTimedOut) return;
-
-        this._pollingTimer = setInterval(() => this.pollPendingMeals(), POLL_INTERVAL_MS);
-    },
-
-    /**
-     * Poll for updated meal data when pending/processing meals exist.
-     * Only refreshes if we're still on the nutrition page, and gives up once the
-     * polling budget is spent.
-     */
-    async pollPendingMeals() {
-        // Only poll if nutrition page is currently active
-        if (this.app?.state?.currentPage !== 'nutrition') {
-            this.managePolling([], []);
-            return;
-        }
-
-        this._pollingAttempts += 1;
-        if (this._pollingAttempts >= MAX_POLL_ATTEMPTS) {
-            // Out of budget: end the loop and let the still-pending cards show
-            // the timeout instead of shimmering forever.
-            this._pollingTimedOut = true;
-            this.stopPolling();
-            console.warn(
-                `[Nutrition] Polling stopped after ${MAX_POLL_ATTEMPTS} attempts, ` +
-                'some meals are still pending'
-            );
-        }
-
-        this._pollingRender = true;
-        try {
-            await this.render(this.app.elements.pageContent, this.app);
-        } catch (error) {
-            console.warn('[Nutrition] Polling error:', error);
-        } finally {
-            this._pollingRender = false;
         }
     },
 
@@ -1691,7 +1632,33 @@ export const Nutrition = {
     },
 
     async handleNewMealSubmit(modalEl, state) {
+        // A render closes this sheet, so the live "analysis landed" updates
+        // are held back until the submission is through - it re-renders the
+        // page itself when it finishes.
+        this._mealSubmitInFlight = true;
+        try {
         if (!state.selectedFile || !state.selectedMealType) {
+            return;
+        }
+
+        const isOffline = !window.App?.state?.isOnline || !navigator.onLine;
+        if (isOffline) {
+            const notesInput = modalEl.querySelector('#new-meal-notes');
+            const notes = notesInput ? notesInput.value.trim() || null : null;
+            let compressedBlob = state.selectedFile;
+            try {
+                const compressed = await Utils.compressImage(state.selectedFile);
+                if (compressed) {
+                    compressedBlob = compressed;
+                }
+            } catch (compressError) {
+                console.warn('[Nutrition] Compression failed, using original:', compressError);
+            }
+            await Camera.queueOfflineMeal(compressedBlob, notes, state.selectedMealType);
+            this.app.showToast('Сохранено локально. Отправим при появлении связи', 'info');
+            this.closeNewMealModal();
+            this._scrollTargetMealId = null;
+            await this.render(this.app.elements.pageContent, this.app, this.selectedDate);
             return;
         }
 
@@ -1748,11 +1715,18 @@ export const Nutrition = {
             // background analysis started, not that it finished.
         } catch (error) {
             if (error?.isNetworkError || error?.offlineQueued) {
-                newMealId = await Camera.queueOfflineMeal(compressedBlob, notes, state.selectedMealType);
-                this.app.showToast('Нет связи. Фото сохранено локально и будет загружено при появлении связи', 'info');
+                try {
+                    newMealId = await Camera.queueOfflineMeal(compressedBlob, notes, state.selectedMealType);
+                    this.app.showToast('Нет связи. Фото сохранено локально и будет загружено при появлении связи', 'info');
+                } catch (qerr) {
+                    console.error('[Nutrition] Offline queue failed:', qerr);
+                    this.app.showToast(qerr?.message || 'Не удалось сохранить оффлайн', 'error');
+                    newMealId = null;
+                    uploadedOnline = false;
+                }
             } else {
                 console.error('[Nutrition] Upload error:', error);
-                this.app.showToast(error.data?.detail || 'Ошибка загрузки', 'error');
+                this.app.showToast(error.data?.detail || error.message || 'Ошибка загрузки', 'error');
             }
         } finally {
             this.removeAnalyzingSkeleton();
@@ -1764,10 +1738,10 @@ export const Nutrition = {
         }
 
         // The overlay stays up through the whole analysis: the meal status
-        // is polled until the background task lands a terminal status (or
-        // the polling budget runs out), and only then does the checkmark
-        // appear. An offline-queued meal has nothing to poll yet - it
-        // syncs later - and a failed upload leaves nothing to wait for.
+        // is polled until the background task lands a terminal status, and
+        // only then does the checkmark appear. An offline-queued meal has
+        // nothing to poll yet - it syncs later - and a failed upload leaves
+        // nothing to wait for.
         if (uploadedOnline) {
             const outcome = await Camera.pollMealAnalysisStatus(newMealId, token);
             if (outcome === 'completed') {
@@ -1786,6 +1760,19 @@ export const Nutrition = {
         // is handed over instead of scrolled to here.
         this._scrollTargetMealId = newMealId;
         await this.render(this.app.elements.pageContent, this.app, this.selectedDate);
+        } catch (err) {
+            console.error('[Nutrition] handleNewMealSubmit error:', err);
+            try { this.removeAnalyzingSkeleton(); } catch (_) {}
+            const submitBtn = modalEl && modalEl.querySelector('#new-meal-submit');
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<span class="text-sm font-semibold">Создать</span>';
+            }
+            try { Camera.hideLoadingOverlay(modalEl); } catch (_) {}
+            this.app.showToast(err?.message || 'Не удалось сохранить блюдо', 'error');
+        } finally {
+            this._mealSubmitInFlight = false;
+        }
     },
 
     /**

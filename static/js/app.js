@@ -17,6 +17,15 @@ const TOGGLE_BASE = 'flex-shrink-0 w-11 h-11 rounded-2xl text-xl font-bold trans
 const TOGGLE_COMPLETED = 'bg-lime-400 text-zinc-950 border-lime-400 shadow-[0_0_12px_rgba(163,230,53,0.4)]';
 const TOGGLE_UNCOMPLETED = 'glass text-surface-400 dark:text-surface-500';
 
+// How long a resume is considered to be the same resume. The app comes back
+// through `visibilitychange` and through `focus`, and both fire within a
+// fraction of a second of each other.
+const RESUME_DEBOUNCE_MS = 1000;
+
+// How long a confirmed session is trusted. A window focus and a visibility
+// change report the same resume, and every request checks the token anyway.
+const SESSION_REVALIDATE_INTERVAL_MS = 60000;
+
 // Screenshot assets — one primary slide per chapter, plus optional extra
 // slides for the chapters that already have several screenshots on disk.
 // The phone carousel cross-fades between the slides of the active chapter.
@@ -71,14 +80,48 @@ const App = {
         pendingPhotos: [],
         activeWorkout: null,
         currentSessionId: null,
+        // Set when the user leaves the workout tracking screen on purpose
+        // (the back arrow). The resume handler honours it and does not pull
+        // the user back into the workout they just closed.
+        workoutScreenDismissed: false,
         landingCarouselState: {},
         _showcaseImages: null,
         landingThemeState: { mode: 'system', dark: false },
     },
     
     elements: {},
+
+    /**
+     * The live channel to the backend (see RealtimeSocket).
+     *
+     * It only carries notifications - "this analysis is done" - and never
+     * data the REST endpoints do not also serve, so a socket that is down
+     * costs the app an instant update and nothing else.
+     */
+    realtime: null,
+
+    // How often the live channel may renew its token after a refused
+    // handshake. One is enough: a second refusal with a fresh token means
+    // the session itself is gone.
+    _realtimeAuthRetries: 0,
+
+    // The renewal that is currently running, so two callers cannot spend
+    // the same refresh token twice.
+    _realtimeConnectPromise: null,
+
+    // The resume sequence that is currently running. A resume is seen
+    // through several events (`visibilitychange` and `focus`), and all of
+    // them have to end up in a single sequence, not in one sequence each.
+    _resumePromise: null,
+
+    // When the last resume was handled. A second event within the debounce
+    // window is the same resume seen twice and is ignored.
+    _lastResumeAt: 0,
+
+    // When the session was last confirmed with the server.
+    _lastValidatedAt: 0,
     
-    async init() {
+     async init() {
         console.log('[App] Initializing...');
         Theme.init();
         this.cacheElements();
@@ -99,6 +142,7 @@ const App = {
             this.setupOfflineSync();
             this.loadTokens();
             this.setupNetworkBanner();
+            Nutrition.init(this);
 
             // DB init is non-critical
             try {
@@ -111,16 +155,77 @@ const App = {
             if (this.state.tokens.access) {
                 console.log('[App] Token found, validating...');
                 try {
-                    await this.validateToken();
-                    await this.initSyncEngine();
+                    // Defer validation to background to allow cache-first render
+                    this.validateToken().then(() => this.initSyncEngine()).catch((e) => {
+                        console.error('[App] Token validation failed:', e);
+                        if (e?.isNetworkError || !navigator.onLine || !this.state.isOnline) {
+                            console.warn('[App] Network error during init token validation; retaining offline session.');
+                            this.showScreen('main');
+                            const { page, workout } = this.loadState();
+                            if (workout) {
+                                this.state.activeWorkout = workout;
+                                this.showPage('workouts');
+                            } else {
+                                this.showPage(page || 'nutrition');
+                            }
+                        } else {
+                            this.showScreen('landing');
+                            this.renderLanding();
+                        }
+                    });
+                    // Also proactively show main screen if we have cached session
+                    this.showScreen('main');
+                    const { page: initialPage, workout: initialWorkout, sessionId: initialSessionId } = this.loadState();
+                    if (initialWorkout || initialSessionId) {
+                        this.state.activeWorkout = initialWorkout || this.state.activeWorkout;
+                        if (initialSessionId && !this.state.currentSessionId) {
+                            this.state.currentSessionId = initialSessionId;
+                        }
+                        this.showScreen('main');
+                        this.showPage('workouts');
+                        try {
+                            const sessionId = initialSessionId || this.state.currentSessionId;
+                            if (sessionId && window.Workouts && typeof window.Workouts.renderWorkoutScreen === 'function') {
+                                let id = sessionId;
+                                if (typeof id === 'string') {
+                                    if (id.startsWith('local-')) {
+                                        id = id;
+                                    } else if (!isNaN(parseInt(id))) {
+                                        id = parseInt(id);
+                                    }
+                                }
+                                await window.Workouts.renderWorkoutScreen(this.elements.pageContent, this, id);
+                            }
+                        } catch (e) {
+                            console.warn('[App] Failed to auto-resume workout session:', e);
+                        }
+                    } else {
+                        this.showPage(initialPage || 'nutrition');
+                    }
                 } catch (e) {
                     console.error('[App] Token validation failed:', e);
-                    this.showScreen('landing');
-                    this.renderLanding();
+                    if (e?.isNetworkError || !navigator.onLine || !this.state.isOnline) {
+                        console.warn('[App] Network error during init token validation; retaining offline session.');
+                        this.showScreen('main');
+                        const { page, workout } = this.loadState();
+                        if (workout) {
+                            this.state.activeWorkout = workout;
+                            this.showPage('workouts');
+                        } else {
+                            this.showPage(page || 'nutrition');
+                        }
+                    } else {
+                        this.showScreen('landing');
+                        this.renderLanding();
+                    }
                 }
             }
 
-            await this.flushOfflineQueue();
+            // Host reachability check on warm init: navigator.onLine is
+            // unreliable under L3 blocks and captive portals, so probe the
+            // backend /health endpoint and flush any queued mutations if the
+            // host is actually reachable.
+            await this.checkHostConnectivity();
         } finally {
             // Hide splash screen after auth determination — always, even if
             // rendering or auth check threw an error. Otherwise a UI exception
@@ -138,7 +243,15 @@ const App = {
         };
         const onOnline = () => {
             this.state.isOnline = true;
-            this.updateNetworkBanner();
+            this.updateNetworkBanner(true);
+            // Event-driven refresh: when network returns, flush the sync queue
+            // and re-render the active page so pending meals show real results.
+            this.checkHostConnectivity().then((reachable) => {
+                if (reachable && this.state.tokens.access) {
+                    this.flushOfflineQueue().catch(() => {});
+                    this.refreshCurrentView();
+                }
+            });
         };
         SyncEngine.setReplayFn((item) => API.replayQueuedItem(item));
         SyncEngine.setHooks({
@@ -162,43 +275,37 @@ const App = {
         });
 
         window.addEventListener('online', async () => {
-            this.state.isOnline = true;
-            this.updateNetworkBanner();
             console.log('[App] Network regained, revalidating session');
-            if (this.state.tokens.access) {
-                try {
-                    await this.validateToken();
-                    if (this.state.currentScreen === 'main') {
-                        this.renderPage(this.state.currentPage);
-                    }
-                } catch (e) {
-                    console.warn('[App] Online revalidation failed:', e);
-                }
-            }
+            // The socket was waiting for exactly this moment.
+            this.connectRealtime();
+            // Coming back online is a resume in every way that matters: the
+            // session has to be alive again and the workout has to be found
+            // again, but the view the user is on stays as it is.
+            await this.handleAppResume('online');
+            this.refreshCurrentView();
         });
 
-        document.addEventListener('visibilitychange', async () => {
-            if (document.visibilityState === 'visible') {
-                console.log('[App] App resumed, revalidating session');
-                if (this.state.tokens.access) {
-                    try {
-                        await this.validateToken();
-                        if (this.state.currentScreen === 'main') {
-                            this.renderPage(this.state.currentPage);
-                        }
-                    } catch (e) {
-                        console.warn('[App] Visibility revalidation failed:', e);
-                    }
-                }
-            }
+        // The app comes back from the background in two different ways:
+        // `visibilitychange` on mobile browsers and `focus` on desktop and
+        // on iOS Safari PWAs, where the visibility event is unreliable.
+        // Both funnel into the same handler, which is single flighted, so a
+        // resume never re-renders the view that is already on top.
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState !== 'visible') return;
+            this.handleAppResume('visibility');
+        });
+
+        window.addEventListener('focus', () => {
+            if (document.visibilityState !== 'visible') return;
+            this.handleAppResume('focus');
         });
 
         // Lists rendered from the read cache are stale right after a sync
         window.addEventListener('mylofi:offline-sync', () => {
-            this.updateNetworkBanner();
+            this.updateNetworkBanner(true);
             if (this.state.currentScreen !== 'main') return;
             if (['nutrition', 'workouts', 'history', 'statistics', 'templates'].includes(this.state.currentPage)) {
-                this.renderPage(this.state.currentPage);
+                this.refreshCurrentView();
             }
         });
 
@@ -207,7 +314,7 @@ const App = {
         window.addEventListener('mylofi:meal-synced', () => {
             if (this.state.currentScreen !== 'main') return;
             if (this.state.currentPage === 'nutrition') {
-                this.renderPage('nutrition');
+                this.refreshCurrentView();
             }
         });
 
@@ -215,9 +322,9 @@ const App = {
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.addEventListener('message', (event) => {
                 if (event.data?.type === 'SYNC_COMPLETE') {
-                    this.updateNetworkBanner();
+                    this.updateNetworkBanner(true);
                     if (this.state.currentScreen === 'main' && ['nutrition', 'workouts', 'history'].includes(this.state.currentPage)) {
-                        this.renderPage(this.state.currentPage);
+                        this.refreshCurrentView();
                     }
                 }
             });
@@ -232,7 +339,302 @@ const App = {
             console.error('[App] Offline queue processing failed:', e);
         }
     },
-    
+
+    /**
+     * Whether the workout tracking screen is the view on top.
+     *
+     * The tracking screen is the one view whose state must never be lost:
+     * it holds the weights and reps the user typed, the scroll position of
+     * the exercise carousel and the running timer. Every re-render of the
+     * page throws all of that away, so the resume handler asks this
+     * question before it touches anything.
+     */
+    isWorkoutScreenOpen() {
+        return !!this.elements.pageContent?.querySelector('#workout-container');
+    },
+
+    /**
+     * The workout that is in progress, as the server and the local storage
+     * see it.
+     *
+     * A workout started offline only exists in the local storage until the
+     * queue syncs it, so both sources are consulted. Returns null when
+     * nothing is running.
+     */
+    async resolveActiveWorkout() {
+        const token = this.state.tokens?.access || null;
+        let serverSession = null;
+        try {
+            // Read fresh: the read cache may still hold a session that was
+            // completed minutes ago.
+            serverSession = await API.getFresh('/workouts/sessions/active', token);
+        } catch (error) {
+            console.warn('[App] Active workout lookup failed:', error);
+        }
+
+        // A workout started offline lives only in the local storage until
+        // the queue syncs it, so both sides are consulted.
+        const localSession = Workouts.getActiveLocalSession();
+        let active = serverSession;
+        let isLocal = false;
+        if (!active) {
+            active = localSession;
+            isLocal = !!active;
+        } else if (active.id && Workouts.isSessionClosedLocally(active.id)) {
+            // Completed or cancelled offline and not yet replayed on the
+            // server: the local decision wins.
+            active = null;
+        }
+
+        if (!active) return null;
+        return {
+            sessionId: active.isLocal ? active.key : active.id,
+            session: active,
+            isLocal,
+        };
+    },
+
+    /**
+     * Check that the session is still alive without touching the view.
+     *
+     * `validateToken()` re-renders the page it validates, which is exactly
+     * what a resume must not do, so the resume path asks this quiet check
+     * instead. Returns false when the session is gone for good.
+     */
+    async revalidateSession() {
+        try {
+            const user = await API.getFresh('/users/me', this.state.tokens.access);
+            if (user) this.state.user = user;
+            return true;
+        } catch (error) {
+            if (error?.isNetworkError || !navigator.onLine) {
+                // The network is down: the cached session stays valid.
+                return true;
+            }
+            console.warn('[App] Session revalidation failed:', error);
+            // A failed renewal has already signed the user out.
+            if (!this.state.tokens?.access) return false;
+            this.clearTokens();
+            this.showScreen('landing');
+            this.renderLanding();
+            return false;
+        }
+    },
+
+    /**
+     * Make sure the session is still alive, but not on every single event.
+     *
+     * A window focus and a visibility change report the same resume, and
+     * every request the app makes checks the token anyway, so a session
+     * that was confirmed a moment ago does not have to be confirmed again.
+     */
+    async ensureSessionAlive() {
+        if (Date.now() - this._lastValidatedAt < SESSION_REVALIDATE_INTERVAL_MS) return true;
+        const alive = await this.revalidateSession();
+        if (alive) this._lastValidatedAt = Date.now();
+        return alive;
+    },
+
+    /**
+     * Bring the app back after it was in the background.
+     *
+     * Single flight: `visibilitychange` and `focus` both report the same
+     * resume, and only one of them may run the sequence.
+     */
+    async handleAppResume(source = 'resume') {
+        if (this._resumePromise) return this._resumePromise;
+        this._resumePromise = this.runAppResume(source)
+            .catch((error) => console.warn('[App] Resume handling failed:', error))
+            .finally(() => {
+                this._resumePromise = null;
+            });
+        return this._resumePromise;
+    },
+
+    /**
+     * The resume sequence itself.
+     *
+     * A backgrounded tab is frozen by the browser and the socket it held is
+     * usually gone, so the resume re-establishes the channel and the
+     * session. What it does NOT do is re-render the view: the page the
+     * user left is the page they come back to, and the workout tracking
+     * screen keeps the values they typed, the position of the carousel and
+     * the running timer.
+     */
+    async runAppResume(source) {
+        // A resume is reported by several events in a row; the second one
+        // must not start a second sequence.
+        const now = Date.now();
+        if (now - this._lastResumeAt < RESUME_DEBOUNCE_MS) {
+            console.log(`[App] Resume already handled, ignoring "${source}"`);
+            return;
+        }
+        this._lastResumeAt = now;
+
+        if (this.state.currentScreen !== 'main' || !this.state.tokens?.access) return;
+
+        console.log(`[App] App resumed (${source})`);
+
+        // A backgrounded tab can have its socket suspended or dropped by the
+        // mobile browser; reconnecting is cheap and the channel heals itself.
+        this.connectRealtime();
+
+        const reachable = await this.checkHostConnectivity();
+        if (!reachable) {
+            // Offline: the view, the local session and the typed values stay
+            // as they are, and the timer only has to be woken up.
+            this.rearmWorkoutTimer();
+            return;
+        }
+
+        if (!await this.ensureSessionAlive()) return;
+
+        // The active workout is looked up before anything is rendered: the
+        // server knows whether a session is still running, and the local
+        // storage knows about the ones that were started offline.
+        const active = await this.resolveActiveWorkout();
+
+        if (this.isWorkoutScreenOpen()) {
+            if (!active) {
+                // The session was completed or cancelled elsewhere - the
+                // tracking screen is stale, so fall back to the dashboard.
+                console.log('[App] The active workout is gone, leaving the tracking screen');
+                this.state.currentSessionId = null;
+                this.state.activeWorkout = null;
+                this.state.workoutScreenDismissed = false;
+                this.saveState();
+                this.renderPage('workouts');
+                return;
+            }
+
+            if (this.isSameActiveSession(active)) {
+                // The very same workout is on screen: the DOM stays exactly
+                // as it is, and the timer is woken up.
+                this.rearmWorkoutTimer(active.session);
+                return;
+            }
+
+            if (this.state.workoutScreenDismissed) {
+                // The user closed the workout on purpose - do not pull them back.
+                return;
+            }
+
+            // Another workout is running now: the tracking screen is
+            // re-rendered for it, still without leaving the page.
+            console.log('[App] Another workout is active, switching the tracking screen');
+            await this.openWorkoutScreen(active);
+            return;
+        }
+
+        // The tracking screen is not on top, so the page the user is on
+        // stays exactly as it is. The only exception is the workout
+        // dashboard with a running workout: the tracking screen is then
+        // opened, the same way a cold start opens it.
+        if (!active) return;
+        if (this.state.currentPage !== 'workouts') return;
+        if (this.state.workoutScreenDismissed) return;
+        await this.openWorkoutScreen(active);
+    },
+
+    /**
+     * Open the tracking screen of a workout.
+     *
+     * The dashboard is skipped on purpose: it would flash up in between and
+     * the scroll position of the exercise carousel would be lost.
+     */
+    async openWorkoutScreen(active) {
+        if (active.isLocal) {
+            this.state.activeWorkout = this.localWorkoutMarker();
+        }
+        this.markPageActive('workouts');
+        this.saveState();
+        await Workouts.renderWorkoutScreen(this.elements.pageContent, this, active.sessionId);
+    },
+
+    /**
+     * Whether two session references point at the same workout.
+     *
+     * A server session is a number and a session started offline is a
+     * string key, so they are compared as text.
+     */
+    sameSession(a, b) {
+        if (a == null || b == null) return false;
+        return String(a) === String(b);
+    },
+
+    /**
+     * Whether the workout on screen is the one that is still running.
+     *
+     * A workout started offline keeps its local key until the server knows
+     * the session, so the two sides have to be compared through the local
+     * session as well - otherwise a synced workout would look like a
+     * different one and the tracking screen would be re-rendered.
+     */
+    isSameActiveSession(active) {
+        if (!active) return false;
+        if (this.sameSession(active.sessionId, this.state.currentSessionId)) return true;
+
+        const localSession = Workouts.getActiveLocalSession();
+        if (!localSession) return false;
+        if (active.isLocal) {
+            return this.sameSession(localSession.key, active.sessionId);
+        }
+        // The workout was started offline and has been synced since: the
+        // local key and the server id point at the same workout.
+        return !!localSession.remoteSessionId
+            && this.sameSession(localSession.remoteSessionId, active.sessionId);
+    },
+
+    /**
+     * Wake the workout timer up after the app was frozen.
+     *
+     * A backgrounded tab has its timers throttled or suspended by the
+     * browser, so the interval that ticks the elapsed time is not running
+     * any more. The tick itself is computed from the start of the session,
+     * so restarting the interval is enough to get the right value back.
+     */
+    rearmWorkoutTimer(session = null) {
+        if (!this.isWorkoutScreenOpen()) return;
+        const active = session || Workouts.currentSession;
+        if (!active) return;
+        Workouts.startWorkoutTimer(active);
+    },
+
+    /**
+     * The marker of a workout that was started offline, if there is one.
+     *
+     * The marker is what tells a cold start that a workout is still
+     * running, so it has to survive every navigation.
+     */
+    localWorkoutMarker() {
+        const localSession = Workouts.getActiveLocalSession();
+        if (!localSession) return null;
+        return { isLocal: true, key: localSession.key };
+    },
+
+    /**
+     * Re-render the current page after a data change.
+     *
+     * The workout tracking screen is skipped on purpose: a re-render there
+     * would throw away the values the user typed and the position of the
+     * exercise carousel.
+     */
+    refreshCurrentView() {
+        if (this.state.currentScreen !== 'main') return;
+        if (this.isWorkoutScreenOpen()) return;
+        this.renderPage(this.state.currentPage).catch((error) => {
+            console.error('[App] View refresh failed:', error);
+        });
+    },
+
+    /**
+     * Highlight a page in the bottom navigation without rendering it.
+     */
+    markPageActive(pageName) {
+        this.state.currentPage = pageName;
+        this.elements.navItems?.forEach(item => item.classList.toggle('active', item.dataset.page === pageName));
+    },
+
     cacheElements() {
         this.elements = {
             screens: {
@@ -251,11 +653,49 @@ const App = {
     },
 
     setupNetworkBanner() {
+        this.state.isOnline = navigator.onLine;
         NetworkBanner.init();
     },
 
-    updateNetworkBanner() {
-        NetworkBanner.refresh();
+    updateNetworkBanner(skipHostCheck = false) {
+        NetworkBanner.refresh(skipHostCheck);
+    },
+
+    /**
+     * Explicit backend host reachability check using a short AbortController
+     * timeout. navigator.onLine is unreliable under L3 blocks and captive
+     * portals (the interface reports online while HTTP requests time out), so
+     * a lightweight GET /health probe is the source of truth.
+     *
+     * When the host is reachable and the offline banner was visible, this
+     * flushes the IndexedDB sync queue and transitions to the clean hidden
+     * state. When unreachable, it shows the offline banner immediately.
+     */
+    async checkHostConnectivity() {
+        if (!navigator.onLine) {
+            this.state.isOnline = false;
+            NetworkBanner.showOffline();
+            return false;
+        }
+
+        let reachable = false;
+        try {
+            reachable = await API.checkHostReachable();
+        } catch (error) {
+            console.warn('[App] Host reachability check failed:', error);
+            reachable = false;
+        }
+
+        if (reachable) {
+            this.state.isOnline = true;
+            await NetworkBanner.refresh(true);
+            await this.flushOfflineQueue();
+        } else {
+            this.state.isOnline = false;
+            NetworkBanner.showOffline();
+        }
+
+        return reachable;
     },
 
     isAIOnline() {
@@ -266,7 +706,57 @@ const App = {
         this.state.tokens.access = localStorage.getItem('access_token');
         this.state.tokens.refresh = localStorage.getItem('refresh_token');
         const user = localStorage.getItem('user');
-        if (user) this.state.user = JSON.parse(user);
+        if (user) {
+            try {
+                this.state.user = JSON.parse(user);
+            } catch (e) {
+                this.state.user = null;
+            }
+        }
+    },
+    
+    saveState() {
+        if (this.state.currentPage) {
+            localStorage.setItem('last_active_page', this.state.currentPage);
+        }
+        // A workout that was started offline lives in the local storage
+        // until the queue syncs it. Its marker has to survive a navigation:
+        // without it a cold start would not find the session any more.
+        const activeWorkout = this.state.activeWorkout || this.localWorkoutMarker();
+        if (activeWorkout) {
+            try {
+                localStorage.setItem('active_workout', JSON.stringify(activeWorkout));
+            } catch (e) {
+                localStorage.removeItem('active_workout');
+            }
+        } else {
+            localStorage.removeItem('active_workout');
+        }
+        if (this.state.currentSessionId) {
+            localStorage.setItem('active_session_id', String(this.state.currentSessionId));
+        } else {
+            localStorage.removeItem('active_session_id');
+        }
+    },
+    
+    loadState() {
+        const lastPage = localStorage.getItem('last_active_page');
+        const activeWorkout = localStorage.getItem('active_workout');
+        const activeSessionId = localStorage.getItem('active_session_id');
+        let parsedWorkout = null;
+        if (activeWorkout) {
+            try {
+                parsedWorkout = JSON.parse(activeWorkout);
+            } catch (e) {
+                parsedWorkout = null;
+                localStorage.removeItem('active_workout');
+            }
+        }
+        return {
+            page: lastPage || 'nutrition',
+            workout: parsedWorkout,
+            sessionId: activeSessionId || null
+        };
     },
     
     saveTokens() {
@@ -281,6 +771,9 @@ const App = {
         localStorage.removeItem('user');
         this.state.tokens = { access: null, refresh: null };
         this.state.user = null;
+        // The live channel is authenticated with the access token, so it
+        // goes down with it.
+        this.disconnectRealtime();
     },
 
     async refreshAccessToken() {
@@ -293,6 +786,9 @@ const App = {
             this.state.tokens.access = response.access_token;
             this.state.tokens.refresh = response.refresh_token;
             this.saveTokens();
+            // The live channel authenticates with the access token, so the
+            // socket has to hand the renewed one to its next handshake.
+            this.realtime?.setToken(response.access_token);
             return true;
         } catch (error) {
             console.error('[App] Token refresh failed:', error);
@@ -311,17 +807,66 @@ const App = {
             const user = await API.get('/users/me', this.state.tokens.access);
             this.state.user = user;
             this.showScreen('main');
-            this.showPage('nutrition');
+            const { page, workout, sessionId } = this.loadState();
+            if (workout || sessionId) {
+                this.state.activeWorkout = workout || this.state.activeWorkout;
+                if (sessionId && !this.state.currentSessionId) {
+                    this.state.currentSessionId = sessionId;
+                }
+                this.showPage('workouts');
+                try {
+                    const sid = sessionId || this.state.currentSessionId;
+                    if (sid && window.Workouts && typeof window.Workouts.renderWorkoutScreen === 'function') {
+                        let id = sid;
+                        if (typeof id === 'string') {
+                            if (id.startsWith('local-')) id = id;
+                            else if (!isNaN(parseInt(id))) id = parseInt(id);
+                        }
+                        await window.Workouts.renderWorkoutScreen(this.elements.pageContent, this, id);
+                    }
+                } catch (e) {
+                    console.warn('[App] Failed to auto-resume workout session:', e);
+                }
+            } else {
+                this.showPage(page || 'nutrition');
+            }
         } catch (error) {
             console.error('[App] Token validation error:', error);
-            if (error?.isNetworkError || !navigator.onLine) {
-                // Temporary network drop on wake/resume: keep user logged in using cached state
+            if (error?.isNetworkError || !navigator.onLine || !this.state.isOnline) {
+                // Temporary network drop on wake/resume: keep user logged in using cached state or tokens
                 console.warn('[App] Network error during token validation; retaining offline session.');
-                if (this.state.user) {
-                    this.showScreen('main');
-                    this.showPage('nutrition');
-                    return;
+                if (!this.state.user) {
+                    const cachedUser = localStorage.getItem('user');
+                    if (cachedUser) {
+                        try { this.state.user = JSON.parse(cachedUser); } catch(e) {}
+                    }
                 }
+                this.showScreen('main');
+                const { page, workout, sessionId } = this.loadState();
+                if (workout || sessionId) {
+                    this.state.activeWorkout = workout || this.state.activeWorkout;
+                    if (sessionId && !this.state.currentSessionId) {
+                        this.state.currentSessionId = sessionId;
+                    }
+                    this.showScreen('main');
+                    this.showPage('workouts');
+                    try {
+                        const sid = sessionId || this.state.currentSessionId;
+                        if (sid && window.Workouts && typeof window.Workouts.renderWorkoutScreen === 'function') {
+                            let id = sid;
+                            if (typeof id === 'string') {
+                                if (id.startsWith('local-')) id = id;
+                                else if (!isNaN(parseInt(id))) id = parseInt(id);
+                            }
+                            await window.Workouts.renderWorkoutScreen(this.elements.pageContent, this, id);
+                        }
+                    } catch (e) {
+                        console.warn('[App] Failed to auto-resume workout session:', e);
+                    }
+                } else {
+                    this.showPage(page || 'nutrition');
+                }
+                return;
             }
             // Definite auth failure (401/403 or invalid session)
             this.clearTokens();
@@ -870,17 +1415,148 @@ const App = {
             console.error(`[App] Screen ${screenName} not found!`);
             return;
         }
-        
+
         Object.values(this.elements.screens).forEach(screen => {
             if (screen) screen.classList.add('hidden');
         });
-        
+
         this.elements.screens[screenName].classList.remove('hidden');
         this.state.currentScreen = screenName;
-        
+
+        // The live channel is authenticated with the access token, so it
+        // lives exactly as long as the signed-in shell does.
+        if (screenName === 'main') {
+            this.connectRealtime();
+        } else if (screenName === 'landing') {
+            this.disconnectRealtime();
+        }
+
         if (this.elements.bottomNav) {
             this.elements.bottomNav.style.display = (screenName === 'main') ? 'block' : 'none';
         }
+    },
+
+    /**
+     * Open the live channel used for background-analysis updates.
+     *
+     * The handshake is authenticated with the access token, so the token is
+     * renewed first when it is about to expire: the server checks the token
+     * once, during the handshake, and refuses it with a close the socket
+     * cannot recover from on its own.
+     */
+    connectRealtime() {
+        // Only one renewal at a time: the server rotates the refresh token,
+        // so two parallel renewals would spend the same one twice and the
+        // loser would sign the user out.
+        if (this._realtimeConnectPromise) return;
+        this._realtimeConnectPromise = this.ensureRealtimeToken()
+            .then((token) => {
+                if (!token) return;
+                this.openRealtime(token);
+            })
+            .catch((error) => {
+                console.warn('[App] Live channel could not be opened:', error);
+            })
+            .finally(() => {
+                this._realtimeConnectPromise = null;
+            });
+    },
+
+    /**
+     * The access token the live channel should authenticate with.
+     *
+     * Returns null when there is no session. A token that is expired or
+     * about to expire is refreshed first; `forceRefresh` does it even when
+     * the token still looks alive, which is what a refused handshake needs.
+     */
+    async ensureRealtimeToken(forceRefresh = false) {
+        const token = this.state.tokens?.access;
+        if (!token) return null;
+        if (!forceRefresh && !API.isTokenExpiring(token)) return token;
+
+        console.log('[App] Renewing the access token for the live channel');
+        try {
+            const refreshed = await this.refreshAccessToken();
+            if (!refreshed) return null;
+        } catch (error) {
+            console.warn('[App] Token renewal for the live channel failed:', error);
+            return null;
+        }
+        return this.state.tokens?.access || null;
+    },
+
+    /**
+     * Put the socket on the given token and open it.
+     *
+     * The socket instance is kept across token changes: it carries the
+     * reconnect and the heartbeat, and only the token it hands to the
+     * handshake has to be current.
+     */
+    openRealtime(token) {
+        // The session can be gone by the time the renewal answers - a
+        // logout, a 403 - and a socket opened for it would linger behind
+        // for a session that no longer exists.
+        if (this.state.tokens?.access !== token) return;
+
+        if (!this.realtime) {
+            this.realtime = API.createWebSocket(token);
+            this.realtime.on('status', (status) => {
+                // A channel that came up has proved its token, so a later
+                // refusal is allowed to start the retry budget over.
+                if (status === 'open') {
+                    this._realtimeAuthRetries = 0;
+                    this.state.isOnline = true;
+                    NetworkBanner.hide();
+                } else if (status === 'closed') {
+                    this.state.isOnline = false;
+                    NetworkBanner.showOffline();
+                }
+            });
+            window.addEventListener('mylofi:realtime-status', (e) => {
+                const status = e?.detail?.status;
+                if (status === 'open') {
+                    this.state.isOnline = true;
+                    NetworkBanner.hide();
+                    if (this.state.tokens?.access && this.state.currentScreen === 'main') {
+                        this.flushOfflineQueue().catch(() => {});
+                        // The workout screen is skipped: a re-render there
+                        // would throw away what the user typed.
+                        this.refreshCurrentView();
+                    }
+                } else if (status === 'closed') {
+                    this.state.isOnline = false;
+                    NetworkBanner.showOffline();
+                }
+            });
+            this.realtime.on('unauthorized', () => {
+                // The server refused the token the handshake carried. A
+                // renewed one is worth one more attempt; the same one would
+                // be refused again.
+                if (this._realtimeAuthRetries >= 1) {
+                    console.warn('[App] Live channel refused the access token, giving up');
+                    this._realtimeAuthRetries = 0;
+                    return;
+                }
+                this._realtimeAuthRetries += 1;
+                this.ensureRealtimeToken(true)
+                    .then((fresh) => {
+                        if (!fresh) return;
+                        this.realtime?.setToken(fresh);
+                        this.realtime?.connect();
+                    })
+                    .catch((error) => {
+                        console.warn('[App] Live channel re-authentication failed:', error);
+                    });
+            });
+        }
+
+        this.realtime.setToken(token);
+        this.realtime.connect();
+    },
+
+    disconnectRealtime() {
+        this.realtime?.close();
+        this.realtime = null;
     },
 
     hideSplash() {
@@ -894,8 +1570,13 @@ const App = {
     
     showPage(pageName) {
         console.log(`[App] Showing page: ${pageName}`);
-        this.state.currentPage = pageName;
-        this.elements.navItems.forEach(item => item.classList.toggle('active', item.dataset.page === pageName));
+        this.markPageActive(pageName);
+        // navigator.onLine is unreliable under L3 blocks and captive portals
+        // (the interface reports online while HTTP requests time out), so
+        // every page navigation re-probes the backend host and shows the
+        // offline banner immediately when the host is unreachable.
+        this.checkHostConnectivity().catch(() => {});
+        this.saveState();
         this.renderPage(pageName);
     },
     
@@ -970,6 +1651,9 @@ const App = {
                 this.showPage('history');
                 break;
             case 'back-to-workouts':
+                // The user closed the workout on purpose: the resume handler
+                // must not pull them back into it.
+                this.state.workoutScreenDismissed = true;
                 this.showPage('workouts');
                 break;
             case 'show-build-workout':

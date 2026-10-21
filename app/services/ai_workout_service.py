@@ -61,6 +61,7 @@ from app.services.workout import (
     WORKOUT_GOAL_SETTINGS,
     as_utc,
     get_workout_session,
+    measured_rest_times,
     select_quick_start_exercises,
 )
 
@@ -543,25 +544,32 @@ async def load_muscle_volume(db: AsyncSession, session_id: int, user_id: int) ->
 
 
 async def load_rest_stats(db: AsyncSession, session_id: int) -> Dict[str, Any]:
-    """Rest intervals between consecutive completed sets, computed from timestamps."""
-    result = await db.execute(
-        select(WorkoutSet.completed_at)
-        .join(WorkoutSessionExercise, WorkoutSet.exercise_id == WorkoutSessionExercise.id)
-        .where(
-            WorkoutSessionExercise.session_id == session_id,
-            WorkoutSet.is_completed.is_(True),
-            WorkoutSet.completed_at.isnot(None),
-        )
-        .order_by(WorkoutSet.completed_at.asc())
-    )
-    timestamps = [as_utc(row.completed_at) for row in result.all()]
-    timestamps = [t for t in timestamps if t is not None]
-    if len(timestamps) < 2:
-        return {"avg_rest_seconds": 0, "max_rest_seconds": 0}
+    """Rest intervals between consecutive completed sets, computed from timestamps.
 
-    intervals = []
-    for i in range(1, len(timestamps)):
-        intervals.append(abs(int((timestamps[i] - timestamps[i - 1]).total_seconds())))
+    A break only counts inside one exercise: the time between the last set of
+    an exercise and the first set of the next is the changeover, and counting
+    it as a rest is what made the coach quote breaks the user never took. The
+    same rules the session service applies to the stored measurements are used
+    here, so the coach and the history card read the same numbers - including
+    the rule that a set which was not performed breaks the chain of gaps.
+    """
+    result = await db.execute(
+        select(
+            WorkoutSessionExercise.id.label("exercise_id"),
+            WorkoutSet.completed_at.label("completed_at"),
+            WorkoutSet.rest_time_seconds.label("rest_time_seconds"),
+        )
+        .join(WorkoutSessionExercise, WorkoutSet.exercise_id == WorkoutSessionExercise.id)
+        .where(WorkoutSessionExercise.session_id == session_id)
+        .order_by(WorkoutSessionExercise.order, WorkoutSet.set_number)
+    )
+    rests = measured_rest_times(
+        (row.exercise_id, row.completed_at, row.rest_time_seconds)
+        for row in result.all()
+    )
+    intervals = [rest for rest in rests if rest is not None]
+    if not intervals:
+        return {"avg_rest_seconds": 0, "max_rest_seconds": 0}
 
     return {
         "avg_rest_seconds": int(sum(intervals) / len(intervals)),
