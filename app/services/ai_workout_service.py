@@ -60,7 +60,6 @@ from app.services.nutrition import utcnow
 from app.services.workout import (
     WORKOUT_GOAL_SETTINGS,
     as_utc,
-    get_workout_session,
     measured_rest_times,
     select_quick_start_exercises,
 )
@@ -1141,7 +1140,7 @@ async def build_workout_preview_and_store(
                 .where(WorkoutSession.id == session_id)
                 .options(
                     selectinload(WorkoutSession.template).selectinload(WorkoutTemplate.exercises),
-                    selectinload(WorkoutSession.exercises),
+                    selectinload(WorkoutSession.exercises).selectinload(WorkoutSessionExercise.sets),
                 )
             )
             session = result.scalar_one_or_none()
@@ -1232,41 +1231,56 @@ async def wait_for_stored_ai_plan(
     """
     deadline = asyncio.get_running_loop().time() + timeout
     while asyncio.get_running_loop().time() < deadline:
-        # Expire all cached state so each poll reflects commits made by the
-        # background task (SQLAlchemy identity map would otherwise return the
-        # stale `PENDING` instance loaded earlier in this request).
-        db.expire_all()
-        session = await get_workout_session(db, session_id, user_id)
-        if session is None:
+        # The background task writes the plan in its own session and commits it,
+        # so the two columns it writes are read again on every poll - the
+        # instance this request loaded earlier still carries the state it had
+        # then. Reading the columns is enough, and it is what keeps the poll
+        # safe: expiring the session's cached state would expire the user and
+        # the template with it, and the next access to either of them would be
+        # a lazy load, which an async session cannot do without a greenlet.
+        row = (
+            await db.execute(
+                select(WorkoutSession.ai_plan_status, WorkoutSession.ai_plan_json).where(
+                    WorkoutSession.id == session_id,
+                    WorkoutSession.user_id == user_id,
+                )
+            )
+        ).first()
+        if row is None:
             logger.debug(f"[AI Workout Preview] wait_for_stored_ai_plan: session {session_id} not found")
             return None
-        stored = load_stored_ai_plan(session)
+        stored = _parse_stored_plan(row.ai_plan_json, session_id)
         if stored is not None:
-            logger.debug(f"[AI Workout Preview] wait_for_stored_ai_plan: session {session_id} got stored plan (status={getattr(session,'ai_plan_status')})")
+            logger.debug(f"[AI Workout Preview] wait_for_stored_ai_plan: session {session_id} got stored plan (status={row.ai_plan_status})")
             return stored
         # `failed` is terminal: the background task already tried and gave up, so
         # there is nothing left to wait for.
-        status = getattr(session, "ai_plan_status", None)
-        if status == AI_PLAN_STATUS_FAILED:
+        if row.ai_plan_status == AI_PLAN_STATUS_FAILED:
             logger.debug(f"[AI Workout Preview] wait_for_stored_ai_plan: session {session_id} terminal FAILED")
             return None
-        logger.debug(f"[AI Workout Preview] wait_for_stored_ai_plan: session {session_id} still {status}, waiting...")
+        logger.debug(f"[AI Workout Preview] wait_for_stored_ai_plan: session {session_id} still {row.ai_plan_status}, waiting...")
         await asyncio.sleep(0.25)
     logger.debug(f"[AI Workout Preview] wait_for_stored_ai_plan: session {session_id} timed out after {timeout}s")
     return None
 
 
-def load_stored_ai_plan(session: WorkoutSession) -> Optional[Dict[str, Any]]:
-    """Read the stored AI plan from a session, or None if not yet generated."""
-    raw = getattr(session, "ai_plan_json", None)
+def _parse_stored_plan(raw: Optional[str], session_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """The stored plan as a dict, or None when there is nothing readable there."""
     if not raw:
         return None
     try:
         parsed = json.loads(raw)
     except (TypeError, ValueError):
-        logger.warning(f"[AI Workout Preview] Stored plan for session {session.id} is not readable JSON")
+        logger.warning(f"[AI Workout Preview] Stored plan for session {session_id} is not readable JSON")
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+def load_stored_ai_plan(session: WorkoutSession) -> Optional[Dict[str, Any]]:
+    """Read the stored AI plan from a session, or None if not yet generated."""
+    return _parse_stored_plan(
+        getattr(session, "ai_plan_json", None), getattr(session, "id", None)
+    )
 # ===== summary =================================================================
 
 SUMMARY_REQUIRED_FIELDS = ["ai_summary", "overall_score"]

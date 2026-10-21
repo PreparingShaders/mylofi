@@ -186,6 +186,7 @@ async def get_workout_session(
         select(WorkoutSession)
         .where(WorkoutSession.id == session_id, WorkoutSession.user_id == user_id)
         .options(
+            selectinload(WorkoutSession.template).selectinload(WorkoutTemplate.exercises),
             selectinload(WorkoutSession.exercises).selectinload(WorkoutSessionExercise.sets)
         )
     )
