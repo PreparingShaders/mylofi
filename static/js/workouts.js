@@ -83,6 +83,10 @@ const AI_PREMIUM_REQUIRED_MESSAGE = 'ИИ-разбор тренировок до
 export const Workouts = {
     app: null,
     workoutTimerInterval: null,
+    // The session the tracking screen is showing. A backgrounded app has its
+    // timers suspended, so the resume handler uses this to wake the timer
+    // up without re-rendering the screen.
+    currentSession: null,
     recentSessions: [],
     stats: null,
     tonnageData: null,
@@ -866,6 +870,9 @@ export const Workouts = {
         this.app = app;
         try {
         this.stopWorkoutTimer();
+        // The dashboard replaces the tracking screen, so there is no session
+        // on screen any more.
+        this.currentSession = null;
         // The filters sheet lives in the shared #modals host, so release its
         // scroll lock if it survived a navigation.
         this.closeTonnageFiltersSheet();
@@ -1700,6 +1707,20 @@ export const Workouts = {
             this.aiPlan = null;
         }
         app.state.currentSessionId = session.isLocal ? session.key : session.id;
+        // The tracking screen is on top again, so the user is inside the
+        // workout once more.
+        this.currentSession = session;
+        if (app.state) app.state.workoutScreenDismissed = false;
+
+        try {
+            if (app.saveState) {
+                app.saveState();
+            }
+            localStorage.setItem('active_session_id', String(app.state.currentSessionId));
+            if (session.isLocal) {
+                localStorage.setItem('active_workout', JSON.stringify({ isLocal: true, key: session.key }));
+            }
+        } catch (e) {}
 
         // Anchor the silent rest clock to when the session started, falling back
         // to the local clock for sessions that never got a server timestamp.
@@ -2243,6 +2264,9 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         container.querySelector('[data-action="back-to-workouts"]')?.addEventListener('click', (e) => {
             e.stopPropagation();
             this.stopWorkoutTimer();
+            // The user closed the workout on purpose: the resume handler
+            // must not pull them back into it.
+            if (app.state) app.state.workoutScreenDismissed = true;
             app.showPage('workouts');
         });
     },
@@ -3023,7 +3047,7 @@ showQuickStartModal(app) {
                     const session = await sessionPromise;
 
                     // Рендерим экран (не блокируя отсчет)
-                    this.renderWorkoutScreen(app.elements.pageContent, app, session.id);
+                    await this.renderWorkoutScreen(app.elements.pageContent, app, session.id);
                 } catch (err) {
                     const template = templates.find(t => t.id === templateId);
                     if (err?.offlineQueued && template) {
