@@ -111,8 +111,12 @@ export const Workouts = {
     // session was completed. The gap between them is the rest the user actually
     // took before the next set, sent inline with each set's completion PATCH so
     // the coach reads real breaks without a floating timer bar on screen.
+    // The exercise the last set belonged to is kept as well: a break belongs to
+    // the exercise it was taken in, and the changeover between two exercises is
+    // not a break.
     sessionStartTimestamp: null,
     lastSetCompletedAt: null,
+    lastSetCompletedExerciseId: null,
 
     escapeHtml(value) {
         return String(value ?? '')
@@ -842,7 +846,10 @@ export const Workouts = {
         API.enqueueRequest(
             'POST',
             `/workouts/sessions/${LOCAL_SESSION_PLACEHOLDER}/complete`,
-            null,
+            // The workout was timed here, and the server only sees it when the
+            // queue is flushed - by then every set carries the same second, so
+            // the length of the session has to travel with the request.
+            { duration_seconds: session.duration_seconds },
             token,
             { offlineSessionKey: session.key }
         );
@@ -1727,6 +1734,7 @@ export const Workouts = {
         const sessionStart = session.started_at ? new Date(session.started_at).getTime() : Date.now();
         this.sessionStartTimestamp = sessionStart;
         this.lastSetCompletedAt = null;
+        this.lastSetCompletedExerciseId = null;
 
         const completedHistorySessions = [...(historyData?.sessions || [])]
             .filter(s => s.status === 'completed')
@@ -2058,19 +2066,26 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     weight_kg: isNaN(weight_kg) ? null : weight_kg,
                     reps: isNaN(reps) ? null : reps
                 };
-                // Background rest chronometry: the gap between the last completed
-                // set (or the session start, for the first set) and now is the
-                // rest this set took. Measured silently and sent inline so the
-                // coach reads real breaks without a floating timer bar on screen.
+                // Background rest chronometry: the gap between the previous set
+                // of the same exercise and now is the break this set took.
+                // Measured silently and sent inline so the coach reads real
+                // breaks without a floating timer bar on screen. The first set
+                // of an exercise carries no measurement: there is no set before
+                // it, and the changeover from the previous exercise is not a
+                // break.
+                const exerciseId = card?.dataset.exerciseId ?? null;
                 if (isCompleted) {
-                    const referenceAt = this.lastSetCompletedAt || this.sessionStartTimestamp;
-                    if (referenceAt && this.sessionStartTimestamp) {
-                        const restSeconds = Math.round((Date.now() - referenceAt) / 1000);
+                    const sameExercise = this.lastSetCompletedAt
+                        && this.lastSetCompletedExerciseId === exerciseId;
+                    if (sameExercise) {
+                        const restSeconds = Math.round((Date.now() - this.lastSetCompletedAt) / 1000);
                         payload.rest_time_seconds = Math.max(0, restSeconds);
                     }
                     this.lastSetCompletedAt = Date.now();
+                    this.lastSetCompletedExerciseId = exerciseId;
                 } else {
                     this.lastSetCompletedAt = null;
+                    this.lastSetCompletedExerciseId = null;
                 }
                 if (isLocal) {
                     this.persistLocalSession(session);

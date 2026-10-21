@@ -1,5 +1,5 @@
 from datetime import datetime, timezone, timedelta
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Iterable, Tuple
 from sqlalchemy import select, func, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -311,9 +311,14 @@ async def complete_workout_session(
 ) -> Optional[WorkoutSession]:
     """Mark a workout session as completed.
 
-    If the client provides `duration_seconds`, it is used directly. Otherwise
-    the duration is derived from the started_at / completed_at timestamps so
-    older clients and offline replays still get a sensible value.
+    The duration is measured on the server, from the completion stamps of the
+    sets that were performed, so the figure describes the workout and not the
+    time the app was open. A client that timed the session on its own clock is
+    only trusted for the case the server cannot measure - a session that was
+    worked out offline and reached the server as a replay of the offline queue.
+
+    The measured rests are re-derived from the same stamps: a client that
+    measured one across an exercise change stored the changeover as a break.
     """
     session = await get_workout_session(db, session_id, user_id)
     if not session:
@@ -322,10 +327,12 @@ async def complete_workout_session(
     session.status = WorkoutSessionStatus.COMPLETED
     completed_at = datetime.now(timezone.utc)
     session.completed_at = completed_at
-    if duration_seconds is not None:
-        session.duration_seconds = max(0, min(86400, duration_seconds))
-    else:
-        session.duration_seconds = resolve_duration_seconds(session.started_at, completed_at)
+    resolve_rest_times(session)
+    session.duration_seconds = resolve_completed_duration(
+        session,
+        client_duration_seconds=duration_seconds,
+        completed_at=completed_at,
+    )
     session.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
@@ -341,7 +348,8 @@ async def cancel_workout_session(db: AsyncSession, session_id: int, user_id: int
     session.status = WorkoutSessionStatus.CANCELLED
     completed_at = datetime.now(timezone.utc)
     session.completed_at = completed_at
-    session.duration_seconds = resolve_duration_seconds(session.started_at, completed_at)
+    # The same measure as for a closed session: the time the sets took.
+    session.duration_seconds = resolve_completed_duration(session, completed_at=completed_at)
     session.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
@@ -829,7 +837,6 @@ async def get_workout_statistics(
         select(
             func.sum(WorkoutSet.weight_kg * WorkoutSet.reps).label("total_volume"),
             func.count(WorkoutSet.id).label("total_sets"),
-            func.sum(WorkoutSession.duration_seconds).label("total_duration"),
         )
         .join(WorkoutSessionExercise, WorkoutSet.exercise_id == WorkoutSessionExercise.id)
         .join(WorkoutSession, WorkoutSessionExercise.session_id == WorkoutSession.id)
@@ -838,14 +845,30 @@ async def get_workout_statistics(
             WorkoutSession.status == WorkoutSessionStatus.COMPLETED,
             WorkoutSet.is_completed,
             WorkoutSet.weight_kg.isnot(None),
-            WorkoutSession.duration_seconds > 0,
-            WorkoutSession.duration_seconds <= 86400,
         )
     )
     volume_data = volume_result.first()
     total_volume_kg = volume_data.total_volume or 0
     total_sets = volume_data.total_sets or 0
-    total_duration_seconds = volume_data.total_duration or 0
+
+    # The duration belongs to the session, not to the set: summing it next to
+    # the sets counted it once per set, so a 45-minute session of 9 sets was
+    # reported as 6 hours and 45 minutes of training. It is summed on its own
+    # query, one row per session, over the durations the server measured.
+    duration_result = await db.execute(
+        select(
+            func.coalesce(func.sum(WorkoutSession.duration_seconds), 0).label("total_duration"),
+            func.count(WorkoutSession.id).label("measured_sessions"),
+        ).where(
+            WorkoutSession.user_id == user_id,
+            WorkoutSession.status == WorkoutSessionStatus.COMPLETED,
+            WorkoutSession.duration_seconds > 0,
+            WorkoutSession.duration_seconds <= 86400,
+        )
+    )
+    duration_data = duration_result.first()
+    total_duration_seconds = duration_data.total_duration or 0
+    measured_sessions = duration_data.measured_sessions or 0
 
     # Workouts by muscle group
     muscle_group_result = await db.execute(
@@ -909,7 +932,10 @@ async def get_workout_statistics(
         "total_volume_kg": round(total_volume_kg, 1),
         "total_sets": total_sets,
         "total_duration_hours": round(total_duration_seconds / 3600, 1),
-        "avg_workout_duration_min": round((total_duration_seconds / 60) / total_workouts, 1) if total_workouts > 0 else 0,
+        # The average is over the sessions that carry a measured duration: a
+        # session the server could not measure would otherwise drag the figure
+        # down with a zero it never earned.
+        "avg_workout_duration_min": round((total_duration_seconds / 60) / measured_sessions, 1) if measured_sessions > 0 else 0,
         "current_streak_weeks": current_streak,
         "top_exercises": top_exercises,
     }
@@ -951,6 +977,162 @@ def resolve_duration_seconds(started_at: Optional[datetime], completed_at: Optio
         return 0
     seconds = abs(int((end - start).total_seconds()))
     return max(0, min(86400, seconds))
+
+
+# ===== Session timing =====
+# The length of a workout and the breaks inside it are measured twice: the
+# client times them on its own clock, and the server can re-derive them from
+# the completion stamps of the sets. The server's figures are the ones that go
+# into the database, with the client's kept for the case the server cannot
+# measure - a session that was worked out offline and reached the server as a
+# replay of the offline queue.
+
+
+def _ordered_session_exercises(session: WorkoutSession) -> List[WorkoutSessionExercise]:
+    """The exercises of a session in the order they were performed."""
+    return sorted(
+        session.exercises or [],
+        key=lambda exercise: (exercise.order or 0, exercise.id or 0),
+    )
+
+
+def _ordered_sets(exercise: WorkoutSessionExercise) -> List[WorkoutSet]:
+    """The sets of an exercise in the order they were performed."""
+    return sorted(
+        exercise.sets or [],
+        key=lambda workout_set: (workout_set.set_number or 0, workout_set.id or 0),
+    )
+
+
+def measured_rest_times(
+    sets: Iterable[Tuple[Optional[int], Optional[datetime], Optional[int]]],
+) -> List[Optional[int]]:
+    """The measured rest of every set, in the order the sets were given.
+
+    Each set is given as (exercise id, completion stamp, the rest the client
+    measured), in the order the sets were performed.
+
+    A break belongs to the exercise it was taken in: the time between the last
+    set of one exercise and the first set of the next is spent changing
+    equipment, not resting, so the interval stops at every exercise change.
+    That is what the client could not know - it measured the gap from the last
+    set it had seen, whichever exercise that set belonged to, and stored the
+    changeover as a rest.
+
+    A set without a completion stamp was not performed: it anchors nothing, and
+    the gap behind it stays empty instead of being measured against the set
+    before it.
+
+    A break the server cannot confirm is left as the client measured it. A
+    session worked out offline reaches the server as a replay, in which every
+    set carries the same second; those stamps describe the replay and not the
+    workout, so the break the client measured is the honest one.
+    """
+    rests: List[Optional[int]] = []
+    previous_exercise: Optional[int] = None
+    previous_stamp: Optional[datetime] = None
+    for exercise_id, completed_at, measured in sets:
+        stamp = as_utc(completed_at)
+        rest: Optional[int] = None
+        if stamp is not None and previous_stamp is not None and previous_exercise == exercise_id:
+            gap = int((stamp - previous_stamp).total_seconds())
+            if gap < 0:
+                # The stamps are out of order, so the gap means nothing.
+                rest = None
+            elif measured is not None and measured > gap:
+                # The client measured a longer break than the stamps show,
+                # which is what a replayed session looks like: its own
+                # measurement is the honest one.
+                rest = measured
+            else:
+                rest = gap
+        rests.append(rest)
+        previous_exercise = exercise_id
+        previous_stamp = stamp
+    return rests
+
+
+def resolve_rest_times(session: WorkoutSession) -> List[WorkoutSet]:
+    """Re-derive the measured rest of every set from the completion stamps.
+
+    The rules are the ones `measured_rest_times` applies: a break belongs to
+    the exercise it was taken in, a set that was not performed anchors nothing,
+    and a break the server cannot confirm is left as the client measured it.
+    """
+    ordered: List[Tuple[WorkoutSessionExercise, WorkoutSet]] = [
+        (exercise, workout_set)
+        for exercise in _ordered_session_exercises(session)
+        for workout_set in _ordered_sets(exercise)
+    ]
+    rests = measured_rest_times(
+        (exercise.id, workout_set.completed_at, workout_set.rest_time_seconds)
+        for exercise, workout_set in ordered
+    )
+    for (_, workout_set), rest in zip(ordered, rests):
+        workout_set.rest_time_seconds = rest
+    return [workout_set for _, workout_set in ordered]
+
+
+def resolve_session_duration(session: WorkoutSession) -> Optional[int]:
+    """The working time of a session in seconds, or None when it cannot be measured.
+
+    The span runs from the first set that carries a completion stamp to the
+    last one, so the setup before the first set and the cool-down after the
+    last stay out of it: the figure is the time the sets themselves took. A
+    session with fewer than two stamped sets has no span to measure and reads
+    as None, which leaves the caller to fall back to the clock it has.
+    """
+    stamps = [
+        stamp
+        for stamp in (
+            as_utc(workout_set.completed_at)
+            for exercise in _ordered_session_exercises(session)
+            for workout_set in _ordered_sets(exercise)
+        )
+        if stamp is not None
+    ]
+    if len(stamps) < 2:
+        return None
+    seconds = int((max(stamps) - min(stamps)).total_seconds())
+    return max(0, min(86400, seconds))
+
+
+def resolve_completed_duration(
+    session: WorkoutSession,
+    client_duration_seconds: Optional[int] = None,
+    completed_at: Optional[datetime] = None,
+) -> int:
+    """The duration to store for a session that is being closed.
+
+    The server measures the workout from the stamps of the sets that were
+    performed: the span from the first one to the last is the working time,
+    with the setup before the first set and the cool-down after the last kept
+    out of it. The client timed the session on its own clock, and that timer
+    counts the whole time the app was open - the server's figure is the one
+    that describes the workout.
+
+    A session worked out offline is the exception: it reaches the server as a
+    replay, created and stamped within the same second, so its stamps describe
+    the replay and not the workout. The client measured that workout for real,
+    and the two clocks disagreeing by that much is what gives the replay away.
+    """
+    audited = resolve_session_duration(session)
+    server_span = resolve_duration_seconds(session.started_at, completed_at)
+
+    if client_duration_seconds is not None:
+        # What the server can see of the session: the span between its own
+        # stamps and the one it measured from the sets. A client that measured
+        # a workout several times longer than that did not work out on the
+        # server's clock - the session was replayed from the offline queue, and
+        # the break it measured is the honest one.
+        server_view = max(server_span, audited or 0)
+        if server_view * 2 < client_duration_seconds:
+            return max(0, min(86400, client_duration_seconds))
+    if audited is not None:
+        return audited
+    if client_duration_seconds is not None:
+        return max(0, min(86400, client_duration_seconds))
+    return server_span
 
 
 def parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
@@ -1297,6 +1479,12 @@ async def get_workout_session_detail(
     session = await get_workout_session(db, session_id, user_id)
     if not session:
         return None
+
+    # The breaks are re-derived from the completion stamps for the payload, so
+    # a session closed before the stamps were the source of truth shows the
+    # break each exercise really took. The session is not committed here, so
+    # this only corrects what is on screen.
+    resolve_rest_times(session)
 
     exercises = sorted(session.exercises or [], key=lambda ex: (ex.order or 0, ex.id))
     metrics = {"tonnage_kg": 0.0, "total_sets": 0, "completed_sets": 0, "exercises_count": len(exercises)}
