@@ -1383,14 +1383,20 @@ export const Workouts = {
         try {
             const session = await sessionPromise;
             const sessionId = session.id;
-            // Try to read the stored plan; if the background task has not stored
-            // it yet, the preview endpoint falls back to generating it on the fly.
-            const plan = await this.loadAiPlan(app, { session_id: sessionId, template_id: templateId, name: session.name });
-            this.aiPlan = plan ? { ...plan, sessionId } : null;
             Camera.markLoadingComplete(overlayState.overlay);
             await new Promise(r => setTimeout(r, 500));
             Camera.hideLoadingOverlay(overlayState);
+            // Render workout screen immediately without waiting for AI plan
             await this.renderWorkoutScreen(container, app, sessionId);
+            // Load AI plan in background and update badges reactively
+            this.loadAiPlan(app, { session_id: sessionId, template_id: templateId, name: session.name })
+                .then(plan => {
+                    this.aiPlan = plan ? { ...plan, sessionId } : null;
+                    this.updateAiPlanBadges(container);
+                })
+                .catch(err => {
+                    console.warn('[Workouts] AI plan background load failed:', err);
+                });
         } catch (err) {
             console.error('[Workouts] Start with AI error:', err);
             Camera.hideLoadingOverlay(overlayState);
@@ -1426,14 +1432,20 @@ export const Workouts = {
                 { goal, with_ai_plan: true, reduce: true },
                 token,
             );
-            // Read the stored plan; the preview endpoint generates it on demand
-            // if the background task has not stored it yet.
-            const plan = await this.loadAiPlan(app, { goal, name: `Быстрый старт: ${goalLabel}`, session_id: sessionId, reduce: true });
-            this.aiPlan = plan ? { ...plan, sessionId } : null;
             Camera.markLoadingComplete(overlayState.overlay);
             await new Promise(r => setTimeout(r, 500));
             Camera.hideLoadingOverlay(overlayState);
+            // Render workout screen immediately without waiting for AI plan
             await this.renderWorkoutScreen(app.elements.pageContent, app, sessionId);
+            // Load AI plan in background and update badges reactively
+            this.loadAiPlan(app, { goal, name: `Быстрый старт: ${goalLabel}`, session_id: sessionId, reduce: true })
+                .then(plan => {
+                    this.aiPlan = plan ? { ...plan, sessionId } : null;
+                    this.updateAiPlanBadges(app.elements.pageContent);
+                })
+                .catch(err => {
+                    console.warn('[Workouts] AI plan background load failed:', err);
+                });
         } catch (err) {
             console.error('[Workouts] Quick start with AI error:', err);
             Camera.hideLoadingOverlay(overlayState);
@@ -1446,7 +1458,7 @@ export const Workouts = {
     },
 
     /**
-     * The plan for one exercise card, matched by name the way the server matched
+     * The coach's plan for one exercise card, matched by name the way the server matched
      * it: session exercises are free-text names, so the comparison trims and folds
      * case rather than testing equality.
      */
@@ -1455,6 +1467,37 @@ export const Workouts = {
         if (!wanted || !this.aiPlan) return null;
         return (this.aiPlan.recommendations || [])
             .find(r => String(r?.name || '').trim().toLowerCase() === wanted) || null;
+    },
+
+    /**
+     * Inject AI plan badges into the currently rendered workout screen once
+     * they arrive. Looks for exercise cards and updates their badges.
+     */
+    updateAiPlanBadges(container) {
+        if (!container || !this.aiPlan) return;
+        container.querySelectorAll('.workout-card[data-exercise-id]').forEach(card => {
+            const nameEl = card.querySelector('h3');
+            const name = nameEl?.textContent || '';
+            const rec = this.findAiPlanFor(name);
+            if (!rec) return;
+            const badgeHtml = Components.aiWorkoutPlanBadge(rec);
+            if (!badgeHtml) return;
+            const existing = card.querySelector('.ai-plan');
+            if (existing) {
+                existing.outerHTML = badgeHtml;
+            } else {
+                // Insert after sparkline or before sets
+                const sparkline = card.querySelector('.min-h-\\[140px\\]');
+                if (sparkline) {
+                    sparkline.insertAdjacentHTML('afterend', badgeHtml);
+                } else {
+                    const sets = card.querySelector('.space-y-2');
+                    if (sets) {
+                        sets.insertAdjacentHTML('beforebegin', badgeHtml);
+                    }
+                }
+            }
+        });
     },
 
     /** The stored verdict of a session, or null when there is none to read. */

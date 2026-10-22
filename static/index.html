@@ -25,8 +25,8 @@
         })();
     </script>
     
-    <!-- Tailwind CSS via CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Tailwind CSS (local fallback) -->
+    <script src="/static/css/tailwind.browser.js" onerror="var s=document.createElement('script');s.src='https://cdn.tailwindcss.com';document.head.appendChild(s);"></script>
     <script>
         tailwind.config = {
             darkMode: 'class',

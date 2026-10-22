@@ -1,22 +1,18 @@
-# Implementation Plan: Graceful Auth Expiry, Sync Loop Prevention, & UI Error Refinement
+# Implementation Plan: Non-Blocking "Start with AI" Workout Initiation
 
 ## Goal
-1. Fix handling of expired/invalid authentication tokens (401/403) to prevent background sync spam and safely redirect to the login screen.
-2. Refine the Sync Errors UI: exclude technical/auth endpoints from the error UI, provide user-friendly labels for actionable errors, and auto-purge system-level errors.
+Optimize the "Start with AI" flow in `static/js/workouts.js` to transition to the active workout screen instantly, decoupling it from the AI preview generation.
 
 ## Affected Boundaries & Changes
-- **Token Refresh & API Error Interception (`static/js/api.js`)**:
-  - Catch auth failure (401/403), abort background sync (`SyncEngine`), clear stale tokens, and redirect to the login landing screen.
-- **App Resume & Cold Start Validation (`static/js/app.js`)**:
-  - Validate tokens *before* flushing sync queue. If invalid, reset auth state and render landing.
-- **Sync Engine Halt & UI Refinement (`static/js/sync.js`, UI components)**:
-  - Halt `SyncEngine` on persistent auth errors.
-  - **Endpoint Filtering**: In `SyncEngine.enqueue` or the UI error mapper, filter out infrastructure endpoints (`/auth/refresh`, `/auth/login`, `/health`, token validation) so they never appear in the "Sync Errors" UI.
-  - **Friendly Error Mapping**: Map technical endpoints to user-friendly labels (e.g., `/nutrition/photos` -> "Фото еды").
-  - **Auto-Purge**: Automatically discard/hide system-level errors in the sync error modal.
+- **`static/js/workouts.js` (`startTemplateWithAi`)**:
+  - Remove the sequential `await` of `loadAiPlan` before calling `renderWorkoutScreen`.
+  - Implement a two-step flow:
+    1. Await `sessionPromise` (workout creation).
+    2. Immediately call `renderWorkoutScreen` to transition the UI.
+    3. Trigger `loadAiPlan` (AI preview generation/fetching) in the background.
+    4. Implement a reactive update or callback mechanism in `renderWorkoutScreen` to inject AI tips into the UI once they arrive.
+  - Relax any remaining frontend-side timeouts related to the AI plan, ensuring that a slow AI response does not interrupt the workout.
 
 ## Validation Plan
-1. Test expired refresh token behavior.
-2. Verify sync error UI excludes infrastructure routes.
-3. Test user-friendly labels for actionable sync items.
-4. Confirm auto-purge functionality for system-level sync errors.
+1. Test "Старт с ИИ" trigger: verify UI transitions to active workout screen instantly, even if AI plan is pending.
+2. Verify AI tips/preview populate reactively in the UI after a few seconds without freezing the workout interface.
