@@ -684,6 +684,10 @@ class APIClient {
             window.App.renderLanding();
             const authError = new Error('Доступ запрещён. Пожалуйста, войдите снова.');
             authError.status = response.status;
+            authError.authInvalidated = true;
+            if (typeof SyncEngine?.signalAuthFailure === 'function') {
+                SyncEngine.signalAuthFailure(authError);
+            }
             throw authError;
         }
 
@@ -721,14 +725,27 @@ class APIClient {
             this.refreshQueue = [];
             // Network errors during refresh must not wipe tokens — the user is still
             // authenticated; they simply can't reach the server right now.
-            if (!error?.isNetworkError) {
-                console.error('[API] Token refresh failed, clearing auth state:', {
+            if (error?.isNetworkError) {
+                console.error('[API] Token refresh failed (network), preserving session:', {
                     error: error?.message,
                     status: error?.status
                 });
+                throw error;
+            }
+            // Auth failure (401/403 on the refresh call): the session is gone for
+            // good. Clear tokens, halt the sync queue so it doesn't hammer the
+            // server with more unauthenticated requests, and redirect to login.
+            console.error('[API] Token refresh failed, invalidating auth session:', {
+                error: error?.message,
+                status: error?.status
+            });
+            if (window.App) {
                 window.App.clearTokens();
                 window.App.showScreen('landing');
                 window.App.renderLanding();
+            }
+            if (typeof SyncEngine?.signalAuthFailure === 'function') {
+                SyncEngine.signalAuthFailure(error);
             }
             throw error;
         } finally {

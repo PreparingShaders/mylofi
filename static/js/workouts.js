@@ -46,6 +46,13 @@ let DRUM_KEYDOWN_HANDLER = null;
 const LOCAL_SESSION_KEY = 'offline_local_session';
 const LOCAL_CLOSED_SESSIONS_KEY = 'offline_closed_sessions';
 const LOCAL_SESSION_PLACEHOLDER = '__local_session__';
+// Coaching plan and AI verdict are cached per session id so a backgrounded,
+// screen-locked, or reconnected tab can re-hydrate them without re-asking the
+// model. The plan (pre-session targets) and the verdict (recovery_advice and
+// the rest of the breakdown) are read-heavy and user-facing, so the local copy
+// is preferred for the first paint and refreshed behind it.
+const LOCAL_AI_PLAN_KEY = 'ai_plan_session_';
+const LOCAL_AI_ANALYSIS_KEY = 'ai_analysis_session_';
 const TEMP_EXERCISE_ID_BASE = -1000;
 const TEMP_SET_ID_BASE = -100000;
 const OFFLINE_START_MESSAGE = 'Нет подключения к интернету. Тренировка создана локально и будет синхронизирована при появлении связи';
@@ -632,6 +639,66 @@ export const Workouts = {
 
     markSessionCancelledLocally(sessionId) {
         this.markSessionClosedLocally(sessionId);
+    },
+
+    // AI coaching plan (the pre-workout preview) is cached per session so it
+    // survives backgrounding, screen lock and reconnections: the user typed
+    // nothing worth losing, but the plan is the coach's answer and should not
+    // be re-fetched every time the screen re-appears online.
+    persistAiPlan(sessionId, plan) {
+        if (!sessionId || !plan) return;
+        try {
+            localStorage.setItem(`${LOCAL_AI_PLAN_KEY}${sessionId}`, JSON.stringify(plan));
+        } catch (err) {
+            console.warn('[Workouts] Failed to cache AI plan:', err);
+        }
+    },
+
+    restoreAiPlan(sessionId) {
+        if (!sessionId) return null;
+        try {
+            const raw = localStorage.getItem(`${LOCAL_AI_PLAN_KEY}${sessionId}`);
+            return raw ? JSON.parse(raw) : null;
+        } catch (err) {
+            console.warn('[Workouts] Failed to read cached AI plan:', err);
+            return null;
+        }
+    },
+
+    forgetAiPlan(sessionId) {
+        if (sessionId) {
+            try { localStorage.removeItem(`${LOCAL_AI_PLAN_KEY}${sessionId}`); } catch (err) {}
+        }
+    },
+
+    // AI verdict/summary (recovery advice, intensity conclusions, etc.) is
+    // written by the background analysis task; caching it locally lets the
+    // history card and the analysis modal render immediately after a
+    // reconnect or background resume, before the read-only endpoint is polled.
+    persistAiAnalysis(sessionId, payload) {
+        if (!sessionId || !payload) return;
+        try {
+            localStorage.setItem(`${LOCAL_AI_ANALYSIS_KEY}${sessionId}`, JSON.stringify(payload));
+        } catch (err) {
+            console.warn('[Workouts] Failed to cache AI analysis:', err);
+        }
+    },
+
+    restoreAiAnalysis(sessionId) {
+        if (!sessionId) return null;
+        try {
+            const raw = localStorage.getItem(`${LOCAL_AI_ANALYSIS_KEY}${sessionId}`);
+            return raw ? JSON.parse(raw) : null;
+        } catch (err) {
+            console.warn('[Workouts] Failed to read cached AI analysis:', err);
+            return null;
+        }
+    },
+
+    forgetAiAnalysis(sessionId) {
+        if (sessionId) {
+            try { localStorage.removeItem(`${LOCAL_AI_ANALYSIS_KEY}${sessionId}`); } catch (err) {}
+        }
     },
 
     // Fetch the exercise catalog, caching to IndexedDB on success and
@@ -1260,17 +1327,20 @@ export const Workouts = {
     /**
      * The coach's plan for one session, kept on the instance so the exercise
      * cards can look up their own targets while the screen renders. Returns the
-     * payload on success and null on anything else - offline, quota, a model
-     * that did not answer - because the workout starts with or without it.
-     */
+         * payload on success and null on anything else - offline, quota, a model
+         * that did not answer - because the workout starts with or without it.
+         */
     async loadAiPlan(app, body) {
-        if (navigator.onLine === false) {
+        if (window.App?.state?.isOnline === false || navigator.onLine === false) {
             app.showToast(AI_OFFLINE_MESSAGE, 'info');
             return null;
         }
         try {
             const payload = await API.postImmediate('/ai/workout-preview', body, app.state.tokens.access);
-            if (payload?.available) return payload;
+            if (payload?.available) {
+                this.persistAiPlan(payload.session_id || body?.session_id, payload);
+                return payload;
+            }
             app.showToast(payload?.reason || AI_PLAN_UNAVAILABLE_MESSAGE, 'info');
             return null;
         } catch (err) {
@@ -1389,12 +1459,23 @@ export const Workouts = {
 
     /** The stored verdict of a session, or null when there is none to read. */
     async loadAiAnalysis(app, sessionId, { quiet = true } = {}) {
+        const id = parseInt(sessionId);
+        if (isNaN(id)) return null;
+        // The cached verdict is shown first so the screen is never empty after a
+        // background resume or a reconnect; the network read that follows
+        // refreshes it and re-caches the result.
+        let cached = null;
+        if (app.state?.isOnline !== false && navigator.onLine !== false) {
+            cached = this.restoreAiAnalysis(id);
+        }
         try {
-            return await API.get(`/ai/workout-summary/${sessionId}`, app.state.tokens.access);
+            const payload = await API.get(`/ai/workout-summary/${id}`, app.state.tokens.access);
+            if (payload) this.persistAiAnalysis(id, payload);
+            return payload || cached;
         } catch (err) {
             console.warn('[Workouts] AI analysis read failed:', err);
             if (!quiet) app.showToast(err?.message || 'Не удалось загрузить разбор', 'error');
-            return null;
+            return cached;
         }
     },
 
@@ -1415,7 +1496,7 @@ export const Workouts = {
         const id = parseInt(sessionId);
         if (isNaN(id)) return null;
         if (this._aiAnalysisLoading) return null;
-        if (navigator.onLine === false) {
+        if (window.App?.state?.isOnline === false || navigator.onLine === false) {
             app.showToast(AI_OFFLINE_MESSAGE, 'info');
             return null;
         }
@@ -1443,6 +1524,7 @@ export const Workouts = {
             // A verdict that was just written invalidates the cached read of it.
             API.invalidateReadCache(`/ai/workout-summary/${id}`);
             if (payload?.available) {
+                this.persistAiAnalysis(id, payload);
                 app.showToast(force ? 'Разбор пересчитан' : 'Тренировка разобрана', 'success');
             } else {
                 app.showToast(payload?.reason || 'Не удалось разобрать тренировку', 'info');
@@ -1506,7 +1588,7 @@ export const Workouts = {
             await app.handleCompleteWorkout(event);
             return;
         }
-        if (navigator.onLine === false) {
+        if (window.App?.state?.isOnline === false || navigator.onLine === false) {
             app.showToast(AI_OFFLINE_MESSAGE, 'info');
             await app.handleCompleteWorkout(event);
             return;
@@ -1712,6 +1794,13 @@ export const Workouts = {
         // the badges, and starting any other workout drops them.
         if (this.aiPlan && String(this.aiPlan.sessionId) !== String(session.id)) {
             this.aiPlan = null;
+        }
+        // A backgrounded/screen-locked tab lost the in-memory plan; re-hydrate
+        // it from the cache so the badges survive the resume before any network
+        // round-trip. The live plan is still refreshed when it is asked for.
+        if (!this.aiPlan) {
+            const cachedPlan = this.restoreAiPlan(session.id || session.key);
+            if (cachedPlan) this.aiPlan = { ...cachedPlan, sessionId: session.id || session.key };
         }
         app.state.currentSessionId = session.isLocal ? session.key : session.id;
         // The tracking screen is on top again, so the user is inside the
@@ -2740,6 +2829,11 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 <div class="flex items-center gap-3 mb-4">
                     <button data-action="history-detail-back" class="text-surface-500 hover:text-surface-900 text-lg">←</button>
                     <h2 class="text-xl font-bold truncate flex-1" title="${this.escapeHtml(detail.name || 'Тренировка')}">${this.escapeHtml(detail.name || 'Тренировка')}</h2>
+                    ${detail.status !== 'active' && !isNaN(parseInt(detail.id))
+                        ? `<button type="button" data-action="delete-session" data-session-id="${detail.id}"
+                                class="text-surface-400 hover:text-red-500 dark:text-surface-500 dark:hover:text-red-400 flex-shrink-0"
+                                aria-label="Удалить тренировку">🗑️</button>`
+                        : ''}
                 </div>
 
                 <p class="text-xs text-surface-500 dark:text-surface-400 mb-4">
@@ -2784,6 +2878,38 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             e.stopPropagation();
             this.renderHistory(container, app, { limit: this.historyState?.limit || 20 });
         });
+
+        // Soft-delete a completed/cancelled session: confirm, call the delete
+        // endpoint, drop any locally cached AI verdict, and jump back to the
+        // list so statistics update on the next load. Offline deletes are not
+        // queued (they are destructive reads of sets the server must remove);
+        // the user is told to retry when back online.
+        const deleteBtn = container.querySelector('[data-action="delete-session"]');
+        if (deleteBtn) {
+            deleteBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const sessionId = parseInt(e.currentTarget.dataset.sessionId, 10);
+                if (isNaN(sessionId)) return;
+                if (!await Components.confirmModal({
+                    title: 'Удалить тренировку?',
+                    message: `Эта тренировка будет удалена безвозвратно: её упражнения, подходы и ИИ-разбор исчезнут.`,
+                    confirmText: 'Удалить',
+                    confirmClass: 'bg-red-600 hover:bg-red-700 text-white shadow-md',
+                    cancelText: 'Назад'
+                })) return;
+                try {
+                    await API.delete(`/workouts/sessions/${sessionId}`, app.state.tokens.access);
+                    this.forgetAiPlan(sessionId);
+                    this.forgetAiAnalysis(sessionId);
+                    this.recentSessions = (this.recentSessions || []).filter(s => s.id !== sessionId);
+                    app.showToast('Тренировка удалена', 'info');
+                    await this.renderHistory(container, app, { limit: this.historyState?.limit || 20 });
+                } catch (err) {
+                    console.error('[Workouts] Delete session failed:', err);
+                    app.showToast(err?.offlineQueued ? 'Офлайн: удаление недоступно, повторите при подключении' : (err?.message || 'Не удалось удалить тренировку'), 'error');
+                }
+            });
+        }
 
         // The verdict is a separate read from the session detail (it has its own
         // quota and its own empty state), so the screen renders first and the card

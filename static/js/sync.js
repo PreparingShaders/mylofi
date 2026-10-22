@@ -12,6 +12,63 @@ function isTransientError(error) {
     return false;
 }
 
+/**
+ * Auth errors (401/403) are never transient: retrying the same expired
+ * token just produces the same 401 again. When a queued item fails
+ * with an auth error the caller has already failed to refresh, so the
+ * queue must halt entirely and the session must be invalidated.
+ */
+function isAuthError(error) {
+    if (!error) return false;
+    if (error?.authInvalidated) return true;
+    const status = error.status;
+    return status === 401 || status === 403;
+}
+
+/**
+ * Infrastructure / auth endpoints that must never be queued for retry and
+ * must never appear in the sync-errors UI. Retrying them with a stale token
+ * just produces the same 401, and they carry no user-facing action.
+ */
+const INFRA_ENDPOINTS = new Set([
+    '/auth/refresh',
+    '/auth/login',
+    '/auth/register',
+    '/auth/verify-register',
+    '/auth/resend-code',
+    '/auth/forgot-password',
+    '/auth/verify-reset-code',
+    '/auth/reset-password',
+    '/auth/logout',
+    '/auth/logout-all',
+    '/health',
+]);
+
+function isInfrastructureEndpoint(endpoint) {
+    if (!endpoint) return false;
+    const normalized = String(endpoint).replace(/\?.*$/, '');
+    return INFRA_ENDPOINTS.has(normalized);
+}
+
+/**
+ * User-friendly labels for actionable sync endpoints shown in the error UI.
+ * Endpoints not listed here fall back to their path with the leading slash
+ * stripped.
+ */
+const FRIENDLY_ENDPOINT_LABELS = {
+    '/nutrition/photos': 'Фото еды',
+    '/nutrition/meals': 'Продукты',
+    '/workouts/sessions': 'Тренировка',
+    '/workouts/templates': 'Шаблон тренировки',
+    '/users/me': 'Профиль',
+};
+
+function getFriendlyEndpointLabel(endpoint) {
+    if (!endpoint) return 'Запрос';
+    const normalized = String(endpoint).replace(/\?.*$/, '');
+    return FRIENDLY_ENDPOINT_LABELS[normalized] || normalized.replace(/^\//, '') || 'Запрос';
+}
+
 export const SyncEngine = {
     replayFn: null,
     itemResolver: null,
@@ -19,6 +76,47 @@ export const SyncEngine = {
     onOnline: null,
     processing: false,
     initialized: false,
+    authFailed: false,
+    authFailedPromise: null,
+
+    /**
+     * Reject a pending auth-failed promise so any caller awaiting queue
+     * processing receives the auth error instead of hanging or retrying.
+     */
+    _rejectAuthFailed(error) {
+        this.authFailed = true;
+        if (this.authFailedPromise) {
+            const { reject } = this.authFailedPromise;
+            this.authFailedPromise = null;
+            reject(error);
+        }
+    },
+
+    /**
+     * Signal that the auth session is invalid and no queued mutation can
+     * succeed. App code calls this when token refresh fails with 401.
+     */
+    signalAuthFailure(error) {
+        if (this.authFailed) return;
+        const authError = error || new Error('Сессия истекла. Пожалуйста, войдите снова.');
+        authError.status = authError.status || 401;
+        authError.authInvalidated = true;
+        this._rejectAuthFailed(authError);
+        if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('mylofi:auth-failed', { detail: { error: authError.message } }));
+        }
+    },
+
+    /**
+     * Clear the auth-failed flag so the queue can resume processing.
+     * Called when a new login or token refresh succeeds.
+     */
+    clearAuthFailure() {
+        if (!this.authFailed) return;
+        console.log('[SyncEngine] Clearing auth-failed flag');
+        this.authFailed = false;
+        this.authFailedPromise = null;
+    },
 
     init(opts = {}) {
         if (this.initialized) return;
@@ -43,6 +141,15 @@ export const SyncEngine = {
         }
 
         this.migrateLocalStorageQueue();
+
+        // A successful login or token refresh clears the auth-failed flag
+        // so the queue can resume on the next online/resume event.
+        window.addEventListener('auth:logged-in', () => {
+            if (this.authFailed) {
+                console.log('[SyncEngine] Auth resolved, clearing auth-failed flag');
+                this.clearAuthFailure();
+            }
+        });
 
         console.log('[SyncEngine] Initialized');
     },
@@ -105,6 +212,14 @@ export const SyncEngine = {
     // Persist a mutation to the sync_queue. `entry.payload` is the JSON body;
     // `entry.formData` is a plain object (with Blob values) replayed as FormData.
     async enqueue(entry) {
+        // Infrastructure / auth endpoints must never enter the sync queue:
+        // retrying them with a stale token only produces the same 401, and
+        // they carry no user-facing action worth surfacing in the error UI.
+        if (isInfrastructureEndpoint(entry.endpoint)) {
+            console.log(`[SyncEngine] Skipping infrastructure endpoint: ${entry.endpoint}`);
+            return null;
+        }
+
         const item = {
             endpoint: entry.endpoint,
             method: entry.method,
@@ -186,6 +301,18 @@ export const SyncEngine = {
     },
 
     async processQueue() {
+        if (this.authFailed) {
+            console.log('[SyncEngine] Auth session invalid, aborting queue processing');
+            return false;
+        }
+        // Validate tokens before flushing: a cold start or resume with no
+        // access token must not replay queued mutations against the server.
+        const hasToken = typeof window !== 'undefined'
+            && Boolean(window.App?.state?.tokens?.access);
+        if (!hasToken) {
+            console.log('[SyncEngine] No access token, skipping queue processing');
+            return false;
+        }
         if (this.processing) {
             console.log('[SyncEngine] Already processing, skipping');
             return false;
@@ -245,6 +372,20 @@ export const SyncEngine = {
                 try {
                     response = await this.replayFn(item);
                 } catch (error) {
+                    // Auth errors (401/403 after refresh attempt) are terminal:
+                    // every remaining item will fail the same way. Halt the
+                    // loop immediately and signal the app to sign out.
+                    if (isAuthError(error)) {
+                        console.error('[SyncEngine] Auth failure during queue replay, halting:', error);
+                        await DB.updateSyncQueue(item.id, {
+                            status: DB.SYNC_STATUS.FAILED,
+                            error: error?.message || 'auth failure',
+                            updatedAt: Date.now(),
+                        });
+                        this.signalAuthFailure(error);
+                        break;
+                    }
+
                     if (isTransientError(error)) {
                         const newRetryCount = item.retryCount + 1;
                         if (newRetryCount >= MAX_RETRIES) {
@@ -331,10 +472,25 @@ export const SyncEngine = {
     },
 
     async getFailedItems() {
-        return DB.getSyncQueueFailed();
+        const items = await DB.getSyncQueueFailed();
+        // Auto-purge infrastructure-level errors: they carry no user action
+        // and retrying them cannot succeed without a valid session. Delete
+        // them from IndexedDB so they never surface in the sync-errors UI.
+        const actionable = [];
+        for (const item of items) {
+            if (isInfrastructureEndpoint(item.endpoint)) {
+                await DB.deleteSyncQueue(item.id);
+                console.log(`[SyncEngine] Auto-purged system error: ${item.endpoint}`);
+            } else {
+                actionable.push(item);
+            }
+        }
+        return actionable;
     },
 
     async clearQueue() {
         return DB.clearSyncQueue();
     },
 };
+
+export { isInfrastructureEndpoint, getFriendlyEndpointLabel };

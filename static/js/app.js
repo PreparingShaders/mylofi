@@ -247,7 +247,7 @@ const App = {
             // Event-driven refresh: when network returns, flush the sync queue
             // and re-render the active page so pending meals show real results.
             this.checkHostConnectivity().then((reachable) => {
-                if (reachable && this.state.tokens.access) {
+                if (reachable && this.state.tokens.access && !SyncEngine.authFailed) {
                     this.flushOfflineQueue().catch(() => {});
                     this.refreshCurrentView();
                 }
@@ -318,6 +318,16 @@ const App = {
             }
         });
 
+        // Sync engine halts and dispatches this when a queued replay hits 401/403
+        // after refresh failed. Sign out and go to the landing screen.
+        window.addEventListener('mylofi:auth-failed', () => {
+            console.warn('[App] Received auth-failed from SyncEngine, signing out');
+            this.clearTokens();
+            this.showScreen('landing');
+            this.renderLanding();
+            this.showToast('Сессия истекла. Пожалуйста, войдите снова.', 'info');
+        });
+
         // Background sync completion from the service worker
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.addEventListener('message', (event) => {
@@ -332,7 +342,14 @@ const App = {
     },
 
     async flushOfflineQueue() {
+        // Don't flush if the session is already known to be invalid: the
+        // queue items will all get 401/403 and trigger repeated refresh
+        // attempts that can never succeed.
         if (!this.state.tokens.access) return;
+        if (SyncEngine.authFailed) {
+            console.log('[App] Auth session invalid, skipping offline queue flush');
+            return;
+        }
         try {
             await SyncEngine.processQueue();
         } catch (e) {
@@ -472,6 +489,11 @@ const App = {
         this._lastResumeAt = now;
 
         if (this.state.currentScreen !== 'main' || !this.state.tokens?.access) return;
+
+        // If the sync engine already flagged the session as invalid (e.g.
+        // a 401 on /auth/refresh), don't waste more requests — the user has
+        // already been redirected to the landing screen.
+        if (SyncEngine.authFailed) return;
 
         console.log(`[App] App resumed (${source})`);
 
@@ -689,7 +711,16 @@ const App = {
         if (reachable) {
             this.state.isOnline = true;
             await NetworkBanner.refresh(true);
-            await this.flushOfflineQueue();
+            // Only flush the offline queue when the session is still valid.
+            // A reachable host with an expired token would make every queued
+            // item return 401, so probe /users/me first and bail out (clearing
+            // tokens) when the session is gone.
+            if (this.state.tokens.access && !SyncEngine.authFailed) {
+                const live = await this.ensureSessionAlive();
+                if (live) {
+                    await this.flushOfflineQueue();
+                }
+            }
         } else {
             this.state.isOnline = false;
             NetworkBanner.showOffline();
@@ -789,6 +820,9 @@ const App = {
             // The live channel authenticates with the access token, so the
             // socket has to hand the renewed one to its next handshake.
             this.realtime?.setToken(response.access_token);
+            // A successful refresh means the session is valid again: clear
+            // any auth-failed flag the sync engine may have set.
+            window.dispatchEvent(new Event('auth:logged-in'));
             return true;
         } catch (error) {
             console.error('[App] Token refresh failed:', error);
@@ -2020,6 +2054,7 @@ const App = {
                 durationSeconds !== null ? { duration_seconds: durationSeconds } : null,
                 this.state.tokens.access,
             );
+            Workouts.forgetAiPlan(sessionId);
             this.showToast('Тренировка завершена!', 'success');
         } catch (e) {
             if (e?.offlineQueued) {
@@ -2072,6 +2107,7 @@ const App = {
         }
         try {
             await API.post(`/workouts/sessions/${sessionId}/cancel`, null, this.state.tokens.access);
+            Workouts.forgetAiPlan(sessionId);
             this.showToast('Тренировка отменена', 'info');
         } catch (e) {
             if (e?.offlineQueued) {

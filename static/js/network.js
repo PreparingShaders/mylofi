@@ -145,6 +145,7 @@ export const NetworkBanner = {
         document.body.classList.add('has-network-banner');
 
         SyncEngine.processQueue().catch((error) => {
+            if (SyncEngine.authFailed) return;
             console.warn('[NetworkBanner] processQueue failed:', error);
         });
 
