@@ -1,6 +1,6 @@
 import { API } from './api.js';
 import { DB } from './db.js';
-import { SyncEngine } from './sync.js';
+import { SyncEngine, getFriendlyEndpointLabel } from './sync.js';
 import { Components } from './components.js';
 import { Utils, clientTimezone } from './utils.js';
 import { Camera } from './camera.js';
@@ -1357,7 +1357,7 @@ try {
                                 </div>
                                 ${failedItems.map((item) => `
                                     <div class="glass rounded-lg p-2 mb-1">
-                                        <p class="text-sm text-surface-600 dark:text-surface-300">${item.endpoint || 'Запрос'}</p>
+                                        <p class="text-sm text-surface-600 dark:text-surface-300">${getFriendlyEndpointLabel(item.endpoint) || 'Запрос'}</p>
                                         <p class="text-xs text-surface-500 truncate">${item.error || 'Неизвестная ошибка'}</p>
                                     </div>
                                 `).join('')}

@@ -144,12 +144,15 @@ export const Auth = {
             
             app.showScreen('main');
             app.showPage('nutrition');
+            // Notify the sync engine that auth is valid again so it can
+            // resume flushing any pending queue.
+            window.dispatchEvent(new Event('auth:logged-in'));
         } catch (error) {
             console.error('[Auth] Login error:', error);
             this.showError(app, this.extractErrorMessage(error));
         }
     },
-    
+
     async handleRegister(event, app) {
         event.preventDefault();
         const formData = new FormData(event.target);
@@ -192,6 +195,7 @@ export const Auth = {
 
             app.showScreen('main');
             app.showPage('nutrition');
+            window.dispatchEvent(new Event('auth:logged-in'));
         } catch (error) {
             console.error('[Auth] Register error:', error);
             this.showError(app, this.extractErrorMessage(error));
@@ -228,6 +232,7 @@ export const Auth = {
                 await app.Components.closeAuthModal(modalEl);
                 app.showScreen('main');
                 app.showPage('nutrition');
+                window.dispatchEvent(new Event('auth:logged-in'));
             } else if (purpose === 'reset_password') {
                 const response = await API.post('/auth/verify-reset-code', { email, code });
                 ctx.code = code;
@@ -309,6 +314,7 @@ export const Auth = {
                 await app.Components.closeAuthModal(modalEl);
                 app.showScreen('main');
                 app.showPage('nutrition');
+                window.dispatchEvent(new Event('auth:logged-in'));
             } else {
                 app.showToast('Пароль изменён', 'success');
                 if (app.Components?._switchAuthForm) {

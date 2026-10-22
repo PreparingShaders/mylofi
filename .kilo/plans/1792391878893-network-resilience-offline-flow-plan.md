@@ -1,20 +1,22 @@
-# Implementation Plan: Fix `sqlalchemy.exc.MissingGreenlet` in AI Workout Preview & Session Fetching
+# Implementation Plan: Graceful Auth Expiry, Sync Loop Prevention, & UI Error Refinement
 
 ## Goal
-Fix `sqlalchemy.exc.MissingGreenlet` errors occurring in `ai_workout_preview` and `build_workout_preview_and_store` due to un-eagerly loaded relationships (`WorkoutSession.template`, `WorkoutSessionExercise.sets`) being accessed in asynchronous execution contexts (background tasks and route handlers).
+1. Fix handling of expired/invalid authentication tokens (401/403) to prevent background sync spam and safely redirect to the login screen.
+2. Refine the Sync Errors UI: exclude technical/auth endpoints from the error UI, provide user-friendly labels for actionable errors, and auto-purge system-level errors.
 
 ## Affected Boundaries & Changes
-- **`get_workout_session` (`app/services/workout.py`)**:
-  - Update query options to include `.selectinload(WorkoutSession.template)` alongside `.selectinload(WorkoutSession.exercises).selectinload(WorkoutSessionExercise.sets)`.
-- **`build_workout_preview_and_store` (`app/services/ai_workout_service.py`)**:
-  - Update background task session query to fully eager-load all necessary relationships:
-    ```python
-    .options(
-        selectinload(WorkoutSession.template).selectinload(WorkoutTemplate.exercises),
-        selectinload(WorkoutSession.exercises).selectinload(WorkoutSessionExercise.sets),
-    )
-    ```
+- **Token Refresh & API Error Interception (`static/js/api.js`)**:
+  - Catch auth failure (401/403), abort background sync (`SyncEngine`), clear stale tokens, and redirect to the login landing screen.
+- **App Resume & Cold Start Validation (`static/js/app.js`)**:
+  - Validate tokens *before* flushing sync queue. If invalid, reset auth state and render landing.
+- **Sync Engine Halt & UI Refinement (`static/js/sync.js`, UI components)**:
+  - Halt `SyncEngine` on persistent auth errors.
+  - **Endpoint Filtering**: In `SyncEngine.enqueue` or the UI error mapper, filter out infrastructure endpoints (`/auth/refresh`, `/auth/login`, `/health`, token validation) so they never appear in the "Sync Errors" UI.
+  - **Friendly Error Mapping**: Map technical endpoints to user-friendly labels (e.g., `/nutrition/photos` -> "Фото еды").
+  - **Auto-Purge**: Automatically discard/hide system-level errors in the sync error modal.
 
 ## Validation Plan
-1. Test AI workout preview endpoint (`POST /api/v1/ai/workout-preview`) with `session_id` on a session started with `with_ai_plan=true`.
-2. Verify background task execution of `build_workout_preview_and_store` without `MissingGreenlet` exceptions.
+1. Test expired refresh token behavior.
+2. Verify sync error UI excludes infrastructure routes.
+3. Test user-friendly labels for actionable sync items.
+4. Confirm auto-purge functionality for system-level sync errors.
