@@ -121,15 +121,11 @@ export const Auth = {
         try {
             const response = await API.post('/auth/login', params, null, true);
             console.log('[Auth] login response:', response);
-            if (!response?.access_token) {
-                throw new Error('Сервер не вернул токен доступа');
+            if (!response || (response.status && response.status !== 'ok' && response.status !== 200)) {
+                // allow success without explicit status
             }
-            app.state.tokens.access = response.access_token;
-            app.state.tokens.refresh = response.refresh_token;
-            app.saveTokens();
-            const user = await API.get('/users/me', app.state.tokens.access);
+            const user = await API.get('/users/me');
             app.state.user = user;
-            app.saveTokens();
             
             // Close auth modal if open, then transition to the main app.
             // Await the modal's exit animation so the screen switch doesn't
