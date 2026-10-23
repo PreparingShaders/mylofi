@@ -154,55 +154,8 @@ const App = {
 
             if (this.state.tokens.access) {
                 console.log('[App] Token found, validating...');
-                try {
-                    // Defer validation to background to allow cache-first render
-                    this.validateToken().then(() => this.initSyncEngine()).catch((e) => {
-                        console.error('[App] Token validation failed:', e);
-                        if (e?.isNetworkError || !navigator.onLine || !this.state.isOnline) {
-                            console.warn('[App] Network error during init token validation; retaining offline session.');
-                            this.showScreen('main');
-                            const { page, workout } = this.loadState();
-                            if (workout) {
-                                this.state.activeWorkout = workout;
-                                this.showPage('workouts');
-                            } else {
-                                this.showPage(page || 'nutrition');
-                            }
-                        } else {
-                            this.showScreen('landing');
-                            this.renderLanding();
-                        }
-                    });
-                    // Also proactively show main screen if we have cached session
-                    this.showScreen('main');
-                    const { page: initialPage, workout: initialWorkout, sessionId: initialSessionId } = this.loadState();
-                    if (initialWorkout || initialSessionId) {
-                        this.state.activeWorkout = initialWorkout || this.state.activeWorkout;
-                        if (initialSessionId && !this.state.currentSessionId) {
-                            this.state.currentSessionId = initialSessionId;
-                        }
-                        this.showScreen('main');
-                        this.showPage('workouts');
-                        try {
-                            const sessionId = initialSessionId || this.state.currentSessionId;
-                            if (sessionId && window.Workouts && typeof window.Workouts.renderWorkoutScreen === 'function') {
-                                let id = sessionId;
-                                if (typeof id === 'string') {
-                                    if (id.startsWith('local-')) {
-                                        id = id;
-                                    } else if (!isNaN(parseInt(id))) {
-                                        id = parseInt(id);
-                                    }
-                                }
-                                await window.Workouts.renderWorkoutScreen(this.elements.pageContent, this, id);
-                            }
-                        } catch (e) {
-                            console.warn('[App] Failed to auto-resume workout session:', e);
-                        }
-                    } else {
-                        this.showPage(initialPage || 'nutrition');
-                    }
-                } catch (e) {
+                // Defer validation to background to allow cache-first render
+                this.validateToken().then(() => this.initSyncEngine()).catch((e) => {
                     console.error('[App] Token validation failed:', e);
                     if (e?.isNetworkError || !navigator.onLine || !this.state.isOnline) {
                         console.warn('[App] Network error during init token validation; retaining offline session.');
@@ -218,7 +171,39 @@ const App = {
                         this.showScreen('landing');
                         this.renderLanding();
                     }
+                });
+                // Also proactively show main screen if we have cached session
+                this.showScreen('main');
+                const { page: initialPage, workout: initialWorkout, sessionId: initialSessionId } = this.loadState();
+                if (initialWorkout || initialSessionId) {
+                    this.state.activeWorkout = initialWorkout || this.state.activeWorkout;
+                    if (initialSessionId && !this.state.currentSessionId) {
+                        this.state.currentSessionId = initialSessionId;
+                    }
+                    this.showScreen('main');
+                    this.showPage('workouts');
+                    try {
+                        const sessionId = initialSessionId || this.state.currentSessionId;
+                        if (sessionId && window.Workouts && typeof window.Workouts.renderWorkoutScreen === 'function') {
+                            let id = sessionId;
+                            if (typeof id === 'string') {
+                                if (id.startsWith('local-')) {
+                                    id = id;
+                                } else if (!isNaN(parseInt(id))) {
+                                    id = parseInt(id);
+                                }
+                            }
+                            await window.Workouts.renderWorkoutScreen(this.elements.pageContent, this, id);
+                        }
+                    } catch (e) {
+                        console.warn('[App] Failed to auto-resume workout session:', e);
+                    }
+                } else {
+                    this.showPage(initialPage || 'nutrition');
                 }
+            } else {
+                this.showScreen('landing');
+                this.renderLanding();
             }
 
             // Host reachability check on warm init: navigator.onLine is

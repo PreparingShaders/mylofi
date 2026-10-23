@@ -1,18 +1,42 @@
-# Implementation Plan: Non-Blocking "Start with AI" Workout Initiation
+# Implementation Plan: Fix Syntax Error (`Unexpected token 'else'`) in `app.js`
 
 ## Goal
-Optimize the "Start with AI" flow in `static/js/workouts.js` to transition to the active workout screen instantly, decoupling it from the AI preview generation.
+Fix the `Uncaught SyntaxError: Unexpected token 'else'` in `static/js/app.js` around line 221 caused by an orphaned `else` block following a misplaced `try/catch` wrapper around an asynchronous promise chain (`validateToken().then(...).catch(...)`).
 
 ## Affected Boundaries & Changes
-- **`static/js/workouts.js` (`startTemplateWithAi`)**:
-  - Remove the sequential `await` of `loadAiPlan` before calling `renderWorkoutScreen`.
-  - Implement a two-step flow:
-    1. Await `sessionPromise` (workout creation).
-    2. Immediately call `renderWorkoutScreen` to transition the UI.
-    3. Trigger `loadAiPlan` (AI preview generation/fetching) in the background.
-    4. Implement a reactive update or callback mechanism in `renderWorkoutScreen` to inject AI tips into the UI once they arrive.
-  - Relax any remaining frontend-side timeouts related to the AI plan, ensuring that a slow AI response does not interrupt the workout.
+- **`static/js/app.js` (`init` method)**:
+  - Remove the invalid `try { ... } catch (e) { ... } else { ... }` wrapping around the async `validateToken().then(...).catch(...)` call.
+  - Structure the token presence check cleanly:
+    ```javascript
+    if (this.state.tokens.access) {
+        console.log('[App] Token found, validating...');
+        // Defer validation to background to allow cache-first render
+        this.validateToken().then(() => this.initSyncEngine()).catch((e) => {
+            console.error('[App] Token validation failed:', e);
+            if (e?.isNetworkError || !navigator.onLine || !this.state.isOnline) {
+                console.warn('[App] Network error during init token validation; retaining offline session.');
+                this.showScreen('main');
+                const { page, workout } = this.loadState();
+                if (workout) {
+                    this.state.activeWorkout = workout;
+                    this.showPage('workouts');
+                } else {
+                    this.showPage(page || 'nutrition');
+                }
+            } else {
+                this.showScreen('landing');
+                this.renderLanding();
+            }
+        });
+        
+        // Proactively show cached main screen state
+        ...
+    } else {
+        this.showScreen('landing');
+        this.renderLanding();
+    }
+    ```
 
 ## Validation Plan
-1. Test "Старт с ИИ" trigger: verify UI transitions to active workout screen instantly, even if AI plan is pending.
-2. Verify AI tips/preview populate reactively in the UI after a few seconds without freezing the workout interface.
+1. Check JavaScript syntax using Node or linter/compiler to ensure no syntax errors remain in `app.js`.
+2. Verify app cold start and initialization flow runs without uncaught syntax errors.
