@@ -146,6 +146,8 @@ from fastapi import (
     Query,
     UploadFile,
     WebSocket,
+    Request,
+    Response,
     WebSocketDisconnect,
     status,
 )
@@ -158,17 +160,20 @@ router = APIRouter()
 
 # ===== Dependency: Get Current User =====
 async def get_current_user(
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    authorization: str | None = Header(None),
 ) -> User:
-    if not authorization or not authorization.startswith("Bearer "):
+    token = request.cookies.get("access_token")
+    if not token:
+        authorization = request.headers.get("authorization")
+        if authorization and authorization.startswith("Bearer "):
+            token = authorization.split(" ", 1)[1]
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-    token = authorization.split(" ")[1]
     payload = decode_token(token)
 
     if not payload or payload.type != "access":
@@ -234,14 +239,16 @@ async def get_current_admin_user(
 
 
 async def get_optional_current_user(
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    authorization: str | None = Header(None),
 ) -> User | None:
-    """Optional auth dependency - returns User if valid Bearer token, otherwise None."""
-    if not authorization or not authorization.startswith("Bearer "):
+    token = request.cookies.get("access_token")
+    if not token:
+        authorization = request.headers.get("authorization")
+        if authorization and authorization.startswith("Bearer "):
+            token = authorization.split(" ", 1)[1]
+    if not token:
         return None
-
-    token = authorization.split(" ")[1]
     payload = decode_token(token)
 
     if not payload or payload.type != "access":
@@ -486,10 +493,12 @@ async def reset_password(
     return {"status": "password_reset", "email": reset_data.email}
 
 
-@router.post("/auth/login", response_model=Token)
+@router.post("/auth/login")
 async def login(
+    response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ):
     """Login with email and password"""
     result = await db.execute(select(User).where(User.email == form_data.username))
@@ -510,48 +519,60 @@ async def login(
 
     user.last_seen_at = datetime.now(timezone.utc)
     access_token, refresh_token = await create_user_tokens(db, user)
-    return Token(access_token=access_token, refresh_token=refresh_token)
+    secure = request.url.is_secure if request else False
+    response.set_cookie("access_token", access_token, httponly=True, samesite="lax", secure=secure, max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES*60)
+    response.set_cookie("refresh_token", refresh_token, httponly=True, samesite="lax", secure=secure, max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS*86400)
+    return {"message": "Logged in"}
 
 
-@router.post("/auth/refresh", response_model=Token)
+@router.post("/auth/refresh")
 async def refresh_token(
-    token_data: RefreshTokenRequest,
+    request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ):
     """Refresh access token using refresh token"""
+    refresh = request.cookies.get("refresh_token")
+    if not refresh:
+        raise HTTPException(status_code=401, detail="No refresh token")
     try:
-        access_token, refresh_token = await rotate_refresh_token(
-            db, token_data.refresh_token
-        )
-        return Token(access_token=access_token, refresh_token=refresh_token)
+        access_token, new_refresh = await rotate_refresh_token(db, refresh)
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(e),
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise HTTPException(status_code=401, detail=str(e))
+    secure = request.url.is_secure
+    response.set_cookie("access_token", access_token, httponly=True, samesite="lax", secure=secure, max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES*60)
+    response.set_cookie("refresh_token", new_refresh, httponly=True, samesite="lax", secure=secure, max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS*86400)
+    return {"status": "ok"}
 
 
 @router.post("/auth/logout")
 async def logout(
-    token_data: RefreshTokenRequest,
+    request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Logout - revoke refresh token"""
     from app.services.auth import revoke_refresh_token
 
-    await revoke_refresh_token(db, token_data.refresh_token)
+    refresh = request.cookies.get("refresh_token")
+    if refresh:
+        await revoke_refresh_token(db, refresh)
+    response.delete_cookie("access_token")
+    response.delete_cookie("refresh_token")
     return {"message": "Successfully logged out"}
 
 
 @router.post("/auth/logout-all")
 async def logout_all(
+    response: Response,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Logout from all devices - revoke all refresh tokens"""
     await revoke_all_user_refresh_tokens(db, current_user.id)
+    response.delete_cookie("access_token")
+    response.delete_cookie("refresh_token")
     return {"message": "Successfully logged out from all devices"}
 
 
