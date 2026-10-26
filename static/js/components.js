@@ -34,6 +34,7 @@ const MEAL_TYPE_ICON_PATHS = {
 const MEAL_ACTION_ICON_PATHS = {
     edit: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 20h4l10.5-10.5a2.12 2.12 0 0 0-3-3L5 17v3Z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.5 6.5l4 4"/>',
     trash: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 4h4"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 7l1 13h10l1-13"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 11v6"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 11v6"/>',
+    retry: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.25 9v3.046a2.25 2.25 0 1 1-1.5 0V9h1.5z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.75 9c0 4.877-3.82 8.867-8.75 9.646A9 9 0 0 1 4.5 7.318a8.96 8.96 0 0 1 14.25 1.69z"/>',
 };
 
 const MACRO_ICON_PATHS = {
@@ -1068,9 +1069,14 @@ export const Components = {
       * made the header read like a sentence and pushed the time out of view.
       */
     mealCardPhoto(meal, { showDate = false } = {}) {
-        const isPending = meal.status === 'pending' || meal.status === 'processing' || meal.sync_status === DB.SYNC_STATUS.PENDING;
-        const isFailed = meal.sync_status === DB.SYNC_STATUS.FAILED;
-        const isStuck = false;
+        const serverStatus = meal.status;
+        const isPending = serverStatus === 'pending' || serverStatus === 'processing' || meal.sync_status === DB.SYNC_STATUS.PENDING;
+        const isFailed = serverStatus === 'failed' || meal.sync_status === DB.SYNC_STATUS.FAILED;
+        const createdAt = meal.created_at ? new Date(meal.created_at).getTime() : (meal.eaten_at ? new Date(meal.eaten_at).getTime() : Date.now());
+        const updatedAt = meal.updated_at ? new Date(meal.updated_at).getTime() : createdAt;
+        const isStuck = (serverStatus === 'pending' || serverStatus === 'processing') &&
+            (Date.now() - Math.max(createdAt, updatedAt) > 3 * 60 * 1000);
+        const isAlert = isFailed || isStuck;
         const day = meal.eaten_at ? new Date(meal.eaten_at) : (meal.created_at ? new Date(meal.created_at) : null);
 
         const dishName = meal.dish_name || (isPending ? '' : 'Блюдо');
@@ -1116,6 +1122,15 @@ export const Components = {
                     <span class="text-xs font-semibold text-white bg-black/50 px-3 py-1 rounded-full backdrop-blur-sm">Анализируем...</span>
                 </div>
             `
+            : isAlert
+            ? `
+                <div class="flex flex-col items-center justify-center gap-2">
+                    <div class="w-6 h-6 rounded-full border-2 border-red-500/30 bg-red-500/10 flex items-center justify-center shrink-0">
+                        <svg class="w-3.5 h-3.5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>
+                    </div>
+                    <span class="text-xs font-semibold text-white bg-black/50 px-3 py-1 rounded-full backdrop-blur-sm">${isStuck ? 'Анализ застрел' : 'Ошибка анализа'}</span>
+                </div>
+            `
             : `
                 <h3 class="meal-card-hero__name">${escName}</h3>
                 ${breakdown?.portion
@@ -1153,6 +1168,8 @@ export const Components = {
         const insight = typeof meal.ai_insight === 'string' ? meal.ai_insight.trim() : '';
         const verdictContent = isPending
             ? `<div class="flex items-center gap-2"><div class="w-4 h-4 rounded-full border-2 border-white/20 border-t-lime-400 animate-spin"></div><span class="text-xs text-surface-500 dark:text-surface-400">Анализируем...</span></div>`
+            : isAlert
+            ? `<p class="meal-card-ai__text">${escapeHtml(meal.quality_reason || meal.error_message || 'Анализ не удался. Попробуйте повторить.')}</p>`
             : insight
                 ? `<p class="meal-card-ai__text">${escapeHtml(insight)}</p>`
                 : this.qualityMetrics(meal.quality_reason);
@@ -1181,6 +1198,9 @@ export const Components = {
         const actionsBlock = mealId
             ? `
                 <div class="meal-card-hero__actions">
+                    ${isAlert
+                        ? `<button type="button" data-action="retry-analysis" data-meal-id="${mealId}" class="glass-badge meal-card-hero__action meal-card-hero__action--retry" aria-label="Повторить анализ" title="Повторить анализ">${this.mealActionIcon('retry')}</button>`
+                        : ''}
                     <button type="button" data-action="edit-meal" data-meal-id="${mealId}" class="glass-badge meal-card-hero__action" aria-label="Редактировать блюдо" title="Редактировать">${this.mealActionIcon('edit')}</button>
                     <button type="button" data-action="delete-meal" data-meal-id="${mealId}" class="glass-badge meal-card-hero__action meal-card-hero__action--danger" aria-label="Удалить блюдо" title="Удалить">${this.mealActionIcon('trash')}</button>
                 </div>
@@ -1189,7 +1209,7 @@ export const Components = {
 
         return `
             <article class="meal-card-slot snap-center shrink-0" data-meal-id="${mealId}">
-                <div class="meal-card ${isFailed || isStuck ? 'meal-card--alert' : ''}" data-meal-id="${mealId}">
+                <div class="meal-card ${isAlert ? 'meal-card--alert' : ''}" data-meal-id="${mealId}">
                     <div class="meal-card-hero meal-card-hero--tall">
                         <div ${heroBackground} class="meal-card-hero__image"></div>
                         <div class="meal-card-scrim meal-card-scrim--heavy"></div>

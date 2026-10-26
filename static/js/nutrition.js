@@ -328,6 +328,15 @@ try {
     ]);
     pendingMeals = pm || [];
     failedItems = fi || [];
+    // Exclude locally-cached meals whose server status is already FAILED:
+    // a failed analysis is permanently done, not "awaiting sync", and would
+    // otherwise inflate the "Ожидают синхронизации" counter.
+    pendingMeals = pendingMeals.filter(
+        (m) => {
+            const s = typeof m.status === 'string' ? m.status.toLowerCase() : '';
+            return s !== 'failed' && s !== 'completed';
+        }
+    );
     // Deduplicate: filter out pending meals that have already been
     // resolved by the sync engine (i.e. their temp id was replaced
     // with a real server id and a matching server meal exists).
@@ -1973,8 +1982,44 @@ try {
                         this.app.showToast('Ошибка удаления', 'error');
                     }
                 }
+             };
+        });
+
+        container.querySelectorAll('[data-action="retry-analysis"]').forEach((btn) => {
+            btn.onclick = async (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                const mealId = btn.dataset.mealId;
+                await this.retryMealAnalysis(mealId, btn);
             };
         });
+    },
+
+    async retryMealAnalysis(mealId, btnEl) {
+        const token = this.app.state.tokens.access;
+        const disabled = (v) => {
+            if (btnEl) {
+                btnEl.disabled = v;
+                btnEl.innerHTML = v
+                    ? `${Components.mealActionIcon('retry')}<span class="animate-spin border-2 border-white/20 border-t-white rounded-full w-3 h-3"></span>`
+                    : Components.mealActionIcon('retry');
+            }
+        };
+        disabled(true);
+        try {
+            await API.post(`/nutrition/meals/${mealId}/retry-analysis`, {}, token);
+            this.app.showToast('Анализ запущен повторно', 'success');
+            this.render(this.app.elements.pageContent, this.app);
+        } catch (error) {
+            if (error?.isNetworkError) {
+                this.app.showToast('Нет связи. Попробуйте снова', 'error');
+            } else {
+                this.app.showToast(error?.data?.detail || 'Ошибка повторного запуска', 'error');
+            }
+            console.error('[Nutrition] Retry analysis error:', error);
+        } finally {
+            disabled(false);
+        }
     },
 
     /**

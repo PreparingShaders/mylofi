@@ -98,6 +98,7 @@ from app.services.nutrition import (
     meal_to_response,
     normalize_tz_offset,
     process_meal_photo_task,
+    retry_meal_analysis,
     resolve_eaten_at,
     save_uploaded_photo,
     update_meal,
@@ -1142,6 +1143,31 @@ async def delete_meal_endpoint(
             status_code=status.HTTP_404_NOT_FOUND, detail="Meal not found"
         )
     return {"message": "Meal deleted"}
+
+
+@router.post("/nutrition/meals/{meal_id}/retry-analysis", response_model=MealResponse)
+async def retry_meal_analysis_endpoint(
+    meal_id: int,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Reset a failed or stuck meal to PENDING and re-run the photo analysis task.
+
+    Only meals that still have their photo on disk can be retried: without the
+    source image the vision cascade has nothing to process.
+    """
+    meal = await retry_meal_analysis(db, meal_id, current_user.id)
+    if not meal:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Meal not found or cannot be retried",
+        )
+
+    # Re-queue the background analysis. The meal was reset to PENDING in the
+    # service call above, so the task picks up from the initial processing step.
+    background_tasks.add_task(process_meal_photo_task, meal.id)
+    return meal_to_response(meal)
 
 
 # Need to import settings

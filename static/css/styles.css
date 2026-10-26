@@ -565,6 +565,10 @@ html.dark,
     background: rgba(239, 68, 68, 0.6);
     color: #fafafa;
 }
+.meal-card-hero__action--retry:hover {
+    background: rgba(59, 130, 246, 0.6);
+    color: #fafafa;
+}
 .meal-card-hero__bottom {
     position: absolute;
     inset: auto 8px 7px 8px;
