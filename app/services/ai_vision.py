@@ -93,10 +93,10 @@ WORKER_BASE_URL = (settings.WORKER_URL or "").rstrip("/")
 
 UNIFIED_MODEL_CASCADE = [
     "gemini-3.5-flash-lite",
-    "gemini-3.6-flash",
     "gemini-3.1-flash-lite",
-    "gemini-3.1-flash-lite-preview",
     "gemini-2.5-flash-lite",
+    "gemini-3.6-flash",
+    "gemini-3.1-flash-lite-preview",
     "gemini-2.5-flash",
     "qwen/qwen3.8-27b:free",
     "dots-studio/dots-3-note-preview:free",

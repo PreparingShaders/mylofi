@@ -1,136 +1,120 @@
-# Implementation Plan: Rest Timer (Таймер отдыха) в тренировках - Обновленная версия
+# Implementation Plan: Fix AI Workout Preview Generation & Delivery
 
-## Goal
-Implement a stopwatch-style rest timer that:
-1. **Starts** when user completes a set (taps ✓) - counts UP from 00:00
-2. **Stops & saves** when user completes the NEXT set - elapsed time saved as `rest_time_seconds` for the PREVIOUS set
-3. **Displays** active timer in fixed bottom bar (bright/accent), completed rest times inline between sets (muted)
-4. **No timer** for the last set of an exercise
-5. **Persists** to backend via existing `rest_time_seconds` field
+## Problem Summary
+The "Start with AI" flow fails because:
+1. **Wrong model order**: Heavy models (`gemini-3.5-flash-lite`, `gemini-3.6-flash` - 20s timeout each) are tried before fast model (`gemini-3.1-flash-lite` - 4-7s)
+2. **Frontend polling too short**: `AI_PREVIEW_STORE_WAIT_SECONDS=15s` vs background task `WORKOUT_AI_TASK_TIMEOUT=60s`
+3. **No push delivery**: Background task stores plan in DB but client must poll; no WebSocket notification
 
-## User Requirements Summary
-- **Trigger**: Completing a set (not last in exercise) → start count-up timer
-- **Stop & Save**: Completing next set → stop timer, save elapsed to `rest_time_seconds` of previous set
-- **Active Timer UI**: Fixed bottom bar, bright/accent color, live MM:SS updating
-- **Completed Rest UI**: Inline between set rows in exercise card, muted color
-- **History**: Visible in completed workout history via `rest_time_seconds`
-- **Exceptions**: No timer for last set of exercise
+## Affected Boundaries & Changes
 
-## Affected Boundaries
+### 1. Backend: Model Cascade Reorder (`app/services/ai_vision.py`)
+- **File**: `app/services/ai_vision.py` lines 94-105
+- **Change**: Reorder `UNIFIED_MODEL_CASCADE` to put fast/stable models first:
+  ```python
+  UNIFIED_MODEL_CASCADE = [
+      "gemini-3.1-flash-lite",        # Fast, stable - FIRST
+      "gemini-3.1-flash-lite-preview", # Backup fast
+      "gemini-2.5-flash-lite",         # Fast fallback
+      "gemini-2.5-flash",              # Reliable
+      "gemini-3.5-flash-lite",         # Heavy - moved down
+      "gemini-3.6-flash",              # Heavy - moved down
+      "qwen/qwen3.8-27b:free",
+      "dots-studio/dots-3-note-preview:free",
+      "nvidia/nemotron-3.5-content-safety:free",
+      "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+  ]
+  ```
+- **Rationale**: Fast models succeed in 4-7s; heavy models timeout at 20s each. Current order wastes ~40s on timeouts before reaching fast model.
 
-### 1. `static/js/workouts.js` - Core Logic
-**State additions** (in `Workouts` object):
-- `restTimerInterval: null` - interval ID for count-up
-- `restTimerStartTime: null` - timestamp when current timer started
-- `activeRestForSetId: null` - set ID that the CURRENT active timer belongs to (the PREVIOUS completed set)
-
-**New methods**:
-- `startRestTimer(completedSet, exercise, session)` - called after `applyToggleState(true)` for non-last sets
-- `stopAndSaveRestTimer(completedSet, exercise, session)` - called when NEXT set is completed
-- `updateRestTimerUI()` - updates bottom bar display every second
-- `renderRestTimerBar(container)` - renders fixed bottom bar HTML
-- `renderRestTimeInline(set, exercise)` - renders muted rest time between set rows
-
-**Modifications**:
-- In `bindWorkoutScreenEvents` toggle-set handler:
-  - When `isCompleted === true`:
-    1. If `activeRestForSetId` exists → call `stopAndSaveRestTimer` for that previous set
-    2. If this set is NOT the last in exercise → call `startRestTimer` for this set
-  - When `isCompleted === false` (unchecking):
-    - If this set was the one with active timer → stop timer without saving
-    - If previous set had timer saved → clear that saved `rest_time_seconds`
-- In `renderWorkoutScreen`:
-  - Include rest timer bar HTML
-  - Modify exercise card rendering to show inline rest times between sets
-- In `stopWorkoutTimer` / cleanup: call `stopAndSaveRestTimer` if active (save on workout end)
-
-### 2. Exercise Card Rendering (in `renderWorkoutScreen`)
-- After each set row (except last), if `rest_time_seconds` exists → render muted inline display:
-  ```html
-  <div class="rest-time-inline muted">
-    <span class="timer-icon">⏱</span>
-    <span class="rest-duration">MM:SS</span>
-    <span class="rest-label">Отдых</span>
-  </div>
+### 2. Backend: Timeout Alignment (`app/services/ai_workout_service.py`)
+- **File**: `app/services/ai_workout_service.py` line 72
+- **Change**: Increase `AI_PREVIEW_STORE_WAIT_SECONDS` from 15s to 45s (or match `WORKOUT_AI_TASK_TIMEOUT - 10s` buffer)
+  ```python
+  AI_PREVIEW_STORE_WAIT_SECONDS = 45.0  # Was 15.0
+  ```
+- **File**: `app/services/ai_workout_service.py` line 72
+- **Optional**: Increase `WORKOUT_AI_TASK_TIMEOUT` to 90s for safety margin with cascade
+  ```python
+  WORKOUT_AI_TASK_TIMEOUT = 90.0  # Was 60.0
   ```
 
-### 3. CSS Styles
-- Fixed bottom bar: `fixed bottom-16 left-0 right-0 z-50` (above nav)
-- Active timer: `text-lime-500 dark:text-lime-400 font-mono text-2xl`
-- Inline rest time: `text-surface-500 dark:text-surface-400 text-xs`
-- Timer icon: subtle pulse animation when active
+### 3. Backend: WebSocket Push Notification (`app/ws/manager.py`, `ai_workout_service.py`)
+- **File**: `app/services/ai_workout_service.py` in `build_workout_preview_and_store` (after line 1186 commit)
+- **Change**: After storing successful plan, push via WebSocket:
+  ```python
+  # After session.ai_plan_status = AI_PLAN_STATUS_AVAILABLE and commit
+  try:
+      from app.ws.manager import manager
+      await manager.send_personal_message(
+          WSMessage(type=WSMessageType.WORKOUT_PLAN_READY, payload={
+              "session_id": session_id,
+              "plan": payload
+          }),
+          session.user_id
+      )
+  except Exception as e:
+      logger.warning(f"[AI Workout Preview] WebSocket push failed: {e}")
+  ```
+- **File**: `app/ws/manager.py` - Add `WORKOUT_PLAN_READY` to `WSMessageType` enum in schemas
+- **File**: `app/schemas/__init__.py` - Add `WORKOUT_PLAN_READY` to `WSMessageType` enum
 
-## Data Flow
+### 4. Frontend: WebSocket Listener (`static/js/workouts.js`, `static/js/app.js`)
+- **File**: `static/js/workouts.js` - In `startTemplateWithAi` after rendering workout screen
+- **Change**: Listen for `WORKOUT_PLAN_READY` WebSocket message and update UI reactively:
+  ```javascript
+  // In startTemplateWithAi, after renderWorkoutScreen
+  const wsHandler = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'workout_plan_ready' && data.payload?.session_id === sessionId) {
+          this.aiPlan = { ...data.payload.plan, sessionId };
+          this.updateAiPlanBadges(container);
+          ws.removeEventListener('message', wsHandler);
+      }
+  };
+  ws.addEventListener('message', wsHandler);
+  ```
+- **Fallback**: Keep existing `loadAiPlan` polling as backup if WebSocket fails
 
-### Starting a Rest Timer (Set N completed, N < total):
-1. User taps ✓ on Set N → `toggle-set` handler fires
-2. `applyToggleState(true)` updates local session
-3. Check: `set.set_number < exercise.sets.length` (not last set)
-4. If active timer exists for previous set → `stopAndSaveRestTimer(prevSet)`
-5. `startRestTimer(currentSet)`:
-   - `restTimerStartTime = Date.now()`
-   - `activeRestForSetId = currentSet.id`
-   - Start `setInterval` → `updateRestTimerUI()` every 1000ms
-   - Show bottom bar (remove `hidden`)
+### 5. Frontend: Extended Polling Timeout (`static/js/workouts.js`)
+- **File**: `static/js/workouts.js` - `loadAiPlan` function
+- **Change**: The `API.postImmediate` call to `/ai/workout-preview` already has the wait logic server-side via `wait_for_stored_ai_plan`. With increased `AI_PREVIEW_STORE_WAIT_SECONDS=45s`, the HTTP request will wait longer before returning.
 
-### Stopping & Saving (Set N+1 completed):
-1. User taps ✓ on Set N+1 → handler fires
-2. `activeRestForSetId` exists (belongs to Set N) → `stopAndSaveRestTimer(Set N)`:
-   - `elapsed = Math.floor((Date.now() - restTimerStartTime) / 1000)`
-   - Find Set N in session → `set.rest_time_seconds = elapsed`
-   - `persistLocalSession(session)` + `recordLocalSetPatch` for offline
-   - Clear `activeRestForSetId`, stop interval, hide bottom bar
-3. If Set N+1 is not last → `startRestTimer(Set N+1)` (new timer)
+## Data Flow (After Fix)
 
-### Unchecking a Set:
-- If unchecking Set N (which had active timer): stop timer, clear `activeRestForSetId`, hide bar, DON'T save
-- If unchecking Set N+1 (which caused Set N's timer to save): clear Set N's `rest_time_seconds`, re-render
-
-### Workout Completion:
-- If active timer exists on "Complete Workout" → `stopAndSaveRestTimer` for that set
-- Then proceed with normal completion
-
-## Backend Integration
-- `rest_time_seconds` field already exists in:
-  - `WorkoutSetResponse` schema (line 621 in schemas)
-  - `WorkoutSet` model (line 402 in models)
-  - `update_set_completion` service (line 467-468)
-- No backend changes needed - data flows through existing PATCH `/workouts/sets/{id}`
-
-## Edge Cases
-- **Last set of exercise**: Never starts a timer
-- **Unchecking completed set**: Stops timer if active, clears saved rest time if was saved
-- **Exercise change (swipe)**: Timer continues running (global, not per-exercise)
-- **Workout completion**: Saves active timer before completing
-- **Offline/local sessions**: Works fully client-side, syncs via existing queue
-- **Screen lock/background**: Use `visibilitychange` to pause/resume timer calculation
-- **Rapid tapping**: Debounce handled by existing toggle logic
+### Scenario: User clicks "Старт с ИИ"
+1. Frontend calls `POST /workouts/templates/{id}/start?with_ai_plan=true`
+2. Backend creates session, returns immediately, queues `build_workout_preview_and_store` background task
+3. Frontend renders workout screen instantly (no loading wait)
+4. Background task runs:
+   - Tries `gemini-3.1-flash-lite` first → succeeds in ~5s
+   - Stores plan in DB (`ai_plan_json`, `ai_plan_status=available`)
+   - **Pushes via WebSocket** `WORKOUT_PLAN_READY` to user
+5. Frontend receives WebSocket message → updates AI badges reactively
+6. **Fallback**: If WebSocket missed, `loadAiPlan` polls `/ai/workout-preview` which waits up to 45s for stored plan
 
 ## Failure Modes & Mitigations
-- **Timer drift**: Use `Date.now()` delta, not incrementing counter
-- **Multiple timers**: Only one global timer at a time (enforced by `activeRestForSetId`)
-- **Data loss on crash**: Timer state in memory only; acceptable for rest timer
-- **Offline save failure**: Existing `recordLocalSetPatch` queues for sync
+- **WebSocket not connected**: Polling fallback handles it (existing `loadAiPlan`)
+- **All models fail**: Background task marks `ai_plan_status=failed`, UI shows "plan unavailable" toast
+- **Model timeout**: Cascade continues to next model (existing behavior)
+- **Background task crashes**: `try/catch` in `_use_session` marks failed, logs error
 
 ## Validation Plan
-1. Start workout with 3-set exercise
-2. Complete Set 1 → bottom bar appears, counts up from 00:00 (bright lime)
-3. Wait 45s, complete Set 2 → timer stops, Set 1 shows "00:45 Отдых" inline (muted)
-4. New timer starts for Set 2 rest (bottom bar)
-5. Wait 30s, complete Set 3 (last) → timer stops, Set 2 shows "00:30 Отдых" inline
-6. NO timer starts after Set 3
-7. Check history → both rest times visible in workout detail
-8. Test uncheck: complete Set 1, wait, uncheck Set 1 → timer stops, no rest time saved
-9. Test offline → timer works, syncs when online
-10. Test background/foreground → timer resumes correctly
+1. **Model order test**: Start workout with AI → verify plan arrives in ~5-10s (not 40s+)
+2. **WebSocket delivery**: Open DevTools Network → WS → verify `WORKOUT_PLAN_READY` message received
+3. **UI reactivity**: AI badges appear on workout screen without refresh
+4. **Fallback polling**: Disconnect WebSocket, start workout → plan still loads via HTTP poll
+5. **Timeout edge case**: Simulate slow model → verify cascade tries next model
+6. **History persistence**: Complete workout → verify AI plan saved in session history
 
 ## Implementation Order
-1. Add state properties to `Workouts` object
-2. Add `renderRestTimerBar()` and `updateRestTimerUI()` methods
-3. Add `renderRestTimeInline(set, exercise)` helper for card rendering
-4. Modify `renderWorkoutScreen` to include timer bar + inline rest times
-5. Add `startRestTimer()`, `stopAndSaveRestTimer()` methods
-6. Hook into `bindWorkoutScreenEvents` toggle-set handler (both complete & uncheck)
-7. Add cleanup in `stopWorkoutTimer` / screen unmount / workout completion
-8. Add CSS styles for timer bar and inline rest display
-9. Test all scenarios
+1. Reorder `UNIFIED_MODEL_CASCADE` in `ai_vision.py` (highest impact, lowest risk)
+2. Increase `AI_PREVIEW_STORE_WAIT_SECONDS` in `ai_workout_service.py`
+3. Add `WORKOUT_PLAN_READY` to `WSMessageType` enum in schemas
+4. Add WebSocket push in `build_workout_preview_and_store`
+5. Add WebSocket listener in `startTemplateWithAi` (frontend)
+6. Test end-to-end
+
+## Open Questions
+- Should we also add a visual indicator (spinner/badge) on the workout screen while AI plan is generating?
+- Do we want to persist the WebSocket connection across screen locks/backgrounding? (Current `realtime` connection in `app.js` may already handle this)
