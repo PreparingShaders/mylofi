@@ -784,6 +784,7 @@ class WSMessageType(str, Enum):
     MEAL_FAILED = "meal_failed"
     PING = "ping"
     PONG = "pong"
+    WORKOUT_PLAN_READY = "workout_plan_ready"
 
 
 class WSMessage(BaseModel):

@@ -1558,13 +1558,28 @@ export const Workouts = {
             Camera.hideLoadingOverlay(overlayState);
             // Render workout screen immediately without waiting for AI plan
             await this.renderWorkoutScreen(container, app, sessionId);
-            // Load AI plan in background and update badges reactively
+            // Listen for the plan over WebSocket; the polling below is the fallback
+            // when the socket is not connected or the message is missed.
+            let wsCleanup = null;
+            const wsHandler = (payload) => {
+                if (payload?.session_id === sessionId) {
+                    if (wsCleanup) wsCleanup();
+                    this.aiPlan = { ...payload.plan, sessionId };
+                    this.updateAiPlanBadges(container);
+                }
+            };
+            if (app.realtime) {
+                wsCleanup = app.realtime.on('workout_plan_ready', wsHandler);
+            }
+            // Load AI plan in background and update badges reactively (polling fallback)
             this.loadAiPlan(app, { session_id: sessionId, template_id: templateId, name: session.name })
                 .then(plan => {
+                    if (wsCleanup) wsCleanup();
                     this.aiPlan = plan ? { ...plan, sessionId } : null;
                     this.updateAiPlanBadges(container);
                 })
                 .catch(err => {
+                    if (wsCleanup) wsCleanup();
                     console.warn('[Workouts] AI plan background load failed:', err);
                 });
         } catch (err) {
@@ -1607,13 +1622,28 @@ export const Workouts = {
             Camera.hideLoadingOverlay(overlayState);
             // Render workout screen immediately without waiting for AI plan
             await this.renderWorkoutScreen(app.elements.pageContent, app, sessionId);
-            // Load AI plan in background and update badges reactively
+            // Listen for the plan over WebSocket; the polling below is the fallback
+            // when the socket is not connected or the message is missed.
+            let wsCleanup = null;
+            const wsHandler = (payload) => {
+                if (payload?.session_id === sessionId) {
+                    if (wsCleanup) wsCleanup();
+                    this.aiPlan = { ...payload.plan, sessionId };
+                    this.updateAiPlanBadges(app.elements.pageContent);
+                }
+            };
+            if (app.realtime) {
+                wsCleanup = app.realtime.on('workout_plan_ready', wsHandler);
+            }
+            // Load AI plan in background and update badges reactively (polling fallback)
             this.loadAiPlan(app, { goal, name: `Быстрый старт: ${goalLabel}`, session_id: sessionId, reduce: true })
                 .then(plan => {
+                    if (wsCleanup) wsCleanup();
                     this.aiPlan = plan ? { ...plan, sessionId } : null;
                     this.updateAiPlanBadges(app.elements.pageContent);
                 })
                 .catch(err => {
+                    if (wsCleanup) wsCleanup();
                     console.warn('[Workouts] AI plan background load failed:', err);
                 });
         } catch (err) {
