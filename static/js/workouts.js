@@ -1171,6 +1171,7 @@ export const Workouts = {
 
                 // Запускаем API запрос СРАЗУ, параллельно с отсчетом
                 const startEndpoint = `/workouts/templates/${templateId}/start`;
+                await app.ensureFreshToken();
                 const sessionPromise = API.post(startEndpoint, {}, app.state.tokens.access);
 
                 // Запускаем отсчет
@@ -1421,16 +1422,16 @@ export const Workouts = {
         if (this.isGeneratingPreview) return;
         this.isGeneratingPreview = true;
         if (btn) btn.disabled = true;
-        const token = app.state.tokens.access;
         const goalLabel = (QUICK_GOALS.find(g => g.value === goal) || {}).title;
 
         const overlayState = Camera.showLoadingOverlay(document.body, Camera.workoutHints);
 
         try {
+            await app.ensureFreshToken();
             const { session_id: sessionId } = await API.post(
                 '/workouts/sessions/quick-start',
                 { goal, with_ai_plan: true, reduce: true },
-                token,
+                app.state.tokens.access,
             );
             Camera.markLoadingComplete(overlayState.overlay);
             await new Promise(r => setTimeout(r, 500));
@@ -2302,8 +2303,9 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 return;
             }
 
+            await app.ensureFreshToken();
             try {
-                await API.patch(`/workouts/sets/${setId}`, { [field]: value }, token);
+                await API.patch(`/workouts/sets/${setId}`, { [field]: value }, app.state.tokens.access);
             } catch (err) {
                 if (err?.offlineQueued) {
                     // Silent: the global network banner reflects offline/syncing status

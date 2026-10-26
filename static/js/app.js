@@ -820,8 +820,28 @@ const App = {
             return false;
         }
     },
-    
-    async validateToken() {
+
+    /**
+     * Proactively refresh the access token shortly before it expires so
+     * critical actions (starting or saving a workout) do not surface a 401
+     * mid-flight. Reads the JWT `exp` claim without verifying the signature;
+     * only the server can verify, but the expiry claim is enough to know a
+     * refresh is due soon. A failed proactive refresh is non-fatal: the
+     * action still proceeds with the current token and the standard 401
+     * flow handles a genuinely expired token.
+     */
+    async ensureFreshToken() {
+        const token = this.state.tokens?.access || null;
+        if (!token || !API.isTokenExpiring(token)) return true;
+        try {
+            return await this.refreshAccessToken();
+        } catch (error) {
+            console.warn('[App] Proactive token refresh skipped:', error?.message);
+            return false;
+        }
+    },
+
+        async validateToken() {
         try {
             const user = await API.get('/users/me', this.state.tokens.access);
             this.state.user = user;

@@ -456,9 +456,37 @@ class Feedback(Base):
     user: Mapped[Optional["User"]] = relationship("User", backref="feedback")
 
 
+class RotatedRefreshToken(Base):
+    """Short-lived record of a recently rotated refresh token.
+
+    Used to make refresh-token rotation idempotent under concurrency: when two
+    requests present the same (already rotated) refresh token within the grace
+    window, the second one receives the same new token pair that the first
+    rotation issued instead of a 401. Records expire quickly and are purged on
+    each rotation.
+    """
+
+    __tablename__ = "rotated_refresh_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    old_token_hash: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    new_access_token: Mapped[str] = mapped_column(String(1024), nullable=False)
+    new_refresh_token: Mapped[str] = mapped_column(String(1024), nullable=False)
+    rotated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+    user: Mapped["User"] = relationship("User")
+
+    __table_args__ = (Index("ix_rotated_refresh_tokens_user_rotated", "user_id", "rotated_at"),)
+
+
 __all__ = [
     "User",
     "RefreshToken",
+    "RotatedRefreshToken",
     "VerificationCode",
     "Meal",
     "MealStatus",
