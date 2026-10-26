@@ -708,6 +708,7 @@ const App = {
         const active = session || Workouts.currentSession;
         if (!active) return;
         Workouts.startWorkoutTimer(active);
+        Workouts.rearmRestTimer();
     },
 
     /**
@@ -2125,6 +2126,8 @@ const App = {
             cancelText: 'Назад'
         })) return;
 
+        Workouts.stopRestTimer();
+
         // A session created offline has no server id yet: close it locally and queue the request
         if (Workouts.completeLocalSession(this)) {
             await this.renderPage('workouts');
@@ -2212,6 +2215,8 @@ const App = {
             confirmClass: 'bg-red-600 hover:bg-red-700 text-white shadow-md',
             cancelText: 'Назад'
         })) return;
+
+        Workouts.stopRestTimer();
 
         if (Workouts.cancelLocalSession(this)) {
             await this.renderPage('workouts');

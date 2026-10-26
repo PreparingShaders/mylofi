@@ -3651,3 +3651,22 @@ body.has-network-banner main {
         transform: none;
     }
 }
+
+/* ===== Rest timer bar =====
+   Fixed above the bottom nav (bottom-0 z-50) so it stays put while the
+   exercise carousel scrolls. The bottom offset accounts for the 4rem (64px)
+   clearance plus the iOS home-indicator safe area so the bar never overlaps
+   the nav on either platform. z-[90] keeps it below the toast layer (z-[130])
+   and the modal host (z-[120]) but above the carousel content. */
+#rest-timer-bar.rest-timer-bar {
+    bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+}
+.rest-timer-bar__inner {
+    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+}
+#rest-timer-dismiss {
+    border: 1px solid rgba(24, 24, 27, 0.08);
+}
+.dark #rest-timer-dismiss {
+    border-color: rgba(255, 255, 255, 0.08);
+}

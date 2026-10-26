@@ -125,6 +125,17 @@ export const Workouts = {
     lastSetCompletedAt: null,
     lastSetCompletedExerciseId: null,
 
+    // Rest timer (visual guidance between sets, purely client-side):
+    // restTimerEndTime is an absolute Date.now() target so the display never
+    // drifts when the tab is backgrounded; the interval only repaints. The
+    // state is deliberately NOT cleared by stopRestTimer so a backgrounded tab
+    // can rearm the interval on resume without losing the end time.
+    restTimerInterval: null,
+    restTimerEndTime: null,
+    restTimerTotalDuration: 0,
+    currentRestSetId: null,
+    restTimerCompleted: false,
+
     escapeHtml(value) {
         return String(value ?? '')
             .replace(/&/g, '&amp;')
@@ -1298,6 +1309,91 @@ export const Workouts = {
             clearInterval(this.workoutTimerInterval);
             this.workoutTimerInterval = null;
         }
+        this.stopRestTimer();
+    },
+
+    startRestTimer(set, exercise, session) {
+        this.stopRestTimer();
+        const duration = (typeof set?.rest_seconds === 'number' && set.rest_seconds > 0)
+            ? set.rest_seconds
+            : (typeof exercise?.rest_seconds === 'number' && exercise.rest_seconds > 0)
+                ? exercise.rest_seconds
+                : 90;
+        this.restTimerTotalDuration = duration;
+        this.restTimerEndTime = Date.now() + duration * 1000;
+        this.currentRestSetId = set?.id ?? null;
+        this.restTimerCompleted = false;
+        const bar = document.getElementById('rest-timer-bar');
+        if (bar) bar.classList.remove('hidden');
+        this.updateRestTimerUI();
+        this.restTimerInterval = setInterval(() => this.updateRestTimerUI(), 1000);
+    },
+
+    stopRestTimer() {
+        if (this.restTimerInterval) {
+            clearInterval(this.restTimerInterval);
+            this.restTimerInterval = null;
+        }
+        const bar = document.getElementById('rest-timer-bar');
+        if (bar) bar.classList.add('hidden');
+    },
+
+    dismissRestTimer() {
+        this.stopRestTimer();
+        this.restTimerEndTime = null;
+        this.restTimerTotalDuration = 0;
+        this.currentRestSetId = null;
+        this.restTimerCompleted = false;
+    },
+
+    rearmRestTimer() {
+        if (!this.restTimerEndTime) return;
+        if (this.restTimerInterval) return;
+        const bar = document.getElementById('rest-timer-bar');
+        if (bar) bar.classList.remove('hidden');
+        this.updateRestTimerUI();
+        this.restTimerInterval = setInterval(() => this.updateRestTimerUI(), 1000);
+    },
+
+    updateRestTimerUI() {
+        const remainingEl = document.getElementById('rest-timer-remaining');
+        const progressEl = document.getElementById('rest-timer-progress');
+        const stateEl = document.getElementById('rest-timer-state');
+        if (!remainingEl) return;
+
+        if (!this.restTimerEndTime) {
+            remainingEl.textContent = '00:00';
+            return;
+        }
+
+        const remaining = Math.max(0, Math.floor((this.restTimerEndTime - Date.now()) / 1000));
+
+        if (remaining <= 0) {
+            if (!this.restTimerCompleted) {
+                this.restTimerCompleted = true;
+                this.vibrateRestTimer();
+            }
+            remainingEl.textContent = this.formatTimer(0);
+            remainingEl.classList.remove('text-lime-600', 'dark:text-lime-400');
+            remainingEl.classList.add('text-surface-700', 'dark:text-surface-300');
+            if (stateEl) stateEl.textContent = 'Отдых завершен';
+            progressEl && (progressEl.style.width = '0%');
+            return;
+        }
+
+        remainingEl.textContent = this.formatTimer(remaining);
+        remainingEl.classList.remove('text-surface-700', 'dark:text-surface-300');
+        remainingEl.classList.add('text-lime-600', 'dark:text-lime-400');
+        if (stateEl) stateEl.textContent = 'Отдых';
+        const total = this.restTimerTotalDuration || 1;
+        const percent = Math.round((remaining / total) * 100);
+        progressEl && (progressEl.style.width = `${percent}%`);
+    },
+
+    vibrateRestTimer() {
+        if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+            try { navigator.vibrate([200, 100, 200]); } catch (e) {}
+        }
     },
 
     async renderCountdown(container, onComplete) {
@@ -2008,11 +2104,35 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     </div>
                 </div>
 
-                <div class="flex overflow-x-auto gap-4 pb-6 px-4 -mx-4 workout-carousel" id="carousel">
-                    ${allCards.join('')}
-                </div>
-                
-             </div>
+                 <div class="flex overflow-x-auto gap-4 pb-6 px-4 -mx-4 workout-carousel" id="carousel">
+                     ${allCards.join('')}
+                 </div>
+
+                 <div id="rest-timer-bar" class="hidden rest-timer-bar"
+                      role="timer" aria-live="polite" aria-label="Таймер отдыха">
+                     <div class="flex items-center gap-3 px-4 py-2 rest-timer-bar__inner">
+                         <div class="flex-1 h-1.5 rounded-full bg-surface-200 dark:bg-white/10 overflow-hidden -mr-1">
+                             <div id="rest-timer-progress"
+                                  class="h-full rounded-full bg-lime-400 transition-all duration-300 ease-out"
+                                  style="width: 100%"></div>
+                         </div>
+                         <span id="rest-timer-remaining"
+                               class="font-mono text-xl font-bold text-lime-600 dark:text-lime-400 tabular-nums min-w-[3.5rem] text-center">
+                             00:00
+                         </span>
+                         <span id="rest-timer-state"
+                               class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase">
+                             Отдых
+                         </span>
+                         <button id="rest-timer-dismiss" data-action="dismiss-rest-timer" type="button"
+                                 class="glass rounded-xl px-3 py-1.5 text-xs font-semibold text-surface-700 dark:text-surface-300 hover:bg-surface-200 dark:hover:bg-white/10 transition-colors flex-shrink-0"
+                                 aria-label="Готов">
+                             Готов
+                         </button>
+                     </div>
+                 </div>
+
+              </div>
         `;
         container.innerHTML = html;
         
@@ -2058,6 +2178,14 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             if (set) return set;
         }
         return null;
+    },
+
+    findExerciseOfSet(session, setId) {
+        for (const ex of (session.exercises || [])) {
+            const set = (ex.sets || []).find(s => s.id === setId);
+            if (set) return { exercise: ex, set };
+        }
+        return { exercise: null, set: null };
     },
 
     updateWorkoutMetricsUI(session) {
@@ -2194,6 +2322,10 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 if (isCompleted) {
                     this.flashSetSaved(row);
                     this.scheduleCarouselAdvance(session, row);
+                    const { exercise: ex, set: sessionSet } = this.findExerciseOfSet(session, setId);
+                    if (ex && sessionSet && sessionSet.set_number < (ex.sets || []).length) {
+                        this.startRestTimer(sessionSet, ex, session);
+                    }
                 }
                 const payload = {
                     is_completed: isCompleted,
@@ -2220,6 +2352,9 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 } else {
                     this.lastSetCompletedAt = null;
                     this.lastSetCompletedExerciseId = null;
+                    if (this.currentRestSetId === setId) {
+                        this.dismissRestTimer();
+                    }
                 }
                 if (isLocal) {
                     this.persistLocalSession(session);
@@ -2236,6 +2371,9 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         // Silent: the global network banner reflects offline/syncing status
                     } else {
                         applyToggleState(wasCompleted);
+                        if (this.currentRestSetId === setId) {
+                            this.dismissRestTimer();
+                        }
                         app.showToast(err.message || 'Ошибка', 'error');
                     }
                     button.disabled = false;
@@ -2421,6 +2559,12 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             // must not pull them back into it.
             if (app.state) app.state.workoutScreenDismissed = true;
             app.showPage('workouts');
+        });
+
+        // Dismiss rest timer
+        container.querySelector('[data-action="dismiss-rest-timer"]')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.dismissRestTimer();
         });
     },
 
