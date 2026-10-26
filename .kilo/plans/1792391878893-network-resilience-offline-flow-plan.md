@@ -1,42 +1,66 @@
-# Implementation Plan: Fix Syntax Error (`Unexpected token 'else'`) in `app.js`
+# Implementation Plan: Fix Workout Data Loss on Completion
 
-## Goal
-Fix the `Uncaught SyntaxError: Unexpected token 'else'` in `static/js/app.js` around line 221 caused by an orphaned `else` block following a misplaced `try/catch` wrapper around an asynchronous promise chain (`validateToken().then(...).catch(...)`).
+## Problem Analysis
+When a user completes a workout, the set completion status (`is_completed`) is not being flushed to the server along with weight/reps. The `flushPendingSetEdits()` function in `app.js` only reads and sends `weight_kg` and `reps` from DOM inputs, but the completion state lives in the toggle button's `data-completed` attribute and the session object. This causes a race condition where:
+1. User toggles set completion (sends PATCH with `is_completed`)
+2. User immediately clicks "Complete workout" 
+3. `flushPendingSetEdits` runs, sends only weight/reps
+4. Complete endpoint is called
+5. If the toggle PATCH hasn't completed, the server marks session complete without the set completions
 
 ## Affected Boundaries & Changes
-- **`static/js/app.js` (`init` method)**:
-  - Remove the invalid `try { ... } catch (e) { ... } else { ... }` wrapping around the async `validateToken().then(...).catch(...)` call.
-  - Structure the token presence check cleanly:
-    ```javascript
-    if (this.state.tokens.access) {
-        console.log('[App] Token found, validating...');
-        // Defer validation to background to allow cache-first render
-        this.validateToken().then(() => this.initSyncEngine()).catch((e) => {
-            console.error('[App] Token validation failed:', e);
-            if (e?.isNetworkError || !navigator.onLine || !this.state.isOnline) {
-                console.warn('[App] Network error during init token validation; retaining offline session.');
-                this.showScreen('main');
-                const { page, workout } = this.loadState();
-                if (workout) {
-                    this.state.activeWorkout = workout;
-                    this.showPage('workouts');
-                } else {
-                    this.showPage(page || 'nutrition');
-                }
-            } else {
-                this.showScreen('landing');
-                this.renderLanding();
-            }
-        });
+
+### 1. Fix `flushPendingSetEdits` in `static/js/app.js`
+- Extend the function to also read completion status from toggle buttons (`[data-action="toggle-set"]`)
+- Send `is_completed` along with `weight_kg` and `reps` in a single PATCH per set
+- Ensure we don't double-send if the toggle PATCH is already in flight (use a flag or check)
+
+### 2. Fix `completeWorkoutWithAi` in `static/js/workouts.js`  
+- Same fix - ensure `flushPendingSetEdits` sends completion status
+- Or create a dedicated `flushPendingSetCompletions` function
+
+### 3. Add logging for debugging
+- Log the payload being sent in `flushPendingSetEdits`
+- Log the response from the complete endpoint
+- Server-side: log received completion payload
+
+### 4. Backend validation (defensive)
+- In `complete_workout_session` service, verify all sets have correct `is_completed` status
+- Log any discrepancies
+
+## Implementation Details
+
+### Modified `flushPendingSetEdits` logic:
+```javascript
+async flushPendingSetEdits() {
+    const rows = document.querySelectorAll('[data-set-id]');
+    const promises = Array.from(rows).map(async row => {
+        const setId = parseInt(row.dataset.setId);
+        if (isNaN(setId)) return;
         
-        // Proactively show cached main screen state
-        ...
-    } else {
-        this.showScreen('landing');
-        this.renderLanding();
-    }
-    ```
+        const weightInput = row.querySelector('[data-field="weight"]');
+        const repsInput = row.querySelector('[data-field="reps"]');
+        const toggleBtn = row.querySelector('[data-action="toggle-set"]');
+        
+        const weight_kg = weightInput ? parseFloat(weightInput.value) : null;
+        const reps = repsInput ? parseInt(repsInput.value) : null;
+        const is_completed = toggleBtn?.dataset.completed === 'true';
+        
+        const payload = {};
+        if (!isNaN(weight_kg)) payload.weight_kg = weight_kg;
+        if (!isNaN(reps)) payload.reps = reps;
+        if (is_completed !== undefined) payload.is_completed = is_completed;
+        
+        if (Object.keys(payload).length > 0) {
+            await API.patch(`/workouts/sets/${setId}`, payload, this.state.tokens.access).catch(() => {});
+        }
+    });
+    await Promise.all(promises);
+}
+```
 
 ## Validation Plan
-1. Check JavaScript syntax using Node or linter/compiler to ensure no syntax errors remain in `app.js`.
-2. Verify app cold start and initialization flow runs without uncaught syntax errors.
+1. Test workout completion with multiple sets toggled quickly before clicking "Complete"
+2. Verify all set completions, weights, and reps are persisted correctly
+3. Test offline mode - complete workout offline, then sync when online
+4. Check server logs for completion payloads

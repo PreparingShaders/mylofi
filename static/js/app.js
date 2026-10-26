@@ -87,6 +87,7 @@ const App = {
         landingCarouselState: {},
         _showcaseImages: null,
         landingThemeState: { mode: 'system', dark: false },
+        _pendingToggleSetIds: new Set(),
     },
     
     elements: {},
@@ -2091,6 +2092,7 @@ const App = {
         };
 
         try {
+            this._pendingToggleSetIds?.add(parseInt(set_id));
             await API.patch(`/workouts/sets/${set_id}`, payload, this.state.tokens.access);
 
             // Update UI state. Weight/reps stay editable when completed and the
@@ -2108,6 +2110,8 @@ const App = {
             }
             btn.disabled = false;
             btn.textContent = '✓';
+        } finally {
+            this._pendingToggleSetIds?.delete(parseInt(set_id));
         }
     },
 
@@ -2135,11 +2139,12 @@ const App = {
             : null;
 
         try {
-            await API.post(
+            const resp = await API.post(
                 `/workouts/sessions/${sessionId}/complete`,
                 durationSeconds !== null ? { duration_seconds: durationSeconds } : null,
                 this.state.tokens.access,
             );
+            console.log('[handleCompleteWorkout] Complete endpoint response:', resp);
             Workouts.forgetAiPlan(sessionId);
             this.showToast('Тренировка завершена!', 'success');
         } catch (e) {
@@ -2157,21 +2162,42 @@ const App = {
     },
 
     /**
-     * Push every weight and rep the user has typed but not yet sent, so the
-     * numbers a verdict is written about are the ones on screen. Shared by both
-     * completion paths: the coach reads the completed sets, so a value still
-     * sitting in an input would be analysed as the previous one.
+     * Push every weight, rep value and completion status the user has entered but
+     * not yet sent, so the numbers and the completed flag a verdict is written
+     * about are the ones on screen. Shared by both completion paths: the coach
+     * reads the completed sets, so a value still sitting in an input or a toggle
+     * whose PATCH is still in flight would be analysed as the previous one.
+     *
+     * Sets whose toggle PATCH is already in flight are skipped: that request
+     * already carries weight, reps and is_completed, so re-sending here would
+     * only risk a race where the later weight/reps overwrite the completed flag.
      */
     async flushPendingSetEdits() {
-        const inputs = document.querySelectorAll('[data-set-id] input[data-field]');
-        const promises = Array.from(inputs).map(async input => {
-            const row = input.closest('[data-set-id]');
-            if (!row) return;
+        const rows = document.querySelectorAll('[data-set-id]');
+        const promises = Array.from(rows).map(async row => {
             const setId = parseInt(row.dataset.setId);
-            const field = input.dataset.field;
-            const value = field === 'weight' ? parseFloat(input.value) : parseInt(input.value);
-            if (!isNaN(value)) {
-                await API.patch(`/workouts/sets/${setId}`, { [field]: value }, this.state.tokens.access).catch(() => {});
+            if (isNaN(setId)) return;
+
+            // Skip sets whose toggle PATCH is already in flight — it already
+            // contains weight, reps and is_completed.
+            if (this._pendingToggleSetIds?.has(setId)) return;
+
+            const weightInput = row.querySelector('[data-field="weight"]');
+            const repsInput = row.querySelector('[data-field="reps"]');
+            const toggleBtn = row.querySelector('[data-action="toggle-set"]');
+
+            const weight_kg = weightInput ? parseFloat(weightInput.value) : null;
+            const reps = repsInput ? parseInt(repsInput.value) : null;
+            const is_completed = toggleBtn?.dataset.completed === 'true';
+
+            const payload = {};
+            if (!isNaN(weight_kg)) payload.weight_kg = weight_kg;
+            if (!isNaN(reps)) payload.reps = reps;
+            payload.is_completed = is_completed;
+
+            if (Object.keys(payload).length > 0) {
+                console.log('[flushPendingSetEdits] Flushing set', setId, payload);
+                await API.patch(`/workouts/sets/${setId}`, payload, this.state.tokens.access).catch(() => {});
             }
         });
         await Promise.all(promises);

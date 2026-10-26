@@ -1672,12 +1672,13 @@ export const Workouts = {
             `;
         }
 
-        try {
-            await API.post(
+         try {
+            const resp = await API.post(
                 `/workouts/sessions/${sessionId}/complete`,
                 { with_ai_analysis: true, duration_seconds: durationSeconds },
                 app.state.tokens.access,
             );
+            console.log('[completeWorkoutWithAi] Complete endpoint response:', resp);
         } catch (err) {
             console.error('[Workouts] Complete with AI failed:', err);
             app.showToast(err?.offlineQueued ? OFFLINE_COMPLETE_MESSAGE : (err?.message || 'Ошибка завершения тренировки'), 'error');
@@ -2228,6 +2229,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     return;
                 }
                 try {
+                    app?._pendingToggleSetIds?.add(setId);
                     await API.patch(`/workouts/sets/${setId}`, payload, token);
                 } catch (err) {
                     if (err?.offlineQueued) {
@@ -2238,6 +2240,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     }
                     button.disabled = false;
                     button.textContent = '✓';
+                } finally {
+                    app?._pendingToggleSetIds?.delete(setId);
                 }
             });
         });

@@ -1483,6 +1483,11 @@ async def complete_workout_session_endpoint(
     is completed synchronously and the caller receives a `WorkoutCompletionResponse`.
     """
     data = request or WorkoutCompletionRequest()
+    logger.info(
+        "[complete_workout_session_endpoint] session_id=%s user_id=%s "
+        "with_ai_analysis=%s duration_seconds=%s",
+        session_id, current_user.id, data.with_ai_analysis, data.duration_seconds,
+    )
     session = await complete_workout_session(
         db,
         session_id,
@@ -1675,6 +1680,10 @@ async def update_set_endpoint(
     current_user: User = Depends(get_current_user),
 ):
     """Update a workout set (complete, update weight/reps, record the measured rest)"""
+    logger.info(
+        "[update_set_endpoint] set_id=%s user_id=%s payload=%s",
+        set_id, current_user.id, set_data.model_dump(exclude_unset=True),
+    )
     workout_set = await update_set_completion(
         db,
         set_id,
