@@ -2126,7 +2126,9 @@ const App = {
             cancelText: 'Назад'
         })) return;
 
-        Workouts.stopRestTimer();
+        // Persist any in-flight rest timer so its elapsed seconds are recorded
+        // on the previous set before the session is closed.
+        await Workouts.stopAndSaveRestTimer();
 
         // A session created offline has no server id yet: close it locally and queue the request
         if (Workouts.completeLocalSession(this)) {
@@ -2216,7 +2218,9 @@ const App = {
             cancelText: 'Назад'
         })) return;
 
-        Workouts.stopRestTimer();
+        // Cancel discards the in-flight rest timer (no save) and clears all
+        // timer state so a continued workout starts fresh.
+        Workouts.dismissRestTimer();
 
         if (Workouts.cancelLocalSession(this)) {
             await this.renderPage('workouts');
