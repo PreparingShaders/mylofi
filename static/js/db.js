@@ -1,6 +1,6 @@
 console.log("[DEBUG] Loaded db.js");
 const DB_NAME = 'mylofi-offline';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 let _db = null;
 
@@ -50,6 +50,13 @@ function openDB() {
                 }
                 if (!db.objectStoreNames.contains('exercise_catalog')) {
                     db.createObjectStore('exercise_catalog', { keyPath: 'id' });
+                }
+            }
+
+            // v3 store — auth (reliable session storage on iOS PWA)
+            if (oldVersion < 3) {
+                if (!db.objectStoreNames.contains('auth')) {
+                    db.createObjectStore('auth', { keyPath: 'key' });
                 }
             }
         };
@@ -330,6 +337,39 @@ export const DB = {
 
     async clearSyncQueue() {
         return this.clear('sync_queue');
+    },
+
+    // ─── Auth (reliable session storage on iOS PWA) ─────────────────────
+    async getAuth() {
+        const db = await openDB();
+        const tx = db.transaction('auth', 'readonly');
+        const store = tx.objectStore('auth');
+        const access = await promisify(store.get('access_token'));
+        const refresh = await promisify(store.get('refresh_token'));
+        const user = await promisify(store.get('user'));
+        return {
+            access: access ? access.value : null,
+            refresh: refresh ? refresh.value : null,
+            user: user ? user.value : null,
+        };
+    },
+
+    async saveAuth({ access, refresh, user }) {
+        const db = await openDB();
+        const tx = db.transaction('auth', 'readwrite');
+        const store = tx.objectStore('auth');
+        if (access !== undefined) store.put({ key: 'access_token', value: access });
+        if (refresh !== undefined) store.put({ key: 'refresh_token', value: refresh });
+        if (user !== undefined) store.put({ key: 'user', value: user });
+        await txDone(tx);
+    },
+
+    async clearAuth() {
+        const db = await openDB();
+        const tx = db.transaction('auth', 'readwrite');
+        const store = tx.objectStore('auth');
+        store.clear();
+        await txDone(tx);
     },
 
     // ─── Meals ────────────────────────────────────────────────────────

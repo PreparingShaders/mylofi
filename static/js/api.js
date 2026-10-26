@@ -784,6 +784,37 @@ class APIClient {
      * outage, and it would hide a meal that is actually finished.
      */
     getFresh(endpoint, accessToken = null) { return this.request('GET', endpoint, null, accessToken); }
+    /**
+     * Silent refresh driven solely by the HttpOnly refresh_token cookie.
+     *
+     * On iOS standalone PWAs, localStorage is evicted on process kill, so the
+     * in-memory and localStorage copies of the access token are gone on cold
+     * start. The refresh_token cookie, however, survives — it is HttpOnly and
+     * managed by the browser, not by the page's storage.
+     *
+     * This method calls /auth/refresh with credentials: 'include' and no
+     * Authorization header, letting the browser attach the cookie. The server
+     * reads the cookie, issues a fresh access token, and returns it in the
+     * response body so the frontend can rehydrate localStorage and memory.
+     *
+     * Uses a raw fetch (not this.request) to avoid the 401 retry loop and
+     * the offline queue — the refresh call IS the retry, and it must not be
+     * enqueued or retried recursively.
+     */
+    async refreshFromCookie() {
+        const response = await fetch(`${this.baseURL}/auth/refresh`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        if (!response.ok) {
+            const error = new Error(`Cookie refresh failed: ${response.status}`);
+            error.status = response.status;
+            throw error;
+        }
+        return response.json();
+    }
     post(endpoint, data, accessToken = null, isFormData = false, timeoutMs = null) { return this.request('POST', endpoint, data, accessToken, isFormData, false, timeoutMs); }
     /**
      * A POST that must never enter the offline queue.

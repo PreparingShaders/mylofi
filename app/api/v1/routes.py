@@ -493,7 +493,7 @@ async def reset_password(
     return {"status": "password_reset", "email": reset_data.email}
 
 
-@router.post("/auth/login")
+@router.post("/auth/login", response_model=Token)
 async def login(
     response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -522,16 +522,22 @@ async def login(
     secure = request.url.is_secure if request else False
     response.set_cookie("access_token", access_token, httponly=True, samesite="lax", secure=secure, max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES*60)
     response.set_cookie("refresh_token", refresh_token, httponly=True, samesite="lax", secure=secure, max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS*86400)
-    return {"message": "Logged in"}
+    return Token(access_token=access_token, refresh_token=refresh_token)
 
 
-@router.post("/auth/refresh")
+@router.post("/auth/refresh", response_model=Token)
 async def refresh_token(
     request: Request,
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
-    """Refresh access token using refresh token"""
+    """Refresh access token using refresh token from cookie.
+
+    The HttpOnly refresh_token cookie is the primary source of the refresh
+    token. The response body also carries the new access_token so that the
+    frontend can cache it in localStorage for instant UI rendering on the
+    next cold start (iOS standalone PWAs evict localStorage on process kill).
+    """
     refresh = request.cookies.get("refresh_token")
     if not refresh:
         raise HTTPException(status_code=401, detail="No refresh token")
@@ -542,7 +548,7 @@ async def refresh_token(
     secure = request.url.is_secure
     response.set_cookie("access_token", access_token, httponly=True, samesite="lax", secure=secure, max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES*60)
     response.set_cookie("refresh_token", new_refresh, httponly=True, samesite="lax", secure=secure, max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS*86400)
-    return {"status": "ok"}
+    return Token(access_token=access_token, refresh_token=new_refresh)
 
 
 @router.post("/auth/logout")

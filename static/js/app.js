@@ -121,7 +121,118 @@ const App = {
     // When the session was last confirmed with the server.
     _lastValidatedAt: 0,
     
-     async init() {
+    async initDBAndSync() {
+        try {
+            console.log('[App] Initializing DB...');
+            await DB.init();
+            console.log('[App] DB initialized');
+            await this.initSyncEngine();
+        } catch (e) {
+            console.warn('[App] DB/Sync init failed:', e);
+            try {
+                await this.initSyncEngine();
+            } catch (syncErr) {
+                console.error('[App] Failed to init sync engine:', syncErr);
+            }
+        }
+    },
+
+    /**
+     * Load persisted state (last page, active workout session) and render the
+     * appropriate view. Shared across cold start, validation success, and the
+     * network-error fallback so the workout auto-resume logic lives in one place.
+     */
+    loadStateAndShowPage() {
+        const { page: initialPage, workout: initialWorkout, sessionId: initialSessionId } = this.loadState();
+        if (initialWorkout || initialSessionId) {
+            this.state.activeWorkout = initialWorkout || this.state.activeWorkout;
+            if (initialSessionId && !this.state.currentSessionId) {
+                this.state.currentSessionId = initialSessionId;
+            }
+            this.showPage('workouts');
+            const sessionId = initialSessionId || this.state.currentSessionId;
+            if (sessionId) {
+                this.renderWorkoutScreenSafe(sessionId);
+            }
+        } else {
+            this.showPage(initialPage || 'nutrition');
+        }
+    },
+
+    async renderWorkoutScreenSafe(sessionId) {
+        if (!sessionId) return;
+        if (window.Workouts && typeof window.Workouts.renderWorkoutScreen === 'function') {
+            let id = sessionId;
+            if (typeof id === 'string') {
+                if (id.startsWith('local-')) {
+                    id = id;
+                } else if (!isNaN(parseInt(id))) {
+                    id = parseInt(id);
+                }
+            }
+            try {
+                await window.Workouts.renderWorkoutScreen(this.elements.pageContent, this, id);
+            } catch (e) {
+                console.warn('[App] Failed to auto-resume workout session:', e);
+            }
+        }
+    },
+
+    /**
+     * Attempt to recover the session via the HttpOnly refresh_token cookie.
+     *
+     * iOS standalone PWAs evict localStorage on process kill, so on cold start
+     * there is no access_token to read. The refresh_token HttpOnly cookie,
+     * however, survives — it is managed by the browser, not the page's storage.
+     * This calls /auth/refresh with credentials: 'include' so the browser
+     * attaches the cookie; the server reads it, issues a fresh access token,
+     * and returns it in the response body.
+     */
+    async attemptCookieRefresh() {
+        try {
+            console.log('[App] Attempting cookie-based silent refresh...');
+            const tokens = await API.refreshFromCookie();
+            this.state.tokens.access = tokens.access_token;
+            this.state.tokens.refresh = tokens.refresh_token;
+            this.saveTokens();
+            this.showMainAndValidate();
+        } catch (e) {
+            console.log('[App] Cookie refresh failed, falling back to landing:', e);
+            this.showLanding();
+        }
+    },
+
+    /**
+     * Show the main screen immediately and validate the token in the background.
+     *
+     * Unlike a blocking validation, a network hiccup does NOT drop the user to
+     * the landing screen — the cached session stays valid. Only a hard 401
+     * (token truly invalid) triggers a final cookie-refresh attempt before
+     * signing out.
+     */
+    showMainAndValidate() {
+        this.showScreen('main');
+        this.loadStateAndShowPage();
+        this.validateToken().then(() => this.initSyncEngine()).catch((e) => {
+            console.error('[App] Token validation failed:', e);
+            if (e?.isNetworkError || !navigator.onLine) {
+                console.warn('[App] Network error during token validation; retaining offline session');
+            } else if (e?.status === 401) {
+                // Token rejected but a cookie session may still be alive (iOS PWA)
+                this.attemptCookieRefresh().catch(() => this.showLanding());
+            } else {
+                this.showLanding();
+            }
+        });
+    },
+
+    showLanding() {
+        this.clearTokens();
+        this.showScreen('landing');
+        this.renderLanding();
+    },
+
+    async init() {
         console.log('[App] Initializing...');
         Theme.init();
         this.cacheElements();
@@ -132,76 +243,67 @@ const App = {
             // Проверка элементов перед продолжением
             if (!this.elements.screens.landing) {
                 console.error('[App] Critical error: Landing screen element not found!');
+                this.hideSplash();
                 return;
             }
 
-            // Render landing immediately so user sees something
-            this.showScreen('landing');
-            this.renderLanding();
             this.setupEventListeners();
             this.setupOfflineSync();
-            this.loadTokens();
             this.setupNetworkBanner();
             Nutrition.init(this);
 
-            // DB init is non-critical
-            try {
-                await DB.init();
-                await this.initSyncEngine();
-            } catch (e) {
-                console.warn('[App] DB/Sync init failed:', e);
-            }
+            // Load tokens from localStorage (instant, may be empty on iOS PWA cold start).
+            // The localStorage read is synchronous so the cold-start auth decision
+            // does not depend on async IndexedDB.
+            this.loadTokens();
+            console.log('[App] Tokens loaded:', {
+                hasAccess: !!this.state.tokens.access,
+                hasRefresh: !!this.state.tokens.refresh,
+                hasUser: !!this.state.user
+            });
 
-            if (this.state.tokens.access) {
-                console.log('[App] Token found, validating...');
-                // Defer validation to background to allow cache-first render
-                this.validateToken().then(() => this.initSyncEngine()).catch((e) => {
-                    console.error('[App] Token validation failed:', e);
-                    if (e?.isNetworkError || !navigator.onLine || !this.state.isOnline) {
-                        console.warn('[App] Network error during init token validation; retaining offline session.');
-                        this.showScreen('main');
-                        const { page, workout } = this.loadState();
-                        if (workout) {
-                            this.state.activeWorkout = workout;
-                            this.showPage('workouts');
-                        } else {
-                            this.showPage(page || 'nutrition');
-                        }
-                    } else {
-                        this.showScreen('landing');
-                        this.renderLanding();
-                    }
-                });
-                // Also proactively show main screen if we have cached session
-                this.showScreen('main');
-                const { page: initialPage, workout: initialWorkout, sessionId: initialSessionId } = this.loadState();
-                if (initialWorkout || initialSessionId) {
-                    this.state.activeWorkout = initialWorkout || this.state.activeWorkout;
-                    if (initialSessionId && !this.state.currentSessionId) {
-                        this.state.currentSessionId = initialSessionId;
-                    }
-                    this.showScreen('main');
-                    this.showPage('workouts');
+            // Initialize DB/Sync in background (non-blocking).
+            this.initDBAndSync().catch(e => console.warn('[App] DB init failed:', e));
+
+            const hasLocalAccess = !!this.state.tokens.access;
+            const hasLocalRefresh = !!this.state.tokens.refresh;
+            const isOffline = !navigator.onLine || this.state.isOnline === false;
+
+            // COLD-START AUTH DECISION
+            if (hasLocalAccess) {
+                if (isOffline) {
+                    // Offline: check JWT exp from localStorage
                     try {
-                        const sessionId = initialSessionId || this.state.currentSessionId;
-                        if (sessionId && window.Workouts && typeof window.Workouts.renderWorkoutScreen === 'function') {
-                            let id = sessionId;
-                            if (typeof id === 'string') {
-                                if (id.startsWith('local-')) {
-                                    id = id;
-                                } else if (!isNaN(parseInt(id))) {
-                                    id = parseInt(id);
-                                }
-                            }
-                            await window.Workouts.renderWorkoutScreen(this.elements.pageContent, this, id);
+                        const tokenExpiring = API.isTokenExpiring(this.state.tokens.access, 0);
+                        console.log('[App] Offline cold start, token expiring:', tokenExpiring);
+                        if (!tokenExpiring) {
+                            console.log('[App] Unexpired token found offline, retaining session');
+                            this.showScreen('main');
+                            this.loadStateAndShowPage();
+                        } else {
+                            console.log('[App] Token expired offline, showing landing');
+                            this.showScreen('landing');
+                            this.renderLanding();
                         }
                     } catch (e) {
-                        console.warn('[App] Failed to auto-resume workout session:', e);
+                        console.error('[App] Offline token check failed:', e);
+                        this.showScreen('main');
+                        const { page: initialPage } = this.loadState();
+                        this.showPage(initialPage || 'nutrition');
                     }
                 } else {
-                    this.showPage(initialPage || 'nutrition');
+                    // Online with access token: validate in background
+                    console.log('[App] Online, validating token...');
+                    this.showMainAndValidate();
                 }
+            } else if (hasLocalRefresh || navigator.onLine) {
+                // No access token in localStorage (iOS PWA eviction), but either
+                // a refresh token is cached OR we are online — attempt to recover
+                // the session via the HttpOnly refresh_token cookie.
+                await this.attemptCookieRefresh();
             } else {
+                // Offline and no tokens at all
+                console.log('[App] No tokens found and offline, showing landing');
                 this.showScreen('landing');
                 this.renderLanding();
             }
@@ -719,16 +821,16 @@ const App = {
     },
 
     loadTokens() {
-        this.state.tokens.access = localStorage.getItem('access_token');
-        this.state.tokens.refresh = localStorage.getItem('refresh_token');
-        const user = localStorage.getItem('user');
-        if (user) {
-            try {
-                this.state.user = JSON.parse(user);
-            } catch (e) {
-                this.state.user = null;
-            }
+        const access = localStorage.getItem('access_token');
+        const refresh = localStorage.getItem('refresh_token');
+        const userRaw = localStorage.getItem('user');
+        let user = null;
+        if (userRaw) {
+            try { user = JSON.parse(userRaw); } catch (e) { user = null; }
         }
+        this.state.tokens.access = access;
+        this.state.tokens.refresh = refresh;
+        if (user) this.state.user = user;
     },
     
     saveState() {
@@ -776,29 +878,37 @@ const App = {
     },
     
     saveTokens() {
-        localStorage.setItem('access_token', this.state.tokens.access);
-        localStorage.setItem('refresh_token', this.state.tokens.refresh);
-        localStorage.setItem('user', JSON.stringify(this.state.user));
+        if (this.state.tokens.access) localStorage.setItem('access_token', this.state.tokens.access);
+        else localStorage.removeItem('access_token');
+        if (this.state.tokens.refresh) localStorage.setItem('refresh_token', this.state.tokens.refresh);
+        else localStorage.removeItem('refresh_token');
+        if (this.state.user) localStorage.setItem('user', JSON.stringify(this.state.user));
+        else localStorage.removeItem('user');
     },
-    
+
     clearTokens() {
         localStorage.removeItem('access_token');
         localStorage.removeItem('refresh_token');
         localStorage.removeItem('user');
         this.state.tokens = { access: null, refresh: null };
         this.state.user = null;
-        // The live channel is authenticated with the access token, so it
-        // goes down with it.
         this.disconnectRealtime();
     },
 
     async refreshAccessToken() {
-        if (!this.state.tokens.refresh) {
-            console.error('[App] No refresh token available');
-            return false;
-        }
         try {
-            const response = await API.post('/auth/refresh', { refresh_token: this.state.tokens.refresh });
+            let response;
+            if (this.state.tokens.refresh) {
+                // Normal path: send the refresh token from localStorage
+                response = await API.post('/auth/refresh', { refresh_token: this.state.tokens.refresh });
+            } else {
+                // Cold start / iOS PWA: localStorage was evicted but the
+                // HttpOnly refresh_token cookie survives. Call /auth/refresh
+                // with credentials: 'include' and let the browser attach the
+                // cookie.
+                console.log('[App] No localStorage refresh token, using cookie-based refresh');
+                response = await API.refreshFromCookie();
+            }
             this.state.tokens.access = response.access_token;
             this.state.tokens.refresh = response.refresh_token;
             this.saveTokens();
@@ -841,38 +951,20 @@ const App = {
         }
     },
 
-        async validateToken() {
+    async validateToken() {
+        console.log('[App] validateToken() starting');
         try {
             const user = await API.get('/users/me', this.state.tokens.access);
-            this.state.user = user;
-            this.showScreen('main');
-            const { page, workout, sessionId } = this.loadState();
-            if (workout || sessionId) {
-                this.state.activeWorkout = workout || this.state.activeWorkout;
-                if (sessionId && !this.state.currentSessionId) {
-                    this.state.currentSessionId = sessionId;
-                }
-                this.showPage('workouts');
-                try {
-                    const sid = sessionId || this.state.currentSessionId;
-                    if (sid && window.Workouts && typeof window.Workouts.renderWorkoutScreen === 'function') {
-                        let id = sid;
-                        if (typeof id === 'string') {
-                            if (id.startsWith('local-')) id = id;
-                            else if (!isNaN(parseInt(id))) id = parseInt(id);
-                        }
-                        await window.Workouts.renderWorkoutScreen(this.elements.pageContent, this, id);
-                    }
-                } catch (e) {
-                    console.warn('[App] Failed to auto-resume workout session:', e);
-                }
-            } else {
-                this.showPage(page || 'nutrition');
+            if (user) {
+                this.state.user = user;
+                this.saveTokens();
+                console.log('[App] validateToken() success, user loaded');
             }
+            return user;
         } catch (error) {
             console.error('[App] Token validation error:', error);
-            if (error?.isNetworkError || !navigator.onLine || !this.state.isOnline) {
-                // Temporary network drop on wake/resume: keep user logged in using cached state or tokens
+            if (error?.isNetworkError || !navigator.onLine) {
+                // Temporary network drop: the cached session stays valid.
                 console.warn('[App] Network error during token validation; retaining offline session.');
                 if (!this.state.user) {
                     const cachedUser = localStorage.getItem('user');
@@ -880,37 +972,12 @@ const App = {
                         try { this.state.user = JSON.parse(cachedUser); } catch(e) {}
                     }
                 }
-                this.showScreen('main');
-                const { page, workout, sessionId } = this.loadState();
-                if (workout || sessionId) {
-                    this.state.activeWorkout = workout || this.state.activeWorkout;
-                    if (sessionId && !this.state.currentSessionId) {
-                        this.state.currentSessionId = sessionId;
-                    }
-                    this.showScreen('main');
-                    this.showPage('workouts');
-                    try {
-                        const sid = sessionId || this.state.currentSessionId;
-                        if (sid && window.Workouts && typeof window.Workouts.renderWorkoutScreen === 'function') {
-                            let id = sid;
-                            if (typeof id === 'string') {
-                                if (id.startsWith('local-')) id = id;
-                                else if (!isNaN(parseInt(id))) id = parseInt(id);
-                            }
-                            await window.Workouts.renderWorkoutScreen(this.elements.pageContent, this, id);
-                        }
-                    } catch (e) {
-                        console.warn('[App] Failed to auto-resume workout session:', e);
-                    }
-                } else {
-                    this.showPage(page || 'nutrition');
-                }
-                return;
+                // Don't throw — the caller (showMainAndValidate) treats network
+                // errors as recoverable and keeps the session alive.
+                return null;
             }
-            // Definite auth failure (401/403 or invalid session)
-            this.clearTokens();
-            this.showScreen('landing');
-            this.renderLanding();
+            // Auth failure (401) or other HTTP error — let the caller decide.
+            throw error;
         }
     },
     
@@ -1208,6 +1275,13 @@ const App = {
                                     Уже есть аккаунт
                                 </button>
                             </div>
+
+                            <!-- Restore Session: for iOS PWA cold starts where localStorage
+                                 was evicted but the HttpOnly refresh_token cookie survives. -->
+                            <button data-action="restore-session"
+                                    class="mt-4 px-4 py-2 text-sm text-surface-500 dark:text-zinc-400 hover:text-lime-500 dark:hover:text-lime-400 transition-colors underline decoration-lime-500/30 hover:decoration-lime-500">
+                                Восстановить сессию
+                            </button>
                         </section>
 
                          <!-- Zig-Zag two-column showcase: text and phone alternate per chapter -->
@@ -1673,6 +1747,13 @@ const App = {
             case 'show-register':
                 this.toggleLandingMenu(false);
                 this.openAuthModal('register');
+                break;
+            case 'restore-session':
+                this.toggleLandingMenu(false);
+                this.attemptCookieRefresh()
+                    .catch(() => {
+                        this.showToast('Не удалось восстановить сессию. Попробуйте войти.', 'info');
+                    });
                 break;
             case 'close-auth-modal':
                 this.closeAuthModal();
