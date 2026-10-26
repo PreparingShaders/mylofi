@@ -1565,6 +1565,7 @@ export const Workouts = {
                 if (payload?.session_id === sessionId) {
                     if (wsCleanup) wsCleanup();
                     this.aiPlan = { ...payload.plan, sessionId };
+                    this.persistAiPlan(sessionId, this.aiPlan);
                     this.updateAiPlanBadges(container);
                 }
             };
@@ -1629,6 +1630,7 @@ export const Workouts = {
                 if (payload?.session_id === sessionId) {
                     if (wsCleanup) wsCleanup();
                     this.aiPlan = { ...payload.plan, sessionId };
+                    this.persistAiPlan(sessionId, this.aiPlan);
                     this.updateAiPlanBadges(app.elements.pageContent);
                 }
             };
