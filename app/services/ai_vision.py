@@ -92,12 +92,12 @@ DEFAULT_PERSONA = "kind"
 WORKER_BASE_URL = (settings.WORKER_URL or "").rstrip("/")
 
 UNIFIED_MODEL_CASCADE = [
-    "gemini-3.5-flash-lite", 
-    "gemini-3.1-flash-lite",            # Fast, stable - FIRST
-    "gemini-3.1-flash-lite-preview",    # Backup fast
-    "gemini-2.5-flash-lite",            # Fast fallback
-    "gemini-2.5-flash",                 # Reliable           # Heavy - moved down
-    "gemini-3.6-flash",                 # Heavy - moved down
+    "gemini-3.1-flash-lite",           # Fast, stable - FIRST
+    "gemini-3.1-flash-lite-preview",   # Backup fast
+    "gemini-2.5-flash-lite",           # Fast fallback
+    "gemini-2.5-flash",                # Reliable
+    "gemini-3.5-flash-lite",           # Heavy - moved down
+    "gemini-3.6-flash",                # Heavy - moved down
     "qwen/qwen3.8-27b:free",
     "dots-studio/dots-3-note-preview:free",
     "nvidia/nemotron-3.5-content-safety:free",
@@ -574,12 +574,34 @@ async def _run_cascade(
                         f"({'GEMINI_API_KEY' if is_gemini else 'OPEN_ROUTER_API_KEY'} is invalid)"
                     )
                 continue
-            except (httpx.TimeoutException, httpx.RequestError) as e:
+            except (
+                httpx.ConnectTimeout,
+                httpx.ReadTimeout,
+                httpx.WriteTimeout,
+                httpx.PoolTimeout,
+            ) as e:
+                last_error = e
+                elapsed = time.perf_counter() - started
+                logger.warning(
+                    f"{log_prefix} {model_name} timed out after {elapsed:.1f}s "
+                    f"({type(e).__name__}, connect={MODEL_CONNECT_TIMEOUT}s, "
+                    f"request={MODEL_REQUEST_TIMEOUT}s): {e}"
+                )
+                continue
+            except (httpx.RemoteProtocolError, httpx.LocalProtocolError) as e:
+                last_error = e
+                elapsed = time.perf_counter() - started
+                logger.warning(
+                    f"{log_prefix} {model_name} protocol error after {elapsed:.1f}s "
+                    f"({type(e).__name__}): {e}"
+                )
+                continue
+            except httpx.RequestError as e:
                 last_error = e
                 elapsed = time.perf_counter() - started
                 logger.warning(
                     f"{log_prefix} {model_name} request failed after {elapsed:.1f}s "
-                    f"(timeout={MODEL_REQUEST_TIMEOUT}s): {type(e).__name__}: {e}"
+                    f"({type(e).__name__}): {e}"
                 )
                 continue
             except (ValueError, KeyError, TypeError, IndexError, json.JSONDecodeError) as e:

@@ -2052,6 +2052,11 @@ export const Workouts = {
             const cachedPlan = this.restoreAiPlan(session.id || session.key);
             if (cachedPlan) this.aiPlan = { ...cachedPlan, sessionId: session.id || session.key };
         }
+
+        // Apply cached plan badges/tips to the newly rendered DOM
+        if (this.aiPlan) {
+            this.updateAiPlanBadges(container);
+        }
         app.state.currentSessionId = session.isLocal ? session.key : session.id;
         // The tracking screen is on top again, so the user is inside the
         // workout once more.
@@ -2243,7 +2248,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
               </div>
         `;
         container.innerHTML = html;
-        
+        if (this.aiPlan) this.updateAiPlanBadges(container);
+
         // Scroll to first exercise (index 1 in allCards)
         setTimeout(() => {
             const carousel = document.getElementById('carousel');

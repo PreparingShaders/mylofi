@@ -780,10 +780,16 @@ export const Components = {
                 ${motivation ? `<span class="ai-plan__motivation">${escapeHtml(motivation)}</span>` : ''}
             </div>
         `;
-    },
+        },
+        aiWorkoutPlanTip(recommendation = {}) {
+            const focus = typeof recommendation?.focus === 'string' ? recommendation.focus.trim() : '';
+            const motivation = typeof recommendation?.motivation === 'string' ? recommendation.motivation.trim() : '';
+            if (!focus && !motivation) return '';
+            return `<div class="ai-tip" data-ai-tip>${focus ? `<div class="ai-tip__focus">${escapeHtml(focus)}</div>` : ''}${motivation ? `<div class="ai-tip__motivation">${escapeHtml(motivation)}</div>` : ''}</div>`;
+        },
 
-    /**
-     * Nutrition dashboard: title row with the period switcher, then a single
+        /**
+         * Nutrition dashboard: title row with the period switcher, then a single
      * ring slide for the selected period. The period tabs live in the title
      * row, so switching granularity costs no extra vertical space - the card
      * stays as compact as it was while the swipe carousel was there.
