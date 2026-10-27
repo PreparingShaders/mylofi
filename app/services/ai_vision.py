@@ -94,9 +94,9 @@ WORKER_BASE_URL = (settings.WORKER_URL or "").rstrip("/")
 UNIFIED_MODEL_CASCADE = [
     "gemini-3.1-flash-lite",           # Fast, stable - FIRST
     "gemini-3.1-flash-lite-preview",   # Backup fast
+    "gemini-3.5-flash-lite",           # Heavy - moved down
     "gemini-2.5-flash-lite",           # Fast fallback
     "gemini-2.5-flash",                # Reliable
-    "gemini-3.5-flash-lite",           # Heavy - moved down
     "gemini-3.6-flash",                # Heavy - moved down
     "qwen/qwen3.8-27b:free",
     "dots-studio/dots-3-note-preview:free",
