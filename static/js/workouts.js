@@ -2130,8 +2130,16 @@ export const Workouts = {
         const buttons = setsContainer.querySelector('.flex.items-center.justify-between.gap-2') || Array.from(setsContainer.querySelectorAll('.flex.items-center.justify-between')).find(el => el.classList.contains('gap-2')) || setsContainer.querySelector('.flex.items-center.justify-between');
         if (!buttons) return;
         const idx = exercise.sets.length - 1;
+        // Compute prevText like in full render
+        let prevText = '—';
+        if (exercise.pastSets && Array.isArray(exercise.pastSets)) {
+            const pastSet = exercise.pastSets[idx] || exercise.pastSets[exercise.pastSets.length - 1];
+            if (pastSet && pastSet.weight_kg != null && pastSet.reps != null) {
+                prevText = `${pastSet.weight_kg}×${pastSet.reps}`;
+            }
+        }
         const wrapper = document.createElement('div');
-        wrapper.innerHTML = this.renderSetRowHtml(set, idx, exercise.sets, '—');
+        wrapper.innerHTML = this.renderSetRowHtml(set, idx, exercise.sets, prevText);
         const rowEl = wrapper.firstElementChild;
         rowEl.classList.add('set-row-enter');
         buttons.parentNode.insertBefore(rowEl, buttons);
@@ -2143,6 +2151,32 @@ export const Workouts = {
         rowEl.offsetHeight;
         requestAnimationFrame(() => {
             rowEl.classList.add('active');
+        });
+        // Bind drum picker handlers to new inputs (inherit behavior from existing rows)
+        const app = this.app;
+        rowEl.querySelectorAll('[data-field="weight"], [data-field="reps"]').forEach(input => {
+            // Copy attributes from existing input if possible
+            const existingInput = card.querySelector('[data-field="weight"], [data-field="reps"]');
+            if (existingInput && input !== existingInput) {
+                input.setAttribute('inputmode', existingInput.getAttribute('inputmode') || 'none');
+                input.setAttribute('readonly', existingInput.getAttribute('readonly') || '');
+                input.className = existingInput.className;
+            }
+            const openPicker = (e) => {
+                e?.preventDefault();
+                const row = input.closest('[data-set-id]');
+                const toggle = row?.querySelector('[data-action="toggle-set"]');
+                if (toggle?.dataset.completed === 'true') {
+                    app?.showToast(SET_LOCKED_MESSAGE, 'info');
+                    return;
+                }
+                input.blur();
+                this.openDrumPicker(input, { app });
+            };
+            input.addEventListener('click', openPicker);
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') openPicker(e);
+            });
         });
     },
 
@@ -2392,7 +2426,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     </div>
                 </div>
 
-                 <div class="flex overflow-x-auto gap-3 pb-4 px-4 -mx-4 workout-carousel" id="carousel">
+                 <div class="flex overflow-x-auto gap-3 pb-4 px-4 -mx-4 workout-carousel justify-start" id="carousel">
                      ${allCards.join('')}
                  </div>
 

@@ -3499,6 +3499,8 @@ input[data-field="reps"] {
 .workout-card {
     width: min(92vw, 500px);
     flex-shrink: 0;
+    margin-left: auto;
+    margin-right: auto;
 }
 @media (min-width: 560px) {
     .workout-card {
@@ -3510,6 +3512,12 @@ input[data-field="reps"] {
     scroll-snap-type: x mandatory;
     overscroll-behavior-x: contain;
     -webkit-overflow-scrolling: touch;
+    overflow-x: auto;
+    overflow-y: hidden;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    justify-content: flex-start;
 }
 
 /* Spinner inside the "Finish & Analyze" button while the verdict is generated */
