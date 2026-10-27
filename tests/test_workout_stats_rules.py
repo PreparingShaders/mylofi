@@ -118,24 +118,26 @@ class _StubSession:
         pass
 
 
-# --- the breaks belong to the exercise they were taken in ---------------------
+# --- the breaks belong to the set they were taken after -------------------------
 
 def test_a_break_is_counted_inside_the_exercise_and_not_across_it():
-    """The bug: the client measured the gap from the last set it had seen,
-    whichever exercise that set belonged to, so the changeover was stored as a
-    rest the user never took."""
+    """A rest belongs to the set whose break ended: the time between set N and
+    set N+1 is the rest of set N. The changeover to the next exercise is not a
+    rest, so the last set of an exercise carries none."""
     session = _two_exercise_session()
 
     resolve_rest_times(session)
 
     first, second = session.exercises
-    # The first set of an exercise has no set before it, so it carries no rest.
-    assert first.sets[0].rest_time_seconds is None
+    # Each set carries the rest taken after it, until the next set of the same
+    # exercise was completed.
+    assert first.sets[0].rest_time_seconds == 90
     assert first.sets[1].rest_time_seconds == 90
-    assert first.sets[2].rest_time_seconds == 90
+    # The last set of an exercise has no rest after it within that exercise.
+    assert first.sets[2].rest_time_seconds is None
     # The changeover between the two exercises is not a break.
-    assert second.sets[0].rest_time_seconds is None
-    assert second.sets[1].rest_time_seconds == 90
+    assert second.sets[0].rest_time_seconds == 90
+    assert second.sets[1].rest_time_seconds is None
 
 
 def test_a_set_that_was_not_performed_anchors_nothing():
@@ -180,7 +182,7 @@ def test_a_break_the_client_measured_is_kept_when_the_stamps_say_less():
 
     resolve_rest_times(session)
 
-    assert session.exercises[0].sets[1].rest_time_seconds == 95
+    assert session.exercises[0].sets[0].rest_time_seconds == 95
 
 
 def test_the_rules_are_the_same_wherever_the_breaks_are_read():
@@ -195,7 +197,60 @@ def test_the_rules_are_the_same_wherever_the_breaks_are_read():
         for workout_set in exercise.sets
     )
 
-    assert rests == [None, 90, 90, None, 90]
+    assert rests == [90, 90, None, 90, None]
+
+
+def test_a_rest_is_kept_on_the_set_it_was_taken_after():
+    """A 4-set exercise has three rests, one after each of the first three sets.
+
+    The rest between set N and set N+1 is the rest of set N: the break that
+    ended when set N+1 was completed. The last set carries none, because no
+    later set of the same exercise confirms one."""
+    session = _session(
+        [
+            _exercise(
+                1,
+                0,
+                [
+                    _set(11, 1, BASE),
+                    _set(12, 2, BASE + timedelta(seconds=100)),
+                    _set(13, 3, BASE + timedelta(seconds=220)),
+                    _set(14, 4, BASE + timedelta(seconds=370)),
+                ],
+            )
+        ]
+    )
+
+    resolve_rest_times(session)
+
+    sets = session.exercises[0].sets
+    assert [s.rest_time_seconds for s in sets] == [100, 120, 150, None]
+
+
+def test_an_uncrossed_set_clears_the_rest_of_the_set_before_it():
+    """Unchecking a set erases the rest that was saved against it: the gap
+    behind the unchecked set is gone, and the set before it cannot be measured
+    against the one after the gap."""
+    session = _session(
+        [
+            _exercise(
+                1,
+                0,
+                [
+                    _set(11, 1, BASE),
+                    _set(12, 2, None),
+                    _set(13, 3, BASE + timedelta(seconds=120)),
+                ],
+            )
+        ]
+    )
+
+    resolve_rest_times(session)
+
+    sets = session.exercises[0].sets
+    assert sets[0].rest_time_seconds is None
+    assert sets[1].rest_time_seconds is None
+    assert sets[2].rest_time_seconds is None
 
 
 @pytest.mark.asyncio
@@ -336,9 +391,12 @@ async def test_closing_a_session_stores_the_length_of_its_sets():
     assert session.status == WorkoutSessionStatus.COMPLETED
     # The client's 30 minutes are replaced by the 6 and a half the sets took.
     assert session.duration_seconds == 390
-    # The changeover is not a break, and the breaks inside an exercise are.
-    assert session.exercises[1].sets[0].rest_time_seconds is None
-    assert session.exercises[0].sets[1].rest_time_seconds == 90
+    # The changeover is not a break, and the breaks are kept on the set that
+    # took them - the one whose rest ended when the next set was completed.
+    assert session.exercises[0].sets[0].rest_time_seconds == 90
+    assert session.exercises[0].sets[2].rest_time_seconds is None
+    assert session.exercises[1].sets[0].rest_time_seconds == 90
+    assert session.exercises[1].sets[1].rest_time_seconds is None
     assert db.commits == 1
 
 
@@ -448,6 +506,10 @@ async def test_a_session_recorded_through_the_service_ends_with_the_length_of_it
     # The setup before the first set and the cool-down after the last one are
     # not part of the workout.
     assert closed.duration_seconds == 300
-    # The changeover between the two exercises is not a break.
-    assert closed.exercises[0].sets[1].rest_time_seconds == 90
+    # The changeover between the two exercises is not a break: the last set of
+    # the first exercise carries no rest, and neither does the lone set of the
+    # second. The rest of the first exercise falls on its first set, the one
+    # whose break ended when its second was completed.
+    assert closed.exercises[0].sets[0].rest_time_seconds == 90
+    assert closed.exercises[0].sets[1].rest_time_seconds is None
     assert closed.exercises[1].sets[0].rest_time_seconds is None

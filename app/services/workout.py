@@ -1050,12 +1050,14 @@ def measured_rest_times(
     Each set is given as (exercise id, completion stamp, the rest the client
     measured), in the order the sets were performed.
 
-    A break belongs to the exercise it was taken in: the time between the last
-    set of one exercise and the first set of the next is spent changing
-    equipment, not resting, so the interval stops at every exercise change.
-    That is what the client could not know - it measured the gap from the last
-    set it had seen, whichever exercise that set belonged to, and stored the
-    changeover as a rest.
+    A break belongs to the set it was taken after: the rest between set N and
+    set N+1 is the rest of set N, the one whose break ended when set N+1 was
+    completed. That is what the client stores - it saves the elapsed timer onto
+    the set that started it, the one that just finished its rest.
+
+    The gap stops at every exercise change: the time between the last set of one
+    exercise and the first set of the next is spent changing equipment, not
+    resting, so the interval belongs to no set.
 
     A set without a completion stamp was not performed: it anchors nothing, and
     the gap behind it stays empty instead of being measured against the set
@@ -1071,7 +1073,6 @@ def measured_rest_times(
     previous_stamp: Optional[datetime] = None
     for exercise_id, completed_at, measured in sets:
         stamp = as_utc(completed_at)
-        rest: Optional[int] = None
         if stamp is not None and previous_stamp is not None and previous_exercise == exercise_id:
             gap = int((stamp - previous_stamp).total_seconds())
             if gap < 0:
@@ -1084,7 +1085,12 @@ def measured_rest_times(
                 rest = measured
             else:
                 rest = gap
-        rests.append(rest)
+            # The gap between the previous set and this one is the rest of the
+            # previous set: the break that ended when this set was completed.
+            rests[-1] = rest
+        # The current set's rest is not known yet - it depends on the next
+        # set that gets completed.
+        rests.append(None)
         previous_exercise = exercise_id
         previous_stamp = stamp
     return rests

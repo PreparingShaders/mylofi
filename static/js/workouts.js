@@ -3133,8 +3133,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                                     <span class="w-5 text-center font-semibold">${set.set_number}</span>
                                     <span class="font-mono ${set.is_completed ? '' : 'line-through'}">${set.weight_kg ?? '—'}×${set.reps ?? '—'}</span>
                                     ${set.rpe ? `<span class="text-surface-400">RPE ${set.rpe}</span>` : ''}
-                                    ${set.rest_time_seconds != null && setIndex < arr.length - 1 ? `<span class="rest-time-inline text-surface-500 dark:text-surface-400">${this.restTimeLabelHtml(set.rest_time_seconds)}</span>` : ''}
                                 </div>
+                                ${set.rest_time_seconds != null && setIndex < arr.length - 1 ? this.renderRestTimeInline(set) : ''}
                             `).join('')}
                         </div>
                     ` : ''}
