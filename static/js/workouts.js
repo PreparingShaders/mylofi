@@ -1511,13 +1511,12 @@ export const Workouts = {
                 this.persistAiPlan(payload.session_id || body?.session_id, payload);
                 return payload;
             }
-            app.showToast(payload?.reason || AI_PLAN_UNAVAILABLE_MESSAGE, 'info');
+            console.warn('[Workouts] AI plan not available:', payload?.reason || AI_PLAN_UNAVAILABLE_MESSAGE);
             return null;
         } catch (err) {
             // Never surfaced as an error toast: the workout is what the user came
             // for, and a plan that did not arrive is not a failure.
             console.warn('[Workouts] AI plan failed:', err);
-            app.showToast(AI_PLAN_UNAVAILABLE_MESSAGE, 'info');
             return null;
         }
     },
@@ -1558,6 +1557,13 @@ export const Workouts = {
             Camera.hideLoadingOverlay(overlayState);
             // Render workout screen immediately without waiting for AI plan
             await this.renderWorkoutScreen(container, app, sessionId);
+            let planApplied = false;
+            const applyPlan = (plan) => {
+                if (planApplied) return;
+                planApplied = true;
+                this.aiPlan = plan ? { ...plan, sessionId } : null;
+                this.updateAiPlanBadges(container);
+            };
             // Listen for the plan over WebSocket; the polling below is the fallback
             // when the socket is not connected or the message is missed.
             let wsCleanup = null;
@@ -1567,8 +1573,10 @@ export const Workouts = {
                     this.aiPlan = { ...payload.plan, sessionId };
                     this.persistAiPlan(sessionId, this.aiPlan);
                     this.updateAiPlanBadges(container);
+                    planApplied = true;
                 }
             };
+            await app.waitForRealtimeConnected(3000);
             if (app.realtime) {
                 wsCleanup = app.realtime.on('workout_plan_ready', wsHandler);
             }
@@ -1576,8 +1584,7 @@ export const Workouts = {
             this.loadAiPlan(app, { session_id: sessionId, template_id: templateId, name: session.name })
                 .then(plan => {
                     if (wsCleanup) wsCleanup();
-                    this.aiPlan = plan ? { ...plan, sessionId } : null;
-                    this.updateAiPlanBadges(container);
+                    applyPlan(plan);
                 })
                 .catch(err => {
                     if (wsCleanup) wsCleanup();
@@ -1623,6 +1630,13 @@ export const Workouts = {
             Camera.hideLoadingOverlay(overlayState);
             // Render workout screen immediately without waiting for AI plan
             await this.renderWorkoutScreen(app.elements.pageContent, app, sessionId);
+            let planApplied = false;
+            const applyPlan = (plan) => {
+                if (planApplied) return;
+                planApplied = true;
+                this.aiPlan = plan ? { ...plan, sessionId } : null;
+                this.updateAiPlanBadges(app.elements.pageContent);
+            };
             // Listen for the plan over WebSocket; the polling below is the fallback
             // when the socket is not connected or the message is missed.
             let wsCleanup = null;
@@ -1632,8 +1646,10 @@ export const Workouts = {
                     this.aiPlan = { ...payload.plan, sessionId };
                     this.persistAiPlan(sessionId, this.aiPlan);
                     this.updateAiPlanBadges(app.elements.pageContent);
+                    planApplied = true;
                 }
             };
+            await app.waitForRealtimeConnected(3000);
             if (app.realtime) {
                 wsCleanup = app.realtime.on('workout_plan_ready', wsHandler);
             }
@@ -1641,8 +1657,7 @@ export const Workouts = {
             this.loadAiPlan(app, { goal, name: `Быстрый старт: ${goalLabel}`, session_id: sessionId, reduce: true })
                 .then(plan => {
                     if (wsCleanup) wsCleanup();
-                    this.aiPlan = plan ? { ...plan, sessionId } : null;
-                    this.updateAiPlanBadges(app.elements.pageContent);
+                    applyPlan(plan);
                 })
                 .catch(err => {
                     if (wsCleanup) wsCleanup();

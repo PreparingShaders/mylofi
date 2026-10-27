@@ -1671,6 +1671,34 @@ const App = {
         this.realtime = null;
     },
 
+    /**
+     * Wait for the live channel to be open before relying on it.
+     *
+     * Returns true once the socket reports an open connection; returns false
+     * on timeout or if there is no socket at all, so callers can still register
+     * a listener that will fire when the connection eventually establishes.
+     */
+    async waitForRealtimeConnected(timeout = 5000) {
+        if (!this.realtime) return false;
+        if (this.realtime.isConnected()) return true;
+
+        return new Promise(resolve => {
+            const timer = setTimeout(() => {
+                this.realtime?.off('status', onStatus);
+                resolve(false);
+            }, timeout);
+
+            const onStatus = (status) => {
+                if (status === 'open') {
+                    clearTimeout(timer);
+                    this.realtime?.off('status', onStatus);
+                    resolve(true);
+                }
+            };
+            this.realtime.on('status', onStatus);
+        });
+    },
+
     hideSplash() {
         const splash = this.elements.splash;
         if (splash) {
