@@ -113,17 +113,26 @@ export const Workouts = {
     // half of the anti-spam, so the trigger stays quiet for half a minute
     // after a press no matter which surface asked.
     _aiAnalysisCooldowns: new Map(),
-    // Background rest chronometry: when the current session started (from the
-    // server's started_at or the local clock) and when the last set of this
-    // session was completed. The gap between them is the rest the user actually
-    // took before the next set, sent inline with each set's completion PATCH so
-    // the coach reads real breaks without a floating timer bar on screen.
-    // The exercise the last set belonged to is kept as well: a break belongs to
-    // the exercise it was taken in, and the changeover between two exercises is
-    // not a break.
+    // Wall-clock anchor for the session so workout duration travels with
+    // completion. Sourced from the server's started_at when available.
     sessionStartTimestamp: null,
-    lastSetCompletedAt: null,
-    lastSetCompletedExerciseId: null,
+
+    // Rest timer: a count-up stopwatch that runs between two completed sets of
+    // a workout. It starts when a set is completed (except the last of an
+    // exercise) and stops — saving the elapsed seconds onto that set's
+    // rest_time_seconds — when the next set is completed, or when the workout
+    // is finished.
+    // `activeRestForSetId` is the set the currently-running timer belongs to
+    // (the set that was just completed; the elapsed time is its rest period).
+    // `restTimerStartTime` is a Date.now() anchor so the displayed value never
+    // drifts when the tab is backgrounded — only the interval needs rearming.
+    // `lastSavedRestSetId` / `restSavedBySetId` remember the most recent save so
+    // unchecking the set that triggered it can undo the written value.
+    restTimerInterval: null,
+    restTimerStartTime: null,
+    activeRestForSetId: null,
+    lastSavedRestSetId: null,
+    restSavedBySetId: null,
 
     escapeHtml(value) {
         return String(value ?? '')
@@ -1171,6 +1180,7 @@ export const Workouts = {
 
                 // Запускаем API запрос СРАЗУ, параллельно с отсчетом
                 const startEndpoint = `/workouts/templates/${templateId}/start`;
+                await app.ensureFreshToken();
                 const sessionPromise = API.post(startEndpoint, {}, app.state.tokens.access);
 
                 // Запускаем отсчет
@@ -1297,6 +1307,166 @@ export const Workouts = {
             clearInterval(this.workoutTimerInterval);
             this.workoutTimerInterval = null;
         }
+        // Full cleanup of the rest timer on screen unmount: discard any running
+        // stopwatch without persisting and clear all timer state so a fresh
+        // workout screen starts from a clean slate.
+        this.dismissRestTimer();
+    },
+
+    startRestTimer(set, exercise, session) {
+        this.stopRestTimer();
+        this.restTimerStartTime = Date.now();
+        this.activeRestForSetId = set?.id ?? null;
+        this.lastSavedRestSetId = null;
+        this.restSavedBySetId = null;
+        const bar = document.getElementById('rest-timer-bar');
+        if (bar) bar.classList.remove('hidden');
+        this.updateRestTimerUI();
+        this.restTimerInterval = setInterval(() => this.updateRestTimerUI(), 1000);
+    },
+
+    // Low-level: stop the interval and hide the bar without saving. The
+    // start time / owning set are NOT cleared so a backgrounded tab can rearm
+    // the interval on resume and keep measuring the same rest period.
+    stopRestTimer() {
+        if (this.restTimerInterval) {
+            clearInterval(this.restTimerInterval);
+            this.restTimerInterval = null;
+        }
+        const bar = document.getElementById('rest-timer-bar');
+        if (bar) bar.classList.add('hidden');
+    },
+
+    // Stop the active timer and persist the elapsed seconds onto the set it
+    // belongs to (the previous completed set that started this rest period).
+    // Called when the next set is completed, or when the workout is finished.
+    async stopAndSaveRestTimer(session) {
+        const sess = session || this.currentSession;
+        if (!sess || this.restTimerStartTime == null || this.activeRestForSetId == null) {
+            this.stopRestTimer();
+            return;
+        }
+        const elapsed = Math.max(0, Math.floor((Date.now() - this.restTimerStartTime) / 1000));
+        const setId = this.activeRestForSetId;
+
+        const targetSet = this.findSetInSession(sess, setId);
+        if (targetSet) {
+            targetSet.rest_time_seconds = elapsed;
+        }
+        this.lastSavedRestSetId = setId;
+
+        this.stopRestTimer();
+        this.activeRestForSetId = null;
+        this.restTimerStartTime = null;
+        this.updateRestTimerUI();
+
+        if (this.isLocalSession(sess)) {
+            this.persistLocalSession(sess);
+            this.recordLocalSetPatch(sess.key, setId, { rest_time_seconds: elapsed });
+            return;
+        }
+
+        const token = this.app?.state?.tokens?.access;
+        if (token) {
+            API.patch(`/workouts/sets/${setId}`, { rest_time_seconds: elapsed }, token).catch(() => {});
+        }
+    },
+
+    // Discard the running timer without persisting (user tapped "Готов" or the
+    // set that owns the timer was unchecked). The save chain is forgotten.
+    dismissRestTimer() {
+        this.stopRestTimer();
+        this.activeRestForSetId = null;
+        this.restTimerStartTime = null;
+        this.lastSavedRestSetId = null;
+        this.restSavedBySetId = null;
+    },
+
+    // Re-arm the interval after a backgrounded/frozen tab resumes. The start
+    // time anchor is kept across the suspend, so the count-up value is correct
+    // immediately; only the ticking interval needs to be re-created.
+    rearmRestTimer() {
+        if (this.restTimerStartTime == null) return;
+        if (this.restTimerInterval) return;
+        const bar = document.getElementById('rest-timer-bar');
+        if (bar) bar.classList.remove('hidden');
+        this.updateRestTimerUI();
+        this.restTimerInterval = setInterval(() => this.updateRestTimerUI(), 1000);
+    },
+
+    updateRestTimerUI() {
+        const remainingEl = document.getElementById('rest-timer-remaining');
+        const stateEl = document.getElementById('rest-timer-state');
+        const progressEl = document.getElementById('rest-timer-progress');
+        if (!remainingEl) return;
+
+        if (this.restTimerStartTime == null) {
+            remainingEl.textContent = '00:00';
+            if (progressEl) progressEl.style.display = 'none';
+            return;
+        }
+
+        const elapsed = Math.max(0, Math.floor((Date.now() - this.restTimerStartTime) / 1000));
+        remainingEl.textContent = this.formatTimer(elapsed);
+        remainingEl.classList.remove('text-surface-700', 'dark:text-surface-300');
+        remainingEl.classList.add('text-lime-600', 'dark:text-lime-400');
+        if (stateEl) stateEl.textContent = 'Отдых';
+        if (progressEl) progressEl.style.display = 'none';
+    },
+
+    // Shared inner markup for the muted rest-time line shown between set rows.
+    restTimeLabelHtml(seconds) {
+        const secs = Math.floor(Number(seconds) || 0);
+        return `<span aria-hidden="true">⏱</span>`
+            + `<span class="font-mono tabular-nums">${this.formatTimer(secs)}</span>`
+            + `<span class="font-semibold">Отдых</span>`;
+    },
+
+    // HTML fragment rendered inside the exercise card template after each set
+    // row (except the last) when that set already has a measured rest time.
+    renderRestTimeInline(set) {
+        if (!set || set.rest_time_seconds == null) return '';
+        return `<div class="rest-time-inline flex items-center gap-1 ml-4 mt-1 text-xs text-surface-500 dark:text-surface-400 font-mono tabular-nums">`
+            + `${this.restTimeLabelHtml(set.rest_time_seconds)}`
+            + `</div>`;
+    },
+
+    // Insert, update, or remove the inline rest-time line for a set row in the
+    // live DOM (used when a rest time is saved or cleared without a full re-render).
+    applyRestTimeInline(setId, seconds) {
+        const row = document.querySelector(`[data-set-id="${String(setId)}"]`);
+        if (!row) return;
+        const existing = row.nextElementSibling;
+        if (existing && existing.classList.contains('rest-time-inline')) {
+            existing.remove();
+        }
+        if (seconds != null) {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'rest-time-inline flex items-center gap-1 ml-4 mt-1 text-xs text-surface-500 dark:text-surface-400 font-mono tabular-nums';
+            wrapper.innerHTML = this.restTimeLabelHtml(seconds);
+            row.parentNode.insertBefore(wrapper, row.nextSibling);
+        }
+    },
+
+    // Undo the most recent rest-time save: reverts the rest_time_seconds that was
+    // written to `lastSavedRestSetId` when `setId` was completed. Called on
+    // uncheck or when a completion PATCH fails after the save already happened.
+    undoRestTimeSave(session, setId, isLocal, token) {
+        if (this.restSavedBySetId !== setId || !this.lastSavedRestSetId) return;
+        const savedSetId = this.lastSavedRestSetId;
+        const savedSet = this.findSetInSession(session, savedSetId);
+        if (savedSet) {
+            savedSet.rest_time_seconds = null;
+        }
+        if (isLocal && session) {
+            this.persistLocalSession(session);
+            this.recordLocalSetPatch(session.key, savedSetId, { rest_time_seconds: null });
+        } else if (token) {
+            API.patch(`/workouts/sets/${savedSetId}`, { rest_time_seconds: null }, token).catch(() => {});
+        }
+        this.applyRestTimeInline(savedSetId, null);
+        this.lastSavedRestSetId = null;
+        this.restSavedBySetId = null;
     },
 
     async renderCountdown(container, onComplete) {
@@ -1341,13 +1511,12 @@ export const Workouts = {
                 this.persistAiPlan(payload.session_id || body?.session_id, payload);
                 return payload;
             }
-            app.showToast(payload?.reason || AI_PLAN_UNAVAILABLE_MESSAGE, 'info');
+            console.warn('[Workouts] AI plan not available:', payload?.reason || AI_PLAN_UNAVAILABLE_MESSAGE);
             return null;
         } catch (err) {
             // Never surfaced as an error toast: the workout is what the user came
             // for, and a plan that did not arrive is not a failure.
             console.warn('[Workouts] AI plan failed:', err);
-            app.showToast(AI_PLAN_UNAVAILABLE_MESSAGE, 'info');
             return null;
         }
     },
@@ -1388,13 +1557,37 @@ export const Workouts = {
             Camera.hideLoadingOverlay(overlayState);
             // Render workout screen immediately without waiting for AI plan
             await this.renderWorkoutScreen(container, app, sessionId);
-            // Load AI plan in background and update badges reactively
+            let planApplied = false;
+            const applyPlan = (plan) => {
+                if (planApplied) return;
+                planApplied = true;
+                this.aiPlan = plan ? { ...plan, sessionId } : null;
+                this.updateAiPlanBadges(container);
+            };
+            // Listen for the plan over WebSocket; the polling below is the fallback
+            // when the socket is not connected or the message is missed.
+            let wsCleanup = null;
+            const wsHandler = (payload) => {
+                if (payload?.session_id === sessionId) {
+                    if (wsCleanup) wsCleanup();
+                    this.aiPlan = { ...payload.plan, sessionId };
+                    this.persistAiPlan(sessionId, this.aiPlan);
+                    this.updateAiPlanBadges(container);
+                    planApplied = true;
+                }
+            };
+            await app.waitForRealtimeConnected(3000);
+            if (app.realtime) {
+                wsCleanup = app.realtime.on('workout_plan_ready', wsHandler);
+            }
+            // Load AI plan in background and update badges reactively (polling fallback)
             this.loadAiPlan(app, { session_id: sessionId, template_id: templateId, name: session.name })
                 .then(plan => {
-                    this.aiPlan = plan ? { ...plan, sessionId } : null;
-                    this.updateAiPlanBadges(container);
+                    if (wsCleanup) wsCleanup();
+                    applyPlan(plan);
                 })
                 .catch(err => {
+                    if (wsCleanup) wsCleanup();
                     console.warn('[Workouts] AI plan background load failed:', err);
                 });
         } catch (err) {
@@ -1421,29 +1614,53 @@ export const Workouts = {
         if (this.isGeneratingPreview) return;
         this.isGeneratingPreview = true;
         if (btn) btn.disabled = true;
-        const token = app.state.tokens.access;
         const goalLabel = (QUICK_GOALS.find(g => g.value === goal) || {}).title;
 
         const overlayState = Camera.showLoadingOverlay(document.body, Camera.workoutHints);
 
         try {
+            await app.ensureFreshToken();
             const { session_id: sessionId } = await API.post(
                 '/workouts/sessions/quick-start',
                 { goal, with_ai_plan: true, reduce: true },
-                token,
+                app.state.tokens.access,
             );
             Camera.markLoadingComplete(overlayState.overlay);
             await new Promise(r => setTimeout(r, 500));
             Camera.hideLoadingOverlay(overlayState);
             // Render workout screen immediately without waiting for AI plan
             await this.renderWorkoutScreen(app.elements.pageContent, app, sessionId);
-            // Load AI plan in background and update badges reactively
+            let planApplied = false;
+            const applyPlan = (plan) => {
+                if (planApplied) return;
+                planApplied = true;
+                this.aiPlan = plan ? { ...plan, sessionId } : null;
+                this.updateAiPlanBadges(app.elements.pageContent);
+            };
+            // Listen for the plan over WebSocket; the polling below is the fallback
+            // when the socket is not connected or the message is missed.
+            let wsCleanup = null;
+            const wsHandler = (payload) => {
+                if (payload?.session_id === sessionId) {
+                    if (wsCleanup) wsCleanup();
+                    this.aiPlan = { ...payload.plan, sessionId };
+                    this.persistAiPlan(sessionId, this.aiPlan);
+                    this.updateAiPlanBadges(app.elements.pageContent);
+                    planApplied = true;
+                }
+            };
+            await app.waitForRealtimeConnected(3000);
+            if (app.realtime) {
+                wsCleanup = app.realtime.on('workout_plan_ready', wsHandler);
+            }
+            // Load AI plan in background and update badges reactively (polling fallback)
             this.loadAiPlan(app, { goal, name: `Быстрый старт: ${goalLabel}`, session_id: sessionId, reduce: true })
                 .then(plan => {
-                    this.aiPlan = plan ? { ...plan, sessionId } : null;
-                    this.updateAiPlanBadges(app.elements.pageContent);
+                    if (wsCleanup) wsCleanup();
+                    applyPlan(plan);
                 })
                 .catch(err => {
+                    if (wsCleanup) wsCleanup();
                     console.warn('[Workouts] AI plan background load failed:', err);
                 });
         } catch (err) {
@@ -1650,6 +1867,10 @@ export const Workouts = {
             cancelText: 'Назад'
         })) return;
 
+        // Persist any in-flight rest timer so its elapsed seconds are recorded
+        // on the previous set before the session closes for analysis.
+        await this.stopAndSaveRestTimer();
+
         // The coach reads the completed sets, so every typed value goes out
         // before the session closes.
         await app.flushPendingSetEdits();
@@ -1671,12 +1892,13 @@ export const Workouts = {
             `;
         }
 
-        try {
-            await API.post(
+         try {
+            const resp = await API.post(
                 `/workouts/sessions/${sessionId}/complete`,
                 { with_ai_analysis: true, duration_seconds: durationSeconds },
                 app.state.tokens.access,
             );
+            console.log('[completeWorkoutWithAi] Complete endpoint response:', resp);
         } catch (err) {
             console.error('[Workouts] Complete with AI failed:', err);
             app.showToast(err?.offlineQueued ? OFFLINE_COMPLETE_MESSAGE : (err?.message || 'Ошибка завершения тренировки'), 'error');
@@ -1845,6 +2067,11 @@ export const Workouts = {
             const cachedPlan = this.restoreAiPlan(session.id || session.key);
             if (cachedPlan) this.aiPlan = { ...cachedPlan, sessionId: session.id || session.key };
         }
+
+        // Apply cached plan badges/tips to the newly rendered DOM
+        if (this.aiPlan) {
+            this.updateAiPlanBadges(container);
+        }
         app.state.currentSessionId = session.isLocal ? session.key : session.id;
         // The tracking screen is on top again, so the user is inside the
         // workout once more.
@@ -1861,12 +2088,10 @@ export const Workouts = {
             }
         } catch (e) {}
 
-        // Anchor the silent rest clock to when the session started, falling back
-        // to the local clock for sessions that never got a server timestamp.
+        // Anchor the workout duration clock to when the session started, falling
+        // back to the local clock for sessions that never got a server timestamp.
         const sessionStart = session.started_at ? new Date(session.started_at).getTime() : Date.now();
         this.sessionStartTimestamp = sessionStart;
-        this.lastSetCompletedAt = null;
-        this.lastSetCompletedExerciseId = null;
 
         const completedHistorySessions = [...(historyData?.sessions || [])]
             .filter(s => s.status === 'completed')
@@ -1900,61 +2125,66 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                  ${Components.aiWorkoutPlanBadge(this.findAiPlanFor(ex.name))}
 
                  <div class="space-y-2">
-                    ${(ex.sets || []).map(set => {
-                        let prevText = '—';
-                        
-                        // Сортируем завершенные сессии по дате (новейшие первые)
-                        const sortedSessions = [...completedHistorySessions].sort((a, b) => new Date(b.started_at) - new Date(a.started_at));
-                        
-                        // Ищем последнюю завершенную сессию, где есть это упражнение (исключая текущую)
-                        const prevSession = sortedSessions.find(s => 
-                            s.id !== session.id && 
-                            (s.exercises || []).some(e => e.name.trim().toLowerCase() === ex.name.trim().toLowerCase())
-                        );
-                        
-                        if (prevSession) {
-                            const pastEx = (prevSession.exercises || []).find(e => e.name.trim().toLowerCase() === ex.name.trim().toLowerCase());
-                            if (pastEx) {
-                                const pastSets = [...(pastEx.sets || [])].sort((a, b) => a.set_number - b.set_number);
-                                const pastSet = pastSets.find(s => s.set_number === set.set_number) || pastSets[set.set_number - 1];
-                                if (pastSet && pastSet.weight_kg != null && pastSet.reps != null) {
-                                    prevText = `${pastSet.weight_kg}×${pastSet.reps}`;
-                                }
-                            }
-                        }
+                     ${(ex.sets || []).map((set, setIndex, setsArr) => {
+                         let prevText = '—';
+                         
+                         // Сортируем завершенные сессии по дате (новейшие первые)
+                         const sortedSessions = [...completedHistorySessions].sort((a, b) => new Date(b.started_at) - new Date(a.started_at));
+                         
+                         // Ищем последнюю завершенную сессию, где есть это упражнение (исключая текущую)
+                         const prevSession = sortedSessions.find(s => 
+                             s.id !== session.id && 
+                             (s.exercises || []).some(e => e.name.trim().toLowerCase() === ex.name.trim().toLowerCase())
+                         );
+                         
+                         if (prevSession) {
+                             const pastEx = (prevSession.exercises || []).find(e => e.name.trim().toLowerCase() === ex.name.trim().toLowerCase());
+                             if (pastEx) {
+                                 const pastSets = [...(pastEx.sets || [])].sort((a, b) => a.set_number - b.set_number);
+                                 const pastSet = pastSets.find(s => s.set_number === set.set_number) || pastSets[set.set_number - 1];
+                                 if (pastSet && pastSet.weight_kg != null && pastSet.reps != null) {
+                                     prevText = `${pastSet.weight_kg}×${pastSet.reps}`;
+                                 }
+                             }
+                         }
 
-                        return `
-                             <div class="flex items-center gap-2 glass p-2 rounded-2xl" data-set-id="${set.id}">
-                                 <span class="font-bold w-6 text-center text-xs ${set.is_completed ? SET_DIM.join(' ') : SET_NUMBER_IDLE}">${set.set_number}</span>
-                                 
-                                 <div class="w-14 flex flex-col items-center justify-center flex-shrink-0" title="Прошлый подход">
-                                     <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Пред.</label>
-                                     <span class="text-[11px] font-semibold text-surface-600 dark:text-surface-300 h-10 flex items-center justify-center truncate leading-tight">${prevText}</span>
-                                 </div>
+                         let setRow = `
+                              <div class="flex items-center gap-2 glass p-2 rounded-2xl" data-set-id="${set.id}">
+                                  <span class="font-bold w-6 text-center text-xs ${set.is_completed ? SET_DIM.join(' ') : SET_NUMBER_IDLE}">${set.set_number}</span>
+                                  
+                                  <div class="w-14 flex flex-col items-center justify-center flex-shrink-0" title="Прошлый подход">
+                                      <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Пред.</label>
+                                      <span class="text-[11px] font-semibold text-surface-600 dark:text-surface-300 h-10 flex items-center justify-center truncate leading-tight">${prevText}</span>
+                                  </div>
 
-                                 <div class="flex-1 min-w-[60px] flex flex-col">
-                                     <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Вес</label>
-                                     <input type="number" min="0" step="0.1" placeholder="—" inputmode="none" readonly
-                                            value="${set.weight_kg != null && set.weight_kg > 0 ? set.weight_kg : ''}"
-                                            class="w-full h-12 text-center text-xl font-bold rounded-xl glass-input focus:border-primary-500 focus:outline-none cursor-pointer ${set.is_completed ? SET_DIM.join(' ') : ''}"
-                                            data-field="weight">
-                                 </div>
+                                  <div class="flex-1 min-w-[60px] flex flex-col">
+                                      <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Вес</label>
+                                      <input type="number" min="0" step="0.1" placeholder="—" inputmode="none" readonly
+                                             value="${set.weight_kg != null && set.weight_kg > 0 ? set.weight_kg : ''}"
+                                             class="w-full h-12 text-center text-xl font-bold rounded-xl glass-input focus:border-primary-500 focus:outline-none cursor-pointer ${set.is_completed ? SET_DIM.join(' ') : ''}"
+                                             data-field="weight">
+                                  </div>
 
-                                 <div class="flex-1 min-w-[60px] flex flex-col">
-                                     <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Повт</label>
-                                     <input type="number" min="1" placeholder="—" inputmode="none" readonly
-                                            value="${set.reps != null && set.reps > 0 ? set.reps : ''}"
-                                            class="w-full h-12 text-center text-xl font-bold rounded-xl glass-input focus:border-primary-500 focus:outline-none cursor-pointer ${set.is_completed ? SET_DIM.join(' ') : ''}"
-                                            data-field="reps">
-                                 </div>
+                                  <div class="flex-1 min-w-[60px] flex flex-col">
+                                      <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Повт</label>
+                                      <input type="number" min="1" placeholder="—" inputmode="none" readonly
+                                             value="${set.reps != null && set.reps > 0 ? set.reps : ''}"
+                                             class="w-full h-12 text-center text-xl font-bold rounded-xl glass-input focus:border-primary-500 focus:outline-none cursor-pointer ${set.is_completed ? SET_DIM.join(' ') : ''}"
+                                             data-field="reps">
+                                  </div>
 
-                                  <button data-action="toggle-set" data-completed="${set.is_completed ? 'true' : 'false'}"
-                                          class="${TOGGLE_BASE} ${set.is_completed ? TOGGLE_COMPLETED : TOGGLE_UNCOMPLETED}">
-                                      ✓
-                                  </button>
-                             </div>
-                    `;
-                    }).join('')}
+                                   <button data-action="toggle-set" data-completed="${set.is_completed ? 'true' : 'false'}"
+                                           class="${TOGGLE_BASE} ${set.is_completed ? TOGGLE_COMPLETED : TOGGLE_UNCOMPLETED}">
+                                       ✓
+                                   </button>
+                              </div>
+                         `;
+                         // Показ времени отдыха между подходами (кроме последнего)
+                         if (set.rest_time_seconds != null && setIndex < setsArr.length - 1) {
+                             setRow += this.renderRestTimeInline(set);
+                         }
+                         return setRow;
+                     }).join('')}
                 </div>
             </div>
         `}).join('');
@@ -2006,14 +2236,35 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     </div>
                 </div>
 
-                <div class="flex overflow-x-auto gap-4 pb-6 px-4 -mx-4 workout-carousel" id="carousel">
-                    ${allCards.join('')}
-                </div>
-                
-             </div>
+                 <div class="flex overflow-x-auto gap-4 pb-6 px-4 -mx-4 workout-carousel" id="carousel">
+                     ${allCards.join('')}
+                 </div>
+
+                  <div id="rest-timer-bar" class="hidden fixed bottom-16 left-0 right-0 z-50 rest-timer-bar"
+                       role="timer" aria-live="polite" aria-label="Таймер отдыха">
+                      <div class="flex items-center gap-3 px-4 py-3 rest-timer-bar__inner glass rounded-2xl">
+                          <span class="animate-pulse-lime text-lime-600 dark:text-lime-400" aria-hidden="true">⏱</span>
+                          <span id="rest-timer-remaining"
+                                class="font-mono text-2xl font-bold text-lime-600 dark:text-lime-400 tabular-nums min-w-[3.5rem] text-center">
+                              00:00
+                          </span>
+                          <span id="rest-timer-state"
+                                class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase">
+                              Отдых
+                          </span>
+                          <button id="rest-timer-dismiss" data-action="dismiss-rest-timer" type="button"
+                                  class="ml-auto glass rounded-xl px-3 py-1.5 text-xs font-semibold text-surface-700 dark:text-surface-300 hover:bg-surface-200 dark:hover:bg-white/10 transition-colors flex-shrink-0"
+                                  aria-label="Готов">
+                              Готов
+                          </button>
+                      </div>
+                  </div>
+
+              </div>
         `;
         container.innerHTML = html;
-        
+        if (this.aiPlan) this.updateAiPlanBadges(container);
+
         // Scroll to first exercise (index 1 in allCards)
         setTimeout(() => {
             const carousel = document.getElementById('carousel');
@@ -2056,6 +2307,14 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             if (set) return set;
         }
         return null;
+    },
+
+    findExerciseOfSet(session, setId) {
+        for (const ex of (session.exercises || [])) {
+            const set = (ex.sets || []).find(s => s.id === setId);
+            if (set) return { exercise: ex, set };
+        }
+        return { exercise: null, set: null };
     },
 
     updateWorkoutMetricsUI(session) {
@@ -2133,7 +2392,6 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     console.error('Row not found for set');
                     return;
                 }
-                const card = row.closest('[data-exercise-id]');
                 const setId = parseInt(row.dataset.setId);
                 if (isNaN(setId)) {
                     console.error('Invalid setId found:', row.dataset.setId);
@@ -2192,33 +2450,35 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 if (isCompleted) {
                     this.flashSetSaved(row);
                     this.scheduleCarouselAdvance(session, row);
+                    // If a rest timer is running for the previous set, stop and
+                    // save its elapsed seconds onto that set before starting a
+                    // new rest period for this one.
+                    if (this.activeRestForSetId) {
+                        this.restSavedBySetId = setId;
+                        await this.stopAndSaveRestTimer(session);
+                        const savedSet = this.lastSavedRestSetId
+                            ? this.findSetInSession(session, this.lastSavedRestSetId) : null;
+                        if (savedSet && savedSet.rest_time_seconds != null) {
+                            this.applyRestTimeInline(this.lastSavedRestSetId, savedSet.rest_time_seconds);
+                        }
+                    }
+                    const { exercise: ex, set: sessionSet } = this.findExerciseOfSet(session, setId);
+                    if (ex && sessionSet && sessionSet.set_number < (ex.sets || []).length) {
+                        this.startRestTimer(sessionSet, ex, session);
+                    }
+                } else {
+                    // Unchecking: undo the rest-time save if this set's completion
+                    // was what triggered it, and stop the timer if this set owns it.
+                    this.undoRestTimeSave(session, setId, isLocal, token);
+                    if (this.activeRestForSetId === setId) {
+                        this.dismissRestTimer();
+                    }
                 }
                 const payload = {
                     is_completed: isCompleted,
                     weight_kg: isNaN(weight_kg) ? null : weight_kg,
                     reps: isNaN(reps) ? null : reps
                 };
-                // Background rest chronometry: the gap between the previous set
-                // of the same exercise and now is the break this set took.
-                // Measured silently and sent inline so the coach reads real
-                // breaks without a floating timer bar on screen. The first set
-                // of an exercise carries no measurement: there is no set before
-                // it, and the changeover from the previous exercise is not a
-                // break.
-                const exerciseId = card?.dataset.exerciseId ?? null;
-                if (isCompleted) {
-                    const sameExercise = this.lastSetCompletedAt
-                        && this.lastSetCompletedExerciseId === exerciseId;
-                    if (sameExercise) {
-                        const restSeconds = Math.round((Date.now() - this.lastSetCompletedAt) / 1000);
-                        payload.rest_time_seconds = Math.max(0, restSeconds);
-                    }
-                    this.lastSetCompletedAt = Date.now();
-                    this.lastSetCompletedExerciseId = exerciseId;
-                } else {
-                    this.lastSetCompletedAt = null;
-                    this.lastSetCompletedExerciseId = null;
-                }
                 if (isLocal) {
                     this.persistLocalSession(session);
                     this.recordLocalSetPatch(session.key, setId, payload);
@@ -2227,16 +2487,23 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     return;
                 }
                 try {
+                    app?._pendingToggleSetIds?.add(setId);
                     await API.patch(`/workouts/sets/${setId}`, payload, token);
                 } catch (err) {
                     if (err?.offlineQueued) {
                         // Silent: the global network banner reflects offline/syncing status
                     } else {
                         applyToggleState(wasCompleted);
+                        this.undoRestTimeSave(session, setId, isLocal, token);
+                        if (this.activeRestForSetId === setId) {
+                            this.dismissRestTimer();
+                        }
                         app.showToast(err.message || 'Ошибка', 'error');
                     }
                     button.disabled = false;
                     button.textContent = '✓';
+                } finally {
+                    app?._pendingToggleSetIds?.delete(setId);
                 }
             });
         });
@@ -2302,8 +2569,9 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 return;
             }
 
+            await app.ensureFreshToken();
             try {
-                await API.patch(`/workouts/sets/${setId}`, { [field]: value }, token);
+                await API.patch(`/workouts/sets/${setId}`, { [field]: value }, app.state.tokens.access);
             } catch (err) {
                 if (err?.offlineQueued) {
                     // Silent: the global network banner reflects offline/syncing status
@@ -2415,6 +2683,12 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             // must not pull them back into it.
             if (app.state) app.state.workoutScreenDismissed = true;
             app.showPage('workouts');
+        });
+
+        // Dismiss rest timer
+        container.querySelector('[data-action="dismiss-rest-timer"]')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.dismissRestTimer();
         });
     },
 
@@ -2854,12 +3128,13 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
                     ${(exercise.sets || []).length > 0 ? `
                         <div class="mt-3 space-y-1">
-                            ${exercise.sets.map(set => `
+                            ${[...(exercise.sets || [])].sort((a, b) => a.set_number - b.set_number).map((set, setIndex, arr) => `
                                 <div class="flex items-center gap-2 text-xs ${set.is_completed ? '' : 'text-surface-400'}">
                                     <span class="w-5 text-center font-semibold">${set.set_number}</span>
                                     <span class="font-mono ${set.is_completed ? '' : 'line-through'}">${set.weight_kg ?? '—'}×${set.reps ?? '—'}</span>
                                     ${set.rpe ? `<span class="text-surface-400">RPE ${set.rpe}</span>` : ''}
                                 </div>
+                                ${set.rest_time_seconds != null && setIndex < arr.length - 1 ? this.renderRestTimeInline(set) : ''}
                             `).join('')}
                         </div>
                     ` : ''}

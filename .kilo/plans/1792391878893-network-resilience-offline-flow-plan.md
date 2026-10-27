@@ -1,42 +1,47 @@
-# Implementation Plan: Fix Syntax Error (`Unexpected token 'else'`) in `app.js`
+# Implementation Plan: Fix Rest Time Assignment in Backend (measured_rest_times)
 
-## Goal
-Fix the `Uncaught SyntaxError: Unexpected token 'else'` in `static/js/app.js` around line 221 caused by an orphaned `else` block following a misplaced `try/catch` wrapper around an asynchronous promise chain (`validateToken().then(...).catch(...)`).
+## Problem
+For a 3-set exercise, only 1 rest block shows in history (under 2nd set) instead of 2 (under 1st and 2nd sets).
 
-## Affected Boundaries & Changes
-- **`static/js/app.js` (`init` method)**:
-  - Remove the invalid `try { ... } catch (e) { ... } else { ... }` wrapping around the async `validateToken().then(...).catch(...)` call.
-  - Structure the token presence check cleanly:
-    ```javascript
-    if (this.state.tokens.access) {
-        console.log('[App] Token found, validating...');
-        // Defer validation to background to allow cache-first render
-        this.validateToken().then(() => this.initSyncEngine()).catch((e) => {
-            console.error('[App] Token validation failed:', e);
-            if (e?.isNetworkError || !navigator.onLine || !this.state.isOnline) {
-                console.warn('[App] Network error during init token validation; retaining offline session.');
-                this.showScreen('main');
-                const { page, workout } = this.loadState();
-                if (workout) {
-                    this.state.activeWorkout = workout;
-                    this.showPage('workouts');
-                } else {
-                    this.showPage(page || 'nutrition');
-                }
-            } else {
-                this.showScreen('landing');
-                this.renderLanding();
-            }
-        });
-        
-        // Proactively show cached main screen state
-        ...
-    } else {
-        this.showScreen('landing');
-        this.renderLanding();
-    }
-    ```
+**Root Cause**: Mismatch between frontend and backend rest time semantics:
+- **Frontend**: Saves rest time to the set that was JUST COMPLETED (the one whose rest period ended)
+  - Complete Set 1 → rest timer starts → Complete Set 2 → save rest to Set 1
+  - Complete Set 2 → rest timer starts → Complete Set 3 → save rest to Set 2
+- **Backend `measured_rest_times`**: Assigns rest to the set based on gap from PREVIOUS set
+  - Set 1: no previous → rest = None
+  - Set 2: gap from Set 1 → rest = gap(1→2)  ← This is Set 1's rest!
+  - Set 3: gap from Set 2 → rest = gap(2→3)  ← This is Set 2's rest!
 
-## Validation Plan
-1. Check JavaScript syntax using Node or linter/compiler to ensure no syntax errors remain in `app.js`.
-2. Verify app cold start and initialization flow runs without uncaught syntax errors.
+Result: Backend assigns rest times one set "forward" vs frontend.
+
+## Fix
+Modify `measured_rest_times` in `app/services/workout.py` (line 1045) to assign rest to the PREVIOUS set instead of the current set.
+
+**Current logic** (simplified):
+```python
+for exercise_id, completed_at, measured in sets:
+    stamp = as_utc(completed_at)
+    if stamp and previous_stamp and previous_exercise == exercise_id:
+        gap = (stamp - previous_stamp).total_seconds()
+        rest = gap  # assigned to CURRENT set
+    rests.append(rest)
+    previous_stamp = stamp
+    previous_exercise = exercise_id
+```
+
+**Fixed logic**: Calculate gap, but assign it to the PREVIOUS set in the sequence.
+
+## Affected Files
+- `app/services/workout.py` - `measured_rest_times` function (line 1045)
+
+## Validation
+1. Start workout with 3-set exercise
+2. Complete Set 1 → wait → Complete Set 2 → wait → Complete Set 3
+3. Check history detail: should see 2 rest blocks (under Set 1 and Set 2)
+4. Verify rest times match what was measured on the frontend
+5. Test with 2 sets (1 rest block), 4 sets (3 rest blocks), etc.
+
+## Risk Assessment
+- Low risk: Only affects rest time calculation, not other workout data
+- Need to ensure offline/replayed sessions still work (they use `measured` client value when `measured > gap`)
+- The change only reassigns which set gets the rest value, not the calculation itself

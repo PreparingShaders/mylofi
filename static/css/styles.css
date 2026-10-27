@@ -565,6 +565,10 @@ html.dark,
     background: rgba(239, 68, 68, 0.6);
     color: #fafafa;
 }
+.meal-card-hero__action--retry:hover {
+    background: rgba(59, 130, 246, 0.6);
+    color: #fafafa;
+}
 .meal-card-hero__bottom {
     position: absolute;
     inset: auto 8px 7px 8px;
@@ -3646,4 +3650,37 @@ body.has-network-banner main {
     #network-banner.is-visible {
         transform: none;
     }
+}
+
+/* ===== Rest timer bar (count-up stopwatch) =====
+   Fixed above the bottom nav so it stays put while the exercise carousel
+   scrolls. The bottom offset accounts for the 4rem (64px) nav clearance plus
+   the iOS home-indicator safe area so the bar never overlaps the nav on either
+   platform. z-50 (from the HTML) keeps it below the toast layer (z-[130]) and
+   the modal host (z-[120]) but above the carousel content. */
+#rest-timer-bar.rest-timer-bar {
+    bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+}
+.rest-timer-bar__inner {
+    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+}
+#rest-timer-dismiss {
+    border: 1px solid rgba(24, 24, 27, 0.08);
+}
+.dark #rest-timer-dismiss {
+    border-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Muted inline rest-time line shown between completed set rows on the
+   tracking screen and in the history detail. Uses the dimmed surface text
+   colors so it reads as metadata, not a control. */
+.rest-time-inline {
+    margin-left: 1rem;
+}
+@keyframes rest-time-fade-in {
+    from { opacity: 0; transform: translateY(-2px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.rest-time-inline {
+    animation: rest-time-fade-in 0.2s ease-out;
 }

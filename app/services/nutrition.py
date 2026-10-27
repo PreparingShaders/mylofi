@@ -507,6 +507,39 @@ async def mark_meal_failed(
     return meal
 
 
+async def retry_meal_analysis(
+    db: AsyncSession,
+    meal_id: int,
+    user_id: int,
+) -> Optional[Meal]:
+    """Reset a FAILED (or stuck) meal to PENDING so the analysis task can run again.
+
+    Only meals with a photo can be retried: without the source image the
+    background task has nothing to feed to the vision cascade.
+    """
+    meal = await get_meal(db, meal_id, user_id)
+    if not meal:
+        return None
+
+    if not meal.photo_path or not os.path.exists(meal.photo_path):
+        logger.error(f"[Retry] Photo file missing for meal {meal_id}")
+        return None
+
+    if meal.status not in (MealStatus.FAILED, MealStatus.PENDING, MealStatus.PROCESSING):
+        logger.info(f"[Retry] Meal {meal_id} already {meal.status}, no retry needed")
+        return meal
+
+    meal.status = MealStatus.PENDING
+    meal.error_message = None
+    meal.quality_reason = None
+    meal.updated_at = utcnow()
+
+    await db.commit()
+    await db.refresh(meal)
+    logger.info(f"[Retry] Meal {meal_id} reset to PENDING for re-analysis")
+    return meal
+
+
 async def notify_meal_analysis_update(
     db: AsyncSession,
     meal_id: int,
@@ -531,6 +564,12 @@ async def notify_meal_analysis_update(
             status,
             user_id=user_id,
             **payload,
+        )
+        logger.info(
+            "[AI Task] Pushed meal %s update (status=%s, user_id=%s)",
+            meal_id,
+            status.value,
+            user_id,
         )
     except Exception:
         logger.warning(

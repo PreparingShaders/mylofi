@@ -1,5 +1,6 @@
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Iterable, Tuple
+import logging
 from sqlalchemy import select, func, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -25,6 +26,8 @@ from app.schemas import (
     ExerciseCatalogUpdate,
     BuildWorkoutSessionRequest,
 )
+
+logger = logging.getLogger(__name__)
 
 
 async def create_workout_template(
@@ -324,6 +327,23 @@ async def complete_workout_session(
     session = await get_workout_session(db, session_id, user_id)
     if not session:
         return None
+
+    completed_sets = [s for ex in session.exercises for s in ex.sets if s.is_completed]
+    total_sets = [s for ex in session.exercises for s in ex.sets]
+    completed_ids = [s.id for s in completed_sets]
+    pending_ids = [s.id for s in total_sets if not s.is_completed]
+    logger.info(
+        "[complete_workout_session] session_id=%s user_id=%s completed=%d/%d "
+        "completed_set_ids=%s pending_set_ids=%s",
+        session_id, user_id, len(completed_sets), len(total_sets),
+        completed_ids, pending_ids,
+    )
+    if pending_ids:
+        logger.warning(
+            "[complete_workout_session] session_id=%s has %d incomplete set(s): %s — "
+            "these were not flushed before completion",
+            session_id, len(pending_ids), pending_ids,
+        )
 
     session.status = WorkoutSessionStatus.COMPLETED
     completed_at = datetime.now(timezone.utc)
@@ -1030,12 +1050,14 @@ def measured_rest_times(
     Each set is given as (exercise id, completion stamp, the rest the client
     measured), in the order the sets were performed.
 
-    A break belongs to the exercise it was taken in: the time between the last
-    set of one exercise and the first set of the next is spent changing
-    equipment, not resting, so the interval stops at every exercise change.
-    That is what the client could not know - it measured the gap from the last
-    set it had seen, whichever exercise that set belonged to, and stored the
-    changeover as a rest.
+    A break belongs to the set it was taken after: the rest between set N and
+    set N+1 is the rest of set N, the one whose break ended when set N+1 was
+    completed. That is what the client stores - it saves the elapsed timer onto
+    the set that started it, the one that just finished its rest.
+
+    The gap stops at every exercise change: the time between the last set of one
+    exercise and the first set of the next is spent changing equipment, not
+    resting, so the interval belongs to no set.
 
     A set without a completion stamp was not performed: it anchors nothing, and
     the gap behind it stays empty instead of being measured against the set
@@ -1051,7 +1073,6 @@ def measured_rest_times(
     previous_stamp: Optional[datetime] = None
     for exercise_id, completed_at, measured in sets:
         stamp = as_utc(completed_at)
-        rest: Optional[int] = None
         if stamp is not None and previous_stamp is not None and previous_exercise == exercise_id:
             gap = int((stamp - previous_stamp).total_seconds())
             if gap < 0:
@@ -1064,7 +1085,12 @@ def measured_rest_times(
                 rest = measured
             else:
                 rest = gap
-        rests.append(rest)
+            # The gap between the previous set and this one is the rest of the
+            # previous set: the break that ended when this set was completed.
+            rests[-1] = rest
+        # The current set's rest is not known yet - it depends on the next
+        # set that gets completed.
+        rests.append(None)
         previous_exercise = exercise_id
         previous_stamp = stamp
     return rests
@@ -1314,10 +1340,9 @@ async def get_filtered_tonnage(
             ),
         ).where(ExerciseCatalog.muscle_group == muscle_group)
 
+    
     result = await db.execute(query)
 
-    import logging
-    logger = logging.getLogger(__name__)
     logger.info(f"[Tonnage Debug] Query executed for user_id={user_id}, period={period}, start_date={start_date}, end_date={end_date}, muscle_group={muscle_group}, exercise_name={exercise_name}, template_id={template_id}")
 
     session_rows: List[dict] = []

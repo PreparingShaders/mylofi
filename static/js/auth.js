@@ -121,11 +121,17 @@ export const Auth = {
         try {
             const response = await API.post('/auth/login', params, null, true);
             console.log('[Auth] login response:', response);
-            if (!response || (response.status && response.status !== 'ok' && response.status !== 200)) {
-                // allow success without explicit status
+            // Store tokens in localStorage for instant cold-start on next visit.
+            // On iOS standalone PWAs, localStorage may be evicted, but the
+            // HttpOnly refresh_token cookie survives and is used for recovery.
+            if (response?.access_token) {
+                app.state.tokens.access = response.access_token;
+                app.state.tokens.refresh = response.refresh_token;
+                app.saveTokens();
             }
-            const user = await API.get('/users/me');
+            const user = await API.get('/users/me', app.state.tokens.access);
             app.state.user = user;
+            app.saveTokens();
             
             // Close auth modal if open, then transition to the main app.
             // Await the modal's exit animation so the screen switch doesn't

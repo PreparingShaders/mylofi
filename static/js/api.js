@@ -348,8 +348,7 @@ class RealtimeSocket {
 class APIClient {
     constructor() {
         this.baseURL = API_BASE;
-        this.refreshing = false;
-        this.refreshQueue = [];
+        this.refreshPromise = null;
         this.processingQueue = false;
         this.itemResolver = null;
         this.onItemSynced = null;
@@ -699,45 +698,43 @@ class APIClient {
     }
     
     async handleUnauthorized(method, endpoint, data, accessToken, isFormData) {
-        if (this.refreshing) {
-            return new Promise((resolve, reject) => {
-                this.refreshQueue.push({ resolve, reject, method, endpoint, data, isFormData });
-            });
+        // While a refresh is already in flight, every concurrent 401 awaits the
+        // same shared promise so a single /auth/refresh call serves them all
+        // instead of racing separate retries against a revoked refresh token.
+        if (this.refreshPromise) {
+            return this.refreshPromise.then((newToken) =>
+                this.request(method, endpoint, data, newToken, isFormData)
+            );
         }
-        
-        this.refreshing = true;
-        
-        try {
+
+        const startRefresh = async () => {
             const refreshed = await window.App.refreshAccessToken();
             if (!refreshed) throw new Error('Token refresh failed');
-            
-            const newToken = window.App.state.tokens.access;
-            const response = await this.request(method, endpoint, data, newToken, isFormData);
-            
-            this.refreshQueue.forEach(({ resolve, reject, method: m, endpoint: e, data: d, isFormData: f }) => {
-                this.request(m, e, d, newToken, f).then(resolve).catch(reject);
-            });
-            this.refreshQueue = [];
-            
-            return response;
+            return window.App.state.tokens.access;
+        };
+
+        this.refreshPromise = startRefresh().finally(() => {
+            this.refreshPromise = null;
+        });
+
+        try {
+            const newToken = await this.refreshPromise;
+            return this.request(method, endpoint, data, newToken, isFormData);
         } catch (error) {
-            this.refreshQueue.forEach(({ reject }) => reject(error));
-            this.refreshQueue = [];
-            // Network errors during refresh must not wipe tokens — the user is still
-            // authenticated; they simply can't reach the server right now.
+            // Network errors during refresh must not wipe tokens — the user is
+            // still authenticated; they simply can't reach the server right now.
             if (error?.isNetworkError) {
                 console.error('[API] Token refresh failed (network), preserving session:', {
                     error: error?.message,
-                    status: error?.status
+                    status: error?.status,
                 });
                 throw error;
             }
-            // Auth failure (401/403 on the refresh call): the session is gone for
-            // good. Clear tokens, halt the sync queue so it doesn't hammer the
-            // server with more unauthenticated requests, and redirect to login.
+            // Auth failure (401/403 on the refresh call): the session is gone
+            // for good. Clear tokens, halt the sync queue and redirect to login.
             console.error('[API] Token refresh failed, invalidating auth session:', {
                 error: error?.message,
-                status: error?.status
+                status: error?.status,
             });
             if (window.App) {
                 window.App.clearTokens();
@@ -748,8 +745,6 @@ class APIClient {
                 SyncEngine.signalAuthFailure(error);
             }
             throw error;
-        } finally {
-            this.refreshing = false;
         }
     }
     
@@ -789,6 +784,37 @@ class APIClient {
      * outage, and it would hide a meal that is actually finished.
      */
     getFresh(endpoint, accessToken = null) { return this.request('GET', endpoint, null, accessToken); }
+    /**
+     * Silent refresh driven solely by the HttpOnly refresh_token cookie.
+     *
+     * On iOS standalone PWAs, localStorage is evicted on process kill, so the
+     * in-memory and localStorage copies of the access token are gone on cold
+     * start. The refresh_token cookie, however, survives — it is HttpOnly and
+     * managed by the browser, not by the page's storage.
+     *
+     * This method calls /auth/refresh with credentials: 'include' and no
+     * Authorization header, letting the browser attach the cookie. The server
+     * reads the cookie, issues a fresh access token, and returns it in the
+     * response body so the frontend can rehydrate localStorage and memory.
+     *
+     * Uses a raw fetch (not this.request) to avoid the 401 retry loop and
+     * the offline queue — the refresh call IS the retry, and it must not be
+     * enqueued or retried recursively.
+     */
+    async refreshFromCookie() {
+        const response = await fetch(`${this.baseURL}/auth/refresh`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        if (!response.ok) {
+            const error = new Error(`Cookie refresh failed: ${response.status}`);
+            error.status = response.status;
+            throw error;
+        }
+        return response.json();
+    }
     post(endpoint, data, accessToken = null, isFormData = false, timeoutMs = null) { return this.request('POST', endpoint, data, accessToken, isFormData, false, timeoutMs); }
     /**
      * A POST that must never enter the offline queue.

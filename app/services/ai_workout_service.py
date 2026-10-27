@@ -69,7 +69,7 @@ logger = logging.getLogger(__name__)
 # Wall-clock budget for one coach answer. `run_text_cascade` bounds every single
 # model call; this bounds the cascade as a whole, so the request that asked for a
 # verdict always gets an answer - a stored one, or an empty state.
-WORKOUT_AI_TASK_TIMEOUT = 60.0
+WORKOUT_AI_TASK_TIMEOUT = 90.0
 
 # A verdict on a session is read, not studied: 3-6 sentences is one glance on the
 # phone. The upper bound is enforced by a clamp (a model drifting into an essay is
@@ -142,7 +142,7 @@ AI_PLAN_STATUS_NO_EXERCISES = "no_exercises"
 # started with the session is the one that should answer; a second caller only
 # waits long enough to avoid a redundant model round-trip, never long enough to
 # stall the workout screen behind a slow model.
-AI_PREVIEW_STORE_WAIT_SECONDS = 15.0
+AI_PREVIEW_STORE_WAIT_SECONDS = 45.0
 
 # Per-session locks for the preview endpoint. The background task that started
 # with the session writes the plan to `ai_plan_json`; a second caller that finds
@@ -1184,6 +1184,25 @@ async def build_workout_preview_and_store(
                 logger.info(f"[AI Workout Preview] Plan unavailable for session {session_id}, status=failed")
 
             await fresh_db.commit()
+
+            if payload.get("available"):
+                try:
+                    from app.schemas import WSMessage, WSMessageType
+                    from app.ws.manager import manager
+                    await manager.send_personal_message(
+                        WSMessage(
+                            type=WSMessageType.WORKOUT_PLAN_READY,
+                            payload={
+                                "session_id": session_id,
+                                "plan": payload,
+                            },
+                        ),
+                        session.user_id,
+                    )
+                except Exception as ws_err:
+                    logger.warning(
+                        f"[AI Workout Preview] WebSocket push failed for session {session_id}: {ws_err}"
+                    )
         except Exception as e:
             logger.exception(
                 f"[AI Workout Preview] Failed to store plan for session {session_id}: {e}"

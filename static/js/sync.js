@@ -3,6 +3,7 @@ import { DB } from './db.js';
 
 const SYNC_TAG = 'mylofi-sync';
 const MAX_RETRIES = 5;
+const SYNC_TTL_MS = 24 * 60 * 60 * 1000;
 
 function isTransientError(error) {
     if (error?.isNetworkError) return true;
@@ -141,6 +142,8 @@ export const SyncEngine = {
         }
 
         this.migrateLocalStorageQueue();
+
+        this.purgeStaleItems().catch((e) => console.warn('[SyncEngine] purgeStaleItems failed:', e));
 
         // A successful login or token refresh clears the auth-failed flag
         // so the queue can resume on the next online/resume event.
@@ -330,6 +333,7 @@ export const SyncEngine = {
         let synced = 0;
 
         try {
+            await this.purgeStaleItems().catch(() => {});
             for (;;) {
                 const items = await DB.getSyncQueuePending(1);
                 if (!items.length) {
@@ -471,16 +475,28 @@ export const SyncEngine = {
         return item && (item.method === 'POST' || item.method === 'PUT') && Boolean(item.store);
     },
 
+    async purgeStaleItems() {
+        await DB.init();
+        const items = await DB.getAll('sync_queue');
+        const now = Date.now();
+        for (const item of items || []) {
+            const stale = !item.createdAt || (now - item.createdAt > SYNC_TTL_MS);
+            const stuck = (item.retryCount ?? 0) >= MAX_RETRIES;
+            if (stale || stuck) {
+                try { await DB.deleteSyncQueue(item.id); } catch (e) { console.warn('[SyncEngine] purge delete failed:', e); }
+            }
+        }
+    },
+
     async getFailedItems() {
         const items = await DB.getSyncQueueFailed();
-        // Auto-purge infrastructure-level errors: they carry no user action
-        // and retrying them cannot succeed without a valid session. Delete
-        // them from IndexedDB so they never surface in the sync-errors UI.
+        const now = Date.now();
         const actionable = [];
         for (const item of items) {
-            if (isInfrastructureEndpoint(item.endpoint)) {
+            const stale = !item.createdAt || (now - item.createdAt > SYNC_TTL_MS);
+            if (isInfrastructureEndpoint(item.endpoint) || stale) {
                 await DB.deleteSyncQueue(item.id);
-                console.log(`[SyncEngine] Auto-purged system error: ${item.endpoint}`);
+                console.log(`[SyncEngine] Auto-purged stale/system error: ${item.endpoint}`);
             } else {
                 actionable.push(item);
             }

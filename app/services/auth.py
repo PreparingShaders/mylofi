@@ -5,14 +5,18 @@ import random
 import secrets
 from jose import jwt, JWTError
 import bcrypt
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.models import User, RefreshToken, VerificationCode
+from app.models import RefreshToken, RotatedRefreshToken, User, VerificationCode
 from app.schemas import TokenPayload
 
 settings = get_settings()
+
+# How long a rotated refresh token pair is replayed to duplicate concurrent
+# refresh requests before those requests are treated as invalid.
+REFRESH_ROTATION_GRACE_SECONDS = 10
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -125,8 +129,62 @@ async def validate_refresh_token(db: AsyncSession, refresh_token: str) -> Option
     return user
 
 
+async def _find_recent_rotation(
+    db: AsyncSession, old_token_hash: str, now: datetime
+) -> Optional[RotatedRefreshToken]:
+    """Return a rotation record for this token that is still inside the grace window."""
+    result = await db.execute(
+        select(RotatedRefreshToken).where(
+            RotatedRefreshToken.old_token_hash == old_token_hash,
+            RotatedRefreshToken.expires_at > now,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def _record_rotation(
+    db: AsyncSession,
+    user_id: int,
+    old_token_hash: str,
+    access_token: str,
+    new_refresh_token: str,
+    rotated_at: datetime,
+) -> None:
+    """Persist a rotation so duplicate concurrent requests can be replayed idempotently."""
+    # Purge expired records to keep the table small.
+    await db.execute(
+        delete(RotatedRefreshToken).where(RotatedRefreshToken.expires_at < rotated_at)
+    )
+    expires_at = rotated_at + timedelta(seconds=REFRESH_ROTATION_GRACE_SECONDS)
+    db.add(
+        RotatedRefreshToken(
+            user_id=user_id,
+            old_token_hash=old_token_hash,
+            new_access_token=access_token,
+            new_refresh_token=new_refresh_token,
+            expires_at=expires_at,
+        )
+    )
+    await db.commit()
+
+
 async def rotate_refresh_token(db: AsyncSession, refresh_token: str) -> tuple[str, str]:
-    """Validate refresh token, revoke it, and create new token pair"""
+    """Validate refresh token, revoke it, and create new token pair.
+
+    Idempotent under concurrency: if the same refresh token was already rotated
+    by a parallel request within the grace window, the same new token pair is
+    returned instead of raising 401, so duplicate refreshes do not invalidate a
+    live session.
+    """
+    token_hash = hash_token(refresh_token)
+    now = datetime.now(timezone.utc)
+
+    # A concurrent request may have rotated this token moments ago: hand back
+    # the same new pair rather than failing the duplicate.
+    rotated = await _find_recent_rotation(db, token_hash, now)
+    if rotated:
+        return rotated.new_access_token, rotated.new_refresh_token
+
     user = await validate_refresh_token(db, refresh_token)
     if not user:
         raise ValueError("Invalid or expired refresh token")
@@ -135,7 +193,10 @@ async def rotate_refresh_token(db: AsyncSession, refresh_token: str) -> tuple[st
     await revoke_refresh_token(db, refresh_token)
 
     # Create new token pair
-    return await create_user_tokens(db, user)
+    access_token, new_refresh = await create_user_tokens(db, user)
+
+    await _record_rotation(db, user.id, token_hash, access_token, new_refresh, now)
+    return access_token, new_refresh
 
 
 VERIFICATION_CODE_TTL_MINUTES = 10

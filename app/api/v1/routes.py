@@ -98,6 +98,7 @@ from app.services.nutrition import (
     meal_to_response,
     normalize_tz_offset,
     process_meal_photo_task,
+    retry_meal_analysis,
     resolve_eaten_at,
     save_uploaded_photo,
     update_meal,
@@ -493,7 +494,7 @@ async def reset_password(
     return {"status": "password_reset", "email": reset_data.email}
 
 
-@router.post("/auth/login")
+@router.post("/auth/login", response_model=Token)
 async def login(
     response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -522,16 +523,22 @@ async def login(
     secure = request.url.is_secure if request else False
     response.set_cookie("access_token", access_token, httponly=True, samesite="lax", secure=secure, max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES*60)
     response.set_cookie("refresh_token", refresh_token, httponly=True, samesite="lax", secure=secure, max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS*86400)
-    return {"message": "Logged in"}
+    return Token(access_token=access_token, refresh_token=refresh_token)
 
 
-@router.post("/auth/refresh")
+@router.post("/auth/refresh", response_model=Token)
 async def refresh_token(
     request: Request,
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
-    """Refresh access token using refresh token"""
+    """Refresh access token using refresh token from cookie.
+
+    The HttpOnly refresh_token cookie is the primary source of the refresh
+    token. The response body also carries the new access_token so that the
+    frontend can cache it in localStorage for instant UI rendering on the
+    next cold start (iOS standalone PWAs evict localStorage on process kill).
+    """
     refresh = request.cookies.get("refresh_token")
     if not refresh:
         raise HTTPException(status_code=401, detail="No refresh token")
@@ -542,7 +549,7 @@ async def refresh_token(
     secure = request.url.is_secure
     response.set_cookie("access_token", access_token, httponly=True, samesite="lax", secure=secure, max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES*60)
     response.set_cookie("refresh_token", new_refresh, httponly=True, samesite="lax", secure=secure, max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS*86400)
-    return {"status": "ok"}
+    return Token(access_token=access_token, refresh_token=new_refresh)
 
 
 @router.post("/auth/logout")
@@ -1138,6 +1145,31 @@ async def delete_meal_endpoint(
     return {"message": "Meal deleted"}
 
 
+@router.post("/nutrition/meals/{meal_id}/retry-analysis", response_model=MealResponse)
+async def retry_meal_analysis_endpoint(
+    meal_id: int,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Reset a failed or stuck meal to PENDING and re-run the photo analysis task.
+
+    Only meals that still have their photo on disk can be retried: without the
+    source image the vision cascade has nothing to process.
+    """
+    meal = await retry_meal_analysis(db, meal_id, current_user.id)
+    if not meal:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Meal not found or cannot be retried",
+        )
+
+    # Re-queue the background analysis. The meal was reset to PENDING in the
+    # service call above, so the task picks up from the initial processing step.
+    background_tasks.add_task(process_meal_photo_task, meal.id)
+    return meal_to_response(meal)
+
+
 # Need to import settings
 
 
@@ -1451,6 +1483,11 @@ async def complete_workout_session_endpoint(
     is completed synchronously and the caller receives a `WorkoutCompletionResponse`.
     """
     data = request or WorkoutCompletionRequest()
+    logger.info(
+        "[complete_workout_session_endpoint] session_id=%s user_id=%s "
+        "with_ai_analysis=%s duration_seconds=%s",
+        session_id, current_user.id, data.with_ai_analysis, data.duration_seconds,
+    )
     session = await complete_workout_session(
         db,
         session_id,
@@ -1643,6 +1680,10 @@ async def update_set_endpoint(
     current_user: User = Depends(get_current_user),
 ):
     """Update a workout set (complete, update weight/reps, record the measured rest)"""
+    logger.info(
+        "[update_set_endpoint] set_id=%s user_id=%s payload=%s",
+        set_id, current_user.id, set_data.model_dump(exclude_unset=True),
+    )
     workout_set = await update_set_completion(
         db,
         set_id,
