@@ -39,31 +39,31 @@ const SHOWCASE_IMAGES = [
         folder: 'nutrition',
         alt: 'Питание',
         slides: [
-            { black: '1.png', white: '1.png' },
-            { black: '2.png', white: '2.png' },
-            { black: '3.png', white: '3.png' },
-            { black: '4.png', white: '4.png' },
-            { black: '5.png', white: '5.png' },
+            { black: '1.webp', white: '1.webp' },
+            { black: '2.webp', white: '2.webp' },
+            { black: '3.webp', white: '3.webp' },
+            { black: '4.webp', white: '4.webp' },
+            { black: '5.webp', white: '5.webp' },
         ],
     },
     {
         folder: 'workout',
         alt: 'Тренировки',
         slides: [
-            { black: '1.png', white: '1.png' },
-            { black: '2.png', white: '2.png' },
-            { black: '3.png', white: '3.png' },
-            { black: '4.png', white: '4.png' },
-            { black: '5.png', white: '5.png' },
-            { black: '6.png', white: '6.png' },
+            { black: '1.webp', white: '1.webp' },
+            { black: '2.webp', white: '2.webp' },
+            { black: '3.webp', white: '3.webp' },
+            { black: '4.webp', white: '4.webp' },
+            { black: '5.webp', white: '5.webp' },
+            { black: '6.webp', white: '6.webp' },
         ],
     },
     {
         folder: 'sinergy',
         alt: 'ИИ-Синергия',
         slides: [
-            { black: '1.png', white: '1.png' },
-            { black: '2.png', white: '2.png' },
+            { black: '1.webp', white: '1.webp' },
+            { black: '2.webp', white: '2.webp' },
         ],
     },
 ];
@@ -785,7 +785,9 @@ const App = {
     async checkHostConnectivity() {
         if (!navigator.onLine) {
             this.state.isOnline = false;
-            NetworkBanner.showOffline();
+            if (this.state.currentScreen !== 'landing') {
+                NetworkBanner.showOffline();
+            }
             return false;
         }
 
@@ -812,7 +814,9 @@ const App = {
             }
         } else {
             this.state.isOnline = false;
-            NetworkBanner.showOffline();
+            if (this.state.currentScreen !== 'landing') {
+                NetworkBanner.showOffline();
+            }
         }
 
         return reachable;
@@ -1277,13 +1281,6 @@ const App = {
                                     Уже есть аккаунт
                                 </button>
                             </div>
-
-                            <!-- Restore Session: for iOS PWA cold starts where localStorage
-                                 was evicted but the HttpOnly refresh_token cookie survives. -->
-                            <button data-action="restore-session"
-                                    class="mt-4 px-4 py-2 text-sm text-surface-500 dark:text-zinc-400 hover:text-lime-500 dark:hover:text-lime-400 transition-colors underline decoration-lime-500/30 hover:decoration-lime-500">
-                                Восстановить сессию
-                            </button>
                         </section>
 
                          <!-- Zig-Zag two-column showcase: text and phone alternate per chapter -->
@@ -1749,13 +1746,6 @@ const App = {
             case 'show-register':
                 this.toggleLandingMenu(false);
                 this.openAuthModal('register');
-                break;
-            case 'restore-session':
-                this.toggleLandingMenu(false);
-                this.attemptCookieRefresh()
-                    .catch(() => {
-                        this.showToast('Не удалось восстановить сессию. Попробуйте войти.', 'info');
-                    });
                 break;
             case 'close-auth-modal':
                 this.closeAuthModal();
