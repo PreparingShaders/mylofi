@@ -2426,6 +2426,7 @@ input, select, textarea:focus {
     line-height: 1.35;
     background: rgba(168, 85, 247, 0.08);
     border: 1px solid rgba(168, 85, 247, 0.22);
+    flex-shrink: 0;
 }
 .dark .ai-plan {
     background: rgba(192, 132, 252, 0.1);
@@ -3683,4 +3684,31 @@ body.has-network-banner main {
 }
 .rest-time-inline {
     animation: rest-time-fade-in 0.2s ease-out;
+}
+
+/* Set row add/remove animations used by the live workout screen so a single
+   set can be inserted or removed without re-rendering the whole screen. */
+.set-row-enter,
+.set-row-exit {
+    will-change: opacity, transform;
+    overflow: hidden;
+}
+
+.set-row-enter {
+    opacity: 0;
+    transform: translateY(-10px);
+    transition: opacity 200ms ease, transform 200ms ease;
+}
+.set-row-enter.active {
+    opacity: 1;
+    transform: translateY(0);
+}
+.set-row-exit {
+    opacity: 1;
+    transform: translateY(0);
+    transition: opacity 200ms ease, transform 200ms ease;
+}
+.set-row-exit.active {
+    opacity: 0;
+    transform: translateY(-10px);
 }

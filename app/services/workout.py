@@ -472,6 +472,193 @@ async def update_set_completion(
     return workout_set
 
 
+async def delete_workout_set(
+    db: AsyncSession,
+    set_id: int,
+    user_id: int,
+) -> bool:
+    """Delete a workout set, renumbering subsequent sets in the same exercise."""
+    result = await db.execute(
+        select(WorkoutSet)
+        .join(WorkoutSessionExercise)
+        .join(WorkoutSession)
+        .where(
+            WorkoutSet.id == set_id,
+            WorkoutSession.user_id == user_id,
+        )
+    )
+    workout_set = result.scalar_one_or_none()
+    if not workout_set:
+        return False
+
+    exercise_id = workout_set.exercise_id
+    set_number = workout_set.set_number
+
+    await db.delete(workout_set)
+    await db.flush()
+
+    # Renumber any sets that came after the deleted one so set_number
+    # stays a contiguous 1..N sequence.
+    remaining = await db.execute(
+        select(WorkoutSet)
+        .where(
+            WorkoutSet.exercise_id == exercise_id,
+            WorkoutSet.set_number > set_number,
+        )
+        .order_by(WorkoutSet.set_number)
+    )
+    higher_sets = remaining.scalars().all()
+    for i, ws in enumerate(higher_sets, start=set_number):
+        ws.set_number = i
+
+    await db.commit()
+    return True
+
+
+async def create_session_set(
+    db: AsyncSession,
+    user_id: int,
+    exercise_id: int,
+    set_number: Optional[int] = None,
+    weight_kg: Optional[float] = None,
+    reps: Optional[int] = None,
+    rest_seconds: Optional[int] = None,
+) -> Optional[WorkoutSet]:
+    """Add a single set to an existing session exercise.
+
+    Ownership is verified through the exercise → session → user join chain.
+    Set number is always computed server-side to avoid race conditions.
+    """
+    result = await db.execute(
+        select(WorkoutSessionExercise)
+        .join(WorkoutSession)
+        .where(
+            WorkoutSessionExercise.id == exercise_id,
+            WorkoutSession.user_id == user_id,
+        )
+        .options(
+            selectinload(WorkoutSessionExercise.sets),
+            selectinload(WorkoutSessionExercise.session).selectinload(
+                WorkoutSession.template
+            ),
+        )
+    )
+    exercise = result.scalar_one_or_none()
+    if not exercise:
+        return None
+
+    # Always compute set_number server-side, ignoring frontend value
+    existing_numbers = [s.set_number for s in (exercise.sets or [])]
+    set_number = (max(existing_numbers) + 1) if existing_numbers else 1
+
+    if reps is None:
+        existing_sets = exercise.sets or []
+        if existing_sets:
+            reps = existing_sets[-1].reps
+        else:
+            session = exercise.session
+            if session and session.template_id and session.template:
+                template_exercise = next(
+                    (te for te in (session.template.exercises or []) if te.name == exercise.name),
+                    None,
+                )
+                if template_exercise:
+                    reps = template_exercise.target_reps
+        if reps is None:
+            reps = 10
+
+    workout_set = WorkoutSet(
+        exercise_id=exercise.id,
+        set_number=set_number,
+        weight_kg=weight_kg,
+        reps=reps,
+        rest_seconds=rest_seconds,
+    )
+    db.add(workout_set)
+    await db.commit()
+    await db.refresh(workout_set)
+    return workout_set
+
+
+async def add_exercise_to_session(
+    db: AsyncSession,
+    user_id: int,
+    session_id: int,
+    exercise_id: int,
+    target_sets: Optional[int] = None,
+    default_reps: Optional[int] = None,
+    default_rest_seconds: Optional[int] = None,
+) -> Optional[WorkoutSession]:
+    """Add a catalog exercise to an in-progress workout session.
+
+    Sets are seeded the same way ``build_workout_session`` does: past
+    completed sets for the exercise are reused as starting weights/reps, and
+    any remaining sets are filled with the requested defaults.
+    """
+    session = await get_workout_session(db, session_id, user_id)
+    if not session or session.status != WorkoutSessionStatus.ACTIVE:
+        return None
+
+    result = await db.execute(
+        select(ExerciseCatalog).where(
+            ExerciseCatalog.id == exercise_id,
+            or_(
+                ExerciseCatalog.user_id.is_(None),
+                ExerciseCatalog.user_id == user_id,
+            ),
+        )
+    )
+    catalog_ex = result.scalar_one_or_none()
+    if not catalog_ex:
+        return None
+
+    sets_count = target_sets or 3
+    reps = default_reps or 10
+    rest = default_rest_seconds if default_rest_seconds is not None else 90
+
+    max_order = max(
+        (ex.order for ex in (session.exercises or []) if ex.order is not None),
+        default=-1,
+    )
+
+    exercise = WorkoutSessionExercise(
+        session_id=session.id,
+        name=catalog_ex.name,
+        order=max_order + 1,
+        notes=f"{catalog_ex.muscle_group} / {catalog_ex.equipment}{' | ' + (catalog_ex.description or '') if catalog_ex.description else ''}",
+    )
+    db.add(exercise)
+    await db.flush()
+
+    past_sets = await get_last_exercise_sets(db, user_id, catalog_ex.name) or []
+    if past_sets:
+        for ps in past_sets[:sets_count]:
+            db.add(
+                WorkoutSet(
+                    exercise_id=exercise.id,
+                    set_number=ps.set_number,
+                    reps=ps.reps,
+                    weight_kg=ps.weight_kg,
+                    rest_seconds=rest,
+                )
+            )
+    start_num = (past_sets[-1].set_number + 1) if past_sets else 1
+    remaining = sets_count - len(past_sets) if past_sets else sets_count
+    for set_num in range(start_num, start_num + remaining):
+        db.add(
+            WorkoutSet(
+                exercise_id=exercise.id,
+                set_number=set_num,
+                reps=reps,
+                weight_kg=0.0,
+                rest_seconds=rest,
+            )
+        )
+
+    await db.commit()
+    return await get_workout_session(db, session.id, user_id)
+
+
 # ===== Exercise Catalog =====
 WORKOUT_GOAL_SETTINGS = {
     "strength": {"default_sets": 3, "default_reps": 5, "default_rest_seconds": 90},

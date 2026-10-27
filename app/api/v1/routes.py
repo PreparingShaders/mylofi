@@ -7,6 +7,7 @@ from app.core.config import get_settings
 from app.db.session import get_db
 from app.models import Feedback, User, VerificationCode
 from app.schemas import (
+    AddExerciseToSessionRequest,
     AiPersona,
     AIWorkoutPreviewRequest,
     AIWorkoutPreviewResponse,
@@ -15,6 +16,7 @@ from app.schemas import (
     AnthropometricsResponse,
     AnthropometricsUpdate,
     BuildWorkoutSessionRequest,
+    CreateSetRequest,
     DailySummaryResponse,
     ExerciseCatalogCreate,
     ExerciseCatalogResponse,
@@ -47,6 +49,7 @@ from app.schemas import (
     WorkoutSessionCreate,
     WorkoutSessionResponse,
     WorkoutSessionUpdate,
+    WorkoutSetResponse,
     WorkoutSetUpdate,
     WorkoutTemplateCreate,
     WorkoutTemplateResponse,
@@ -110,15 +113,18 @@ from app.services.nutrition_targets import (
     normalize_goal,
 )
 from app.services.workout import (
+    add_exercise_to_session,
     build_session_exercises_from_template,
     build_workout_session,
     cancel_workout_session,
     complete_workout_session,
     create_exercise,
+    create_session_set,
     create_workout_session,
     create_workout_template,
     delete_exercise,
     delete_workout_session,
+    delete_workout_set,
     delete_workout_template,
     get_active_workout_session,
     get_exercises,
@@ -1703,6 +1709,73 @@ async def update_set_endpoint(
         "is_completed": workout_set.is_completed,
         "rest_time_seconds": workout_set.rest_time_seconds,
     }
+
+
+@router.post("/workouts/sets", response_model=WorkoutSetResponse, status_code=status.HTTP_201_CREATED)
+async def create_set_endpoint(
+    set_data: CreateSetRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Add a set to an existing session exercise."""
+    workout_set = await create_session_set(
+        db,
+        current_user.id,
+        set_data.exercise_id,
+        set_data.set_number,
+        set_data.weight_kg,
+        set_data.reps,
+        set_data.rest_seconds,
+    )
+    if not workout_set:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Exercise not found or not in your session",
+        )
+    return workout_set
+
+
+@router.delete("/workouts/sets/{set_id}")
+async def delete_set_endpoint(
+    set_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete a workout set."""
+    success = await delete_workout_set(db, set_id, current_user.id)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Set not found"
+        )
+    return {"message": "Set deleted"}
+
+
+@router.post(
+    "/workouts/sessions/{session_id}/exercises",
+    response_model=WorkoutSessionResponse,
+)
+async def add_exercise_to_session_endpoint(
+    session_id: int,
+    exercise_data: AddExerciseToSessionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Add an exercise from the catalog to an in-progress session."""
+    session = await add_exercise_to_session(
+        db,
+        current_user.id,
+        session_id,
+        exercise_data.exercise_id,
+        exercise_data.target_sets,
+        exercise_data.default_reps,
+        exercise_data.default_rest_seconds,
+    )
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found, not active, or exercise not accessible",
+        )
+    return session
 
 
 # ===== AI Workout Coach Routes =====

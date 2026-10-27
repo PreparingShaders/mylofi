@@ -2142,7 +2142,9 @@ const App = {
             confirmText: 'Завершить',
             confirmClass: 'bg-primary-600 hover:bg-primary-700 text-white dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200 font-semibold shadow-md',
             cancelText: 'Назад'
-        })) return;
+         })) return;
+
+        await Workouts.promptTemplateUpdateIfNeeded(this, Workouts.currentSession);
 
         // Persist any in-flight rest timer so its elapsed seconds are recorded
         // on the previous set before the session is closed.

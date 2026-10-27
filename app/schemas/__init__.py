@@ -643,6 +643,25 @@ class WorkoutSetResponse(WorkoutSetBase):
     created_at: datetime
 
 
+class CreateSetRequest(BaseModel):
+    """Create a single set on an existing session exercise."""
+
+    exercise_id: int = Field(gt=0)
+    set_number: Optional[int] = Field(None, ge=1)
+    weight_kg: Optional[float] = None
+    reps: Optional[int] = Field(None, ge=1)
+    rest_seconds: Optional[int] = Field(None, ge=0)
+
+
+class AddExerciseToSessionRequest(BaseModel):
+    """Add an exercise from the catalog to an in-progress session."""
+
+    exercise_id: int = Field(gt=0)
+    target_sets: Optional[int] = Field(None, ge=1)
+    default_reps: Optional[int] = Field(None, ge=1)
+    default_rest_seconds: Optional[int] = Field(None, ge=0)
+
+
 class WorkoutSessionExerciseBase(BaseModel):
     name: str = Field(max_length=255)
     order: int = 0
