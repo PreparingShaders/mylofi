@@ -3556,35 +3556,68 @@ input[data-field="reps"] {
     font-size: 13px;
     font-weight: 700;
     transition: all 150ms ease;
-    border: 2px solid transparent;
-    background: #27272a;
+    border: 2px solid var(--border-color, #3f3f46);
+    background: transparent;
     color: #71717a;
     cursor: pointer;
+    overflow: hidden;
+    --fill-percent: 0%;
+    --fill-color: transparent;
+    will-change: clip-path;
 }
+.exercise-track-circle::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--fill-color, transparent);
+    clip-path: inset(calc(100% - var(--fill-percent, 0%)) 0 0 0);
+    transition: clip-path 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 0;
+}
+.exercise-track-circle .circle-content {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+}
+.exercise-track-circle .exercise-number {
+    font-size: 13px;
+    font-weight: 700;
+}
+.exercise-track-circle svg {
+    display: block;
+}
+
+/* Cancel circle (×) — solid red border */
+.exercise-track-circle.cancel {
+    --border-color: #ef4444;
+    color: #ef4444;
+}
+
+/* Empty exercise circle — transparent fill, zinc border */
 .exercise-track-circle.empty {
-    background: #27272a;
-    border-color: #3f3f46;
+    --border-color: #3f3f46;
     color: #71717a;
 }
 .dark .exercise-track-circle.empty {
-    background: #3f3f46;
-    border-color: #52525b;
-    color: #71717a;
+    --border-color: #52525b;
 }
+
+/* Partial exercise circle — lime fill rises to % */
 .exercise-track-circle.partial {
-    background: #142a05;
-    border-color: #4d7c0c;
+    --border-color: #4d7c0c;
     color: #84cc16;
 }
 .dark .exercise-track-circle.partial {
-    background: #142a05;
-    border-color: #4d7c0c;
-    color: #84cc16;
     box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.2);
 }
+
+/* Active exercise circle — lime border + pulse */
 .exercise-track-circle.active {
-    background: #142a05;
-    border-color: #84cc16;
+    --border-color: #84cc16;
     color: #84cc16;
     box-shadow: 0 0 0 3px rgba(132, 204, 22, 0.3);
     animation: track-pulse 1.5s ease-in-out infinite;
@@ -3593,29 +3626,24 @@ input[data-field="reps"] {
     0%, 100% { box-shadow: 0 0 0 3px rgba(132, 204, 22, 0.3); }
     50% { box-shadow: 0 0 0 6px rgba(132, 204, 22, 0.15); }
 }
+
+/* Complete exercise circle — full lime fill, white checkmark */
 .exercise-track-circle.complete {
-    background: #4d7c0c;
-    border-color: #4d7c0c;
+    --border-color: #4d7c0c;
     color: white;
 }
-.exercise-track-circle svg {
-    display: block;
-}
 
-/* "+" add-exercise circle at the end of the track */
-.exercise-track-circle.add-exercise-circle {
-    background: transparent;
-    border: 2px dashed #3f3f46;
-    color: #71717a;
-    cursor: pointer;
-}
-.dark .exercise-track-circle.add-exercise-circle {
-    border-color: #52525b;
+/* Add circle (+) — dashed border */
+.exercise-track-circle.add {
+    --border-color: #3f3f46;
+    border-style: dashed;
     color: #71717a;
 }
-.exercise-track-circle.add-exercise-circle:hover {
-    background: rgba(132, 204, 22, 0.08);
-    border-color: #84cc16;
+.dark .exercise-track-circle.add {
+    --border-color: #52525b;
+}
+.exercise-track-circle.add:hover {
+    --border-color: #84cc16;
     color: #84cc16;
 }
 
@@ -3809,9 +3837,17 @@ body.has-network-banner main {
    modes. */
 #rest-timer-bar.rest-timer-bar {
     bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+    left: 0;
+    right: 0;
+    pointer-events: none;
 }
 .rest-timer-bar__inner {
-    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+    pointer-events: auto;
+    width: 100%;
+    max-width: 92vw;
+    margin: 0 auto;
+    box-sizing: border-box;
+    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
 }
 #rest-timer-dismiss {
     border: 1px solid rgba(24, 24, 27, 0.08);
@@ -3843,14 +3879,17 @@ body.has-network-banner main {
 .rest-timer-presets {
     display: flex;
     flex-wrap: nowrap;
-    gap: 4px;
+    gap: 6px;
     overflow-x: auto;
     padding-bottom: 4px;
     -webkit-overflow-scrolling: touch;
     scroll-snap-type: x mandatory;
     scroll-padding-left: 2px;
 }
-.rest-timer-presets button[data-action="rest-timer-preset"] {
+.rest-timer-presets::-webkit-scrollbar {
+    display: none;
+}
+.rest-timer-presets button {
     flex-shrink: 0;
     scroll-snap-align: start;
     min-width: 40px;
@@ -3896,4 +3935,26 @@ body.has-network-banner main {
 .set-row-exit.active {
     opacity: 0;
     transform: translateY(-10px);
+}
+
+/* AI analysis badge in the collapsed toggle header */
+.ai-analysis-badge {
+    white-space: nowrap;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.625rem;
+    font-weight: 700;
+    background: #dcfce8;
+    color: #14532d;
+}
+.dark .ai-analysis-badge {
+    background: rgba(20, 83, 45, 0.4);
+    color: #bbf7d0;
+}
+.ai-analysis-badge.hidden {
+    display: none;
 }

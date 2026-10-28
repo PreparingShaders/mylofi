@@ -1,114 +1,281 @@
-# Implementation Plan: Active Workout Interface Fixes & Redesign
+# Implementation Plan: Active Workout Interface Redesign
 
 ## Overview
-Comprehensive fixes and redesign of the active workout interface (`static/js/workouts.js` + `static/css/styles.css`) based on detailed user review. Addresses 6 critical areas:
+Comprehensive redesign of the active workout interface (`static/js/workouts.js` + `static/css/styles.css`) addressing 4 major areas:
 
-1. **Reduce top padding** - Move header and track circles higher
-2. **Clean up header** - Remove "Суммарный тоннаж", keep only progress text
-3. **Fix "Add Set" DOM update** - Ensure instant DOM re-render
-4. **Fix rest timer modal** - Compact layout, fix "Готов" button
-5. **Add exercise via track circles** - Replace bottom card with "+" circle in track
-6. **Fix add workout modal** - Add close button, fix fullscreen issue
+1. **Liquid Fill Exercise Track Circles** - Liquid fill animation + exercise numbers
+2. **Symmetric Track Layout** - Cancel (×) at start, Add (+) at end, exercises in middle
+3. **Rest Timer Positioning Fix** - Adaptive container, no overflow
+4. **AI Analysis Badge** - Recommended weight/reps in collapsed header
 
 ---
 
-## 1. Reduce Top Padding (Header & Track)
+## 1. Liquid Fill Exercise Track Circles
 
-### Current Problem
-The workout container has excessive top padding (`pt-12` on line 2932), pushing the header and exercise track circles too low.
+### Current State
+- Circles use conic gradient (`conic-gradient(from -90deg, ${fillColor} ${percent * 3.6}deg, transparent 0)`)
+- No exercise numbers inside circles
+- Sharp "pie slice" appearance
 
-### Fix
-**File**: `static/js/workouts.js` - `renderWorkoutScreen` (line ~2932)
-- Change `pt-12` to `pt-6` or `pt-4` on the `#workout-container` div
-- Reduce `mb-3` on header to `mb-2`
-- Reduce `mb-4` on progress section to `mb-2`
-- Ensure exercise track circles sit directly below progress text with minimal gap
+### New Design: Liquid Fill Effect
 
-### CSS Alternative
-Add to `static/css/styles.css`:
+#### Visual Design
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Exercise Track (horizontal scroll)                        │
+│  ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐                  │
+│  │  ×  │ │  1  │ │  2  │ │  3  │ │  +  │  ← Symmetric    │
+│  │     │ │ ███░│ │ ████│ │ ░░░░│ │     │                  │
+│  │  1  │ │  3/3│ │ 2/4 │ │ 0/3 │ │  4  │                  │
+│  └─────┘ └─────┘ └─────┘ └─────┘ └─────┘                  │
+│  Cancel    Ex 1      Ex 2      Ex 3      Add New           │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### Liquid Fill Implementation (CSS-only)
+
+**Technique**: Use `::before` pseudo-element with `clip-path: inset(calc(100% - var(--fill)) 0 0 0)` for smooth liquid rise animation.
+
 ```css
-#workout-container { padding-top: 1.5rem; } /* was 3rem */
+.exercise-track-circle {
+    position: relative;
+    overflow: hidden;
+    background: transparent;
+    border: 2px solid var(--border-color);
+}
+
+.exercise-track-circle::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--fill-color);
+    clip-path: inset(calc(100% - var(--fill-percent)) 0 0 0);
+    transition: clip-path 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 0;
+}
+
+.exercise-track-circle .circle-content {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+}
+```
+
+**States**:
+| State | `--fill-color` | `--border-color` | Content |
+|-------|----------------|------------------|---------|
+| **cancel** | `transparent` | `#ef4444` (red-500) | × icon |
+| **empty** | `transparent` | `#3f3f46` | Exercise number |
+| **partial** | `#1a2e05` (lime-950) | `#4d7c0c` | Exercise number + fill |
+| **active** | `#1a2e05` | `#84cc16` | Exercise number + pulse |
+| **complete** | `#4d7c0c` | `#84cc16` | ✓ checkmark |
+| **add** | `transparent` | `#3f3f46` dashed | + icon |
+
+#### Exercise Numbers
+- Always show exercise index (1, 2, 3...) inside circle
+- For partial/active: number + fill level visible
+- For complete: replace with checkmark
+- For cancel/add: icons (×, +)
+
+#### CSS Animation
+```css
+@keyframes liquid-rise {
+    from { clip-path: inset(100% 0 0 0); }
+    to { clip-path: inset(calc(100% - var(--target-fill)) 0 0 0); }
+}
+
+.exercise-track-circle::before {
+    animation: liquid-rise 0.5s ease-out forwards;
+}
 ```
 
 ---
 
-## 2. Clean Up Header (Remove "Суммарный тоннаж")
+## 2. Symmetric Track Layout
 
-### Current Problem
-Header (lines 2940-2947) shows:
-- "Сделано X из Y подходов (Z%)" 
-- "Суммарный тоннаж: N кг" 
-These overlap with exercise track circles below.
+### Structure
+```
+[Cancel ×] [Ex 1] [Ex 2] [Ex 3] ... [Add +]
+   ↑                               ↑
+index 0                         last index
+```
 
-### Fix
-**File**: `static/js/workouts.js` - `renderWorkoutScreen` (lines 2940-2947)
-- Remove the tonnage `<span id="workout-total-tonnage">` entirely
-- Keep only `<span id="workout-progress-text">` 
-- Add comfortable gap (`mb-3` → `mb-4`) between progress text and exercise track circles
-- The tonnage is available in the workout summary/analysis; no need in active header
+### Implementation
 
----
-
-## 3. Fix "Add Set" DOM Update
-
-### Current Problem
-The add-set handler (lines 3364-3410) calls `insertSetRow()` but user reports DOM doesn't update. The function exists but may have selector issues.
-
-### Root Cause Investigation
-In `insertSetRow` (lines 2625-2645):
-- `setsContainer` selector uses `.space-y-1\.5` which may not match
-- `buttons` selector is fragile
-
-### Fix
-**File**: `static/js/workouts.js`
-
-1. **Add data attribute** to sets container in `renderSetRowHtml` / exercise card:
-   ```html
-   <div class="space-y-1.5" data-set-container>...</div>
-   ```
-
-2. **Simplify `insertSetRow` selectors**:
-   ```javascript
-   const setsContainer = card.querySelector('[data-set-container]');
-   const buttons = setsContainer.querySelector('[data-add-set-buttons]');
-   ```
-
-3. **Add data attribute** to the add/remove buttons container in exercise card template (line ~2884):
-   ```html
-   <div class="flex items-center justify-between gap-2 pt-1.5" data-add-set-buttons>...</div>
-   ```
-
-3. **Ensure `insertSetRow` is called** after state mutation in both local and online paths (already done, but verify).
-
-4. **Add fallback**: If DOM insertion fails, fall back to `renderWorkoutScreen` re-render.
-
----
-
-## 4. Fix Rest Timer Modal & "Готов" Button
-
-### 4a. Compact Timer Layout
-
-**Current Problem**: Timer bar (lines 2954-2999) has:
-- Preset chips (5 buttons) - overflow on mobile
-- Custom input
-- Mode toggle (Timer/Stopwatch)
-- Dismiss button
-All in a fixed-width bar that overflows on mobile.
-
-**Fix**: `static/js/workouts.js` (timer bar HTML, lines 2954-2999) + `static/css/styles.css`
-
-1. **Reduce width**: Use `max-w-[90vw]` or `w-full max-w-sm` with side margins
-2. **Stack on small screens**: Use `flex-col sm:flex-row` for presets + custom input
-3. **Compact presets**: Reduce padding, use `px-2 py-1 text-xs`
-4. **Mode toggle**: Make it a compact segmented control
-4. **Reduce height**: Reduce `py-2` to `py-1.5`, `gap-2` to `gap-1.5`
-
-**CSS**:
-```css
-.rest-timer-bar__inner {
-    max-width: 90vw;
-    padding: 0.75rem 1rem;
+#### `buildExerciseTrackCircles()` Modification
+```javascript
+buildExerciseTrackCircles(session) {
+    const exercises = this.currentSession?.exercises || session.exercises || [];
+    if (exercises.length === 0) return this.renderEmptyTrack();
+    
+    const activeIdx = this.findActiveExerciseIndex(session);
+    
+    // 1. Cancel button (always first)
+    const circles = [this.renderCancelCircle()];
+    
+    // 2. Exercise circles
+    exercises.forEach((ex, i) => {
+        circles.push(this.renderExerciseCircle(ex, i, activeIdx));
+    });
+    
+    // 3. Add exercise button (always last)
+    circles.push(this.renderAddCircle());
+    
+    return circles.join('');
 }
+```
+
+#### Circle Renderers
+```javascript
+renderCancelCircle() {
+    return `
+        <button type="button"
+                data-action="cancel-workout-from-track"
+                role="tab"
+                aria-label="Отменить тренировку"
+                class="exercise-track-circle cancel">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+        </button>
+    `;
+}
+
+renderExerciseCircle(ex, i, activeIdx) {
+    const state = this.getExerciseTrackState(ex);
+    const sets = ex.sets || [];
+    const completed = sets.filter(s => s.is_completed).length;
+    const total = sets.length;
+    const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+    const isActive = i === activeIdx;
+    
+    const fillPercent = state === 'complete' ? 100 : percent;
+    
+    return `
+        <button type="button"
+                data-exercise-index="${i}"
+                data-exercise-id="${ex.id}"
+                role="tab"
+                aria-label="Упражнение ${i + 1}: ${ex.name}"
+                class="exercise-track-circle ${state} ${isActive ? 'active' : ''}"
+                style="--fill-percent: ${fillPercent}%; --fill-color: ${this.getFillColor(state)}; --border-color: ${this.getBorderColor(state, isActive)};"
+                data-track-state="${state}"
+                data-track-percent="${percent}">
+            <div class="circle-content">
+                ${state === 'complete' 
+                    ? '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>'
+                    : `<span class="exercise-number">${i + 1}</span>`}
+            </div>
+        </button>
+    `;
+}
+
+renderAddCircle() {
+    return `
+        <button type="button"
+                data-action="add-exercise-from-track"
+                role="tab"
+                aria-label="Добавить упражнение"
+                class="exercise-track-circle add">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+            </svg>
+        </button>
+    `;
+}
+```
+
+---
+
+## 3. Rest Timer Positioning Fix
+
+### Current Problems
+1. Timer bar overflows right edge on mobile
+2. Presets chips don't scroll properly
+3. Timer can overlap bottom sets (4th, 5th)
+4. Fixed width causes horizontal overflow
+
+### Fix Strategy
+
+#### HTML Structure Changes (`renderWorkoutScreen`)
+```html
+<div id="rest-timer-bar" class="hidden fixed bottom-16 left-0 right-0 z-50 rest-timer-bar"
+     role="timer" aria-live="polite" aria-label="Таймер отдыха">
+    <div class="rest-timer-bar__inner glass rounded-2xl w-full max-w-[92vw] mx-auto">
+        <div class="flex flex-col gap-2 p-3">
+            <!-- Mode toggle (compact segmented) -->
+            <div class="flex gap-1" data-rest-timer-mode-toggle>
+                <button data-action="rest-timer-mode" data-mode="timer" class="mode-btn flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-colors">Таймер</button>
+                <button data-action="rest-timer-mode" data-mode="stopwatch" class="mode-btn flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-colors">Секундомер</button>
+            </div>
+            
+            <!-- Timer mode content -->
+            <div data-timer-mode class="space-y-2">
+                <!-- Presets - horizontally scrollable -->
+                <div class="rest-timer-presets flex gap-1.5 overflow-x-auto pb-1" data-timer-presets>
+                    ${REST_TIMER_PRESETS.map(sec => `
+                        <button type="button" data-action="rest-timer-preset" data-preset="${sec}"
+                                class="preset-btn flex-shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold glass text-surface-600 dark:text-surface-400 hover:bg-surface-200 dark:hover:bg-white/10 transition-colors snap-start">
+                            ${sec >= 60 ? `${sec / 60}м` : `${sec}с`}
+                        </button>
+                    `).join('')}
+                </div>
+                
+                <!-- Custom input -->
+                <div class="flex items-center gap-1">
+                    <input type="number" min="1" max="600" data-action="rest-timer-custom"
+                           class="w-16 h-7 text-center text-xs font-mono rounded-lg glass-input focus:outline-none focus:border-primary-500"
+                           placeholder="90">
+                    <span class="text-[10px] text-surface-500 dark:text-surface-400">сек</span>
+                </div>
+            </div>
+            
+            <!-- Stopwatch mode content -->
+            <div data-stopwatch-mode class="hidden space-y-2">
+                <div class="text-center text-xs text-surface-500 dark:text-surface-400">
+                    Нажмите «Готов» для фиксации времени
+                </div>
+            </div>
+            
+            <!-- Timer display + dismiss -->
+            <div class="flex items-center justify-between gap-2 pt-1">
+                <div class="flex items-center gap-2">
+                    <span class="animate-pulse-lime text-lime-600 dark:text-lime-400" aria-hidden="true">⏱</span>
+                    <span id="rest-timer-remaining" class="font-mono text-xl font-bold text-lime-600 dark:text-lime-400 tabular-nums min-w-[3.5rem] text-center">00:00</span>
+                    <span id="rest-timer-state" class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase">Отдых</span>
+                </div>
+                <button id="rest-timer-dismiss" data-action="dismiss-rest-timer" type="button"
+                        class="flex-shrink-0 glass rounded-xl px-3 py-1.5 text-xs font-semibold text-surface-700 dark:text-surface-300 hover:bg-surface-200 dark:hover:bg-white/10 transition-colors"
+                        aria-label="Готов">
+                    Готов
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+```
+
+#### CSS Fixes
+```css
+.rest-timer-bar {
+    bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+    left: 0;
+    right: 0;
+    pointer-events: none;
+}
+
+.rest-timer-bar__inner {
+    pointer-events: auto;
+    width: 100%;
+    max-width: 92vw;
+    margin: 0 auto;
+    box-sizing: border-box;
+}
+
 .rest-timer-presets {
     display: flex;
     gap: 6px;
@@ -116,210 +283,185 @@ All in a fixed-width bar that overflows on mobile.
     scroll-snap-type: x mandatory;
     -webkit-overflow-scrolling: touch;
     padding-bottom: 4px;
+    scrollbar-width: none;
 }
+
+.rest-timer-presets::-webkit-scrollbar {
+    display: none;
+}
+
 .rest-timer-presets button {
     flex-shrink: 0;
     scroll-snap-align: start;
-    padding: 4px 10px;
-    font-size: 11px;
 }
 ```
 
-### 4b. Fix "Готов" Button
+#### Positioning Fix
+- Use `left: 0; right: 0; max-width: 92vw; margin: 0 auto;` for centered adaptive width
+- Ensure `z-index: 50` is below modals (z-[120]) and toasts (z-[130])
+- Add `bottom: calc(4rem + env(safe-area-inset-bottom))` for safe area
 
-**Current Problem** (line 3546):
-```javascript
-this.dismissRestTimer(); // Discards rest time!
+---
+
+## 4. AI Analysis Badge in Collapsed Header
+
+### Current State
+- AI analysis block has toggle button + collapsible content
+- When collapsed, user sees only "ИИ-анализ" text
+- Must expand to see recommendations
+
+### New Design
+Show compact badge in toggle button with recommended weight/reps:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  ▼ ИИ-анализ                                    [ 80кг × 8 ] │  ← Collapsed
+│  ▶ ИИ-анализ                                    [ 80кг × 8 ] │  ← Collapsed (alt)
+└─────────────────────────────────────────────────────────────┘
 ```
 
-**Fix**: Change to call `stopAndSaveRestTimer(session)` which:
-1. Calculates elapsed time from `restTimerStartTime`
-2. Saves to `targetSet.rest_time_seconds` 
-3. Persists to localStorage/IndexedDB or API
-4. Updates inline rest time display via `applyRestTimeInline`
-5. Stops timer and hides bar
+### Implementation
 
-**File**: `static/js/workouts.js` - `bindWorkoutScreenEvents` (line ~3546)
+#### Modified Toggle Button (line ~2865-2877)
+```html
+<button type="button"
+        data-action="toggle-ai-analysis"
+        class="ai-analysis-toggle w-full flex items-center justify-between gap-2 text-xs font-semibold text-surface-600 dark:text-surface-300 hover:text-surface-900 dark:hover:text-surface-100 py-1.5 px-2 rounded-xl glass transition-colors"
+        aria-expanded="true">
+    <span>ИИ-анализ</span>
+    <span class="ai-analysis-badge hidden" data-ai-badge></span>
+    <svg class="chevron w-4 h-4 transition-transform duration-150" viewBox="0 0 24 24" aria-hidden="true">
+        <path fill="currentColor" d="M7 10l5 5 5-5z"/>
+    </svg>
+</button>
+```
+
+#### Badge Content
+```html
+<span class="ai-analysis-badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-lime-100 dark:bg-lime-900/30 text-lime-700 dark:text-lime-300">
+    ${weight_kg}кг × ${reps}
+</span>
+```
+
+#### Update Logic (`updateAiPlanBadges`)
 ```javascript
-container.querySelector('[data-action="dismiss-rest-timer"]')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    this.stopAndSaveRestTimer(session); // FIXED
-});
+updateAiPlanBadges(container) {
+    if (!container || !this.aiPlan) return;
+    container.querySelectorAll('.workout-card[data-exercise-id]').forEach(card => {
+        const nameEl = card.querySelector('h3');
+        const name = nameEl?.textContent || '';
+        const rec = this.findAiPlanFor(name);
+        
+        // Update badge in toggle button
+        const badgeEl = card.querySelector('[data-ai-badge]');
+        if (rec && (rec.weight_kg || rec.reps)) {
+            const badgeText = `${rec.weight_kg || '—'}кг × ${rec.reps || '—'}`;
+            if (badgeEl) {
+                badgeEl.textContent = badgeText;
+                badgeEl.classList.remove('hidden');
+            }
+        } else if (badgeEl) {
+            badgeEl.classList.add('hidden');
+        }
+        
+        // Existing badge injection logic for expanded state...
+        const contentEl = card.querySelector('.ai-analysis-content');
+        if (contentEl && rec) {
+            contentEl.innerHTML = Components.aiWorkoutPlanBadge(rec);
+        }
+    });
+}
+```
+
+#### CSS for Badge
+```css
+.ai-analysis-badge {
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.ai-analysis-toggle[aria-expanded="false"] .ai-analysis-badge {
+    /* Badge visible in both states */
+}
 ```
 
 ---
 
-## 5. Add Exercise via Track Circles (Replace Bottom Card)
+## Affected Files
 
-### Current Problem
-- "Add Exercise" card at bottom of carousel (lines 2916-2922) takes full card space
-- User wants it as a "+" circle at the end of the exercise track
-
-### Fix
-
-**File**: `static/js/workouts.js`
-
-1. **Modify `buildExerciseTrackCircles`** (lines 3129-3174) to append a "+" circle:
-   ```javascript
-   // After mapping exercises, add:
-   circles.push(`
-       <button type="button"
-               data-action="add-exercise-from-track"
-               role="tab"
-               aria-label="Добавить упражнение"
-               class="exercise-track-circle add-exercise-circle">
-           <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-           </svg>
-       </button>
-   `);
-   ```
-
-2. **Add click handler** in `updateExerciseTrack` (line ~3184):
-   ```javascript
-   container.querySelector('[data-action="add-exercise-from-track"]')?.addEventListener('click', async (e) => {
-       e.stopPropagation();
-       await this.showAddExerciseModal(app, session, sessionId);
-   });
-   ```
-
-3. **Remove "Add Exercise" card** from carousel (remove lines 2916-2922, and from `allCards` array line 2924)
-
-4. **Add CSS** for the add circle:
-   ```css
-   .exercise-track-circle.add-exercise-circle {
-       background: transparent;
-       border: 2px dashed #3f3f46;
-       color: #71717a;
-   }
-   .dark .exercise-track-circle.add-exercise-circle {
-       border-color: #52525b;
-       color: #71717a;
-   }
-   .exercise-track-circle.add-exercise-circle:hover {
-       border-color: #84cc16;
-       color: #84cc16;
-   }
-   ```
-
----
-
-## 6. Fix Add Workout Modal (Close Button + Fullscreen)
-
-### Current Problem
-- `showAddExerciseModal` (line ~4692) creates modal without visible close button
-- Modal takes 100% screen height (`h-[100dvh] sm:h-[90vh]`)
-- No way to close except Escape or backdrop click
-
-### Fix
-
-**File**: `static/js/workouts.js` - `showAddExerciseModal` (lines 4692-4866)
-
-1. **Add close button** in modal header (after line 4746):
-   ```html
-   <button type="button" data-action="close-add-exercise-modal" 
-           class="w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0"
-           aria-label="Закрыть">✕</button>
-   ```
-
-2. **Add click handler** in event binding section:
-   ```javascript
-   modal.querySelector('[data-action="close-add-exercise-modal"]')?.addEventListener('click', closeModal);
-   ```
-
-3. **Fix fullscreen issue**: Change modal height from `h-[100dvh]` to `max-h-[90vh]` with `overflow-y-auto` on content area, ensuring close button stays visible.
-
-4. **Ensure backdrop click closes**: Already implemented (line 4770-4772), verify it works.
-
----
-
-## Affected Files Summary
-
-| File | Issues |
-|------|--------|
-| `static/js/workouts.js` | All 6 issues |
-| `static/css/styles.css` | Issues 1, 3, 4, 5 (colors, spacing, timer layout) |
+| File | Changes |
+|------|---------|
+| `static/js/workouts.js` | `buildExerciseTrackCircles`, `buildExerciseTrackCircles` helpers, `renderWorkoutScreen` (timer HTML), `updateAiPlanBadges`, `updateExerciseTrack` handlers |
+| `static/css/styles.css` | `.exercise-track-circle` (liquid fill), `.rest-timer-bar__inner`, `.rest-timer-presets`, `.ai-analysis-badge`, circle state colors |
 
 ---
 
 ## Validation Plan
 
-### 1. Top Padding & Header
-- [ ] Header ("Присяд") and exercise track circles visible without scrolling on mobile
-- [ ] No "Суммарный тоннаж" text in header
-- [ ] Progress text "Сделано X из Y подходов" visible with comfortable gap to circles
+### 1. Liquid Fill Circles
+- [ ] Circles show exercise numbers (1, 2, 3...)
+- [ ] Liquid fill rises smoothly from bottom (0.4s animation)
+- [ ] Empty: transparent, zinc border, number visible
+- [ ] Partial: lime fill rises to %, number visible
+- [ ] Active: lime fill + pulse animation
+- [ ] Complete: filled lime-800, white checkmark
+- [ ] Cancel: red border, × icon
+- [ ] Add: dashed border, + icon
+- [ ] Both themes work
 
-### 2. Add Set DOM Update
-- [ ] Click "+ Добавить подход" → new row appears instantly with slide-down animation
-- [ ] Set numbering updates correctly
-- [ ] Works for local and online sessions
-- [ ] No full page re-render needed
+### 2. Symmetric Track
+- [ ] First circle: × (cancel), red border
+- [ ] Middle circles: exercises with numbers
+- [ ] Last circle: + (add), dashed border
+- [ ] Click cancel → confirms cancellation
+- [ ] Click add → opens exercise modal
+- [ ] Click exercise → scrolls to card
+- [ ] Track updates when exercises added/removed
 
-### 3. Rest Timer Modal
-- [ ] Timer bar fits on 320px screen without horizontal overflow
+### 3. Rest Timer
+- [ ] Timer bar max-width 92vw, centered
+- [ ] No horizontal overflow on 320px screen
 - [ ] Presets horizontally scrollable
-- [ ] "Готов" button saves rest time to previous set
-- [ ] Inline "⏱ MM:SS Отдых" appears below completed set
-- [ ] Timer bar hides after saving
+- [ ] No overlap with bottom sets
+- [ ] "Готов" saves rest time to previous set
+- [ ] Inline rest time appears after save
+- [ ] Timer mode / stopwatch mode both work
 
-### 4. Exercise Track Circles
-- [ ] Circles render with new dark neon color scheme
-- [ ] Active exercise circle highlighted with pulse
-- [ ] Click circle → smooth scroll to exercise card
-- [ ] "+" circle at end opens add exercise modal
-- [ ] Circles update dynamically when exercises added/removed
-
-### 5. Add Exercise via Track
-- [ ] "+" circle visible at end of track
-- [ ] Tap opens add exercise modal
-- [ ] No "Add Exercise" card at bottom of carousel
-
-### 5. Add Exercise Modal
-- [ ] Visible "✕" close button in header
-- [ ] Click close button → modal closes
-- [ ] Click backdrop → modal closes
-- [ ] Escape key → modal closes
-- [ ] Modal doesn't take full screen (max-h-[90vh])
-- [ ] Search, filter, selection all work
-
-### 6. Circle Colors (Dark Neon)
-- [ ] Empty: dark zinc bg, subtle border, zinc-500 text
-- [ ] Partial: lime-950 bg, lime-800 border, lime-500 text
-- [ ] Active: lime-950 bg, lime-500 border + pulse
-- [ ] Complete: lime-800 filled, white checkmark
-- [ ] Both light/dark themes work
+### 4. AI Analysis Badge
+- [ ] Badge shows "80кг × 8" in toggle button when collapsed
+- [ ] Badge updates when AI plan arrives
+- [ ] Badge hidden when no recommendation
+- [ ] Expanded state still shows full analysis
 
 ---
 
 ## Implementation Order
 
-1. **Issue 4b** - Fix "Готов" button (critical data loss)
-2. **Issue 6** - Fix add exercise modal (usability blocker)
-3. **Issue 1** - Reduce top padding (visual cleanup)
-4. **Issue 2** - Clean header (visual cleanup)
-5. **Issue 3** - Fix Add Set DOM update (core functionality)
-6. **Issue 4a** - Compact timer layout (UX)
-7. **Issue 5** - Add exercise via track (structural change)
-8. **Issue 3 (colors)** - Circle color redesign (visual polish)
+1. **Rest Timer Fix** (critical - data loss + layout bug)
+2. **Liquid Fill Circles** (core visual redesign)
+3. **Symmetric Track** (structural change)
+4. **AI Analysis Badge** (UX improvement)
+5. **Timer "Готов" Fix** (data persistence)
 
 ---
 
-## Risk Assessment
+## Risks
 
 | Risk | Likelihood | Mitigation |
 |------|------------|------------|
-| "Готов" button fix breaks timer state | Medium | Test local/online; verify `session` passed correctly |
-| Modal close button conflicts with existing handlers | Low | Use unique `data-action`; test all close paths |
-| "+" circle breaks track click handlers | Low | Use unique `data-action`; test click delegation |
-| Top padding too small for notch/Dynamic Island | Medium | Test on iOS; use `safe-area-inset-top` |
-| Add Set DOM insertion fails | Medium | Fallback to full re-render; add error logging |
-| Timer bar still overflows on very small screens | Low | Test at 320px; use `max-w-[90vw]` |
+| Liquid fill CSS not supported on older iOS | Low | `clip-path: inset()` well supported since iOS 13 |
+| Liquid fill performance on many circles | Low | Max 10 circles; CSS-only animation |
+| Cancel button accidental tap | Medium | Confirmation modal; distinct red styling |
+| Timer bar still overlaps on very small screens | Low | Test at 320px; `max-w-[92vw]` |
+| Liquid fill animation jank on low-end | Low | `will-change: clip-path`; compositor-only |
 
 ---
 
 ## Notes
 
-- **Priority 1**: Issues 4b (data loss) and 6 (usability blocker)
-- **Issue 5** (add via track) is a nice-to-have structural improvement
-- All color changes should use the app's existing lime/zinc design tokens
-- Test on both iOS Safari and Android Chrome
+- **Priority 1**: Rest timer positioning + "Готов" fix (data loss + layout)
+- **Priority 2**: Liquid fill circles (signature feature)
+- **Priority 3**: Symmetric track (structural)
+- **Priority 4**: AI badge (polish)
+- All colors use existing lime/zinc design tokens
+- Test on iOS Safari (Dynamic Island, safe areas) and Android Chrome
