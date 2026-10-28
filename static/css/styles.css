@@ -3572,18 +3572,18 @@ input[data-field="reps"] {
     color: #71717a;
 }
 .exercise-track-circle.partial {
-    background: #1a2e05;
+    background: #142a05;
     border-color: #4d7c0c;
     color: #84cc16;
 }
 .dark .exercise-track-circle.partial {
-    background: #1a2e05;
+    background: #142a05;
     border-color: #4d7c0c;
     color: #84cc16;
     box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.2);
 }
 .exercise-track-circle.active {
-    background: #1a2e05;
+    background: #142a05;
     border-color: #84cc16;
     color: #84cc16;
     box-shadow: 0 0 0 3px rgba(132, 204, 22, 0.3);
@@ -3595,11 +3595,28 @@ input[data-field="reps"] {
 }
 .exercise-track-circle.complete {
     background: #4d7c0c;
-    border-color: #84cc16;
+    border-color: #4d7c0c;
     color: white;
 }
 .exercise-track-circle svg {
     display: block;
+}
+
+/* "+" add-exercise circle at the end of the track */
+.exercise-track-circle.add-exercise-circle {
+    background: transparent;
+    border: 2px dashed #3f3f46;
+    color: #71717a;
+    cursor: pointer;
+}
+.dark .exercise-track-circle.add-exercise-circle {
+    border-color: #52525b;
+    color: #71717a;
+}
+.exercise-track-circle.add-exercise-circle:hover {
+    background: rgba(132, 204, 22, 0.08);
+    border-color: #84cc16;
+    color: #84cc16;
 }
 
 /* ===== Per-set row delete button (start of row) ===== */
@@ -3826,17 +3843,18 @@ body.has-network-banner main {
 .rest-timer-presets {
     display: flex;
     flex-wrap: nowrap;
-    gap: 8px;
+    gap: 4px;
     overflow-x: auto;
     padding-bottom: 4px;
     -webkit-overflow-scrolling: touch;
     scroll-snap-type: x mandatory;
+    scroll-padding-left: 2px;
 }
 .rest-timer-presets button[data-action="rest-timer-preset"] {
     flex-shrink: 0;
     scroll-snap-align: start;
-    min-width: 44px;
-    height: 28px;
+    min-width: 40px;
+    height: 26px;
 }
 
 /* Muted inline rest-time line shown between completed set rows on the

@@ -1,259 +1,235 @@
-# Implementation Plan: Active Workout Interface Fixes & Improvements
+# Implementation Plan: Active Workout Interface Fixes & Redesign
 
 ## Overview
-Fix 6 critical issues in the active workout interface (`static/js/workouts.js` + `static/css/styles.css`):
+Comprehensive fixes and redesign of the active workout interface (`static/js/workouts.js` + `static/css/styles.css`) based on detailed user review. Addresses 6 critical areas:
 
-1. **Remove overlapping progress bar** - Old linear progress bar still renders alongside new exercise track circles
-2. **Fix rest timer "Готов" button** - Currently calls `dismissRestTimer()` which discards rest time; should call `stopAndSaveRestTimer()` to persist elapsed rest time
-3. **Unify circle colors to dark neon design system** - Replace yellow/amber partial state with consistent dark neon palette
-3. **Optimize timer presets layout** - Presets don't fit on mobile; add horizontal scroll or compact layout
-4. **Fix "Add Set" DOM update** - Button adds to state but doesn't update DOM (already has `insertSetRow` but may have issues)
-5. **Move delete button to set row start** - Replace dropdown menu (⋮) with compact delete icon at row start
+1. **Reduce top padding** - Move header and track circles higher
+2. **Clean up header** - Remove "Суммарный тоннаж", keep only progress text
+3. **Fix "Add Set" DOM update** - Ensure instant DOM re-render
+4. **Fix rest timer modal** - Compact layout, fix "Готов" button
+5. **Add exercise via track circles** - Replace bottom card with "+" circle in track
+6. **Fix add workout modal** - Add close button, fix fullscreen issue
 
 ---
 
-## Issue 1: Remove Overlapping Progress Bar
+## 1. Reduce Top Padding (Header & Track)
 
 ### Current Problem
-The HTML at lines 2939-2948 in `renderWorkoutScreen` still renders:
-- `workout-progress-text` (text showing "Сделано X из Y подходов")
-- `workout-progress-bar` (linear progress bar)
-- THEN calls `this.buildExerciseTrackHtml(session)` which adds circles
+The workout container has excessive top padding (`pt-12` on line 2932), pushing the header and exercise track circles too low.
 
 ### Fix
-Remove the progress bar section (lines 2939-2947) entirely. Keep only:
-- `workout-progress-text` (optional - could keep for total stats)
-- Exercise track circles (via `buildExerciseTrackHtml`)
+**File**: `static/js/workouts.js` - `renderWorkoutScreen` (line ~2932)
+- Change `pt-12` to `pt-6` or `pt-4` on the `#workout-container` div
+- Reduce `mb-3` on header to `mb-2`
+- Reduce `mb-4` on progress section to `mb-2`
+- Ensure exercise track circles sit directly below progress text with minimal gap
 
-### Files
-- `static/js/workouts.js` - `renderWorkoutScreen` (lines 2939-2948)
-
----
-
-## Issue 2: Fix Rest Timer "Готов" Button
-
-### Current Problem
-Line 3546 in `bindWorkoutScreenEvents`:
-```javascript
-container.querySelector('[data-action="dismiss-rest-timer"]')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    this.dismissRestTimer();  // BUG: discards rest time instead of saving
-});
-```
-
-The `dismissRestTimer()` function (line 1487) only clears state without saving. The correct function is `stopAndSaveRestTimer()` which:
-1. Calculates elapsed time from `restTimerStartTime`
-2. Saves to `targetSet.rest_time_seconds`
-3. Persists to localStorage/IndexedDB or sends to API
-4. Updates inline rest time display
-
-### Fix
-Change the event handler to call `stopAndSaveRestTimer(session)` instead of `dismissRestTimer()`.
-
-### Files
-- `static/js/workouts.js` - `bindWorkoutScreenEvents` (line 3546)
-
----
-
-## Issue 3: Unify Circle Colors to Dark Neon Design System
-
-### Current Problem
-CSS uses inconsistent colors:
-- `empty`: `#e4e4e7` / `#3f3f46` (gray/zinc)
-- `partial`: `#f59e0b` / `#fbbf24` (amber/yellow) - **stands out wrong**
-- `active`: `#84cc16` (lime) with pulse
-- `complete`: `#84cc16` / `#4d7c0c` (lime/green)
-
-### Desired Design System
-All states should use the **dark neon lime/emerald palette** consistent with the app:
-- Primary accent: `#84cc16` (lime-500)
-- Dark accent: `#4d7c0c` (lime-800)
-- Surface dark: `#18181b` / `#27272a`
-- Border: `#3f3f46` (zinc-700)
-
-### New Color Scheme
-| State | Background | Border | Text/Icon | Notes |
-|-------|------------|--------|-----------|-------|
-| **empty** | `#27272a` (zinc-800) | `#3f3f46` (zinc-700) | `#71717a` (zinc-500) | Subtle, receded |
-| **partial** | `#1a2e05` (lime-950/80) | `#4d7c0c` (lime-800) | `#84cc16` (lime-500) | Neon lime glow |
-| **active** | `#1a2e05` | `#84cc16` (lime-500) | `#84cc16` | Border glow + pulse |
-| **complete** | `#4d7c0c` (lime-800) | `#84cc16` | `white` | Filled, checkmark |
-
-### CSS Changes
-Update `.exercise-track-circle` base and all state classes in `static/css/styles.css` (lines 3546-3587).
-
-### Files
-- `static/css/styles.css` - lines 3546-3587
-
----
-
-## Issue 4: Optimize Timer Presets Layout
-
-### Current Problem
-Presets at lines 2969-2974 render as inline buttons:
-```html
-<div id="rest-timer-presets" class="rest-timer-presets flex gap-1.5 hidden" data-timer-presets>
-    <button ...>30с</button>
-    <button ...>1м</button>
-    <button ...>1.5м</button>
-    <button ...>2м</button>
-    <button ...>3м</button>
-</div>
-```
-On mobile (320-375px), 5 buttons + custom input + mode toggle + dismiss button overflow.
-
-### Fix Options
-1. **Horizontal scroll** - Add `overflow-x-auto` to presets container
-2. **Compact grid** - 2 rows of 3 buttons (30s, 1m, 1.5m / 2m, 3m, custom)
-3. **Expandable** - Show 3 presets, "More" button reveals rest
-
-### Recommended: Horizontal Scroll
-Simplest, preserves all presets, native mobile behavior.
-
-### CSS Changes
+### CSS Alternative
+Add to `static/css/styles.css`:
 ```css
+#workout-container { padding-top: 1.5rem; } /* was 3rem */
+```
+
+---
+
+## 2. Clean Up Header (Remove "Суммарный тоннаж")
+
+### Current Problem
+Header (lines 2940-2947) shows:
+- "Сделано X из Y подходов (Z%)" 
+- "Суммарный тоннаж: N кг" 
+These overlap with exercise track circles below.
+
+### Fix
+**File**: `static/js/workouts.js` - `renderWorkoutScreen` (lines 2940-2947)
+- Remove the tonnage `<span id="workout-total-tonnage">` entirely
+- Keep only `<span id="workout-progress-text">` 
+- Add comfortable gap (`mb-3` → `mb-4`) between progress text and exercise track circles
+- The tonnage is available in the workout summary/analysis; no need in active header
+
+---
+
+## 3. Fix "Add Set" DOM Update
+
+### Current Problem
+The add-set handler (lines 3364-3410) calls `insertSetRow()` but user reports DOM doesn't update. The function exists but may have selector issues.
+
+### Root Cause Investigation
+In `insertSetRow` (lines 2625-2645):
+- `setsContainer` selector uses `.space-y-1\.5` which may not match
+- `buttons` selector is fragile
+
+### Fix
+**File**: `static/js/workouts.js`
+
+1. **Add data attribute** to sets container in `renderSetRowHtml` / exercise card:
+   ```html
+   <div class="space-y-1.5" data-set-container>...</div>
+   ```
+
+2. **Simplify `insertSetRow` selectors**:
+   ```javascript
+   const setsContainer = card.querySelector('[data-set-container]');
+   const buttons = setsContainer.querySelector('[data-add-set-buttons]');
+   ```
+
+3. **Add data attribute** to the add/remove buttons container in exercise card template (line ~2884):
+   ```html
+   <div class="flex items-center justify-between gap-2 pt-1.5" data-add-set-buttons>...</div>
+   ```
+
+3. **Ensure `insertSetRow` is called** after state mutation in both local and online paths (already done, but verify).
+
+4. **Add fallback**: If DOM insertion fails, fall back to `renderWorkoutScreen` re-render.
+
+---
+
+## 4. Fix Rest Timer Modal & "Готов" Button
+
+### 4a. Compact Timer Layout
+
+**Current Problem**: Timer bar (lines 2954-2999) has:
+- Preset chips (5 buttons) - overflow on mobile
+- Custom input
+- Mode toggle (Timer/Stopwatch)
+- Dismiss button
+All in a fixed-width bar that overflows on mobile.
+
+**Fix**: `static/js/workouts.js` (timer bar HTML, lines 2954-2999) + `static/css/styles.css`
+
+1. **Reduce width**: Use `max-w-[90vw]` or `w-full max-w-sm` with side margins
+2. **Stack on small screens**: Use `flex-col sm:flex-row` for presets + custom input
+3. **Compact presets**: Reduce padding, use `px-2 py-1 text-xs`
+4. **Mode toggle**: Make it a compact segmented control
+4. **Reduce height**: Reduce `py-2` to `py-1.5`, `gap-2` to `gap-1.5`
+
+**CSS**:
+```css
+.rest-timer-bar__inner {
+    max-width: 90vw;
+    padding: 0.75rem 1rem;
+}
 .rest-timer-presets {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     overflow-x: auto;
-    padding-bottom: 4px; /* for scrollbar */
     scroll-snap-type: x mandatory;
     -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
 }
 .rest-timer-presets button {
     flex-shrink: 0;
     scroll-snap-align: start;
+    padding: 4px 10px;
+    font-size: 11px;
 }
 ```
 
-### Files
-- `static/css/styles.css` - add `.rest-timer-presets` styles
-- `static/js/workouts.js` - ensure container has proper classes
+### 4b. Fix "Готов" Button
+
+**Current Problem** (line 3546):
+```javascript
+this.dismissRestTimer(); // Discards rest time!
+```
+
+**Fix**: Change to call `stopAndSaveRestTimer(session)` which:
+1. Calculates elapsed time from `restTimerStartTime`
+2. Saves to `targetSet.rest_time_seconds` 
+3. Persists to localStorage/IndexedDB or API
+4. Updates inline rest time display via `applyRestTimeInline`
+5. Stops timer and hides bar
+
+**File**: `static/js/workouts.js` - `bindWorkoutScreenEvents` (line ~3546)
+```javascript
+container.querySelector('[data-action="dismiss-rest-timer"]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    this.stopAndSaveRestTimer(session); // FIXED
+});
+```
 
 ---
 
-## Issue 5: Fix "Add Set" DOM Update
-
-### Current State
-The add-set handler (lines 3364-3410) already calls `insertSetRow()` for both local and online cases. However, the user reports it doesn't update DOM.
-
-### Potential Issues
-1. `insertSetRow` selector for `setsContainer` may fail (line 2628-2630)
-2. `buttons` selector may not find the add/remove button container
-3. Race condition with `persistLocalSession` or API call
-
-### Fix
-1. Add debug logging to `insertSetRow`
-2. Make selectors more robust (use `data-set-container` attribute)
-3. Ensure `insertSetRow` is called after state mutation
-
-### Files
-- `static/js/workouts.js` - `insertSetRow` (lines 2625-2645) and add-set handler (lines 3364-3410)
-
----
-
-## Issue 6: Move Delete Button to Set Row Start
+## 5. Add Exercise via Track Circles (Replace Bottom Card)
 
 ### Current Problem
-Set rows have a dropdown menu (⋮) at the end (lines 2596-2617) with delete action inside. User wants a compact delete icon at row **start** (near set number) to avoid accidental taps near the ✓ toggle button.
+- "Add Exercise" card at bottom of carousel (lines 2916-2922) takes full card space
+- User wants it as a "+" circle at the end of the exercise track
 
-### Current Structure (end of row):
-```html
-<button data-action="toggle-set">✓</button>
-<div class="set-row-menu relative flex-shrink-0">
-    <button data-action="toggle-set-menu">⋮</button>
-    <div class="set-dropdown-menu">...</div>
-</div>
-```
+### Fix
 
-### New Structure (start of row):
-```html
-<div class="flex items-center gap-2 glass p-1.5 rounded-2xl relative" data-set-id="...">
-    <!-- DELETE ICON AT START -->
-    <button data-action="delete-set" data-set-id="..." 
-            class="delete-set-btn-start w-7 h-7 rounded-xl glass text-surface-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center justify-center transition-colors"
-            aria-label="Удалить подход">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.131A2.24 2.24 0 0115.138 21H8.862a2.24 0 01-2.271-2.133L5.867 7M6 7h12M6 7l1-2h10l1 2M10 11v6M14 11v6M9 11l1-9h4l1 9"/>
-        </svg>
-    </button>
-    <span class="font-bold w-6 text-center text-xs ...">${set.set_number}</span>
-    ...
-    <button data-action="toggle-set">✓</button>
-</div>
-```
+**File**: `static/js/workouts.js`
 
-### Behavior
-- Click delete icon → show confirmation modal → if confirmed, call existing delete logic
-- Remove the dropdown menu (⋮) entirely
-- Keep existing `handleSetDelete` logic but trigger from new button
+1. **Modify `buildExerciseTrackCircles`** (lines 3129-3174) to append a "+" circle:
+   ```javascript
+   // After mapping exercises, add:
+   circles.push(`
+       <button type="button"
+               data-action="add-exercise-from-track"
+               role="tab"
+               aria-label="Добавить упражнение"
+               class="exercise-track-circle add-exercise-circle">
+           <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+           </svg>
+       </button>
+   `);
+   ```
 
-### Files
-- `static/js/workouts.js` - `renderSetRowHtml` (lines 2566-2621)
-- `static/js/workouts.js` - remove dropdown menu click handlers (lines 3413-3525)
-- `static/css/styles.css` - add `.delete-set-btn-start` styles
+2. **Add click handler** in `updateExerciseTrack` (line ~3184):
+   ```javascript
+   container.querySelector('[data-action="add-exercise-from-track"]')?.addEventListener('click', async (e) => {
+       e.stopPropagation();
+       await this.showAddExerciseModal(app, session, sessionId);
+   });
+   ```
 
----
+3. **Remove "Add Exercise" card** from carousel (remove lines 2916-2922, and from `allCards` array line 2924)
 
-## Validation Plan
-
-### Issue 1: Progress Bar Removed
-- [ ] No linear progress bar visible in workout screen
-- [ ] Exercise track circles visible and functional
-- [ ] Total sets/tonnage text still visible (optional)
-
-### Issue 2: Rest Timer "Готов" Saves Time
-- [ ] Complete set 1 → rest timer starts
-- [ ] Click "Готов" → timer stops, rest time saved to set 1
-- [ ] Inline "⏱ 01:30 Отдых" appears below set 1
-- [ ] Works for both local and online sessions
-
-### Issue 3: Circle Colors
-- [ ] Empty circles: dark zinc background, subtle border
-- [ ] Partial circles: neon lime border/glow, lime text
-- [ ] Active circles: lime border + pulse animation
-- [ ] Complete circles: filled lime-800, white checkmark
-- [ ] Dark/light themes both work
-
-### Issue 4: Timer Presets Scroll
-- [ ] All 5 presets accessible on 320px screen
-- [ ] Horizontal scroll works smoothly
-- [ ] Custom input and mode toggle still accessible
-
-### Issue 5: Add Set Updates DOM
-- [ ] Click "+ Добавить подход" → new row appears instantly with animation
-- [ ] Set numbering updates correctly
-- [ ] Works for local and online sessions
-
-### Issue 6: Delete Button at Row Start
-- [ ] Delete icon visible at start of each set row
-- [ ] Click → confirmation modal → delete works
-- [ ] No dropdown menu (⋮) at row end
-- [ ] Set numbering updates after deletion
+4. **Add CSS** for the add circle:
+   ```css
+   .exercise-track-circle.add-exercise-circle {
+       background: transparent;
+       border: 2px dashed #3f3f46;
+       color: #71717a;
+   }
+   .dark .exercise-track-circle.add-exercise-circle {
+       border-color: #52525b;
+       color: #71717a;
+   }
+   .exercise-track-circle.add-exercise-circle:hover {
+       border-color: #84cc16;
+       color: #84cc16;
+   }
+   ```
 
 ---
 
-## Implementation Order
+## 6. Fix Add Workout Modal (Close Button + Fullscreen)
 
-1. **Issue 1** - Remove progress bar (simple, visual cleanup)
-2. **Issue 2** - Fix rest timer "Готов" (critical data loss bug)
-3. **Issue 3** - Circle colors (visual consistency)
-4. **Issue 4** - Timer presets scroll (UX improvement)
-5. **Issue 5** - Add set DOM update (verify/fix existing logic)
-6. **Issue 6** - Move delete button (structural change)
+### Current Problem
+- `showAddExerciseModal` (line ~4692) creates modal without visible close button
+- Modal takes 100% screen height (`h-[100dvh] sm:h-[90vh]`)
+- No way to close except Escape or backdrop click
 
----
+### Fix
 
-## Risk Assessment
+**File**: `static/js/workouts.js` - `showAddExerciseModal` (lines 4692-4866)
 
-| Risk | Likelihood | Mitigation |
-|------|------------|------------|
-| Progress bar removal breaks metrics display | Low | Keep tonnage/completed text; circles show progress |
-| `stopAndSaveRestTimer` called incorrectly | Medium | Test both local/online; verify `session` passed correctly |
-| Circle color changes break dark/light themes | Medium | Test both themes; use CSS custom properties |
-| Preset scroll breaks on iOS | Low | Use `-webkit-overflow-scrolling: touch` |
-| Add set DOM insertion fails silently | Medium | Add error logging; fallback to full re-render |
-| Delete button too close to set number | Medium | Add `gap-1` or `pl-1`; test touch targets |
+1. **Add close button** in modal header (after line 4746):
+   ```html
+   <button type="button" data-action="close-add-exercise-modal" 
+           class="w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0"
+           aria-label="Закрыть">✕</button>
+   ```
+
+2. **Add click handler** in event binding section:
+   ```javascript
+   modal.querySelector('[data-action="close-add-exercise-modal"]')?.addEventListener('click', closeModal);
+   ```
+
+3. **Fix fullscreen issue**: Change modal height from `h-[100dvh]` to `max-h-[90vh]` with `overflow-y-auto` on content area, ensuring close button stays visible.
+
+4. **Ensure backdrop click closes**: Already implemented (line 4770-4772), verify it works.
 
 ---
 
@@ -262,13 +238,88 @@ Set rows have a dropdown menu (⋮) at the end (lines 2596-2617) with delete act
 | File | Issues |
 |------|--------|
 | `static/js/workouts.js` | All 6 issues |
-| `static/css/styles.css` | Issues 3, 4 |
+| `static/css/styles.css` | Issues 1, 3, 4, 5 (colors, spacing, timer layout) |
 
 ---
 
-## Notes for Implementation
+## Validation Plan
 
-- **Issue 2** is the highest priority - data loss bug
-- **Issue 6** requires removing dropdown menu event handlers (lines 3413-3525) - ensure no orphaned listeners
-- **Issue 5** may already work - verify first before fixing
+### 1. Top Padding & Header
+- [ ] Header ("Присяд") and exercise track circles visible without scrolling on mobile
+- [ ] No "Суммарный тоннаж" text in header
+- [ ] Progress text "Сделано X из Y подходов" visible with comfortable gap to circles
+
+### 2. Add Set DOM Update
+- [ ] Click "+ Добавить подход" → new row appears instantly with slide-down animation
+- [ ] Set numbering updates correctly
+- [ ] Works for local and online sessions
+- [ ] No full page re-render needed
+
+### 3. Rest Timer Modal
+- [ ] Timer bar fits on 320px screen without horizontal overflow
+- [ ] Presets horizontally scrollable
+- [ ] "Готов" button saves rest time to previous set
+- [ ] Inline "⏱ MM:SS Отдых" appears below completed set
+- [ ] Timer bar hides after saving
+
+### 4. Exercise Track Circles
+- [ ] Circles render with new dark neon color scheme
+- [ ] Active exercise circle highlighted with pulse
+- [ ] Click circle → smooth scroll to exercise card
+- [ ] "+" circle at end opens add exercise modal
+- [ ] Circles update dynamically when exercises added/removed
+
+### 5. Add Exercise via Track
+- [ ] "+" circle visible at end of track
+- [ ] Tap opens add exercise modal
+- [ ] No "Add Exercise" card at bottom of carousel
+
+### 5. Add Exercise Modal
+- [ ] Visible "✕" close button in header
+- [ ] Click close button → modal closes
+- [ ] Click backdrop → modal closes
+- [ ] Escape key → modal closes
+- [ ] Modal doesn't take full screen (max-h-[90vh])
+- [ ] Search, filter, selection all work
+
+### 6. Circle Colors (Dark Neon)
+- [ ] Empty: dark zinc bg, subtle border, zinc-500 text
+- [ ] Partial: lime-950 bg, lime-800 border, lime-500 text
+- [ ] Active: lime-950 bg, lime-500 border + pulse
+- [ ] Complete: lime-800 filled, white checkmark
+- [ ] Both light/dark themes work
+
+---
+
+## Implementation Order
+
+1. **Issue 4b** - Fix "Готов" button (critical data loss)
+2. **Issue 6** - Fix add exercise modal (usability blocker)
+3. **Issue 1** - Reduce top padding (visual cleanup)
+4. **Issue 2** - Clean header (visual cleanup)
+5. **Issue 3** - Fix Add Set DOM update (core functionality)
+6. **Issue 4a** - Compact timer layout (UX)
+7. **Issue 5** - Add exercise via track (structural change)
+8. **Issue 3 (colors)** - Circle color redesign (visual polish)
+
+---
+
+## Risk Assessment
+
+| Risk | Likelihood | Mitigation |
+|------|------------|------------|
+| "Готов" button fix breaks timer state | Medium | Test local/online; verify `session` passed correctly |
+| Modal close button conflicts with existing handlers | Low | Use unique `data-action`; test all close paths |
+| "+" circle breaks track click handlers | Low | Use unique `data-action`; test click delegation |
+| Top padding too small for notch/Dynamic Island | Medium | Test on iOS; use `safe-area-inset-top` |
+| Add Set DOM insertion fails | Medium | Fallback to full re-render; add error logging |
+| Timer bar still overflows on very small screens | Low | Test at 320px; use `max-w-[90vw]` |
+
+---
+
+## Notes
+
+- **Priority 1**: Issues 4b (data loss) and 6 (usability blocker)
+- **Issue 5** (add via track) is a nice-to-have structural improvement
 - All color changes should use the app's existing lime/zinc design tokens
+- Test on both iOS Safari and Android Chrome
