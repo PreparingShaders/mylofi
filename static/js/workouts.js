@@ -156,6 +156,9 @@ export const Workouts = {
     activeRestForSetId: null,
     lastSavedRestSetId: null,
     restSavedBySetId: null,
+    // Per-exercise auto-start preference for the rest timer. Stored as a Map
+    // keyed by exercise id; missing entries default to true (auto-start on).
+    restAutoStart: null,
     // Cached completed history sessions, available to computePrevText for
     // dynamically inserted set rows that are added outside of renderWorkoutScreen.
     completedHistorySessions: [],
@@ -1375,12 +1378,14 @@ export const Workouts = {
         const bar = document.getElementById('rest-timer-bar');
         if (!bar) return;
         const mode = this.restTimerMode || 'timer';
-        const timerModeEl = bar.querySelector('[data-timer-mode]');
+        const presetsEl = bar.querySelector('[data-timer-presets]');
+        const customEl = bar.querySelector('[data-timer-custom]');
         const stopwatchModeEl = bar.querySelector('[data-stopwatch-mode]');
-        const modeTimerBtn = bar.querySelector('.mode-timer');
-        const modeStopwatchBtn = bar.querySelector('.mode-stopwatch');
+        const modeTimerBtn = bar.querySelector('[data-mode="timer"]');
+        const modeStopwatchBtn = bar.querySelector('[data-mode="stopwatch"]');
 
-        if (timerModeEl) timerModeEl.classList.toggle('hidden', mode !== 'timer');
+        if (presetsEl) presetsEl.classList.toggle('hidden', mode !== 'timer');
+        if (customEl) customEl.classList.toggle('hidden', mode !== 'timer');
         if (stopwatchModeEl) stopwatchModeEl.classList.toggle('hidden', mode !== 'stopwatch');
         if (modeTimerBtn) {
             modeTimerBtn.setAttribute('data-active', mode === 'timer');
@@ -1429,7 +1434,7 @@ export const Workouts = {
         if (bar) bar.classList.remove('hidden');
         this.applyRestTimerModeUI();
         this.updateRestTimerUI();
-        this.restTimerInterval = setInterval(() => this.updateRestTimerUI(), 1000);
+        this.restTimerInterval = setInterval(() => this.updateRestTimerUI(), 100);
     },
 
     // Low-level: stop the interval and hide the bar without saving. The
@@ -1514,16 +1519,22 @@ export const Workouts = {
         if (this.restTimerInterval) return;
         this.applyRestTimerModeUI();
         this.updateRestTimerUI();
-        this.restTimerInterval = setInterval(() => this.updateRestTimerUI(), 1000);
+        this.restTimerInterval = setInterval(() => this.updateRestTimerUI(), 100);
     },
 
     updateRestTimerUI() {
         const remainingEl = document.getElementById('rest-timer-remaining');
+        const msEl = document.getElementById('rest-timer-ms');
         const stateEl = document.getElementById('rest-timer-state');
         const progressEl = document.getElementById('rest-timer-progress');
         if (!remainingEl) return;
 
         const mode = this.restTimerMode || 'timer';
+
+        // Compute and render milliseconds (0-99) for the dynamic running effect.
+        const updateMs = (ms) => {
+            if (msEl) msEl.textContent = String(Math.floor(ms / 10) % 100).padStart(2, '0');
+        };
 
         // Stopwatch mode: count up from start time, no countdown target
         if (mode === 'stopwatch') {
@@ -1532,8 +1543,10 @@ export const Workouts = {
                 return;
             }
             const now = Date.now();
-            const elapsed = Math.max(0, Math.floor((now - this.restTimerStartTime) / 1000));
+            const elapsedMs = Math.max(0, now - this.restTimerStartTime);
+            const elapsed = Math.floor(elapsedMs / 1000);
             remainingEl.textContent = this.formatTimer(elapsed);
+            updateMs(elapsedMs);
             remainingEl.classList.remove('text-surface-700', 'dark:text-surface-300');
             remainingEl.classList.add('text-lime-600', 'dark:text-lime-400');
             if (stateEl) stateEl.textContent = 'Секундомер';
@@ -1544,6 +1557,7 @@ export const Workouts = {
         // Timer mode: countdown from target, switch to overtime at zero
         if (this.restTimerTargetTimestamp == null) {
             remainingEl.textContent = '00:00';
+            if (msEl) msEl.textContent = '00';
             if (progressEl) progressEl.style.display = 'none';
             return;
         }
@@ -1559,6 +1573,8 @@ export const Workouts = {
             this.restTimerOvertime = true;
             const overtimeDisplay = elapsed;
             remainingEl.textContent = this.formatTimer(overtimeDisplay);
+            const elapsedMs = Math.max(0, now - this.restTimerStartTime);
+            updateMs(elapsedMs);
             remainingEl.classList.remove('text-lime-600', 'dark:text-lime-400', 'text-surface-700', 'dark:text-surface-300');
             remainingEl.classList.add('text-rose-500', 'dark:text-rose-400');
             if (stateEl) stateEl.textContent = 'Перерыв просрочен';
@@ -1567,6 +1583,8 @@ export const Workouts = {
         } else {
             this.restTimerOvertime = false;
             remainingEl.textContent = this.formatTimer(remaining);
+            const remainingMs = Math.max(0, this.restTimerTargetTimestamp - now);
+            updateMs(remainingMs);
             remainingEl.classList.remove('text-surface-700', 'dark:text-surface-300', 'text-rose-500', 'dark:text-rose-400', 'animate-pulse');
             remainingEl.classList.add('text-lime-600', 'dark:text-lime-400');
             if (stateEl) stateEl.textContent = 'Отдых';
@@ -1870,7 +1888,9 @@ export const Workouts = {
                     if (session) {
                         const { exercise: ex, set: sessionSet } = this.findExerciseOfSet(session, setId);
                         if (ex && sessionSet && sessionSet.set_number < (ex.sets || []).length) {
-                            this.startRestTimer(sessionSet, ex, session);
+                            if (!(this.restAutoStart && this.restAutoStart.get(ex.id) === false)) {
+                                this.startRestTimer(sessionSet, ex, session);
+                            }
                         }
                     }
                 } else {
@@ -2823,6 +2843,7 @@ export const Workouts = {
         // workout once more.
         this.currentSession = session;
         if (app.state) app.state.workoutScreenDismissed = false;
+        this.restAutoStart = this.restAutoStart || new Map();
 
         try {
             if (app.saveState) {
@@ -2864,6 +2885,16 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     <div class="flex items-center gap-1 flex-shrink-0">
                         <button type="button" data-action="move-ex-up" data-ex-id="${ex.id}" class="w-7 h-7 glass rounded-xl text-xs font-bold hover:bg-surface-200 transition-colors ${index === 0 ? 'opacity-30 cursor-not-allowed' : ''}">▲</button>
                         <button type="button" data-action="move-ex-down" data-ex-id="${ex.id}" class="w-7 h-7 glass rounded-xl text-xs font-bold hover:bg-surface-200 transition-colors ${index === arr.length - 1 ? 'opacity-30 cursor-not-allowed' : ''}">▼</button>
+                        <button type="button"
+                                data-action="toggle-rest-auto"
+                                data-ex-id="${ex.id}"
+                                class="rest-auto-toggle w-6 h-6 rounded-lg glass text-surface-400 dark:text-surface-500 hover:text-surface-900 dark:hover:text-surface-100 flex items-center justify-center text-xs transition-colors"
+                                aria-label="Автозапуск таймера отдыха"
+                                aria-pressed="true">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                            </svg>
+                        </button>
                     </div>
                 </div>
 
@@ -2904,15 +2935,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
         // Cards
         const sessionKey = session.isLocal ? session.key : session.id;
-        const cancelCard = `
-            <div class="workout-card snap-center glass rounded-2xl p-6 flex flex-col items-center justify-center min-h-[520px]">
-                <button data-action="cancel-workout" data-session-id="${sessionKey}"
-                        class="w-full py-4 border-2 border-dashed border-red-300 dark:border-red-700 rounded-2xl text-red-600 font-bold text-base">
-                    Отменить тренировку
-                </button>
-            </div>
-        `;
-        const completeCard = `
+         const completeCard = `
             <div class="workout-card snap-center glass rounded-2xl p-6 flex flex-col items-center justify-center gap-3 min-h-[520px]">
                 <button data-action="complete-workout-ai" data-session-id="${sessionKey}"
                         class="w-full py-4 border-2 border-dashed border-primary-500/60 dark:border-primary-400/40 rounded-2xl text-primary-600 dark:text-primary-400 font-bold text-base btn-press">
@@ -2924,7 +2947,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 </button>
             </div>
         `;
-        const allCards = [cancelCard, ...exerciseCards, completeCard];
+        const allCards = [...exerciseCards, completeCard];
 
         const initialMetrics = this.getWorkoutMetrics(session);
         const initialPercent = initialMetrics.total > 0
@@ -2952,73 +2975,76 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
                      <div id="rest-timer-bar" class="hidden fixed bottom-16 left-0 right-0 z-50 rest-timer-bar"
                         role="timer" aria-live="polite" aria-label="Таймер отдыха">
-                       <div class="rest-timer-bar__inner glass rounded-2xl w-full max-w-[92vw] mx-auto">
-                            <div class="flex flex-col gap-2 p-3">
-                                <!-- Mode toggle (compact segmented) -->
-                                <div class="flex gap-1" data-rest-timer-mode-toggle>
-                                    <button type="button" data-action="rest-timer-mode" data-mode="timer"
-                                            class="mode-timer flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-colors"
-                                            data-active="false">Таймер</button>
-                                    <button type="button" data-action="rest-timer-mode" data-mode="stopwatch"
-                                            class="mode-stopwatch flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-colors"
-                                            data-active="false">Секундомер</button>
-                                </div>
+                         <div class="rest-timer-bar__inner glass rounded-2xl w-full max-w-[92vw] mx-auto">
+                             <div class="rest-timer-main flex items-center gap-4 p-3">
+                                 <!-- Left: Time + label -->
+                                 <div class="rest-timer-time flex flex-col items-center gap-1">
+                                     <span id="rest-timer-remaining" class="font-mono text-2xl font-bold text-lime-600 dark:text-lime-400 tabular-nums">00:00</span>
+                                     <span id="rest-timer-ms" class="text-xs text-lime-600 dark:text-lime-400 tabular-nums">00</span>
+                                     <span id="rest-timer-state" class="text-[10px] font-semibold text-surface-500 dark:text-surface-400 uppercase">Отдых</span>
+                                 </div>
 
-                                <!-- Timer mode content -->
-                                <div data-timer-mode class="space-y-2">
-                                    <!-- Presets - horizontally scrollable -->
-                                    <div id="rest-timer-presets" class="rest-timer-presets flex gap-1.5 overflow-x-auto pb-1" data-timer-presets>
-                                        ${REST_TIMER_PRESETS.map(sec => {
-                                            const label = sec >= 60 ? `${sec / 60}м` : `${sec}с`;
-                                            return `<button type="button" data-action="rest-timer-preset" data-preset="${sec}"
-                                                    class="preset-btn flex-shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold glass text-surface-600 dark:text-surface-400 hover:bg-surface-200 dark:hover:bg-white/10 transition-colors snap-start">${label}</button>`;
-                                        }).join('')}
-                                    </div>
+                                 <!-- Right: Presets + controls -->
+                                 <div class="rest-timer-controls flex-1 flex flex-col gap-2">
+                                     <!-- Mode toggle -->
+                                     <div class="rest-timer-mode-toggle flex gap-1">
+                                         <button type="button" data-action="rest-timer-mode" data-mode="timer"
+                                                 class="mode-btn flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-colors"
+                                                 data-active="false">Таймер</button>
+                                         <button type="button" data-action="rest-timer-mode" data-mode="stopwatch"
+                                                 class="mode-btn flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-colors"
+                                                 data-active="false">Секундомер</button>
+                                     </div>
 
-                                    <!-- Custom input -->
-                                    <div id="rest-timer-custom" class="rest-timer-custom flex items-center gap-1" data-timer-custom>
-                                        <input type="number" min="1" max="600" data-action="rest-timer-custom"
-                                               class="w-16 h-7 text-center text-xs font-mono rounded-lg glass-input focus:outline-none focus:border-primary-500"
-                                               placeholder="90">
-                                        <span class="text-[10px] text-surface-500 dark:text-surface-400">сек</span>
-                                    </div>
-                                </div>
+                                     <!-- Presets (timer mode only) -->
+                                     <div id="rest-timer-presets" class="rest-timer-presets flex gap-1.5 overflow-x-auto pb-1" data-timer-presets>
+                                         ${REST_TIMER_PRESETS.map(sec => `
+                                             <button type="button" data-action="rest-timer-preset" data-preset="${sec}"
+                                                     class="preset-btn flex-shrink-0 px-2 py-1 rounded-lg text-xs font-semibold glass text-surface-600 dark:text-surface-400 hover:bg-surface-200 dark:hover:bg-white/10 transition-colors snap-start">
+                                                 ${sec >= 60 ? `${sec / 60}м` : `${sec}с`}
+                                             </button>
+                                         `).join('')}
+                                     </div>
 
-                                <!-- Stopwatch mode content -->
-                                <div data-stopwatch-mode class="hidden">
-                                    <div class="text-center text-xs text-surface-500 dark:text-surface-400">
-                                        Нажмите «Готов» для фиксации времени
-                                    </div>
-                                </div>
+                                     <!-- Custom input (timer mode only) -->
+                                     <div id="rest-timer-custom" class="rest-timer-custom flex items-center gap-1" data-timer-custom>
+                                         <input type="number" min="1" max="600" inputmode="numeric" data-action="rest-timer-custom"
+                                                class="w-20 h-7 text-center text-xs font-mono rounded-lg glass-input focus:outline-none focus:border-primary-500"
+                                                placeholder="90">
+                                         <span class="text-[10px] text-surface-500 dark:text-surface-400">сек</span>
+                                     </div>
 
-                                <!-- Timer display + dismiss -->
-                                <div class="flex items-center justify-between gap-2 pt-1">
-                                    <div class="flex items-center gap-2">
-                                        <span class="animate-pulse-lime text-lime-600 dark:text-lime-400" aria-hidden="true">⏱</span>
-                                        <span id="rest-timer-remaining"
-                                              class="font-mono text-xl font-bold text-lime-600 dark:text-lime-400 tabular-nums min-w-[3.5rem] text-center">
-                                           00:00
-                                        </span>
-                                        <span id="rest-timer-state"
-                                              class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase">
-                                            Отдых
-                                        </span>
-                                    </div>
-                                    <button id="rest-timer-dismiss" data-action="dismiss-rest-timer" type="button"
-                                            class="flex-shrink-0 glass rounded-xl px-3 py-1.5 text-xs font-semibold text-surface-700 dark:text-surface-300 hover:bg-surface-200 dark:hover:bg-white/10 transition-colors"
-                                            aria-label="Готов">
-                                        Готов
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                                     <!-- Stopwatch mode content -->
+                                     <div data-stopwatch-mode class="hidden">
+                                         <div class="text-center text-xs text-surface-500 dark:text-surface-400">
+                                             Нажмите «Готов» для фиксации времени
+                                         </div>
+                                  </div>
+                              </div>
+                              </div>
+
+                              <!-- Progress bar (managed by updateRestTimerUI) -->
+                              <div class="h-1 bg-surface-200 dark:bg-white/10 rounded-full overflow-hidden mx-3 mb-1" data-timer-progress-container>
+                                      <div id="rest-timer-progress"
+                                           class="h-full w-0 bg-lime-500 dark:bg-lime-400 rounded-full transition-all duration-1000 ease-linear"
+                                           style="display: none;">
+                                      </div>
+                                  </div>
+
+                                  <!-- Bottom: Dismiss button -->
+                                  <button id="rest-timer-dismiss" data-action="dismiss-rest-timer" type="button"
+                                          class="rest-timer-dismiss w-full py-2 rounded-xl bg-lime-600 dark:bg-lime-500 text-white font-bold text-sm transition-colors hover:bg-lime-700 dark:hover:bg-lime-400"
+                                          aria-label="Готов">
+                                      Готов
+                                  </button>
+                          </div>
+                      </div>
 
               </div>
         `;
         container.innerHTML = html;
 
-        // Scroll to first exercise card (index 1 in allCards = cancelCard + exerciseCards[0])
+        // Scroll to first exercise card (exercises are the first cards now)
         requestAnimationFrame(() => {
             const carousel = document.getElementById('carousel');
             if (carousel) {
@@ -3291,8 +3317,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         const carousel = document.getElementById('carousel');
         if (!carousel) return;
         const cards = carousel.querySelectorAll('.workout-card[data-exercise-id]');
-        // Cards array: [cancelCard(0), ...exerciseCards, completeCard]
-        // Exercise at index `exerciseIndex` is at position exerciseIndex + 1 in the carousel
+        // Cards array: [...exerciseCards, completeCard]
+        // Exercise at index `exerciseIndex` is at position exerciseIndex in the carousel
         const targetCard = cards[exerciseIndex];
         if (!targetCard) return;
         const cardLeft = targetCard.offsetLeft;
@@ -3450,6 +3476,31 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             });
          });
 
+        // Timer auto-start toggle in exercise card header
+        container.querySelectorAll('[data-action="toggle-rest-auto"]').forEach(btn => {
+            const exId = parseInt(btn.dataset.exId);
+            const isOff = this.restAutoStart && this.restAutoStart.get(exId) === false;
+            if (isOff) {
+                btn.setAttribute('aria-pressed', 'false');
+                btn.classList.remove('text-surface-400', 'dark:text-surface-500');
+                btn.classList.add('text-lime-600', 'dark:text-lime-400');
+            }
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const exIdNum = parseInt(e.currentTarget.dataset.exId);
+                const isOn = e.currentTarget.getAttribute('aria-pressed') === 'true';
+                e.currentTarget.setAttribute('aria-pressed', String(!isOn));
+                if (!isOn) {
+                    e.currentTarget.classList.add('text-lime-600', 'dark:text-lime-400');
+                    e.currentTarget.classList.remove('text-surface-400', 'dark:text-surface-500');
+                } else {
+                    e.currentTarget.classList.remove('text-lime-600', 'dark:text-lime-400');
+                    e.currentTarget.classList.add('text-surface-400', 'dark:text-surface-500');
+                }
+                if (this.restAutoStart) this.restAutoStart.set(exIdNum, !isOn);
+            });
+        });
+
         // Add/Remove Set buttons
         container.querySelectorAll('[data-action="add-set"]').forEach(btn => {
             btn.addEventListener('click', async (e) => {
@@ -3537,45 +3588,48 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 confirmClass: 'bg-red-600 hover:bg-red-700 text-white font-semibold shadow-md',
                 cancelText: 'Отмена',
             });
-            if (!confirmed) {
-                return;
-            }
+            if (!confirmed) return;
 
-            // Remove from session data
+            // Remove from state immediately
             exercise.sets = exercise.sets.filter((s, i) => i !== setIndex);
             exercise.sets.forEach((s, i) => { s.set_number = i + 1; });
             this.exercisesModified = true;
 
+            // Remove DOM row immediately (with CSS transition fallback)
             const row = card.querySelector(`[data-set-id="${removedSet.id}"]`);
             const prevSet = setIndex > 0 ? exercise.sets[setIndex - 1] : null;
             // Clear rest time on the preceding set if the removed one was completed
             if (removedSet.is_completed && prevSet && prevSet.rest_time_seconds != null) {
                 prevSet.rest_time_seconds = null;
                 this.applyRestTimeInline(prevSet.id, null);
-                if (isLocal) {
-                    this.recordLocalSetPatch(session.key, prevSet.id, { rest_time_seconds: null });
-                } else if (token) {
-                    API.patch(`/workouts/sets/${prevSet.id}`, { rest_time_seconds: null }, token).catch(() => {});
-                }
+            }
+            if (row) {
+                row.classList.add('set-row-exit');
+                requestAnimationFrame(() => row.classList.add('active'));
+                row.addEventListener('transitionend', () => row.remove(), { once: true });
+                setTimeout(() => row.remove(), 300);
             }
 
+            // Renumber and update metrics
+            this.renumberSetRows(card);
+            this.updateWorkoutMetricsUI(session);
+
+            // Persist/deletion via API — fire and forget, ignore "not found"
             if (isLocal) {
                 this.persistLocalSession(session);
-                await this.removeSetRow(card, row, removedSet, exercise);
-                return;
-            }
-
-            try {
-                await API.delete(`/workouts/sets/${removedSet.id}`, token);
-                await this.removeSetRow(card, row, removedSet, exercise);
-            } catch (err) {
-                if (!err?.offlineQueued) {
-                    exercise.sets.splice(setIndex, 0, removedSet);
-                    exercise.sets.forEach((s, i) => { s.set_number = i + 1; });
-                    app.showToast(err.message || 'Ошибка удаления подхода', 'error');
-                    return;
-                }
-                await this.removeSetRow(card, row, removedSet, exercise);
+                this.recordLocalSetPatch(session.key, removedSet.id, { _deleted: true });
+            } else if (token) {
+                API.delete(`/workouts/sets/${removedSet.id}`, token)
+                    .catch(err => {
+                        if (err?.message?.includes('not found') || err?.status === 404) {
+                            return;
+                        }
+                        app.showToast(err.message || 'Ошибка удаления подхода', 'error');
+                        // Restore state on error
+                        exercise.sets.splice(setIndex, 0, removedSet);
+                        exercise.sets.forEach((s, i) => { s.set_number = i + 1; });
+                        this.renderWorkoutScreen(container, app, sessionId);
+                    });
             }
         };
 
