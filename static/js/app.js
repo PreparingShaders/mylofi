@@ -388,6 +388,14 @@ const App = {
             this.handleAppResume('focus');
         });
 
+        // bfcache restore: the DOM is intact but timers were suspended.
+        // Only fire on persisted (cached) restores, not on normal loads.
+        window.addEventListener('pageshow', (event) => {
+            if (event.persisted) {
+                this.handleAppResume('pageshow');
+            }
+        });
+
         // Lists rendered from the read cache are stale right after a sync
         window.addEventListener('mylofi:offline-sync', () => {
             this.updateNetworkBanner(true);
@@ -703,11 +711,29 @@ const App = {
      * any more. The tick itself is computed from the start of the session,
      * so restarting the interval is enough to get the right value back.
      */
-    rearmWorkoutTimer(session = null) {
+     rearmWorkoutTimer(session = null) {
         if (!this.isWorkoutScreenOpen()) return;
         const active = session || Workouts.currentSession;
         if (!active) return;
+        // startWorkoutTimer → stopWorkoutTimer → dismissRestTimer clears the
+        // rest timer state, so snapshot it here and restore after so the
+        // count-down target survives the resume.
+        const savedRestTimer = {
+            restTimerStartTime: Workouts.restTimerStartTime,
+            restTimerTargetTimestamp: Workouts.restTimerTargetTimestamp,
+            restTimerPlannedDuration: Workouts.restTimerPlannedDuration,
+            activeRestForSetId: Workouts.activeRestForSetId,
+            lastSavedRestSetId: Workouts.lastSavedRestSetId,
+            restSavedBySetId: Workouts.restSavedBySetId,
+        };
         Workouts.startWorkoutTimer(active);
+        // Restore the snapshot dismissed by stopWorkoutTimer
+        Workouts.restTimerStartTime = savedRestTimer.restTimerStartTime;
+        Workouts.restTimerTargetTimestamp = savedRestTimer.restTimerTargetTimestamp;
+        Workouts.restTimerPlannedDuration = savedRestTimer.restTimerPlannedDuration;
+        Workouts.activeRestForSetId = savedRestTimer.activeRestForSetId;
+        Workouts.lastSavedRestSetId = savedRestTimer.lastSavedRestSetId;
+        Workouts.restSavedBySetId = savedRestTimer.restSavedBySetId;
         Workouts.rearmRestTimer();
     },
 

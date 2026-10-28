@@ -3517,7 +3517,18 @@ input[data-field="reps"] {
     width: 100%;
     max-width: 100%;
     box-sizing: border-box;
-    justify-content: flex-start;
+    /* Center the active card in the scroll port via scroll-padding so cards
+       snap into the middle instead of the start. justify-content is omitted:
+       it only centers when content fits, and conflicts with scroll-snap when
+       the row overflows. */
+    scroll-padding-left: calc(50% - min(46vw, 250px));
+    scroll-padding-right: calc(50% - min(46vw, 250px));
+}
+
+/* Each card snaps to the centre of the carousel scroll port. */
+.workout-card.snap-center {
+    scroll-snap-align: center;
+    scroll-snap-stop: normal;
 }
 
 /* Spinner inside the "Finish & Analyze" button while the verdict is generated */

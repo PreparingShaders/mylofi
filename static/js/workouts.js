@@ -133,9 +133,20 @@ export const Workouts = {
     // unchecking the set that triggered it can undo the written value.
     restTimerInterval: null,
     restTimerStartTime: null,
+    // Absolute target timestamp the rest timer is counting down towards.
+    // Using an absolute anchor (instead of elapsed-time arithmetic) means the
+    // value is correct immediately after a backgrounded/frozen tab resumes,
+    // without drift from the interval having been suspended.
+    restTimerTargetTimestamp: null,
+    // Planned duration in milliseconds — restored alongside the target so
+    // the progress bar and save logic keep working on resume.
+    restTimerPlannedDuration: null,
     activeRestForSetId: null,
     lastSavedRestSetId: null,
     restSavedBySetId: null,
+    // Cached completed history sessions, available to computePrevText for
+    // dynamically inserted set rows that are added outside of renderWorkoutScreen.
+    completedHistorySessions: [],
 
     escapeHtml(value) {
         return String(value ?? '')
@@ -1284,7 +1295,13 @@ export const Workouts = {
     },
 
     startWorkoutTimer(session, elementId = 'workout-timer') {
-        this.stopWorkoutTimer();
+        // Only clear the workout timer interval — do NOT dismiss the rest timer.
+        // The rest timer state survives across re-renders and resumes; dismissing
+        // it here would wipe the target timestamp just restored by the caller.
+        if (this.workoutTimerInterval) {
+            clearInterval(this.workoutTimerInterval);
+            this.workoutTimerInterval = null;
+        }
         if (!session || !session.started_at) return;
 
         const startTime = new Date(session.started_at).getTime();
@@ -1319,6 +1336,8 @@ export const Workouts = {
     startRestTimer(set, exercise, session) {
         this.stopRestTimer();
         this.restTimerStartTime = Date.now();
+        this.restTimerPlannedDuration = (set.rest_seconds || 90) * 1000;
+        this.restTimerTargetTimestamp = this.restTimerStartTime + this.restTimerPlannedDuration;
         this.activeRestForSetId = set?.id ?? null;
         this.lastSavedRestSetId = null;
         this.restSavedBySetId = null;
@@ -1361,6 +1380,8 @@ export const Workouts = {
         this.stopRestTimer();
         this.activeRestForSetId = null;
         this.restTimerStartTime = null;
+        this.restTimerTargetTimestamp = null;
+        this.restTimerPlannedDuration = null;
         this.updateRestTimerUI();
 
         if (this.isLocalSession(sess)) {
@@ -1381,18 +1402,20 @@ export const Workouts = {
         this.stopRestTimer();
         this.activeRestForSetId = null;
         this.restTimerStartTime = null;
+        this.restTimerTargetTimestamp = null;
+        this.restTimerPlannedDuration = null;
         this.lastSavedRestSetId = null;
         this.restSavedBySetId = null;
     },
 
-    // Re-arm the interval after a backgrounded/frozen tab resumes. The start
-    // time anchor is kept across the suspend, so the count-up value is correct
+    // Re-arm the interval after a backgrounded/frozen tab resumes. The target
+    // timestamp is kept across the suspend, so the count-down value is correct
     // immediately; only the ticking interval needs to be re-created.
     rearmRestTimer() {
-        if (this.restTimerStartTime == null) return;
-        if (this.restTimerInterval) return;
+        if (this.restTimerTargetTimestamp == null) return;
         const bar = document.getElementById('rest-timer-bar');
         if (bar) bar.classList.remove('hidden');
+        if (this.restTimerInterval) return;
         this.updateRestTimerUI();
         this.restTimerInterval = setInterval(() => this.updateRestTimerUI(), 1000);
     },
@@ -1403,18 +1426,26 @@ export const Workouts = {
         const progressEl = document.getElementById('rest-timer-progress');
         if (!remainingEl) return;
 
-        if (this.restTimerStartTime == null) {
+        if (this.restTimerTargetTimestamp == null) {
             remainingEl.textContent = '00:00';
             if (progressEl) progressEl.style.display = 'none';
             return;
         }
 
-        const elapsed = Math.max(0, Math.floor((Date.now() - this.restTimerStartTime) / 1000));
-        remainingEl.textContent = this.formatTimer(elapsed);
+        const now = Date.now();
+        const remaining = Math.max(0, Math.ceil((this.restTimerTargetTimestamp - now) / 1000));
+        const elapsed = Math.max(0, Math.floor((now - (this.restTimerTargetTimestamp - (this.restTimerPlannedDuration || 0))) / 1000));
+
+        remainingEl.textContent = this.formatTimer(remaining);
         remainingEl.classList.remove('text-surface-700', 'dark:text-surface-300');
         remainingEl.classList.add('text-lime-600', 'dark:text-lime-400');
         if (stateEl) stateEl.textContent = 'Отдых';
-        if (progressEl) progressEl.style.display = 'none';
+        if (progressEl) {
+            const totalSeconds = this.restTimerPlannedDuration ? this.restTimerPlannedDuration / 1000 : 90;
+            const progress = Math.min(100, (elapsed / totalSeconds) * 100);
+            progressEl.style.width = `${progress}%`;
+            progressEl.style.display = 'block';
+        }
     },
 
     // Shared inner markup for the muted rest-time line shown between set rows.
@@ -1448,6 +1479,274 @@ export const Workouts = {
             wrapper.className = 'rest-time-inline flex items-center gap-1 ml-4 mt-1 text-xs text-surface-500 dark:text-surface-400 font-mono tabular-nums';
             wrapper.innerHTML = this.restTimeLabelHtml(seconds);
             row.parentNode.insertBefore(wrapper, row.nextSibling);
+        }
+    },
+
+    // Shared previous-set text computation from completed history sessions.
+    // Used by both the initial render and dynamic set insertion so "ПРЕД." values match.
+    computePrevText(exercise, setIndex, completedHistorySessions) {
+        let prevText = '\u2014';
+        const sortedSessions = [...(completedHistorySessions || [])].sort((a, b) => new Date(b.started_at) - new Date(a.started_at));
+        const prevSession = sortedSessions.find(s =>
+            s.id !== this.currentSession?.id &&
+            (s.exercises || []).some(e => e.name.trim().toLowerCase() === exercise.name.trim().toLowerCase())
+        );
+        if (prevSession) {
+            const pastEx = (prevSession.exercises || []).find(e => e.name.trim().toLowerCase() === exercise.name.trim().toLowerCase());
+            if (pastEx) {
+                const pastSets = [...(pastEx.sets || [])].sort((a, b) => a.set_number - b.set_number);
+                const pastSet = pastSets.find(s => s.set_number === setIndex + 1) || pastSets[setIndex];
+                if (pastSet && pastSet.weight_kg != null && pastSet.reps != null) {
+                    prevText = `${pastSet.weight_kg}\u00d7${pastSet.reps}`;
+                }
+            }
+        }
+        return prevText;
+    },
+
+    // Bind all events for a single set row (shared by initial render and dynamic insert):
+    // drum picker, weight/reps persistence, and set completion toggle.
+    bindSetRowEvents(row, session, exercise, app) {
+        if (!row) return;
+        const isLocal = session ? this.isLocalSession(session) : false;
+        const token = app?.state?.tokens?.access;
+        const DEBOUNCE_MS = 400;
+        const pendingTimers = new Map();
+
+        // Weight/reps inputs
+        const inputs = row.querySelectorAll('[data-field="weight"], [data-field="reps"]');
+
+        // --- Persistence handlers (input/change/blur) ---
+        const applyLocalValue = (input) => {
+            const r = input.closest('[data-set-id]');
+            if (!r) return null;
+            const setId = parseInt(r.dataset.setId);
+            const field = input.dataset.field;
+            const value = field === 'weight' ? parseFloat(input.value) : parseInt(input.value);
+            if (isNaN(value)) return null;
+
+            if (session) {
+                const sessionSet = this.findSetInSession(session, setId);
+                if (sessionSet) {
+                    sessionSet[field === 'weight' ? 'weight_kg' : 'reps'] = value;
+                    this.updateWorkoutMetricsUI(session);
+                }
+            }
+            return { row: r, setId, field, value };
+        };
+
+        const propagateWeightToNextSet = (r, value) => {
+            const exerciseContainer = r.closest('[data-exercise-id]');
+            if (!exerciseContainer) return;
+            const rows = exerciseContainer.querySelectorAll('[data-set-id]');
+            let foundCurrent = false;
+            for (const otherRow of rows) {
+                if (foundCurrent) {
+                    const nextWeightInput = otherRow.querySelector('[data-field="weight"]');
+                    if (nextWeightInput && !nextWeightInput.value) {
+                        nextWeightInput.value = value;
+                        const nextSetId = parseInt(otherRow.dataset.setId);
+                        if (session) {
+                            const nextSessionSet = this.findSetInSession(session, nextSetId);
+                            if (nextSessionSet) nextSessionSet.weight_kg = value;
+                        }
+                        if (isLocal && session) {
+                            this.persistLocalSession(session);
+                            this.recordLocalSetPatch(session.key, nextSetId, { weight_kg: value });
+                        } else if (token) {
+                            API.patch(`/workouts/sets/${nextSetId}`, { weight_kg: value }, token).catch(() => {});
+                        }
+                    }
+                    break;
+                }
+                if (otherRow === r) foundCurrent = true;
+            }
+        };
+
+        const persistSet = async (input) => {
+            const parsed = applyLocalValue(input);
+            if (!parsed) return;
+            const { row: r, setId, field, value } = parsed;
+
+            if (field === 'weight') propagateWeightToNextSet(r, value);
+
+            if (isLocal && session) {
+                this.persistLocalSession(session);
+                this.recordLocalSetPatch(session.key, setId, { [field]: value });
+                return;
+            }
+
+            if (app?.ensureFreshToken) await app.ensureFreshToken();
+            try {
+                await API.patch(`/workouts/sets/${setId}`, { [field]: value }, token);
+            } catch (err) {
+                if (!err?.offlineQueued) app?.showToast(err.message || 'Ошибка сохранения', 'error');
+            }
+        };
+
+        const scheduleSave = (input, immediate) => {
+            const r = input.closest('[data-set-id]');
+            if (!r) return;
+            const key = `${r.dataset.setId}:${input.dataset.field}`;
+
+            const run = () => {
+                pendingTimers.delete(key);
+                return persistSet(input);
+            };
+
+            const existing = pendingTimers.get(key);
+            if (existing) {
+                clearTimeout(existing);
+                pendingTimers.delete(key);
+            }
+
+            if (immediate) {
+                run();
+            } else {
+                pendingTimers.set(key, setTimeout(run, DEBOUNCE_MS));
+            }
+        };
+
+        inputs.forEach(input => {
+            input.addEventListener('input', () => applyLocalValue(input));
+            input.addEventListener('change', () => scheduleSave(input, false));
+            input.addEventListener('blur', () => scheduleSave(input, true));
+        });
+
+        // --- Drum picker handlers ---
+        inputs.forEach(input => {
+            const openPicker = (e) => {
+                e?.preventDefault();
+                const toggle = row.querySelector('[data-action="toggle-set"]');
+                if (toggle?.dataset.completed === 'true') {
+                    app?.showToast(SET_LOCKED_MESSAGE, 'info');
+                    return;
+                }
+                input.blur();
+                this.openDrumPicker(input, { app });
+            };
+            input.addEventListener('click', openPicker);
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') openPicker(e);
+            });
+        });
+
+        // --- Toggle set completion handler ---
+        const toggleBtn = row.querySelector('[data-action="toggle-set"]');
+        if (toggleBtn) {
+            toggleBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const button = e.currentTarget;
+                const setId = parseInt(row.dataset.setId);
+                if (isNaN(setId)) {
+                    console.error('Invalid setId found:', row.dataset.setId);
+                    return;
+                }
+
+                const weightInput = row.querySelector('[data-field="weight"]');
+                const repsInput = row.querySelector('[data-field="reps"]');
+                const weight_kg = weightInput ? parseFloat(weightInput.value) : null;
+                const reps = repsInput ? parseInt(repsInput.value) : null;
+
+                const wasCompleted = button.dataset.completed === 'true';
+                const isCompleted = !wasCompleted;
+
+                const applyToggleState = (completed) => {
+                    if (session) {
+                        const sessionSet = this.findSetInSession(session, setId);
+                        if (sessionSet) {
+                            sessionSet.is_completed = completed;
+                            sessionSet.weight_kg = isNaN(weight_kg) ? null : weight_kg;
+                            sessionSet.reps = isNaN(reps) ? null : reps;
+                        }
+                        this.updateWorkoutMetricsUI(session);
+                    }
+                    if (completed) {
+                        button.dataset.completed = 'true';
+                        button.className = TOGGLE_BASE + ' ' + TOGGLE_COMPLETED;
+                        button.textContent = '\u2713';
+
+                        row.querySelector('span.font-bold').classList.add(...SET_DIM);
+                        row.querySelectorAll('input').forEach(inp => inp.classList.add(...SET_DIM));
+                        row.querySelectorAll('label').forEach(lbl => lbl.classList.add(...SET_DIM));
+
+                        button.disabled = false;
+                    } else {
+                        button.dataset.completed = 'false';
+                        button.className = TOGGLE_BASE + ' ' + TOGGLE_UNCOMPLETED;
+
+                        const setNumberSpan = row.querySelector('span.font-bold');
+                        setNumberSpan.classList.remove(...SET_DIM);
+                        setNumberSpan.classList.add(SET_NUMBER_IDLE);
+                        row.querySelectorAll('input').forEach(inp => inp.classList.remove(...SET_DIM));
+                        row.querySelectorAll('label').forEach(lbl => lbl.classList.remove(...SET_DIM));
+
+                        button.textContent = '\u2713';
+                        button.disabled = false;
+                    }
+                };
+
+                button.disabled = true;
+                button.textContent = '...';
+                applyToggleState(isCompleted);
+                if (isCompleted) {
+                    this.flashSetSaved(row);
+                    this.scheduleCarouselAdvance(session, row);
+                    if (this.activeRestForSetId) {
+                        this.restSavedBySetId = setId;
+                        await this.stopAndSaveRestTimer(session);
+                        const savedSet = this.lastSavedRestSetId
+                            ? this.findSetInSession(session, this.lastSavedRestSetId) : null;
+                        if (savedSet && savedSet.rest_time_seconds != null) {
+                            this.applyRestTimeInline(this.lastSavedRestSetId, savedSet.rest_time_seconds);
+                        }
+                    }
+                    if (session) {
+                        const { exercise: ex, set: sessionSet } = this.findExerciseOfSet(session, setId);
+                        if (ex && sessionSet && sessionSet.set_number < (ex.sets || []).length) {
+                            this.startRestTimer(sessionSet, ex, session);
+                        }
+                    }
+                } else {
+                    if (session) {
+                        this.undoRestTimeSave(session, setId, isLocal, token);
+                    }
+                    if (this.activeRestForSetId === setId) {
+                        this.dismissRestTimer();
+                    }
+                }
+                const payload = {
+                    is_completed: isCompleted,
+                    weight_kg: isNaN(weight_kg) ? null : weight_kg,
+                    reps: isNaN(reps) ? null : reps
+                };
+                if (isLocal && session) {
+                    this.persistLocalSession(session);
+                    this.recordLocalSetPatch(session.key, setId, payload);
+                    button.disabled = false;
+                    button.textContent = '\u2713';
+                    return;
+                }
+                try {
+                    app?._pendingToggleSetIds?.add(setId);
+                    await API.patch(`/workouts/sets/${setId}`, payload, token);
+                } catch (err) {
+                    if (err?.offlineQueued) {
+                        // Silent: the global network banner reflects offline/syncing status
+                    } else {
+                        applyToggleState(wasCompleted);
+                        if (session) this.undoRestTimeSave(session, setId, isLocal, token);
+                        if (this.activeRestForSetId === setId) {
+                            this.dismissRestTimer();
+                        }
+                        app?.showToast(err.message || 'Ошибка', 'error');
+                    }
+                    button.disabled = false;
+                    button.textContent = '\u2713';
+                } finally {
+                    app?._pendingToggleSetIds?.delete(setId);
+                }
+            });
         }
     },
 
@@ -1699,23 +1998,13 @@ export const Workouts = {
             const nameEl = card.querySelector('h3');
             const name = nameEl?.textContent || '';
             const rec = this.findAiPlanFor(name);
-            if (!rec) return;
-            const badgeHtml = Components.aiWorkoutPlanBadge(rec);
-            if (!badgeHtml) return;
-            const existing = card.querySelector('.ai-plan');
-            if (existing) {
-                existing.outerHTML = badgeHtml;
+            const badgeContainer = card.querySelector('[data-ai-plan-container]');
+            if (!badgeContainer) return;
+            if (rec) {
+                const badgeHtml = Components.aiWorkoutPlanBadge(rec);
+                badgeContainer.innerHTML = badgeHtml;
             } else {
-                // Insert after sparkline or before sets
-                const sparkline = card.querySelector('[data-sparkline]');
-                if (sparkline) {
-                    sparkline.insertAdjacentHTML('afterend', badgeHtml);
-                } else {
-                    const sets = card.querySelector('.space-y-2');
-                    if (sets) {
-                        sets.insertAdjacentHTML('beforebegin', badgeHtml);
-                    }
-                }
+                badgeContainer.innerHTML = '';
             }
         });
     },
@@ -2130,14 +2419,8 @@ export const Workouts = {
         const buttons = setsContainer.querySelector('.flex.items-center.justify-between.gap-2') || Array.from(setsContainer.querySelectorAll('.flex.items-center.justify-between')).find(el => el.classList.contains('gap-2')) || setsContainer.querySelector('.flex.items-center.justify-between');
         if (!buttons) return;
         const idx = exercise.sets.length - 1;
-        // Compute prevText like in full render
-        let prevText = '—';
-        if (exercise.pastSets && Array.isArray(exercise.pastSets)) {
-            const pastSet = exercise.pastSets[idx] || exercise.pastSets[exercise.pastSets.length - 1];
-            if (pastSet && pastSet.weight_kg != null && pastSet.reps != null) {
-                prevText = `${pastSet.weight_kg}×${pastSet.reps}`;
-            }
-        }
+        // Compute prevText using the shared helper so it matches the full render
+        const prevText = this.computePrevText(exercise, idx, this.completedHistorySessions);
         const wrapper = document.createElement('div');
         wrapper.innerHTML = this.renderSetRowHtml(set, idx, exercise.sets, prevText);
         const rowEl = wrapper.firstElementChild;
@@ -2152,32 +2435,8 @@ export const Workouts = {
         requestAnimationFrame(() => {
             rowEl.classList.add('active');
         });
-        // Bind drum picker handlers to new inputs (inherit behavior from existing rows)
-        const app = this.app;
-        rowEl.querySelectorAll('[data-field="weight"], [data-field="reps"]').forEach(input => {
-            // Copy attributes from existing input if possible
-            const existingInput = card.querySelector('[data-field="weight"], [data-field="reps"]');
-            if (existingInput && input !== existingInput) {
-                input.setAttribute('inputmode', existingInput.getAttribute('inputmode') || 'none');
-                input.setAttribute('readonly', existingInput.getAttribute('readonly') || '');
-                input.className = existingInput.className;
-            }
-            const openPicker = (e) => {
-                e?.preventDefault();
-                const row = input.closest('[data-set-id]');
-                const toggle = row?.querySelector('[data-action="toggle-set"]');
-                if (toggle?.dataset.completed === 'true') {
-                    app?.showToast(SET_LOCKED_MESSAGE, 'info');
-                    return;
-                }
-                input.blur();
-                this.openDrumPicker(input, { app });
-            };
-            input.addEventListener('click', openPicker);
-            input.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter' || e.key === ' ') openPicker(e);
-            });
-        });
+        // bindSetRowEvents attaches drum picker, persistence, and toggle handlers
+        this.bindSetRowEvents(rowEl, this.currentSession, exercise, this.app);
     },
 
     // Renumber the visible set numbers within one exercise card after a removal.
@@ -2220,16 +2479,26 @@ export const Workouts = {
     async renderWorkoutScreen(container, app, sessionId) {
         this.app = app;
         try {
-        this.stopWorkoutTimer();
-        // Reset the modified flag when loading a different session (new workout),
-        // so the template-update prompt only fires for changes made this run.
         const incomingKey = sessionId === undefined || sessionId === null
             ? 'active'
             : String(sessionId);
         const currentKey = this.currentSession
             ? (this.currentSession.isLocal ? this.currentSession.key : String(this.currentSession.id))
             : null;
-        if (incomingKey !== currentKey) {
+        const wasSameSession = incomingKey === currentKey;
+        const savedRestState = wasSameSession && this.restTimerStartTime != null ? {
+            restTimerStartTime: this.restTimerStartTime,
+            restTimerTargetTimestamp: this.restTimerTargetTimestamp,
+            restTimerPlannedDuration: this.restTimerPlannedDuration,
+            activeRestForSetId: this.activeRestForSetId,
+            lastSavedRestSetId: this.lastSavedRestSetId,
+            restSavedBySetId: this.restSavedBySetId,
+        } : null;
+
+        this.stopWorkoutTimer();
+        // Reset the modified flag when loading a different session (new workout),
+        // so the template-update prompt only fires for changes made this run.
+        if (!wasSameSession) {
             this.exercisesModified = false;
         }
         let session;
@@ -2260,6 +2529,58 @@ export const Workouts = {
             app.showToast('Нет активной тренировки', 'info');
             return;
         }
+        // CRITICAL FIX: Ensure session has exercises — recover from template or
+        // local session when the server returns an active session without them.
+        if (!session.exercises || session.exercises.length === 0) {
+            console.warn('[Workouts] Session has no exercises, attempting recovery...');
+
+            // Try to get exercises from local session if this is a local session
+            if (this.isLocalSession(session)) {
+                const localSession = this.getActiveLocalSession();
+                if (localSession && localSession.exercises && localSession.exercises.length > 0) {
+                    session.exercises = localSession.exercises;
+                }
+            }
+
+            // If still no exercises and session has template_id, load from template
+            if ((!session.exercises || session.exercises.length === 0) && session.template_id) {
+                try {
+                    const template = await API.get(`/workouts/templates/${session.template_id}`, app.state.tokens.access);
+                    if (template && template.exercises && template.exercises.length > 0) {
+                        session.exercises = template.exercises.map((ex, index) => {
+                            const targetSets = Math.max(1, ex.target_sets || 3);
+                            return {
+                                id: ex.id || `temp-${index}`,
+                                name: ex.name,
+                                order: ex.order ?? index,
+                                target_sets: ex.target_sets || targetSets,
+                                target_reps: ex.target_reps || 10,
+                                target_weight_kg: ex.target_weight_kg || 0,
+                                rest_seconds: ex.rest_seconds || 90,
+                                notes: ex.notes ?? null,
+                                sets: Array.from({ length: targetSets }, (_, i) => ({
+                                    id: `temp-set-${index}-${i}`,
+                                    exercise_id: ex.id || `temp-${index}`,
+                                    set_number: i + 1,
+                                    weight_kg: i === 0 ? (ex.target_weight_kg || 0) : 0,
+                                    reps: ex.target_reps || 10,
+                                    rest_seconds: ex.rest_seconds || 90,
+                                    is_completed: false,
+                                })),
+                            };
+                        });
+                    }
+                } catch (e) {
+                    console.warn('[Workouts] Failed to load template exercises:', e);
+                }
+            }
+
+            // Final fallback — if still empty, show error
+            if (!session.exercises || session.exercises.length === 0) {
+                app.showToast('Ошибка: в тренировке нет упражнений', 'error');
+                return;
+            }
+        }
         // The plan belongs to the session it was made for: resuming that one keeps
         // the badges, and starting any other workout drops them.
         if (this.aiPlan && String(this.aiPlan.sessionId) !== String(session.id)) {
@@ -2273,10 +2594,6 @@ export const Workouts = {
             if (cachedPlan) this.aiPlan = { ...cachedPlan, sessionId: session.id || session.key };
         }
 
-        // Apply cached plan badges/tips to the newly rendered DOM
-        if (this.aiPlan) {
-            this.updateAiPlanBadges(container);
-        }
         app.state.currentSessionId = session.isLocal ? session.key : session.id;
         // The tracking screen is on top again, so the user is inside the
         // workout once more.
@@ -2301,6 +2618,7 @@ export const Workouts = {
         const completedHistorySessions = [...(historyData?.sessions || [])]
             .filter(s => s.status === 'completed')
             .sort((a, b) => new Date(a.started_at) - new Date(b.started_at));
+        this.completedHistorySessions = completedHistorySessions;
 
         const isLocal = this.isLocalSession(session);
 
@@ -2325,36 +2643,15 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     </div>
                 </div>
 
-                  <div class="min-h-[120px]" data-sparkline>
-                      ${Components.sparkline(historyPoints, 60)}
-                  </div>
+                   <div class="min-h-[120px]" data-sparkline>
+                       ${Components.sparkline(historyPoints, 60)}
+                   </div>
 
-                 ${Components.aiWorkoutPlanBadge(this.findAiPlanFor(ex.name))}
+                  <div data-ai-plan-container class="ai-plan-container"></div>
 
-                 <div class="space-y-1.5">
-                     ${(ex.sets || []).map((set, setIndex, setsArr) => {
-                         let prevText = '—';
-                          
-                          // Сортируем завершенные сессии по дате (новейшие первые)
-                          const sortedSessions = [...completedHistorySessions].sort((a, b) => new Date(b.started_at) - new Date(a.started_at));
-                          
-                          // Ищем последнюю завершенную сессию, где есть это упражнение (исключая текущую)
-                          const prevSession = sortedSessions.find(s => 
-                              s.id !== session.id && 
-                              (s.exercises || []).some(e => e.name.trim().toLowerCase() === ex.name.trim().toLowerCase())
-                          );
-                          
-                          if (prevSession) {
-                              const pastEx = (prevSession.exercises || []).find(e => e.name.trim().toLowerCase() === ex.name.trim().toLowerCase());
-                              if (pastEx) {
-                                  const pastSets = [...(pastEx.sets || [])].sort((a, b) => a.set_number - b.set_number);
-                                  const pastSet = pastSets.find(s => s.set_number === set.set_number) || pastSets[set.set_number - 1];
-                                  if (pastSet && pastSet.weight_kg != null && pastSet.reps != null) {
-                                      prevText = `${pastSet.weight_kg}×${pastSet.reps}`;
-                                  }
-                              }
-                          }
-
+                  <div class="space-y-1.5">
+                      ${(ex.sets || []).map((set, setIndex, setsArr) => {
+                          const prevText = this.computePrevText(ex, setIndex, completedHistorySessions);
                           return this.renderSetRowHtml(set, setIndex, setsArr, prevText);
                       }).join('')}
                     <div class="flex items-center justify-between gap-2 pt-1.5">
@@ -2426,7 +2723,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     </div>
                 </div>
 
-                 <div class="flex overflow-x-auto gap-3 pb-4 px-4 -mx-4 workout-carousel justify-start" id="carousel">
+                 <div class="flex overflow-x-auto gap-3 pb-4 px-4 workout-carousel" id="carousel">
                      ${allCards.join('')}
                  </div>
 
@@ -2453,19 +2750,39 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
               </div>
         `;
         container.innerHTML = html;
-        if (this.aiPlan) this.updateAiPlanBadges(container);
 
-        // Scroll to first exercise (index 1 in allCards)
-        setTimeout(() => {
+        // Scroll to first exercise card (index 1 in allCards = cancelCard + exerciseCards[0])
+        requestAnimationFrame(() => {
             const carousel = document.getElementById('carousel');
             if (carousel) {
-                const cardWidth = carousel.querySelector('.snap-center').offsetWidth + CAROUSEL_GAP_PX;
-                carousel.scrollLeft = cardWidth; 
+                const firstExerciseCard = carousel.querySelector('.workout-card[data-exercise-id]');
+                if (firstExerciseCard) {
+                    // Scroll so first exercise card is centered in the carousel
+                    carousel.scrollLeft = firstExerciseCard.offsetLeft - (carousel.clientWidth - firstExerciseCard.offsetWidth) / 2;
+                }
             }
-        }, 100);
+        });
 
         // Event listeners for workout screen
         this.bindWorkoutScreenEvents(container, app, session);
+
+        // Apply cached plan badges/tips to the newly rendered DOM (after binding)
+        if (this.aiPlan) {
+            this.updateAiPlanBadges(container);
+        }
+
+        // Restore rest timer state if re-rendering the same session —
+        // stopWorkoutTimer() at the top dismissed it, but the stopwatch
+        // anchor and owning set are still valid for this session.
+        if (savedRestState && savedRestState.restTimerStartTime != null) {
+            this.restTimerStartTime = savedRestState.restTimerStartTime;
+            this.activeRestForSetId = savedRestState.activeRestForSetId;
+            this.lastSavedRestSetId = savedRestState.lastSavedRestSetId;
+            this.restSavedBySetId = savedRestState.restSavedBySetId;
+            this.restTimerTargetTimestamp = savedRestState.restTimerTargetTimestamp;
+            this.restTimerPlannedDuration = savedRestState.restTimerPlannedDuration;
+            this.rearmRestTimer();
+        }
 
         // Start live timer
         this.startWorkoutTimer(session);
@@ -2572,254 +2889,11 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         const sessionId = isLocal ? session.key : session.id;
         const token = app.state.tokens.access;
 
-        // Toggle set completion
-        container.querySelectorAll('[data-action="toggle-set"]').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
-                e.stopPropagation();
-                const button = e.currentTarget;
-                const row = button.closest('[data-set-id]');
-                if (!row) {
-                    console.error('Row not found for set');
-                    return;
-                }
-                const setId = parseInt(row.dataset.setId);
-                if (isNaN(setId)) {
-                    console.error('Invalid setId found:', row.dataset.setId);
-                    return;
-                }
-                
-                const weightInput = row.querySelector('[data-field="weight"]');
-                const repsInput = row.querySelector('[data-field="reps"]');
-                const weight_kg = weightInput ? parseFloat(weightInput.value) : null;
-                const reps = repsInput ? parseInt(repsInput.value) : null;
-
-                const wasCompleted = button.dataset.completed === 'true';
-                const isCompleted = !wasCompleted;
-
-                const applyToggleState = (completed) => {
-                    const sessionSet = this.findSetInSession(session, setId);
-                    if (sessionSet) {
-                        sessionSet.is_completed = completed;
-                        sessionSet.weight_kg = isNaN(weight_kg) ? null : weight_kg;
-                        sessionSet.reps = isNaN(reps) ? null : reps;
-                    }
-                    this.updateWorkoutMetricsUI(session);
-                    if (completed) {
-                        button.dataset.completed = 'true';
-                        button.className = TOGGLE_BASE + ' ' + TOGGLE_COMPLETED;
-                        button.textContent = '✓';
-
-
-                        row.querySelector('span.font-bold').classList.add(...SET_DIM);
-                        row.querySelectorAll('input').forEach(inp => inp.classList.add(...SET_DIM));
-                        row.querySelectorAll('label').forEach(lbl => lbl.classList.add(...SET_DIM));
-
-                        // Completing a set locks its weight/reps until the
-                        // check is cleared; the carousel moves on only through
-                        // scheduleCarouselAdvance below.
-                        button.disabled = false;
-                    }
-                    else {
-                        button.dataset.completed = 'false';
-                        button.className = TOGGLE_BASE + ' ' + TOGGLE_UNCOMPLETED;
-
-                        row.querySelector('span.font-bold').classList.remove(...SET_DIM);
-                        row.querySelector('span.font-bold').classList.add(SET_NUMBER_IDLE);
-                        row.querySelectorAll('input').forEach(inp => inp.classList.remove(...SET_DIM));
-                        row.querySelectorAll('label').forEach(lbl => lbl.classList.remove(...SET_DIM));
-
-                        button.textContent = '✓';
-                        button.disabled = false;
-                    }
-                };
-
-                button.disabled = true;
-                button.textContent = '...';
-                // Optimistic local update so the UI reacts instantly, even offline
-                applyToggleState(isCompleted);
-                if (isCompleted) {
-                    this.flashSetSaved(row);
-                    this.scheduleCarouselAdvance(session, row);
-                    // If a rest timer is running for the previous set, stop and
-                    // save its elapsed seconds onto that set before starting a
-                    // new rest period for this one.
-                    if (this.activeRestForSetId) {
-                        this.restSavedBySetId = setId;
-                        await this.stopAndSaveRestTimer(session);
-                        const savedSet = this.lastSavedRestSetId
-                            ? this.findSetInSession(session, this.lastSavedRestSetId) : null;
-                        if (savedSet && savedSet.rest_time_seconds != null) {
-                            this.applyRestTimeInline(this.lastSavedRestSetId, savedSet.rest_time_seconds);
-                        }
-                    }
-                    const { exercise: ex, set: sessionSet } = this.findExerciseOfSet(session, setId);
-                    if (ex && sessionSet && sessionSet.set_number < (ex.sets || []).length) {
-                        this.startRestTimer(sessionSet, ex, session);
-                    }
-                } else {
-                    // Unchecking: undo the rest-time save if this set's completion
-                    // was what triggered it, and stop the timer if this set owns it.
-                    this.undoRestTimeSave(session, setId, isLocal, token);
-                    if (this.activeRestForSetId === setId) {
-                        this.dismissRestTimer();
-                    }
-                }
-                const payload = {
-                    is_completed: isCompleted,
-                    weight_kg: isNaN(weight_kg) ? null : weight_kg,
-                    reps: isNaN(reps) ? null : reps
-                };
-                if (isLocal) {
-                    this.persistLocalSession(session);
-                    this.recordLocalSetPatch(session.key, setId, payload);
-                    button.disabled = false;
-                    button.textContent = '✓';
-                    return;
-                }
-                try {
-                    app?._pendingToggleSetIds?.add(setId);
-                    await API.patch(`/workouts/sets/${setId}`, payload, token);
-                } catch (err) {
-                    if (err?.offlineQueued) {
-                        // Silent: the global network banner reflects offline/syncing status
-                    } else {
-                        applyToggleState(wasCompleted);
-                        this.undoRestTimeSave(session, setId, isLocal, token);
-                        if (this.activeRestForSetId === setId) {
-                            this.dismissRestTimer();
-                        }
-                        app.showToast(err.message || 'Ошибка', 'error');
-                    }
-                    button.disabled = false;
-                    button.textContent = '✓';
-                } finally {
-                    app?._pendingToggleSetIds?.delete(setId);
-                }
-            });
-        });
-
-        // Save weight/reps: instant local update while typing, debounced network sync, flush on blur
-        const DEBOUNCE_MS = 400;
-        const pendingTimers = new Map();
-
-        const applyLocalValue = (input) => {
-            const row = input.closest('[data-set-id]');
-            if (!row) return null;
-            const setId = parseInt(row.dataset.setId);
-            const field = input.dataset.field;
-            const value = field === 'weight' ? parseFloat(input.value) : parseInt(input.value);
-            if (isNaN(value)) return null;
-
-            const sessionSet = this.findSetInSession(session, setId);
-            if (sessionSet) {
-                sessionSet[field === 'weight' ? 'weight_kg' : 'reps'] = value;
-                this.updateWorkoutMetricsUI(session);
-            }
-            return { row, setId, field, value };
-        };
-
-        const propagateWeightToNextSet = (row, value) => {
-            const exerciseContainer = row.closest('.bg-white, .dark\\:bg-surface-800');
-            if (!exerciseContainer) return;
-            const rows = exerciseContainer.querySelectorAll('[data-set-id]');
-            let foundCurrent = false;
-            for (const r of rows) {
-                if (foundCurrent) {
-                    const nextWeightInput = r.querySelector('[data-field="weight"]');
-                    if (nextWeightInput && !nextWeightInput.value) {
-                        nextWeightInput.value = value;
-                        const nextSetId = parseInt(r.dataset.setId);
-                        const nextSessionSet = this.findSetInSession(session, nextSetId);
-                        if (nextSessionSet) nextSessionSet.weight_kg = value;
-                        if (isLocal) {
-                            this.persistLocalSession(session);
-                            this.recordLocalSetPatch(session.key, nextSetId, { weight_kg: value });
-                        } else {
-                            API.patch(`/workouts/sets/${nextSetId}`, { weight_kg: value }, token).catch(() => {});
-                        }
-                    }
-                    break;
-                }
-                if (r === row) foundCurrent = true;
-            }
-        };
-
-        const persistSet = async (input) => {
-            const parsed = applyLocalValue(input);
-            if (!parsed) return;
-            const { row, setId, field, value } = parsed;
-
-            if (field === 'weight') {
-                propagateWeightToNextSet(row, value);
-            }
-
-            if (isLocal) {
-                this.persistLocalSession(session);
-                this.recordLocalSetPatch(session.key, setId, { [field]: value });
-                return;
-            }
-
-            await app.ensureFreshToken();
-            try {
-                await API.patch(`/workouts/sets/${setId}`, { [field]: value }, app.state.tokens.access);
-            } catch (err) {
-                if (err?.offlineQueued) {
-                    // Silent: the global network banner reflects offline/syncing status
-                } else {
-                    app.showToast(err.message || 'Ошибка сохранения', 'error');
-                }
-            }
-        };
-
-        const scheduleSave = (input, immediate) => {
-            const row = input.closest('[data-set-id]');
-            if (!row) return;
-            const key = `${row.dataset.setId}:${input.dataset.field}`;
-
-            const run = () => {
-                pendingTimers.delete(key);
-                return persistSet(input);
-            };
-
-            const existing = pendingTimers.get(key);
-            if (existing) {
-                clearTimeout(existing);
-                pendingTimers.delete(key);
-            }
-
-            if (immediate) {
-                run();
-            } else {
-                pendingTimers.set(key, setTimeout(run, DEBOUNCE_MS));
-            }
-        };
-
-        container.querySelectorAll('[data-field="weight"], [data-field="reps"]').forEach(input => {
-            input.addEventListener('input', () => applyLocalValue(input));
-            input.addEventListener('change', () => scheduleSave(input, false));
-            input.addEventListener('blur', () => scheduleSave(input, true));
-        });
-
-        // Weight/reps are entered through the drum picker bottom sheet, never the
-        // native keyboard (inputs stay readOnly and inputmode="none"). A completed
-        // set is locked: the guard runs synchronously before the sheet opens, so a
-        // finished set cannot be rewritten until the checkmark is cleared.
-        container.querySelectorAll('[data-field="weight"], [data-field="reps"]').forEach(input => {
-            const openPicker = (e) => {
-                e?.preventDefault();
-                const row = input.closest('[data-set-id]');
-                const toggle = row?.querySelector('[data-action="toggle-set"]');
-                if (toggle?.dataset.completed === 'true') {
-                    app?.showToast(SET_LOCKED_MESSAGE, 'info');
-                    return;
-                }
-                input.blur();
-                this.openDrumPicker(input, { app });
-            };
-            input.addEventListener('click', openPicker);
-            input.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter' || e.key === ' ') openPicker(e);
-            });
+        // Bind per-row event handlers (toggle completion, drum picker, persistence)
+        container.querySelectorAll('[data-set-id]').forEach(rowEl => {
+            const exId = rowEl.closest('[data-exercise-id]')?.dataset.exerciseId;
+            const exercise = (session.exercises || []).find(ex => String(ex.id) === String(exId));
+            this.bindSetRowEvents(rowEl, session, exercise, app);
         });
 
         // Complete workout
@@ -4854,11 +4928,15 @@ showQuickStartModal(app) {
             <div id="add-exercise-modal" class="fixed inset-0 z-50 flex items-end sm:items-center justify-center min-h-screen p-0 sm:p-4 modal-backdrop pointer-events-auto opacity-0 transition-opacity duration-200">
                 <div class="w-full sm:max-w-md bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col h-[100dvh] sm:h-[90vh] transform transition-all duration-200 scale-95 opacity-0 drum-sheet-safe">
                     <div class="w-12 h-1 rounded-full bg-zinc-300 dark:bg-zinc-700 mx-auto mt-2 mb-1 flex-shrink-0"></div>
-                    <div class="px-4 pb-3 flex-shrink-0">
-                        <h3 class="text-lg font-bold">Добавить упражнение</h3>
-                        <input id="ae-search" type="text" placeholder="Поиск упражнения..."
-                               class="w-full mt-2 px-3 py-2.5 text-sm glass-input rounded-xl" autocomplete="off">
-                    </div>
+                     <div class="px-4 pb-3 flex-shrink-0 flex items-center justify-between gap-3">
+                         <div class="min-w-0">
+                             <h3 class="text-lg font-bold truncate">Добавить упражнение</h3>
+                         </div>
+                         <button type="button" data-action="close-add-exercise"
+                                 class="w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0 hover:bg-zinc-200 dark:hover:bg-white/10 transition-colors">✕</button>
+                     </div>
+                    <input id="ae-search" type="text" placeholder="Поиск упражнения..."
+                           class="w-full mt-0 px-3 py-2.5 text-sm glass-input rounded-xl mx-4 mb-2" autocomplete="off" style="width: calc(100% - 2rem);">
                     <div class="px-4 pb-2 flex-shrink-0 overflow-x-auto">
                         <div class="flex gap-1.5 items-center whitespace-nowrap">
                             <button type="button" data-group="" class="px-3 py-1.5 text-xs rounded-xl glass transition-all ${filterGroup === '' ? 'bg-primary-600 text-white' : ''}">Все</button>
@@ -4883,6 +4961,8 @@ showQuickStartModal(app) {
         root.addEventListener('click', (e) => {
             if (e.target === root) closeModal();
         });
+
+        root.querySelector('[data-action="close-add-exercise"]')?.addEventListener('click', closeModal);
 
         // Wire up search input with debounce
         const searchEl = root.querySelector('#ae-search');

@@ -29,6 +29,8 @@ export const NetworkBanner = {
     initialized: false,
     hideTimer: null,
     state: 'hidden',
+    offlineDebounceTimer: null,
+    OFFLINE_DEBOUNCE_MS: 3000,
 
     init() {
         if (this.initialized) return;
@@ -111,6 +113,10 @@ export const NetworkBanner = {
             clearTimeout(this.hideTimer);
             this.hideTimer = null;
         }
+        if (this.offlineDebounceTimer) {
+            clearTimeout(this.offlineDebounceTimer);
+            this.offlineDebounceTimer = null;
+        }
     },
 
     render(state) {
@@ -131,9 +137,14 @@ export const NetworkBanner = {
         this.clearTimers();
         this.state = 'offline';
         this.mount();
-        this.render('offline');
-        this.el.classList.add('is-visible');
-        document.body.classList.add('has-network-banner');
+        // Debounce: wait before showing to avoid flashing on brief disconnects
+        this.offlineDebounceTimer = setTimeout(() => {
+            if (this.state === 'offline') {
+                this.render('offline');
+                this.el.classList.add('is-visible');
+                document.body.classList.add('has-network-banner');
+            }
+        }, this.OFFLINE_DEBOUNCE_MS);
     },
 
     showRestored() {
