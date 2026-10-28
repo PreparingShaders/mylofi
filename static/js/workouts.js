@@ -67,6 +67,11 @@ const SET_SAVED_FLASH_MS = 1000;
 const SET_ADVANCE_DELAY_MS = 350;
 // gap-4 between carousel cards, used to derive the horizontal scroll step.
 const CAROUSEL_GAP_PX = 16;
+// Rest timer presets in seconds for the countdown mode.
+const REST_TIMER_PRESETS = [30, 60, 90, 120, 180];
+// Key for persisting the chosen rest timer mode across sessions.
+const REST_TIMER_MODE_KEY = 'restTimerMode';
+const REST_TIMER_PRESET_KEY = 'restTimerLastPreset';
 
 // The coach answers at the two ends of a session and both calls are refused
 // offline: the plan is wanted before the first set and the verdict right after
@@ -141,6 +146,13 @@ export const Workouts = {
     // Planned duration in milliseconds — restored alongside the target so
     // the progress bar and save logic keep working on resume.
     restTimerPlannedDuration: null,
+    // Dual-mode rest timer: 'timer' (countdown with presets) or
+    // 'stopwatch' (count-up). Mode and last-used preset are persisted to
+    // localStorage so the user's preference survives across workouts.
+    restTimerMode: null,
+    restTimerPresetSeconds: null,
+    // True when the countdown has reached zero and is now counting overtime.
+    restTimerOvertime: false,
     activeRestForSetId: null,
     lastSavedRestSetId: null,
     restSavedBySetId: null,
@@ -1333,16 +1345,89 @@ export const Workouts = {
         this.dismissRestTimer();
     },
 
+    // ===== Dual-mode rest timer helpers =====
+
+    getStoredRestTimerMode() {
+        try {
+            const stored = localStorage.getItem(REST_TIMER_MODE_KEY);
+            return (stored === 'timer' || stored === 'stopwatch') ? stored : 'timer';
+        } catch (e) { return 'timer'; }
+    },
+
+    getStoredRestTimerPreset() {
+        try {
+            const stored = parseInt(localStorage.getItem(REST_TIMER_PRESET_KEY));
+            return !isNaN(stored) && stored > 0 ? stored : 90;
+        } catch (e) { return 90; }
+    },
+
+    saveRestTimerMode(mode) {
+        this.restTimerMode = mode;
+        try { localStorage.setItem(REST_TIMER_MODE_KEY, mode); } catch (e) {}
+    },
+
+    saveRestTimerPreset(seconds) {
+        this.restTimerPresetSeconds = seconds;
+        try { localStorage.setItem(REST_TIMER_PRESET_KEY, String(seconds)); } catch (e) {}
+    },
+
+    applyRestTimerModeUI() {
+        const bar = document.getElementById('rest-timer-bar');
+        if (!bar) return;
+        const mode = this.restTimerMode || 'timer';
+        const presetsEl = bar.querySelector('[data-timer-presets]');
+        const customEl = bar.querySelector('[data-timer-custom]');
+        const modeTimerBtn = bar.querySelector('.mode-timer');
+        const modeStopwatchBtn = bar.querySelector('.mode-stopwatch');
+
+        if (presetsEl) presetsEl.classList.toggle('hidden', mode !== 'timer');
+        if (customEl) customEl.classList.toggle('hidden', mode !== 'timer');
+        if (modeTimerBtn) {
+            modeTimerBtn.setAttribute('data-active', mode === 'timer');
+            modeTimerBtn.classList.toggle('bg-primary-600', mode === 'timer');
+            modeTimerBtn.classList.toggle('text-white', mode === 'timer');
+            modeTimerBtn.classList.toggle('bg-surface-100', mode !== 'timer');
+            modeTimerBtn.classList.toggle('text-surface-600', mode !== 'timer');
+            modeTimerBtn.classList.toggle('dark:bg-white/5', mode !== 'timer');
+            modeTimerBtn.classList.toggle('dark:text-surface-400', mode !== 'timer');
+        }
+        if (modeStopwatchBtn) {
+            modeStopwatchBtn.setAttribute('data-active', mode === 'stopwatch');
+            modeStopwatchBtn.classList.toggle('bg-primary-600', mode === 'stopwatch');
+            modeStopwatchBtn.classList.toggle('text-white', mode === 'stopwatch');
+            modeStopwatchBtn.classList.toggle('bg-surface-100', mode !== 'stopwatch');
+            modeStopwatchBtn.classList.toggle('text-surface-600', mode !== 'stopwatch');
+            modeStopwatchBtn.classList.toggle('dark:bg-white/5', mode !== 'stopwatch');
+            modeStopwatchBtn.classList.toggle('dark:text-surface-400', mode !== 'stopwatch');
+        }
+    },
+
+    // ===== Dual-mode rest timer helpers end =====
+
     startRestTimer(set, exercise, session) {
         this.stopRestTimer();
+        this.restTimerMode = this.restTimerMode || this.getStoredRestTimerMode();
+        this.restTimerPresetSeconds = this.restTimerPresetSeconds || this.getStoredRestTimerPreset();
         this.restTimerStartTime = Date.now();
-        this.restTimerPlannedDuration = (set.rest_seconds || 90) * 1000;
-        this.restTimerTargetTimestamp = this.restTimerStartTime + this.restTimerPlannedDuration;
-        this.activeRestForSetId = set?.id ?? null;
-        this.lastSavedRestSetId = null;
+        this.restTimerOvertime = false;
         this.restSavedBySetId = null;
+        this.lastSavedRestSetId = null;
+        this.activeRestForSetId = set?.id ?? null;
+
+        if (this.restTimerMode === 'stopwatch') {
+            // Stopwatch mode: no countdown target, counts up from zero
+            this.restTimerTargetTimestamp = null;
+            this.restTimerPlannedDuration = null;
+        } else {
+            // Timer mode: count down from the configured preset
+            const durationSec = this.restTimerPresetSeconds || (set.rest_seconds || 90);
+            this.restTimerPlannedDuration = durationSec * 1000;
+            this.restTimerTargetTimestamp = this.restTimerStartTime + this.restTimerPlannedDuration;
+        }
+
         const bar = document.getElementById('rest-timer-bar');
         if (bar) bar.classList.remove('hidden');
+        this.applyRestTimerModeUI();
         this.updateRestTimerUI();
         this.restTimerInterval = setInterval(() => this.updateRestTimerUI(), 1000);
     },
@@ -1382,6 +1467,7 @@ export const Workouts = {
         this.restTimerStartTime = null;
         this.restTimerTargetTimestamp = null;
         this.restTimerPlannedDuration = null;
+        this.restTimerOvertime = false;
         this.updateRestTimerUI();
 
         if (this.isLocalSession(sess)) {
@@ -1396,26 +1482,36 @@ export const Workouts = {
         }
     },
 
-    // Discard the running timer without persisting (user tapped "Готов" or the
-    // set that owns the timer was unchecked). The save chain is forgotten.
+    // Discard the running timer without persisting (the set that owns the timer
+    // was unchecked). The save chain is forgotten. The "Готов" button uses
+    // stopAndSaveRestTimer() instead, so this is only for abortive paths.
     dismissRestTimer() {
         this.stopRestTimer();
         this.activeRestForSetId = null;
         this.restTimerStartTime = null;
         this.restTimerTargetTimestamp = null;
         this.restTimerPlannedDuration = null;
+        this.restTimerOvertime = false;
         this.lastSavedRestSetId = null;
         this.restSavedBySetId = null;
+        // Persist the current mode so it survives across workouts
+        this.restTimerMode = this.getStoredRestTimerMode();
     },
 
     // Re-arm the interval after a backgrounded/frozen tab resumes. The target
     // timestamp is kept across the suspend, so the count-down value is correct
     // immediately; only the ticking interval needs to be re-created.
     rearmRestTimer() {
-        if (this.restTimerTargetTimestamp == null) return;
+        // In stopwatch mode there's no target timestamp — rearm from start time
+        if (this.restTimerTargetTimestamp == null && this.restTimerStartTime != null) {
+            // Stopwatch mode: rearm if we have a start time
+        } else if (this.restTimerTargetTimestamp == null) {
+            return;
+        }
         const bar = document.getElementById('rest-timer-bar');
         if (bar) bar.classList.remove('hidden');
         if (this.restTimerInterval) return;
+        this.applyRestTimerModeUI();
         this.updateRestTimerUI();
         this.restTimerInterval = setInterval(() => this.updateRestTimerUI(), 1000);
     },
@@ -1426,6 +1522,25 @@ export const Workouts = {
         const progressEl = document.getElementById('rest-timer-progress');
         if (!remainingEl) return;
 
+        const mode = this.restTimerMode || 'timer';
+
+        // Stopwatch mode: count up from start time, no countdown target
+        if (mode === 'stopwatch') {
+            if (this.restTimerStartTime == null) {
+                remainingEl.textContent = '00:00';
+                return;
+            }
+            const now = Date.now();
+            const elapsed = Math.max(0, Math.floor((now - this.restTimerStartTime) / 1000));
+            remainingEl.textContent = this.formatTimer(elapsed);
+            remainingEl.classList.remove('text-surface-700', 'dark:text-surface-300');
+            remainingEl.classList.add('text-lime-600', 'dark:text-lime-400');
+            if (stateEl) stateEl.textContent = 'Секундомер';
+            if (progressEl) progressEl.style.display = 'none';
+            return;
+        }
+
+        // Timer mode: countdown from target, switch to overtime at zero
         if (this.restTimerTargetTimestamp == null) {
             remainingEl.textContent = '00:00';
             if (progressEl) progressEl.style.display = 'none';
@@ -1434,17 +1549,32 @@ export const Workouts = {
 
         const now = Date.now();
         const remaining = Math.max(0, Math.ceil((this.restTimerTargetTimestamp - now) / 1000));
-        const elapsed = Math.max(0, Math.floor((now - (this.restTimerTargetTimestamp - (this.restTimerPlannedDuration || 0))) / 1000));
+        // elapsed is always measured from the original start anchor so that
+        // stopAndSaveRestTimer saves the total rest time (incl. overtime).
+        const elapsed = Math.max(0, Math.floor((now - this.restTimerStartTime) / 1000));
 
-        remainingEl.textContent = this.formatTimer(remaining);
-        remainingEl.classList.remove('text-surface-700', 'dark:text-surface-300');
-        remainingEl.classList.add('text-lime-600', 'dark:text-lime-400');
-        if (stateEl) stateEl.textContent = 'Отдых';
-        if (progressEl) {
-            const totalSeconds = this.restTimerPlannedDuration ? this.restTimerPlannedDuration / 1000 : 90;
-            const progress = Math.min(100, (elapsed / totalSeconds) * 100);
-            progressEl.style.width = `${progress}%`;
-            progressEl.style.display = 'block';
+        if (remaining <= 0) {
+            // Overtime: switch to count-up from the original start (elapsed > planned)
+            this.restTimerOvertime = true;
+            const overtimeDisplay = elapsed;
+            remainingEl.textContent = this.formatTimer(overtimeDisplay);
+            remainingEl.classList.remove('text-lime-600', 'dark:text-lime-400', 'text-surface-700', 'dark:text-surface-300');
+            remainingEl.classList.add('text-rose-500', 'dark:text-rose-400');
+            if (stateEl) stateEl.textContent = 'Перерыв просрочен';
+            if (progressEl) progressEl.style.display = 'none';
+            remainingEl.classList.add('animate-pulse');
+        } else {
+            this.restTimerOvertime = false;
+            remainingEl.textContent = this.formatTimer(remaining);
+            remainingEl.classList.remove('text-surface-700', 'dark:text-surface-300', 'text-rose-500', 'dark:text-rose-400', 'animate-pulse');
+            remainingEl.classList.add('text-lime-600', 'dark:text-lime-400');
+            if (stateEl) stateEl.textContent = 'Отдых';
+            if (progressEl) {
+                const totalSeconds = this.restTimerPlannedDuration ? this.restTimerPlannedDuration / 1000 : 90;
+                const progress = Math.min(100, (elapsed / totalSeconds) * 100);
+                progressEl.style.width = `${progress}%`;
+                progressEl.style.display = 'block';
+            }
         }
     },
 
@@ -1535,7 +1665,7 @@ export const Workouts = {
             return { row: r, setId, field, value };
         };
 
-        const propagateWeightToNextSet = (r, value) => {
+        const propagateWeightReps = (r, weightVal, repsVal) => {
             const exerciseContainer = r.closest('[data-exercise-id]');
             if (!exerciseContainer) return;
             const rows = exerciseContainer.querySelectorAll('[data-set-id]');
@@ -1543,24 +1673,49 @@ export const Workouts = {
             for (const otherRow of rows) {
                 if (foundCurrent) {
                     const nextWeightInput = otherRow.querySelector('[data-field="weight"]');
-                    if (nextWeightInput && !nextWeightInput.value) {
-                        nextWeightInput.value = value;
+                    const nextRepsInput = otherRow.querySelector('[data-field="reps"]');
+                    const weightEmpty = !nextWeightInput || !nextWeightInput.value || parseFloat(nextWeightInput.value) === 0;
+                    const repsEmpty = !nextRepsInput || !nextRepsInput.value || parseInt(nextRepsInput.value) === 0;
+                    if (weightEmpty && repsEmpty) {
+                        if (nextWeightInput && weightVal != null) {
+                            nextWeightInput.value = weightVal;
+                        }
+                        if (nextRepsInput && repsVal != null) {
+                            nextRepsInput.value = repsVal;
+                        }
                         const nextSetId = parseInt(otherRow.dataset.setId);
+                        const patch = {};
+                        if (weightVal != null) patch.weight_kg = weightVal;
+                        if (repsVal != null) patch.reps = repsVal;
                         if (session) {
                             const nextSessionSet = this.findSetInSession(session, nextSetId);
-                            if (nextSessionSet) nextSessionSet.weight_kg = value;
+                            if (nextSessionSet) {
+                                if (weightVal != null) nextSessionSet.weight_kg = weightVal;
+                                if (repsVal != null) nextSessionSet.reps = repsVal;
+                            }
                         }
                         if (isLocal && session) {
                             this.persistLocalSession(session);
-                            this.recordLocalSetPatch(session.key, nextSetId, { weight_kg: value });
+                            this.recordLocalSetPatch(session.key, nextSetId, patch);
                         } else if (token) {
-                            API.patch(`/workouts/sets/${nextSetId}`, { weight_kg: value }, token).catch(() => {});
+                            API.patch(`/workouts/sets/${nextSetId}`, patch, token).catch(() => {});
                         }
                     }
-                    break;
                 }
                 if (otherRow === r) foundCurrent = true;
             }
+        };
+
+        // Detect the "first filled set" — the earliest set in this exercise where
+        // both weight AND reps are non-empty. Returns the row element or null.
+        const findFirstFilledSet = (exerciseContainer) => {
+            const rows = exerciseContainer.querySelectorAll('[data-set-id]');
+            for (const otherRow of rows) {
+                const w = otherRow.querySelector('[data-field="weight"]');
+                const rp = otherRow.querySelector('[data-field="reps"]');
+                if (w && w.value && rp && rp.value) return otherRow;
+            }
+            return null;
         };
 
         const persistSet = async (input) => {
@@ -1568,7 +1723,17 @@ export const Workouts = {
             if (!parsed) return;
             const { row: r, setId, field, value } = parsed;
 
-            if (field === 'weight') propagateWeightToNextSet(r, value);
+            if (field === 'weight' || field === 'reps') {
+                const exerciseContainer = r.closest('[data-exercise-id]');
+                const firstFilled = exerciseContainer ? findFirstFilledSet(exerciseContainer) : null;
+                if (firstFilled && firstFilled === r) {
+                    const wInput = r.querySelector('[data-field="weight"]');
+                    const rpInput = r.querySelector('[data-field="reps"]');
+                    propagateWeightReps(r,
+                        wInput && wInput.value ? parseFloat(wInput.value) : null,
+                        rpInput && rpInput.value ? parseInt(rpInput.value) : null);
+                }
+            }
 
             if (isLocal && session) {
                 this.persistLocalSession(session);
@@ -1990,23 +2155,47 @@ export const Workouts = {
 
     /**
      * Inject AI plan badges into the currently rendered workout screen once
-     * they arrive. Looks for exercise cards and updates their badges.
+     * they arrive. Looks for exercise cards and updates their badges inside
+     * the collapsible .ai-analysis-content block.
      */
     updateAiPlanBadges(container) {
         if (!container || !this.aiPlan) return;
+        const collapsed = this.isAiAnalysisCollapsed();
         container.querySelectorAll('.workout-card[data-exercise-id]').forEach(card => {
             const nameEl = card.querySelector('h3');
             const name = nameEl?.textContent || '';
             const rec = this.findAiPlanFor(name);
-            const badgeContainer = card.querySelector('[data-ai-plan-container]');
-            if (!badgeContainer) return;
+            const contentEl = card.querySelector('[data-ai-analysis] .ai-analysis-content');
+            const toggleBtn = card.querySelector('[data-action="toggle-ai-analysis"]');
+            if (!contentEl) return;
+
             if (rec) {
                 const badgeHtml = Components.aiWorkoutPlanBadge(rec);
-                badgeContainer.innerHTML = badgeHtml;
+                contentEl.innerHTML = badgeHtml;
+                contentEl.style.display = collapsed ? 'none' : 'block';
+                if (toggleBtn) {
+                    toggleBtn.classList.remove('hidden');
+                    toggleBtn.setAttribute('aria-expanded', String(!collapsed));
+                }
             } else {
-                badgeContainer.innerHTML = '';
+                contentEl.innerHTML = '';
+                contentEl.style.display = 'none';
+                if (toggleBtn) toggleBtn.classList.add('hidden');
             }
         });
+    },
+
+    // Read/write collapse state for the AI analysis block from localStorage.
+    isAiAnalysisCollapsed() {
+        try {
+            return localStorage.getItem('aiAnalysisCollapsed') === 'true';
+        } catch (e) { return false; }
+    },
+
+    setAiAnalysisCollapsed(value) {
+        try {
+            localStorage.setItem('aiAnalysisCollapsed', String(value));
+        } catch (e) {}
     },
 
     /** The stored verdict of a session, or null when there is none to read. */
@@ -2377,7 +2566,16 @@ export const Workouts = {
     // so it can be reused both in full screen renders and in DOM insertions.
     renderSetRowHtml(set, setIndex, setsArr, prevText) {
         return `
-            <div class="flex items-center gap-2 glass p-1.5 rounded-2xl" data-set-id="${set.id}">
+            <div class="flex items-center gap-2 glass p-1.5 rounded-2xl relative" data-set-id="${set.id}">
+                <button type="button"
+                        data-action="delete-set"
+                        data-set-id="${set.id}"
+                        class="delete-set-btn-start w-7 h-7 rounded-xl glass text-surface-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 flex-shrink-0 flex items-center justify-center transition-colors"
+                        aria-label="Удалить подход">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.131A2.24 2.24 0 0115.138 21H8.862a2.24 2.24 0 01-2.271-2.133L5.867 7M6 7h12M6 7l1-2h10l1 2M10 11v6M14 11v6M9 11l1-9h4l1 9"/>
+                    </svg>
+                </button>
                 <span class="font-bold w-6 text-center text-xs ${set.is_completed ? SET_DIM.join(' ') : SET_NUMBER_IDLE}">${set.set_number}</span>
                 <div class="w-14 flex flex-col items-center justify-center flex-shrink-0" title="Прошлый подход">
                     <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Пред.</label>
@@ -2413,11 +2611,20 @@ export const Workouts = {
     // and keep rest-time lines in sync (the prior last set may now show one).
     insertSetRow(container, exId, set, exercise) {
         const card = container.querySelector(`[data-exercise-id="${exId}"]`);
-        if (!card) return;
-        const setsContainer = card.querySelector('.space-y-1\\.5') || card.querySelector('[class*="space-y-"]');
-        if (!setsContainer) return;
-        const buttons = setsContainer.querySelector('.flex.items-center.justify-between.gap-2') || Array.from(setsContainer.querySelectorAll('.flex.items-center.justify-between')).find(el => el.classList.contains('gap-2')) || setsContainer.querySelector('.flex.items-center.justify-between');
-        if (!buttons) return;
+        if (!card) {
+            console.warn('[insertSetRow] Exercise card not found for exId:', exId);
+            return;
+        }
+        const setsContainer = card.querySelector('[data-set-container]') || card.querySelector('.space-y-1\\.5') || card.querySelector('[class*="space-y-"]');
+        if (!setsContainer) {
+            console.warn('[insertSetRow] Sets container not found for exId:', exId);
+            return;
+        }
+        const buttons = setsContainer.querySelector('[data-action="add-set"]')?.closest('div') || setsContainer.querySelector('.flex.items-center.justify-between.gap-2') || Array.from(setsContainer.querySelectorAll('.flex.items-center.justify-between')).find(el => el.classList.contains('gap-2')) || setsContainer.querySelector('.flex.items-center.justify-between');
+        if (!buttons) {
+            console.warn('[insertSetRow] Add-set button container not found for exId:', exId);
+            return;
+        }
         const idx = exercise.sets.length - 1;
         // Compute prevText using the shared helper so it matches the full render
         const prevText = this.computePrevText(exercise, idx, this.completedHistorySessions);
@@ -2490,6 +2697,9 @@ export const Workouts = {
             restTimerStartTime: this.restTimerStartTime,
             restTimerTargetTimestamp: this.restTimerTargetTimestamp,
             restTimerPlannedDuration: this.restTimerPlannedDuration,
+            restTimerMode: this.restTimerMode,
+            restTimerPresetSeconds: this.restTimerPresetSeconds,
+            restTimerOvertime: this.restTimerOvertime,
             activeRestForSetId: this.activeRestForSetId,
             lastSavedRestSetId: this.lastSavedRestSetId,
             restSavedBySetId: this.restSavedBySetId,
@@ -2634,7 +2844,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 .slice(-10);
 
             return `
-             <div class="workout-card snap-center glass rounded-3xl p-3 flex flex-col space-y-3" data-exercise-id="${ex.id}">
+              <div class="workout-card snap-center glass rounded-3xl p-3 flex flex-col space-y-3" data-exercise-id="${ex.id}" data-has-history="${historyPoints.length > 0 ? 'true' : 'false'}">
                 <div class="flex justify-between items-start mb-3 gap-1.5">
                     <h3 class="font-bold text-base text-surface-900 dark:text-surface-50 leading-tight flex-1 min-w-0 break-words" title="${ex.name}">${ex.name}</h3>
                     <div class="flex items-center gap-1 flex-shrink-0">
@@ -2647,9 +2857,22 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                        ${Components.sparkline(historyPoints, 60)}
                    </div>
 
-                  <div data-ai-plan-container class="ai-plan-container"></div>
+                   <div class="ai-analysis-block" data-ai-analysis>
+                       <button type="button"
+                               data-action="toggle-ai-analysis"
+                               class="ai-analysis-toggle w-full flex items-center justify-between gap-2 text-xs font-semibold text-surface-600 dark:text-surface-300 hover:text-surface-900 dark:hover:text-surface-100 py-1.5 px-2 rounded-xl glass transition-colors hidden"
+                               aria-expanded="true">
+                           <span>ИИ-анализ</span>
+                           <svg class="chevron w-4 h-4 transition-transform duration-150" viewBox="0 0 24 24" aria-hidden="true">
+                               <path fill="currentColor" d="M7 10l5 5 5-5z"/>
+                           </svg>
+                       </button>
+                       <div class="ai-analysis-content overflow-hidden transition-all duration-200 ease"
+                            style="display: none;">
+                       </div>
+                   </div>
 
-                  <div class="space-y-1.5">
+                   <div class="space-y-1.5" data-set-container>
                       ${(ex.sets || []).map((set, setIndex, setsArr) => {
                           const prevText = this.computePrevText(ex, setIndex, completedHistorySessions);
                           return this.renderSetRowHtml(set, setIndex, setsArr, prevText);
@@ -2658,10 +2881,6 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         <button type="button" data-action="add-set" data-ex-id="${ex.id}"
                                 class="flex items-center gap-1 text-xs font-semibold text-lime-600 dark:text-lime-400 hover:text-lime-700 dark:hover:text-lime-300 py-1 px-2 rounded-xl glass transition-colors">
                             <span>+</span><span>Добавить подход</span>
-                        </button>
-                        <button type="button" data-action="remove-set" data-ex-id="${ex.id}"
-                                class="flex items-center gap-1 text-xs font-semibold text-surface-500 dark:text-surface-400 hover:text-red-600 dark:hover:text-red-400 py-1 px-2 rounded-xl glass transition-colors ${isLocal && (ex.sets || []).length <= 1 ? 'opacity-30 cursor-not-allowed' : ''}">
-                            <span>−</span><span>Удалить подход</span>
                         </button>
                     </div>
                  </div>
@@ -2718,34 +2937,60 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         <span id="workout-progress-text" class="text-xs font-semibold text-surface-600 dark:text-surface-300">Сделано ${initialMetrics.completed} из ${initialMetrics.total} подходов (${initialPercent}%)</span>
                         <span id="workout-total-tonnage" class="text-xs font-semibold text-surface-600 dark:text-surface-300">Суммарный тоннаж: ${Math.round(initialMetrics.tonnage)} кг</span>
                     </div>
-                    <div class="h-2 w-full rounded-full bg-surface-200 dark:bg-white/10 overflow-hidden">
-                        <div id="workout-progress-bar" class="h-full rounded-full bg-surface-800 dark:bg-zinc-100 transition-all duration-300" style="width: ${initialPercent}%"></div>
-                    </div>
+                    ${this.buildExerciseTrackHtml(session)}
                 </div>
 
                  <div class="flex overflow-x-auto gap-3 pb-4 px-4 workout-carousel" id="carousel">
                      ${allCards.join('')}
                  </div>
 
-                  <div id="rest-timer-bar" class="hidden fixed bottom-16 left-0 right-0 z-50 rest-timer-bar"
-                       role="timer" aria-live="polite" aria-label="Таймер отдыха">
-                      <div class="flex items-center gap-2 px-3 py-2 rest-timer-bar__inner glass rounded-2xl">
-                           <span class="animate-pulse-lime text-lime-600 dark:text-lime-400" aria-hidden="true">⏱</span>
-                           <span id="rest-timer-remaining"
-                                 class="font-mono text-xl font-bold text-lime-600 dark:text-lime-400 tabular-nums min-w-[3.5rem] text-center">
-                              00:00
-                          </span>
-                          <span id="rest-timer-state"
-                                class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase">
-                              Отдых
-                          </span>
-                          <button id="rest-timer-dismiss" data-action="dismiss-rest-timer" type="button"
-                                  class="ml-auto glass rounded-xl px-3 py-1.5 text-xs font-semibold text-surface-700 dark:text-surface-300 hover:bg-surface-200 dark:hover:bg-white/10 transition-colors flex-shrink-0"
-                                  aria-label="Готов">
-                              Готов
-                          </button>
-                      </div>
-                  </div>
+                   <div id="rest-timer-bar" class="hidden fixed bottom-16 left-0 right-0 z-50 rest-timer-bar"
+                        role="timer" aria-live="polite" aria-label="Таймер отдыха">
+                       <div class="flex items-center gap-2 px-3 py-2 rest-timer-bar__inner glass rounded-2xl">
+                            <span class="animate-pulse-lime text-lime-600 dark:text-lime-400" aria-hidden="true">⏱</span>
+                            <span id="rest-timer-remaining"
+                                  class="font-mono text-xl font-bold text-lime-600 dark:text-lime-400 tabular-nums min-w-[3.5rem] text-center">
+                               00:00
+                           </span>
+                           <span id="rest-timer-state"
+                                 class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase">
+                               Отдых
+                           </span>
+
+                           <!-- Timer mode: preset chips -->
+                           <div id="rest-timer-presets" class="rest-timer-presets flex gap-1.5 hidden" data-timer-presets>
+                               ${REST_TIMER_PRESETS.map(sec => {
+                                   const label = sec >= 60 ? `${sec / 60}м` : `${sec}с`;
+                                   return `<button type="button" data-action="rest-timer-preset" data-preset="${sec}"
+                                           class="px-2.5 py-1 rounded-lg text-xs font-semibold glass text-surface-600 dark:text-surface-400 hover:bg-surface-200 dark:hover:bg-white/10 transition-colors">${label}</button>`;
+                               }).join('')}
+                           </div>
+
+                           <!-- Timer mode: custom input -->
+                           <div id="rest-timer-custom" class="rest-timer-custom flex items-center gap-1 hidden" data-timer-custom>
+                               <input type="number" min="1" max="600" data-action="rest-timer-custom"
+                                      class="w-16 h-7 text-center text-xs font-mono rounded-lg glass-input focus:outline-none focus:border-primary-500"
+                                      placeholder="90">
+                               <span class="text-[10px] text-surface-500 dark:text-surface-400">сек</span>
+                           </div>
+
+                           <!-- Mode toggle -->
+                           <div id="rest-timer-mode-toggle" class="rest-timer-mode-toggle flex gap-1" data-rest-timer-mode-toggle>
+                               <button type="button" data-action="rest-timer-mode" data-mode="timer"
+                                       class="mode-timer px-2 py-0.5 rounded-lg text-xs font-semibold transition-colors"
+                                       data-active="false">Таймер</button>
+                               <button type="button" data-action="rest-timer-mode" data-mode="stopwatch"
+                                       class="mode-stopwatch px-2 py-0.5 rounded-lg text-xs font-semibold transition-colors"
+                                       data-active="false">Секундомер</button>
+                           </div>
+
+                           <button id="rest-timer-dismiss" data-action="dismiss-rest-timer" type="button"
+                                   class="ml-auto glass rounded-xl px-3 py-1.5 text-xs font-semibold text-surface-700 dark:text-surface-300 hover:bg-surface-200 dark:hover:bg-white/10 transition-colors flex-shrink-0"
+                                   aria-label="Готов">
+                               Готов
+                           </button>
+                       </div>
+                   </div>
 
               </div>
         `;
@@ -2776,6 +3021,9 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         // anchor and owning set are still valid for this session.
         if (savedRestState && savedRestState.restTimerStartTime != null) {
             this.restTimerStartTime = savedRestState.restTimerStartTime;
+            this.restTimerMode = savedRestState.restTimerMode || this.getStoredRestTimerMode();
+            this.restTimerPresetSeconds = savedRestState.restTimerPresetSeconds || this.getStoredRestTimerPreset();
+            this.restTimerOvertime = savedRestState.restTimerOvertime || false;
             this.activeRestForSetId = savedRestState.activeRestForSetId;
             this.lastSavedRestSetId = savedRestState.lastSavedRestSetId;
             this.restSavedBySetId = savedRestState.restSavedBySetId;
@@ -2824,6 +3072,144 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         return { exercise: null, set: null };
     },
 
+    // ===== Exercise Track Indicator (circles) =====
+
+    // Returns the index of the first exercise that still has incomplete sets,
+    // i.e. the exercise the user is currently working on. Falls back to the
+    // last exercise when everything is done.
+    findActiveExerciseIndex(session) {
+        const exercises = session.exercises || [];
+        for (let i = 0; i < exercises.length; i++) {
+            const sets = exercises[i].sets || [];
+            if (sets.length > 0 && sets.some(s => !s.is_completed)) {
+                return i;
+            }
+        }
+        return exercises.length - 1;
+    },
+
+    // Compute the circle state for a single exercise.
+    // Returns one of: 'complete', 'active', 'partial', 'empty'
+    getExerciseTrackState(exercise) {
+        const sets = exercise.sets || [];
+        const total = sets.length;
+        if (total === 0) return 'empty';
+        const completed = sets.filter(s => s.is_completed).length;
+        if (completed === total) return 'complete';
+        if (completed > 0) return 'partial';
+        return 'empty';
+    },
+
+    // Build the HTML for the horizontal circle track that replaces the
+    // linear progress bar. One circle per exercise, horizontally scrollable
+    // with scroll-snap.
+    buildExerciseTrackHtml(session) {
+        const exercises = session.exercises || [];
+        if (exercises.length === 0) return '';
+        const circles = this.buildExerciseTrackCircles(session);
+
+        return `
+            <div class="exercise-track-indicator overflow-x-auto flex items-center gap-2 pb-2 px-1" role="tablist" aria-label="Прогресс упражнений">
+                <div class="flex items-center gap-2" id="exercise-track-circles">
+                    ${circles}
+                </div>
+            </div>
+        `;
+    },
+
+    // Just the circle buttons for a session — used both during initial render
+    // and by updateExerciseTrack to rebuild the circles in place.
+    buildExerciseTrackCircles(session) {
+        const exercises = this.currentSession?.exercises || session.exercises || [];
+        if (exercises.length === 0) return '';
+        const activeIdx = this.findActiveExerciseIndex(session);
+
+        return exercises.map((ex, i) => {
+            const state = this.getExerciseTrackState(ex);
+            const sets = ex.sets || [];
+            const completed = sets.filter(s => s.is_completed).length;
+            const total = sets.length;
+            const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+            const isActive = i === activeIdx;
+
+            let fillColor = '#71717a';
+            let label = String(completed);
+            let innerSvg = '';
+
+            if (state === 'complete') {
+                fillColor = '#4d7c0c';
+                label = '';
+                innerSvg = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>';
+            } else if (state === 'active') {
+                fillColor = '#84cc16';
+            } else if (state === 'partial') {
+                fillColor = '#84cc16';
+            }
+
+            const conicStyle = state === 'complete'
+                ? ''
+                : `background: conic-gradient(from -90deg, ${fillColor} ${percent * 3.6}deg, transparent 0);`;
+
+            return `
+                <button type="button"
+                        data-exercise-index="${i}"
+                        data-exercise-id="${ex.id}"
+                        role="tab"
+                        aria-label="Упражнение ${i + 1}: ${ex.name}"
+                        class="exercise-track-circle ${isActive ? 'active' : ''} ${state}"
+                        style="${conicStyle}"
+                        data-track-state="${state}"
+                        data-track-percent="${percent}">
+                    ${label}
+                    ${innerSvg}
+                </button>
+            `;
+        }).join('');
+    },
+
+    // Re-render the exercise track circles after a set toggle or exercise add/remove.
+    updateExerciseTrack(session) {
+        const container = document.getElementById('exercise-track-circles');
+        if (!container) return;
+        container.innerHTML = this.buildExerciseTrackCircles(session);
+
+        // Bind click handlers
+        container.querySelectorAll('[data-exercise-index]').forEach(circle => {
+            circle.addEventListener('click', () => {
+                const index = parseInt(circle.dataset.exerciseIndex);
+                this.scrollToExerciseCard(index);
+            });
+        });
+
+        // Auto-center the active exercise circle in the scroll port
+        const track = container.parentElement;
+        if (!track || !track.parentElement) return;
+        const activeCircle = container.querySelector('.exercise-track-circle.active');
+        if (activeCircle) {
+            const trackRect = track.parentElement.getBoundingClientRect();
+            const circleRect = activeCircle.getBoundingClientRect();
+            const offset = circleRect.left - trackRect.left - (trackRect.width / 2 - circleRect.width / 2);
+            track.scrollBy({ left: offset, behavior: 'smooth' });
+        }
+    },
+
+    // Smooth-scroll the carousel so the card for the given exercise index is centered.
+    scrollToExerciseCard(exerciseIndex) {
+        const carousel = document.getElementById('carousel');
+        if (!carousel) return;
+        const cards = carousel.querySelectorAll('.workout-card[data-exercise-id]');
+        // Cards array: [cancelCard(0), ...exerciseCards, addExerciseCard, completeCard]
+        // Exercise at index `exerciseIndex` is at position exerciseIndex + 1 in the carousel
+        const targetCard = cards[exerciseIndex];
+        if (!targetCard) return;
+        const cardLeft = targetCard.offsetLeft;
+        const cardWidth = targetCard.offsetWidth;
+        const scrollLeft = cardLeft - (carousel.clientWidth - cardWidth) / 2;
+        carousel.scrollTo({ left: scrollLeft, behavior: 'smooth' });
+    },
+
+    // ===== Exercise Track Indicator ends =====
+
     updateWorkoutMetricsUI(session) {
         const { total, completed, tonnage } = this.getWorkoutMetrics(session);
         const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
@@ -2836,6 +3222,9 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
         const tonnageEl = document.getElementById('workout-total-tonnage');
         if (tonnageEl) tonnageEl.textContent = `Суммарный тоннаж: ${Math.round(tonnage)} кг`;
+
+        // Refresh exercise track circles after a set toggle
+        this.updateExerciseTrack(session);
     },
 
     // Lime pulse on a set row confirming the save. The class is dropped after
@@ -2888,6 +3277,31 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         const isLocal = this.isLocalSession(session);
         const sessionId = isLocal ? session.key : session.id;
         const token = app.state.tokens.access;
+
+        // Exercise track circle click handlers
+        container.querySelectorAll('[data-exercise-index]').forEach(circle => {
+            circle.addEventListener('click', () => {
+                const index = parseInt(circle.dataset.exerciseIndex);
+                this.scrollToExerciseCard(index);
+            });
+        });
+
+        // AI analysis block toggle
+        container.querySelectorAll('[data-action="toggle-ai-analysis"]').forEach(toggle => {
+            toggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const card = e.currentTarget.closest('[data-exercise-id]');
+                if (!card) return;
+                const content = card.querySelector('.ai-analysis-content');
+                const isExpanded = e.currentTarget.getAttribute('aria-expanded') === 'true';
+                const newState = !isExpanded;
+                e.currentTarget.setAttribute('aria-expanded', String(newState));
+                if (content) {
+                    content.style.display = newState ? 'block' : 'none';
+                }
+                this.setAiAnalysisCollapsed(!newState);
+            });
+        });
 
         // Bind per-row event handlers (toggle completion, drum picker, persistence)
         container.querySelectorAll('[data-set-id]').forEach(rowEl => {
@@ -2989,63 +3403,77 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             });
         });
 
-        container.querySelectorAll('[data-action="remove-set"]').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
-                e.stopPropagation();
-                const exId = parseInt(e.currentTarget.dataset.exId);
-                const exercise = (session.exercises || []).find(ex => ex.id === exId);
-                if (!exercise || !exercise.sets || exercise.sets.length === 0) return;
-                if (isLocal && exercise.sets.length <= 1) {
-                    app.showToast('Нужен минимум один подход', 'info');
-                    return;
-                }
+        // Set row delete handler (event delegation for dynamically inserted rows)
+        const handleSetDelete = async (e) => {
+            const btn = e.target.closest('[data-action="delete-set"]');
+            if (!btn) return;
+            e.stopPropagation();
+            const setId = parseInt(btn.dataset.setId);
+            if (isNaN(setId)) return;
+            const card = btn.closest('[data-exercise-id]');
+            const exId = parseInt(card?.dataset.exerciseId);
+            const exercise = (session.exercises || []).find(ex => ex.id === exId);
+            if (!exercise || !exercise.sets || exercise.sets.length === 0) return;
 
-                const removedSet = exercise.sets[exercise.sets.length - 1];
-                // If the removed set was completed, clear the rest time that was
-                // measured for the previous set (the break leading into this one).
-                if (removedSet.is_completed) {
-                    const prevSet = exercise.sets[exercise.sets.length - 2];
-                    if (prevSet && prevSet.rest_time_seconds != null) {
-                        prevSet.rest_time_seconds = null;
-                        this.applyRestTimeInline(prevSet.id, null);
-                        if (isLocal) {
-                            this.recordLocalSetPatch(session.key, prevSet.id, { rest_time_seconds: null });
-                        } else if (token) {
-                            API.patch(`/workouts/sets/${prevSet.id}`, { rest_time_seconds: null }, token).catch(() => {});
-                        }
-                    }
-                }
+            const removedSet = exercise.sets.find(s => s.id === setId);
+            if (!removedSet) return;
+            const setIndex = exercise.sets.indexOf(removedSet);
 
-                exercise.sets = exercise.sets.slice(0, -1);
-                // Renumber remaining sets to keep contiguous set_number
-                exercise.sets.forEach((s, i) => { s.set_number = i + 1; });
-                this.exercisesModified = true;
+            if (isLocal && exercise.sets.length <= 1) {
+                app.showToast('Нужен минимум один подход', 'info');
+                return;
+            }
 
-                const card = container.querySelector(`[data-exercise-id="${exId}"]`);
-                const row = card ? card.querySelector(`[data-set-id="${removedSet.id}"]`) : null;
-
-                if (isLocal) {
-                    this.persistLocalSession(session);
-                    await this.removeSetRow(card, row, removedSet, exercise);
-                    return;
-                }
-
-                try {
-                    await API.delete(`/workouts/sets/${removedSet.id}`, token);
-                    await this.removeSetRow(card, row, removedSet, exercise);
-                    return;
-                } catch (err) {
-                    if (!err?.offlineQueued) {
-                        exercise.sets.push(removedSet);
-                        exercise.sets.forEach((s, i) => { s.set_number = i + 1; });
-                        app.showToast(err.message || 'Ошибка удаления подхода', 'error');
-                        return;
-                    }
-                    await this.removeSetRow(card, row, removedSet, exercise);
-                    return;
-                }
+            const confirmed = await Components.confirmModal({
+                title: 'Удалить подход?',
+                message: 'Это действие необратимо. Вы уверены, что хотите удалить подход?',
+                confirmText: 'Удалить',
+                confirmClass: 'bg-red-600 hover:bg-red-700 text-white font-semibold shadow-md',
+                cancelText: 'Отмена',
             });
-        });
+            if (!confirmed) {
+                return;
+            }
+
+            // Remove from session data
+            exercise.sets = exercise.sets.filter((s, i) => i !== setIndex);
+            exercise.sets.forEach((s, i) => { s.set_number = i + 1; });
+            this.exercisesModified = true;
+
+            const row = card.querySelector(`[data-set-id="${removedSet.id}"]`);
+            const prevSet = setIndex > 0 ? exercise.sets[setIndex - 1] : null;
+            // Clear rest time on the preceding set if the removed one was completed
+            if (removedSet.is_completed && prevSet && prevSet.rest_time_seconds != null) {
+                prevSet.rest_time_seconds = null;
+                this.applyRestTimeInline(prevSet.id, null);
+                if (isLocal) {
+                    this.recordLocalSetPatch(session.key, prevSet.id, { rest_time_seconds: null });
+                } else if (token) {
+                    API.patch(`/workouts/sets/${prevSet.id}`, { rest_time_seconds: null }, token).catch(() => {});
+                }
+            }
+
+            if (isLocal) {
+                this.persistLocalSession(session);
+                await this.removeSetRow(card, row, removedSet, exercise);
+                return;
+            }
+
+            try {
+                await API.delete(`/workouts/sets/${removedSet.id}`, token);
+                await this.removeSetRow(card, row, removedSet, exercise);
+            } catch (err) {
+                if (!err?.offlineQueued) {
+                    exercise.sets.splice(setIndex, 0, removedSet);
+                    exercise.sets.forEach((s, i) => { s.set_number = i + 1; });
+                    app.showToast(err.message || 'Ошибка удаления подхода', 'error');
+                    return;
+                }
+                await this.removeSetRow(card, row, removedSet, exercise);
+            }
+        };
+
+        container.addEventListener('click', handleSetDelete);
 
         // Add Exercise button (before completion card)
         container.querySelector('[data-action="add-exercise"]')?.addEventListener('click', async (e) => {
@@ -3063,11 +3491,55 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             app.showPage('workouts');
         });
 
-        // Dismiss rest timer
+        // Dismiss rest timer — persists elapsed time onto the owning set.
         container.querySelector('[data-action="dismiss-rest-timer"]')?.addEventListener('click', (e) => {
             e.stopPropagation();
-            this.dismissRestTimer();
+            this.stopAndSaveRestTimer(session);
         });
+
+        // Rest timer mode toggle
+        container.querySelectorAll('[data-action="rest-timer-mode"]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const mode = e.currentTarget.dataset.mode;
+                this.saveRestTimerMode(mode);
+                this.applyRestTimerModeUI();
+                this.updateRestTimerUI();
+            });
+        });
+
+        // Rest timer preset selection (Timer mode)
+        container.querySelectorAll('[data-action="rest-timer-preset"]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const seconds = parseInt(e.currentTarget.dataset.preset);
+                if (isNaN(seconds)) return;
+                this.saveRestTimerPreset(seconds);
+                // Apply preset to the running timer if in timer mode
+                if (this.restTimerMode === 'timer' && this.restTimerStartTime != null) {
+                    this.restTimerPlannedDuration = seconds * 1000;
+                    this.restTimerTargetTimestamp = this.restTimerStartTime + this.restTimerPlannedDuration;
+                    this.restTimerOvertime = false;
+                    this.updateRestTimerUI();
+                }
+            });
+        });
+
+        // Rest timer custom input (Timer mode)
+        const customInput = container.querySelector('[data-action="rest-timer-custom"]');
+        if (customInput) {
+            customInput.addEventListener('change', (e) => {
+                const seconds = parseInt(e.target.value);
+                if (isNaN(seconds) || seconds < 1) return;
+                this.saveRestTimerPreset(seconds);
+                if (this.restTimerMode === 'timer' && this.restTimerStartTime != null) {
+                    this.restTimerPlannedDuration = seconds * 1000;
+                    this.restTimerTargetTimestamp = this.restTimerStartTime + this.restTimerPlannedDuration;
+                    this.restTimerOvertime = false;
+                    this.updateRestTimerUI();
+                }
+            });
+        }
     },
 
     // Writes a value into a set input and replays the native input/change events

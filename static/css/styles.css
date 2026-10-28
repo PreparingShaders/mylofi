@@ -2464,7 +2464,33 @@ input, select, textarea:focus {
     color: #71717a;
     font-size: 0.75rem;
     line-height: 1.5rem;
-    font-family: ui-serif, system-ui, sans-serif;
+     font-family: ui-serif, system-ui, sans-serif;
+}
+
+/* ===== Collapsible AI Analysis Block (workout screen) ===== */
+.ai-analysis-block {
+    margin: 8px 0;
+}
+.ai-analysis-toggle {
+    font-size: 11px;
+}
+.ai-analysis-toggle .chevron {
+    transition: transform 150ms ease;
+}
+.ai-analysis-toggle[aria-expanded="false"] .chevron {
+    transform: rotate(-90deg);
+}
+.ai-analysis-content {
+    transition: max-height 200ms ease, opacity 150ms ease;
+}
+.ai-analysis-content[style*="display: none"] {
+    max-height: 0;
+    opacity: 0;
+    padding: 0;
+}
+.ai-analysis-content[style*="display: block"] {
+    max-height: 500px;
+    opacity: 1;
 }
 
 /* ============ AI Synergy widget (Nutrition tab) ============ */
@@ -3507,6 +3533,88 @@ input[data-field="reps"] {
         width: 500px;
     }
 }
+/* ===== Exercise Track Indicator (horizontal circles) ===== */
+.exercise-track-indicator {
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+.exercise-track-indicator::-webkit-scrollbar {
+    display: none;
+}
+.exercise-track-circle {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    scroll-snap-align: center;
+    position: relative;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+    transition: all 150ms ease;
+    border: 2px solid transparent;
+    background: #27272a;
+    color: #71717a;
+    cursor: pointer;
+}
+.exercise-track-circle.empty {
+    background: #27272a;
+    border-color: #3f3f46;
+    color: #71717a;
+}
+.dark .exercise-track-circle.empty {
+    background: #3f3f46;
+    border-color: #52525b;
+    color: #71717a;
+}
+.exercise-track-circle.partial {
+    background: #1a2e05;
+    border-color: #4d7c0c;
+    color: #84cc16;
+}
+.dark .exercise-track-circle.partial {
+    background: #1a2e05;
+    border-color: #4d7c0c;
+    color: #84cc16;
+    box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.2);
+}
+.exercise-track-circle.active {
+    background: #1a2e05;
+    border-color: #84cc16;
+    color: #84cc16;
+    box-shadow: 0 0 0 3px rgba(132, 204, 22, 0.3);
+    animation: track-pulse 1.5s ease-in-out infinite;
+}
+@keyframes track-pulse {
+    0%, 100% { box-shadow: 0 0 0 3px rgba(132, 204, 22, 0.3); }
+    50% { box-shadow: 0 0 0 6px rgba(132, 204, 22, 0.15); }
+}
+.exercise-track-circle.complete {
+    background: #4d7c0c;
+    border-color: #84cc16;
+    color: white;
+}
+.exercise-track-circle svg {
+    display: block;
+}
+
+/* ===== Per-set row delete button (start of row) ===== */
+.delete-set-btn-start {
+    opacity: 0.5;
+    transition: all 150ms ease;
+}
+.delete-set-btn-start:hover {
+    opacity: 1;
+}
+.delete-set-btn-start:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 1px;
+}
+
 /* The row of cards scrolls; the header above it must not inherit that scroll. */
 .workout-carousel {
     scroll-snap-type: x mandatory;
@@ -3677,7 +3785,11 @@ body.has-network-banner main {
    scrolls. The bottom offset accounts for the 4rem (64px) nav clearance plus
    the iOS home-indicator safe area so the bar never overlaps the nav on either
    platform. z-50 (from the HTML) keeps it below the toast layer (z-[130]) and
-   the modal host (z-[120]) but above the carousel content. */
+   the modal host (z-[120]) but above the carousel content.
+
+   Dual-mode: the bar now hosts a mode toggle (Timer / Stopwatch) and preset
+   chips for the Timer mode. The display + dismiss button are shared by both
+   modes. */
 #rest-timer-bar.rest-timer-bar {
     bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
 }
@@ -3689,6 +3801,42 @@ body.has-network-banner main {
 }
 .dark #rest-timer-dismiss {
     border-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Rest timer mode toggle (segmented control) */
+.rest-timer-mode-toggle {
+    background: rgba(148, 153, 160, 0.2);
+    border-radius: 0.5rem;
+    padding: 2px;
+}
+.rest-timer-mode-toggle button[data-active="true"] {
+    background: linear-gradient(135deg, #84cc16 0%, #4d7c0c 100%);
+    color: white;
+    box-shadow: 0 0 8px rgba(132, 204, 22, 0.3);
+}
+.rest-timer-mode-toggle button[data-active="false"] {
+    background: transparent;
+    color: #71717a;
+}
+.dark .rest-timer-mode-toggle button[data-active="false"] {
+    color: #a1a1aa;
+}
+
+/* Rest timer preset chips */
+.rest-timer-presets {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x mandatory;
+}
+.rest-timer-presets button[data-action="rest-timer-preset"] {
+    flex-shrink: 0;
+    scroll-snap-align: start;
+    min-width: 44px;
+    height: 28px;
 }
 
 /* Muted inline rest-time line shown between completed set rows on the
