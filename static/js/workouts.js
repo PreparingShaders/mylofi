@@ -512,11 +512,11 @@ export const Workouts = {
                 <div class="px-4 pb-4 overflow-y-auto space-y-4">
                     <div>
                         <label class="text-[11px] uppercase tracking-wider text-zinc-500 font-semibold">Период (даты)</label>
-                        <div class="grid grid-cols-2 gap-2 mt-1.5">
+                        <div class="flex gap-2 mt-1.5">
                             <input type="date" data-filter="start_date" value="${this.escapeHtml(filters.start_date)}"
-                                   class="px-3 py-2.5 text-sm glass-input rounded-xl">
+                                   class="flex-1 px-3 py-2.5 text-sm glass-input rounded-xl">
                             <input type="date" data-filter="end_date" value="${this.escapeHtml(filters.end_date)}"
-                                   class="px-3 py-2.5 text-sm glass-input rounded-xl">
+                                   class="flex-1 px-3 py-2.5 text-sm glass-input rounded-xl">
                         </div>
                         <p class="text-[11px] text-zinc-500 mt-1.5">Указанные даты заменяют переключатель «Неделя / Месяц / Всё время».</p>
                     </div>
@@ -1435,6 +1435,11 @@ export const Workouts = {
         this.applyRestTimerModeUI();
         this.updateRestTimerUI();
         this.restTimerInterval = setInterval(() => this.updateRestTimerUI(), 100);
+
+        if (exercise?.id) {
+            this.switchExerciseTab(exercise.id, 'timer');
+            this.updateTimerPanel(exercise.id, exercise);
+        }
     },
 
     // Low-level: stop the interval and hide the bar without saving. The
@@ -1461,6 +1466,9 @@ export const Workouts = {
         const elapsed = Math.max(0, Math.floor((Date.now() - this.restTimerStartTime) / 1000));
         const setId = this.activeRestForSetId;
 
+        // Capture the owning exercise before clearing state, so we can refresh its Timer panel.
+        const ownerEx = this.findExerciseOfSet(sess, setId);
+
         const targetSet = this.findSetInSession(sess, setId);
         if (targetSet) {
             targetSet.rest_time_seconds = elapsed;
@@ -1475,6 +1483,12 @@ export const Workouts = {
         this.restTimerPlannedDuration = null;
         this.restTimerOvertime = false;
         this.updateRestTimerUI();
+
+        // Refresh the Timer panel on the owning exercise card so the saved
+        // rest time appears without a full re-render.
+        if (ownerEx.exercise?.id) {
+            this.updateTimerPanel(ownerEx.exercise.id, ownerEx.exercise);
+        }
 
         if (this.isLocalSession(sess)) {
             this.persistLocalSession(sess);
@@ -1492,6 +1506,10 @@ export const Workouts = {
     // was unchecked). The save chain is forgotten. The "Готов" button uses
     // stopAndSaveRestTimer() instead, so this is only for abortive paths.
     dismissRestTimer() {
+        const setId = this.activeRestForSetId;
+        const sess = this.currentSession;
+        const ownerEx = setId != null && sess ? this.findExerciseOfSet(sess, setId) : { exercise: null };
+
         this.stopRestTimer();
         this.activeRestForSetId = null;
         this.restTimerStartTime = null;
@@ -1502,6 +1520,11 @@ export const Workouts = {
         this.restSavedBySetId = null;
         // Persist the current mode so it survives across workouts
         this.restTimerMode = this.getStoredRestTimerMode();
+
+        // Refresh the Timer panel on the owning exercise card.
+        if (ownerEx.exercise?.id) {
+            this.updateTimerPanel(ownerEx.exercise.id, ownerEx.exercise);
+        }
     },
 
     // Re-arm the interval after a backgrounded/frozen tab resumes. The target
@@ -1597,13 +1620,96 @@ export const Workouts = {
         }
     },
 
-    // Shared inner markup for the muted rest-time line shown between set rows.
-    restTimeLabelHtml(seconds) {
-        const secs = Math.floor(Number(seconds) || 0);
-        return `<span aria-hidden="true">⏱</span>`
-            + `<span class="font-mono tabular-nums">${this.formatTimer(secs)}</span>`
-            + `<span class="font-semibold">Отдых</span>`;
-    },
+     // Shared inner markup for the muted rest-time line shown between set rows.
+     restTimeLabelHtml(seconds) {
+         const secs = Math.floor(Number(seconds) || 0);
+         return `<span aria-hidden="true">⏱</span>`
+             + `<span class="font-mono tabular-nums">${this.formatTimer(secs)}</span>`
+             + `<span class="font-semibold">Отдых</span>`;
+     },
+
+     // Render the Timer tab panel content for an exercise card: an active-timer
+     // indicator (when a rest timer is running for this exercise) plus a compact
+     // history of measured rest times per completed set.
+     renderTimerPanel(exercise) {
+         const sets = exercise.sets || [];
+         const timerActive = this.activeRestForSetId && sets.some(s => s.id === this.activeRestForSetId);
+         const restSets = sets.filter(set => set.rest_time_seconds != null);
+
+         let html = '';
+
+         if (timerActive) {
+             const isStopwatch = this.restTimerMode === 'stopwatch';
+             const duration = this.restTimerMode === 'timer'
+                 ? this.formatTimer(Math.floor((this.restTimerPlannedDuration || this.restTimerPresetSeconds * 1000 || 90000) / 1000))
+                 : '—';
+             html += `
+                 <div class="mb-3 pb-3 border-b border-surface-200 dark:border-white/10">
+                     <div class="flex items-center gap-2 text-xs text-surface-500 dark:text-surface-400 mb-1">
+                         <span class="w-2 h-2 rounded-full bg-lime-500 animate-pulse"></span>
+                         <span>Таймер активен</span>
+                     </div>
+                     <div class="font-mono text-sm font-semibold text-lime-600 dark:text-lime-400 tabular-nums">${duration}</div>
+                     <div class="text-[10px] text-surface-500 dark:text-surface-400 mt-1">${isStopwatch ? 'Секундомер' : 'Обратный отсчёт'}</div>
+                 </div>
+             `;
+         }
+
+         if (restSets.length > 0) {
+             html += '<div class="space-y-1">';
+             restSets.forEach(set => {
+                 html += `
+                     <div class="flex items-center justify-between py-1">
+                         <span class="text-xs text-surface-500">Подход ${set.set_number}</span>
+                         <span class="text-xs font-mono tabular-nums text-surface-600 dark:text-surface-300">${this.formatTimer(set.rest_time_seconds)}</span>
+                     </div>
+                 `;
+             });
+             html += '</div>';
+         } else if (!timerActive) {
+             html += '<div class="text-center py-2 text-xs text-surface-500">Нет данных о времени отдыха</div>';
+         }
+
+         return html;
+     },
+
+     // Switch the active tab for a specific exercise card.
+     // Pass 'dynamics', 'ai-analysis', or 'timer'.
+      switchExerciseTab(exerciseId, tabName, container) {
+          const card = document.querySelector(`[data-exercise-id="${exerciseId}"]`);
+          if (!card) return;
+
+          card.querySelectorAll('[data-tab]').forEach(tab => {
+              const isActive = tab.dataset.tab === tabName;
+              tab.setAttribute('data-active', String(isActive));
+              tab.setAttribute('aria-selected', String(isActive));
+          });
+
+          card.querySelectorAll('[data-tab-panel]').forEach(panel => {
+              if (panel.dataset.tabPanel === tabName) {
+                  panel.classList.remove('hidden');
+              } else {
+                  panel.classList.add('hidden');
+              }
+          });
+
+        if (tabName === 'ai-analysis' && container && this.aiPlan) {
+            setTimeout(() => {
+                this.updateAiPlanBadges(container);
+            }, 0);
+        }
+      },
+
+     // Refresh the Timer panel content for an exercise (e.g. after the timer state changes).
+     updateTimerPanel(exerciseId, exercise) {
+         const card = document.querySelector(`[data-exercise-id="${exerciseId}"]`);
+         if (!card) return;
+         const panelContent = card.querySelector('[data-timer-panel-content]');
+         if (panelContent) {
+             panelContent.innerHTML = this.renderTimerPanel(exercise);
+         }
+     },
+
 
     // HTML fragment rendered inside the exercise card template after each set
     // row (except the last) when that set already has a measured rest time.
@@ -2206,13 +2312,11 @@ export const Workouts = {
             if (rec) {
                 const badgeHtml = Components.aiWorkoutPlanBadge(rec);
                 contentEl.innerHTML = badgeHtml;
-                contentEl.style.display = collapsed ? 'none' : 'block';
                 if (toggleBtn) {
                     toggleBtn.setAttribute('aria-expanded', String(!collapsed));
                 }
             } else {
                 contentEl.innerHTML = '';
-                contentEl.style.display = 'none';
                 if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'false');
             }
         });
@@ -2597,7 +2701,7 @@ export const Workouts = {
 
     // Render a single set row's HTML (set row div + optional inline rest time)
     // so it can be reused both in full screen renders and in DOM insertions.
-    renderSetRowHtml(set, setIndex, setsArr, prevText) {
+     renderSetRowHtml(set, setIndex, setsArr, prevText) {
         return `
             <div class="flex items-center gap-2 glass p-1.5 rounded-2xl relative" data-set-id="${set.id}">
                 <button type="button"
@@ -2605,9 +2709,7 @@ export const Workouts = {
                         data-set-id="${set.id}"
                         class="delete-set-btn-start w-7 h-7 rounded-xl glass text-surface-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 flex-shrink-0 flex items-center justify-center transition-colors"
                         aria-label="Удалить подход">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.131A2.24 2.24 0 0115.138 21H8.862a2.24 2.24 0 01-2.271-2.133L5.867 7M6 7h12M6 7l1-2h10l1 2M10 11v6M14 11v6M9 11l1-9h4l1 9"/>
-                    </svg>
+                    <span class="text-xs font-bold leading-none">✕</span>
                 </button>
                 <span class="font-bold w-6 text-center text-xs ${set.is_completed ? SET_DIM.join(' ') : SET_NUMBER_IDLE}">${set.set_number}</span>
                 <div class="w-14 flex flex-col items-center justify-center flex-shrink-0" title="Прошлый подход">
@@ -2878,45 +2980,69 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 .filter(v => v != null && v > 0)
                 .slice(-10);
 
-            return `
+            const isCollapsibleCollapsed = this.isAiAnalysisCollapsed();
+             return `
               <div class="workout-card snap-center glass rounded-3xl p-3 flex flex-col space-y-3" data-exercise-id="${ex.id}" data-has-history="${historyPoints.length > 0 ? 'true' : 'false'}">
                 <div class="flex justify-between items-start mb-3 gap-1.5">
                     <h3 class="font-bold text-base text-surface-900 dark:text-surface-50 leading-tight flex-1 min-w-0 break-words" title="${ex.name}">${ex.name}</h3>
                     <div class="flex items-center gap-1 flex-shrink-0">
-                        <button type="button" data-action="move-ex-up" data-ex-id="${ex.id}" class="w-7 h-7 glass rounded-xl text-xs font-bold hover:bg-surface-200 transition-colors ${index === 0 ? 'opacity-30 cursor-not-allowed' : ''}">▲</button>
-                        <button type="button" data-action="move-ex-down" data-ex-id="${ex.id}" class="w-7 h-7 glass rounded-xl text-xs font-bold hover:bg-surface-200 transition-colors ${index === arr.length - 1 ? 'opacity-30 cursor-not-allowed' : ''}">▼</button>
-                        <button type="button"
-                                data-action="toggle-rest-auto"
-                                data-ex-id="${ex.id}"
-                                class="rest-auto-toggle w-6 h-6 rounded-lg glass text-surface-400 dark:text-surface-500 hover:text-surface-900 dark:hover:text-surface-100 flex items-center justify-center text-xs transition-colors"
-                                aria-label="Автозапуск таймера отдыха"
-                                aria-pressed="true">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
-                            </svg>
-                        </button>
-                    </div>
+                         <button type="button" data-action="open-reorder-menu" data-ex-id="${ex.id}"
+                                 class="reorder-handle w-7 h-7 glass rounded-xl text-xs flex items-center justify-center text-surface-400 hover:text-surface-900 dark:hover:text-surface-100 transition-colors"
+                                 aria-label="Изменить порядок упражнений">
+                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"/></svg>
+                         </button>
+                         <button type="button"
+                                 data-action="toggle-rest-auto"
+                                 data-ex-id="${ex.id}"
+                                 class="rest-auto-toggle w-6 h-6 rounded-lg glass hover:text-surface-900 dark:hover:text-surface-100 flex items-center justify-center text-xs transition-colors"
+                                 aria-label="Автозапуск таймера отдыха"
+                                 aria-pressed="true">
+                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                             </svg>
+                         </button>
+                     </div>
                 </div>
 
-                   <div class="min-h-[120px]" data-sparkline>
-                       ${Components.sparkline(historyPoints, 60)}
-                   </div>
-
-                    <div class="ai-analysis-block" data-ai-analysis>
-                        <button type="button"
-                                data-action="toggle-ai-analysis"
-                                class="ai-analysis-toggle w-full flex items-center justify-between gap-2 text-xs font-semibold text-surface-600 dark:text-surface-300 hover:text-surface-900 dark:hover:text-surface-100 py-1.5 px-2 rounded-xl glass transition-colors"
-                                aria-expanded="true">
-                            <span>ИИ-анализ</span>
-                            <span class="ai-analysis-badge hidden" data-ai-badge></span>
-                            <svg class="chevron w-4 h-4 transition-transform duration-150" viewBox="0 0 24 24" aria-hidden="true">
-                                <path fill="currentColor" d="M7 10l5 5 5-5z"/>
-                            </svg>
-                        </button>
-                       <div class="ai-analysis-content overflow-hidden transition-all duration-200 ease"
-                            style="display: none;">
-                       </div>
-                   </div>
+                    <div class="exercise-tabs">
+                        <div class="exercise-tab-bar flex gap-1 p-1 rounded-xl mb-2">
+                            <button type="button" data-tab="dynamics" data-active="true"
+                                    class="exercise-tab-btn flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold">Динамика</button>
+                            <button type="button" data-tab="ai-analysis" data-active="false"
+                                    class="exercise-tab-btn flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold">ИИ-совет</button>
+                            <button type="button" data-tab="timer" data-active="false"
+                                    class="exercise-tab-btn flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold">Таймер</button>
+                        </div>
+                        <div class="exercise-tab-panels">
+                            <div data-tab-panel="dynamics" class="exercise-tab-panel">
+                                <div class="min-h-[120px]" data-sparkline>
+                                    ${Components.sparkline(historyPoints, 60)}
+                                </div>
+                            </div>
+                            <div data-tab-panel="ai-analysis" class="exercise-tab-panel hidden">
+                                <div class="ai-analysis-block" data-ai-analysis>
+                                    <button type="button"
+                                            data-action="toggle-ai-analysis"
+                                            class="ai-analysis-toggle w-full flex items-center justify-between gap-2 text-xs font-semibold text-surface-600 dark:text-surface-300 hover:text-surface-900 dark:hover:text-surface-100 py-1.5 px-2 rounded-xl glass transition-colors"
+                                            aria-expanded="${!isCollapsibleCollapsed}">
+                                        <span>ИИ-анализ</span>
+                                        <span class="ai-analysis-badge hidden" data-ai-badge></span>
+                                        <svg class="chevron w-4 h-4 transition-transform duration-150" viewBox="0 0 24 24" aria-hidden="true">
+                                            <path fill="currentColor" d="M7 10l5 5 5-5z"/>
+                                        </svg>
+                                    </button>
+                                    <div class="ai-analysis-content overflow-hidden transition-all duration-200 ease"
+                                         style="display: ${isCollapsibleCollapsed ? 'none' : 'block'};">
+                                    </div>
+                                </div>
+                            </div>
+                            <div data-tab-panel="timer" class="exercise-tab-panel hidden" data-timer-panel-ex-id="${ex.id}">
+                                <div class="timer-panel-content py-2" data-timer-panel-content>
+                                    ${this.renderTimerPanel(ex)}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
 
                    <div class="space-y-1.5" data-set-container>
                       ${(ex.sets || []).map((set, setIndex, setsArr) => {
@@ -2973,70 +3099,68 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                      ${allCards.join('')}
                  </div>
 
-                     <div id="rest-timer-bar" class="hidden fixed bottom-16 left-0 right-0 z-50 rest-timer-bar"
-                        role="timer" aria-live="polite" aria-label="Таймер отдыха">
-                         <div class="rest-timer-bar__inner glass rounded-2xl w-full max-w-[92vw] mx-auto">
-                             <div class="rest-timer-main flex items-center gap-4 p-3">
-                                 <!-- Left: Time + label -->
-                                 <div class="rest-timer-time flex flex-col items-center gap-1">
-                                     <span id="rest-timer-remaining" class="font-mono text-2xl font-bold text-lime-600 dark:text-lime-400 tabular-nums">00:00</span>
-                                     <span id="rest-timer-ms" class="text-xs text-lime-600 dark:text-lime-400 tabular-nums">00</span>
-                                     <span id="rest-timer-state" class="text-[10px] font-semibold text-surface-500 dark:text-surface-400 uppercase">Отдых</span>
-                                 </div>
-
-                                 <!-- Right: Presets + controls -->
-                                 <div class="rest-timer-controls flex-1 flex flex-col gap-2">
-                                     <!-- Mode toggle -->
-                                     <div class="rest-timer-mode-toggle flex gap-1">
-                                         <button type="button" data-action="rest-timer-mode" data-mode="timer"
-                                                 class="mode-btn flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-colors"
-                                                 data-active="false">Таймер</button>
-                                         <button type="button" data-action="rest-timer-mode" data-mode="stopwatch"
-                                                 class="mode-btn flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-colors"
-                                                 data-active="false">Секундомер</button>
-                                     </div>
-
-                                     <!-- Presets (timer mode only) -->
-                                     <div id="rest-timer-presets" class="rest-timer-presets flex gap-1.5 overflow-x-auto pb-1" data-timer-presets>
-                                         ${REST_TIMER_PRESETS.map(sec => `
-                                             <button type="button" data-action="rest-timer-preset" data-preset="${sec}"
-                                                     class="preset-btn flex-shrink-0 px-2 py-1 rounded-lg text-xs font-semibold glass text-surface-600 dark:text-surface-400 hover:bg-surface-200 dark:hover:bg-white/10 transition-colors snap-start">
-                                                 ${sec >= 60 ? `${sec / 60}м` : `${sec}с`}
-                                             </button>
-                                         `).join('')}
-                                     </div>
-
-                                     <!-- Custom input (timer mode only) -->
-                                     <div id="rest-timer-custom" class="rest-timer-custom flex items-center gap-1" data-timer-custom>
-                                         <input type="number" min="1" max="600" inputmode="numeric" data-action="rest-timer-custom"
-                                                class="w-20 h-7 text-center text-xs font-mono rounded-lg glass-input focus:outline-none focus:border-primary-500"
-                                                placeholder="90">
-                                         <span class="text-[10px] text-surface-500 dark:text-surface-400">сек</span>
-                                     </div>
-
-                                     <!-- Stopwatch mode content -->
-                                     <div data-stopwatch-mode class="hidden">
-                                         <div class="text-center text-xs text-surface-500 dark:text-surface-400">
-                                             Нажмите «Готов» для фиксации времени
-                                         </div>
-                                  </div>
+                      <div id="rest-timer-bar" class="hidden fixed bottom-16 left-0 right-0 z-50 rest-timer-bar"
+                         role="timer" aria-live="polite" aria-label="Таймер отдыха">
+                          <div class="rest-timer-bar__inner glass rounded-2xl w-full max-w-[92vw] mx-auto flex flex-col gap-2.5 p-3.5">
+                              <!-- Row 1: Mode toggle (Timer / Stopwatch) -->
+                              <div class="rest-timer-mode-toggle flex gap-1">
+                                  <button type="button" data-action="rest-timer-mode" data-mode="timer"
+                                          class="mode-btn flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-colors"
+                                          data-active="false">Таймер</button>
+                                  <button type="button" data-action="rest-timer-mode" data-mode="stopwatch"
+                                          class="mode-btn flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-colors"
+                                          data-active="false">Секундомер</button>
                               </div>
+
+                              <!-- Row 2: Large countdown/count-up time + dynamic milliseconds -->
+                              <div class="rest-timer-time flex items-center gap-1">
+                                  <span id="rest-timer-remaining" class="font-mono text-2xl font-bold text-lime-600 dark:text-lime-400 tabular-nums">00:00</span>
+                                  <span id="rest-timer-ms" class="text-xs text-lime-600 dark:text-lime-400 tabular-nums">00</span>
+                                  <span id="rest-timer-state" class="text-[10px] font-semibold text-surface-500 dark:text-surface-400 uppercase">Отдых</span>
+                              </div>
+
+                              <!-- Row 3: Time presets / custom input with numeric keypad -->
+                              <div class="rest-timer-controls flex flex-col gap-2.5">
+                                  <!-- Presets (timer mode only) -->
+                                  <div id="rest-timer-presets" class="rest-timer-presets flex gap-1.5 overflow-x-auto pb-1" data-timer-presets>
+                                      ${REST_TIMER_PRESETS.map(sec => `
+                                          <button type="button" data-action="rest-timer-preset" data-preset="${sec}"
+                                                  class="preset-btn flex-shrink-0 px-2 py-1 rounded-lg text-xs font-semibold glass text-surface-600 dark:text-surface-400 hover:bg-surface-200 dark:hover:bg-white/10 transition-colors snap-start">
+                                              ${sec >= 60 ? `${sec / 60}м` : `${sec}с`}
+                                          </button>
+                                      `).join('')}
+                                  </div>
+
+                                  <!-- Custom input (timer mode only) -->
+                                  <div id="rest-timer-custom" class="rest-timer-custom flex items-center gap-1" data-timer-custom>
+                                      <input type="number" min="1" max="600" inputmode="numeric" data-action="rest-timer-custom"
+                                             class="w-20 h-7 text-center text-xs font-mono rounded-lg glass-input focus:outline-none focus:border-primary-500"
+                                             placeholder="90">
+                                      <span class="text-[10px] text-surface-500 dark:text-surface-400">сек</span>
+                                  </div>
+
+                                  <!-- Stopwatch mode content -->
+                                  <div data-stopwatch-mode class="hidden">
+                                      <div class="text-center text-xs text-surface-500 dark:text-surface-400">
+                                          Нажмите «Готов» для фиксации времени
+                                      </div>
+                                  </div>
                               </div>
 
                               <!-- Progress bar (managed by updateRestTimerUI) -->
-                              <div class="h-1 bg-surface-200 dark:bg-white/10 rounded-full overflow-hidden mx-3 mb-1" data-timer-progress-container>
-                                      <div id="rest-timer-progress"
-                                           class="h-full w-0 bg-lime-500 dark:bg-lime-400 rounded-full transition-all duration-1000 ease-linear"
-                                           style="display: none;">
-                                      </div>
+                              <div class="h-1 bg-surface-200 dark:bg-white/10 rounded-full overflow-hidden" data-timer-progress-container>
+                                  <div id="rest-timer-progress"
+                                       class="h-full w-0 bg-lime-500 dark:bg-lime-400 rounded-full transition-all duration-1000 ease-linear"
+                                       style="display: none;">
                                   </div>
+                              </div>
 
-                                  <!-- Bottom: Dismiss button -->
-                                  <button id="rest-timer-dismiss" data-action="dismiss-rest-timer" type="button"
-                                          class="rest-timer-dismiss w-full py-2 rounded-xl bg-lime-600 dark:bg-lime-500 text-white font-bold text-sm transition-colors hover:bg-lime-700 dark:hover:bg-lime-400"
-                                          aria-label="Готов">
-                                      Готов
-                                  </button>
+                              <!-- Row 4: Full-width "Готов" dismiss button -->
+                              <button id="rest-timer-dismiss" data-action="dismiss-rest-timer" type="button"
+                                      class="rest-timer-dismiss w-full py-2 rounded-xl bg-lime-600 dark:bg-lime-500 text-white font-bold text-sm transition-colors hover:bg-lime-700 dark:hover:bg-lime-400"
+                                      aria-label="Готов">
+                                  Готов
+                              </button>
                           </div>
                       </div>
 
@@ -3228,6 +3352,9 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     style="--fill-percent: ${fillPercent}%; --fill-color: ${this.getFillColor(state)}; --border-color: ${this.getBorderColor(state, isActive)};"
                     data-track-state="${state}"
                     data-track-percent="${percent}">
+                <svg class="wave-fill-svg" viewBox="0 0 44 12" aria-hidden="true">
+                    <path class="wave-path" d="M0,12 L0,6 Q11,2 22,6 Q33,10 44,6 L44,12 Z" />
+                </svg>
                 <div class="circle-content">
                     ${state === 'complete'
                         ? '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>'
@@ -3329,6 +3456,278 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
     // ===== Exercise Track Indicator ends =====
 
+    // Full interactive reordering modal: lists every exercise in the current
+    // workout as a draggable row with up/down move controls. Smooth position
+    // adjustments with live renumbering; the list is committed on save.
+    showReorderExercisesModal(app, session, sessionId) {
+        const exercises = session.exercises || [];
+        if (exercises.length === 0) return;
+
+        // Close any existing reorder sheet
+        if (this._reorderSheet) {
+            this._reorderSheet.remove();
+            this._reorderSheet = null;
+        }
+
+        const sheet = document.createElement('div');
+        sheet.id = 'exerciseReorderSheet';
+        sheet.className = 'drum-sheet fixed inset-0 z-[70] pointer-events-auto';
+        sheet.innerHTML = `
+            <div class="drum-sheet-backdrop absolute inset-0 bg-black/40 dark:bg-black/60" data-action="reorder-close"></div>
+            <div class="drum-sheet-panel absolute bottom-0 left-0 right-0 bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 rounded-t-2xl border-t border-zinc-200 dark:border-white/10 flex flex-col drum-sheet-safe" role="dialog" aria-modal="true" aria-labelledby="reorder-title">
+                <div class="w-10 h-1 rounded-full bg-zinc-300 dark:bg-white/20 mx-auto drum-sheet-handle flex-shrink-0"></div>
+                <div class="flex items-center justify-between gap-3 px-4 pt-1 pb-2 flex-shrink-0">
+                    <div class="min-w-0">
+                        <div class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold">Порядок упражнений</div>
+                        <div id="reorder-title" class="text-base font-bold">Перетащите или используйте кнопки</div>
+                    </div>
+                    <button type="button" data-action="reorder-close" class="w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0">✕</button>
+                </div>
+
+                <div class="px-4 pb-4 overflow-y-auto" id="reorder-list">
+                    <div class="space-y-1.5" id="reorder-items">
+                        ${exercises.map((ex, i) => this.renderReorderItem(ex, i, exercises.length)).join('')}
+                    </div>
+                </div>
+
+                <div class="px-4 pb-4 pt-2 flex gap-2 border-t border-zinc-200 dark:border-white/10 flex-shrink-0">
+                    <button type="button" data-action="reorder-reset"
+                            class="flex-1 py-3 rounded-2xl glass text-sm font-semibold">Сбросить</button>
+                    <button type="button" data-action="reorder-save"
+                            class="flex-1 py-3 rounded-2xl bg-lime-500 text-zinc-950 font-bold text-sm shadow-md">Готово</button>
+                </div>
+            </div>
+        `;
+
+        const onKeydown = (e) => {
+            if (e.key === 'Escape') close();
+        };
+        const bodyWasLocked = document.body.classList.contains('overflow-hidden');
+        let closed = false;
+        const close = () => {
+            if (closed) return;
+            closed = true;
+            document.removeEventListener('keydown', onKeydown);
+            if (this._drumKeydown) {
+                document.removeEventListener('keydown', this._drumKeydown);
+                this._drumKeydown = null;
+            }
+            if (!bodyWasLocked) document.body.classList.remove('overflow-hidden');
+            sheet.remove();
+            this._reorderSheet = null;
+        };
+
+        // Escape to close
+        sheet.addEventListener('click', (e) => {
+            const action = e.target.closest('[data-action]')?.dataset.action;
+            if (action === 'reorder-close') {
+                close();
+                return;
+            }
+        });
+
+        // Move up/down buttons (per-item)
+        const listContainer = sheet.querySelector('#reorder-items');
+
+        const updateMoveButtonStates = () => {
+            const allItems = listContainer.querySelectorAll('[data-ex-id]');
+            allItems.forEach((it, i) => {
+                const isFirst = i === 0;
+                const isLast = i === allItems.length - 1;
+                it.querySelectorAll('[data-action="reorder-item-move"]').forEach(b => {
+                    const dir = b.dataset.direction;
+                    const disabled = (dir === 'up' && isFirst) || (dir === 'down' && isLast);
+                    b.disabled = disabled;
+                    if (disabled) {
+                        b.classList.add('text-surface-300', 'dark:text-surface-600', 'cursor-not-allowed');
+                        b.classList.remove('text-surface-600', 'dark:text-surface-300', 'hover:text-surface-900', 'dark:hover:text-surface-100');
+                    } else {
+                        b.classList.remove('text-surface-300', 'dark:text-surface-600', 'cursor-not-allowed');
+                        b.classList.add('text-surface-600', 'dark:text-surface-300', 'hover:text-surface-900', 'dark:hover:text-surface-100');
+                    }
+                });
+            });
+        };
+
+        listContainer.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-action="reorder-item-move"]');
+            if (!btn) return;
+            const direction = btn.dataset.direction;
+            const item = btn.closest('[data-ex-id]');
+            const items = Array.from(listContainer.querySelectorAll('[data-ex-id]'));
+            const idx = items.indexOf(item);
+            const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+            if (targetIdx < 0 || targetIdx >= items.length) return;
+
+            item.classList.add('scale-[1.02]', 'bg-primary-50/50', 'dark:bg-primary-900/20', 'transition-all', 'duration-300');
+            const targetItem = items[targetIdx];
+            targetItem.classList.add('transition-all', 'duration-300');
+
+            if (direction === 'up') {
+                targetItem.before(item);
+            } else {
+                targetItem.after(item);
+            }
+
+            requestAnimationFrame(() => {
+                renumberItems();
+                updateMoveButtonStates();
+                setTimeout(() => {
+                    item.classList.remove('scale-[1.02]', 'bg-primary-50/50', 'dark:bg-primary-900/20');
+                    targetItem.classList.remove('transition-all', 'duration-300');
+                }, 400);
+            });
+        });
+
+        // Drag-and-drop reordering — disabled on touch devices where it is
+        // unreliable on mobile WebKit; button controls remain available.
+        const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        let dragSrcEl = null;
+        if (!isTouch) {
+            listContainer.addEventListener('dragstart', (e) => {
+                const item = e.target.closest('[data-ex-id]');
+                if (!item) return;
+                dragSrcEl = item;
+                item.classList.add('opacity-40');
+                e.dataTransfer.effectAllowed = 'move';
+            });
+            listContainer.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                const afterElement = getDragAfter(listContainer, e.clientY);
+                const draggable = document.querySelector('.drag-over');
+                if (draggable) draggable.classList.remove('drag-over');
+                if (afterElement) {
+                    afterElement.before(dragSrcEl);
+                } else {
+                    listContainer.appendChild(dragSrcEl);
+                }
+            });
+            listContainer.addEventListener('dragend', (e) => {
+                if (dragSrcEl) dragSrcEl.classList.remove('opacity-40');
+                dragSrcEl = null;
+                const overItems = listContainer.querySelectorAll('.drag-over');
+                overItems.forEach(i => i.classList.remove('drag-over'));
+                renumberItems();
+                updateMoveButtonStates();
+            });
+        }
+
+        const getDragAfter = (container, y) => {
+            const draggableElements = container.querySelectorAll('[data-ex-id]:not(.drag-over)');
+            let closest = null;
+            let closestOffset = null;
+            const after = [...draggableElements].find(el => {
+                const box = el.getBoundingClientRect();
+                const offset = y - box.top - box.height / 2;
+                if (offset < 0 && (closestOffset === null || offset > closestOffset)) {
+                    closestOffset = offset;
+                    closest = el;
+                }
+                return closest !== null;
+            });
+            return after || null;
+        };
+
+        const renumberItems = () => {
+            listContainer.querySelectorAll('[data-ex-id]').forEach((item, i) => {
+                const numEl = item.querySelector('.reorder-item-num');
+                if (numEl) numEl.textContent = i + 1;
+            });
+        };
+
+        // Save button — persist new order and re-render
+        sheet.querySelector('[data-action="reorder-save"]')?.addEventListener('click', async () => {
+            const orderedIds = listContainer.querySelectorAll('[data-ex-id]').map(el => parseInt(el.dataset.exId));
+            const orderedExercises = orderedIds.map((id, i) => {
+                const ex = exercises.find(e => e.id === id);
+                return { ...ex, order: i };
+            });
+
+            // Optimistically update the session and re-render immediately
+            session.exercises = orderedExercises;
+            this.exercisesModified = true;
+
+            const isLocal = this.isLocalSession(session);
+            const token = app?.state?.tokens?.access;
+
+            if (isLocal) {
+                this.persistLocalSession(session);
+                close();
+                await this.renderWorkoutScreen(app.elements.pageContent, app, sessionId);
+                return;
+            }
+
+            close();
+
+            try {
+                await app.ensureFreshToken();
+                await API.patch(`/workouts/sessions/${sessionId}`, {
+                    exercises: orderedExercises.map((ex, i) => ({ id: ex.id, order: i }))
+                }, token);
+                await this.renderWorkoutScreen(app.elements.pageContent, app, sessionId);
+            } catch (err) {
+                app.showToast(err.message || 'Ошибка изменения порядка', 'error');
+                // Revert on error
+                session.exercises = exercises;
+                await this.renderWorkoutScreen(app.elements.pageContent, app, sessionId);
+            }
+        });
+
+        // Reset button — restore original order
+        sheet.querySelector('[data-action="reorder-reset"]')?.addEventListener('click', () => {
+            listContainer.innerHTML = exercises.map((ex, i) => this.renderReorderItem(ex, i, exercises.length)).join('');
+        });
+
+        document.addEventListener('keydown', onKeydown);
+        (document.getElementById('modals') || document.body).appendChild(sheet);
+        document.body.classList.add('overflow-hidden');
+        this._reorderSheet = sheet;
+    },
+
+    // Render a single draggable exercise item row in the reorder modal.
+    renderReorderItem(ex, index, total) {
+        const isFirst = index === 0;
+        const isLast = index === total - 1;
+        const sets = ex.sets || [];
+        const completed = sets.filter(s => s.is_completed).length;
+        const isComplete = sets.length > 0 && completed === sets.length;
+        const statusColor = isComplete ? 'text-lime-600 dark:text-lime-400'
+            : sets.length > 0 ? 'text-amber-500 dark:text-amber-400'
+            : 'text-surface-400 dark:text-surface-500';
+        const statusDot = isComplete ? '●' : sets.some(s => s.is_completed) ? '●' : '○';
+
+        return `
+            <div class="reorder-item flex items-center gap-2 p-2.5 glass rounded-xl" data-ex-id="${ex.id}">
+                <div class="reorder-drag-handle flex-shrink-0" title="Перетащить">
+                    <svg class="w-3.5 h-3.5 text-surface-400 dark:text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 3v2m0 4v2m0 4v2m0 4v2M13 3v2m0 4v2m0 4v2m0 4v2"/>
+                    </svg>
+                </div>
+                <span class="reorder-item-num w-6 text-center text-xs font-bold text-surface-500 dark:text-surface-400 flex-shrink-0">${index + 1}</span>
+                <div class="flex-1 min-w-0 mr-3">
+                    <span class="font-medium text-sm text-surface-900 dark:text-surface-100 truncate">${ex.name}</span>
+                    <span class="ml-1 text-xs ${statusColor}">${statusDot} ${completed}/${sets.length} подх.</span>
+                </div>
+                <div class="reorder-move-btns flex flex-col gap-1 flex-shrink-0">
+                    <button type="button" data-action="reorder-item-move" data-direction="up"
+                            class="w-10 h-10 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl ${isFirst ? 'text-surface-300 dark:text-surface-600 cursor-not-allowed' : 'text-surface-600 dark:text-surface-300 hover:text-surface-900 dark:hover:text-surface-100'}"
+                            ${isFirst ? 'disabled' : ''}>
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/>
+                        </svg>
+                    </button>
+                    <button type="button" data-action="reorder-item-move" data-direction="down"
+                            class="w-10 h-10 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl ${isLast ? 'text-surface-300 dark:text-surface-600 cursor-not-allowed' : 'text-surface-600 dark:text-surface-300 hover:text-surface-900 dark:hover:text-surface-100'}"
+                            ${isLast ? 'disabled' : ''}>
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        `;
+    },
+
     updateWorkoutMetricsUI(session) {
         const { total, completed } = this.getWorkoutMetrics(session);
         const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
@@ -3409,6 +3808,23 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             await this.showAddExerciseModal(app, session, sessionId);
         });
 
+        // Re-hydrate AI analysis badges on carousel scroll so they persist
+        // reliably across scroll events and any deferred DOM mutations.
+        const carouselEl = container.querySelector('#carousel');
+        if (carouselEl && !carouselEl._aiBadgeScrollBound) {
+            let aiScrollT = null;
+            carouselEl._aiBadgeScrollBound = true;
+            carouselEl.addEventListener('scroll', () => {
+                if (this.aiPlan) {
+                    if (aiScrollT) clearTimeout(aiScrollT);
+                    aiScrollT = setTimeout(() => {
+                        this.updateAiPlanBadges(container);
+                        aiScrollT = null;
+                    }, 150);
+                }
+            }, { passive: true });
+        }
+
         // AI analysis block toggle
         container.querySelectorAll('[data-action="toggle-ai-analysis"]').forEach(toggle => {
             toggle.addEventListener('click', (e) => {
@@ -3426,6 +3842,17 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             });
         });
 
+        // Exercise card tab switching (Dynamics / AI Advice / Timer)
+        container.querySelectorAll('[data-tab]').forEach(tab => {
+            tab.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const card = e.currentTarget.closest('[data-exercise-id]');
+                if (!card) return;
+                const tabName = e.currentTarget.dataset.tab;
+                this.switchExerciseTab(card.dataset.exerciseId, tabName, container);
+            });
+        });
+
         // Bind per-row event handlers (toggle completion, drum picker, persistence)
         container.querySelectorAll('[data-set-id]').forEach(rowEl => {
             const exId = rowEl.closest('[data-exercise-id]')?.dataset.exerciseId;
@@ -3439,64 +3866,26 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         // Cancel workout
         // Handled by App.js
 
-        // Move exercise up/down in active session
-        container.querySelectorAll('[data-action="move-ex-up"], [data-action="move-ex-down"]').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
-                const card = e.currentTarget.closest('[data-exercise-id]');
-                const exId = parseInt(e.currentTarget.dataset.exId);
-                const isUp = e.currentTarget.dataset.action === 'move-ex-up';
-                const exercises = [...session.exercises];
-                const idx = exercises.findIndex(ex => ex.id === exId);
-                if (idx === -1) return;
-                const targetIdx = isUp ? idx - 1 : idx + 1;
-                if (targetIdx < 0 || targetIdx >= exercises.length) return;
-
-                card.classList.add('scale-[1.02]', 'bg-primary-50/50', 'dark:bg-primary-900/20', 'transition-all', 'duration-300');
-
-                const temp = exercises[idx];
-                exercises[idx] = exercises[targetIdx];
-                exercises[targetIdx] = temp;
-
-                if (isLocal) {
-                    session.exercises = exercises;
-                    exercises.forEach((ex, i) => { ex.order = i; });
-                    this.persistLocalSession(session);
-                    await this.renderWorkoutScreen(container, app, sessionId);
-                    return;
-                }
-
-                try {
-                    await API.patch(`/workouts/sessions/${sessionId}`, {
-                        exercises: exercises.map((ex, i) => ({ id: ex.id, order: i }))
-                    }, token);
-                    await this.renderWorkoutScreen(container, app, sessionId);
-                } catch (err) {
-                    app.showToast(err.message || 'Ошибка изменения порядка', 'error');
-                }
+        // Open reorder menu for an exercise card — opens the full reordering modal
+        container.querySelectorAll('[data-action="open-reorder-menu"]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.showReorderExercisesModal(app, session, sessionId);
             });
-         });
+        });
 
         // Timer auto-start toggle in exercise card header
         container.querySelectorAll('[data-action="toggle-rest-auto"]').forEach(btn => {
             const exId = parseInt(btn.dataset.exId);
             const isOff = this.restAutoStart && this.restAutoStart.get(exId) === false;
-            if (isOff) {
-                btn.setAttribute('aria-pressed', 'false');
-                btn.classList.remove('text-surface-400', 'dark:text-surface-500');
-                btn.classList.add('text-lime-600', 'dark:text-lime-400');
-            }
+            // Sync ARIA state: CSS [aria-pressed] selectors drive the visual
+            // states — lime glow when active (true), muted gray when inactive (false).
+            btn.setAttribute('aria-pressed', String(!isOff));
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 const exIdNum = parseInt(e.currentTarget.dataset.exId);
                 const isOn = e.currentTarget.getAttribute('aria-pressed') === 'true';
                 e.currentTarget.setAttribute('aria-pressed', String(!isOn));
-                if (!isOn) {
-                    e.currentTarget.classList.add('text-lime-600', 'dark:text-lime-400');
-                    e.currentTarget.classList.remove('text-surface-400', 'dark:text-surface-500');
-                } else {
-                    e.currentTarget.classList.remove('text-lime-600', 'dark:text-lime-400');
-                    e.currentTarget.classList.add('text-surface-400', 'dark:text-surface-500');
-                }
                 if (this.restAutoStart) this.restAutoStart.set(exIdNum, !isOn);
             });
         });
@@ -3527,6 +3916,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     if (!inserted) {
                         await this.renderWorkoutScreen(container, app, sessionId);
                     }
+                    this.updateAiPlanBadges(container);
                     this.updateWorkoutMetricsUI(session);
                     return;
                 }
@@ -3556,6 +3946,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                         await this.renderWorkoutScreen(container, app, sessionId);
                     }
                 }
+                this.updateAiPlanBadges(container);
                 this.updateWorkoutMetricsUI(session);
             });
         });
@@ -3587,6 +3978,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 confirmText: 'Удалить',
                 confirmClass: 'bg-red-600 hover:bg-red-700 text-white font-semibold shadow-md',
                 cancelText: 'Отмена',
+                instantClose: true
             });
             if (!confirmed) return;
 
@@ -3613,6 +4005,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             // Renumber and update metrics
             this.renumberSetRows(card);
             this.updateWorkoutMetricsUI(session);
+            // Re-hydrate AI analysis badges after the DOM mutation
+            this.updateAiPlanBadges(container);
 
             // Persist/deletion via API — fire and forget, ignore "not found"
             if (isLocal) {

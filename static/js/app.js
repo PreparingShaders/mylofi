@@ -2219,19 +2219,15 @@ const App = {
      * reads the completed sets, so a value still sitting in an input or a toggle
      * whose PATCH is still in flight would be analysed as the previous one.
      *
-     * Sets whose toggle PATCH is already in flight are skipped: that request
-     * already carries weight, reps and is_completed, so re-sending here would
-     * only risk a race where the later weight/reps overwrite the completed flag.
+     * Always reads current DOM values and PATCHes every set that has meaningful
+     * data, so values still sitting in drum-picker inputs (not yet flushed via
+     * change/blur) are persisted before the coach reads the completed sets.
      */
     async flushPendingSetEdits() {
         const rows = document.querySelectorAll('[data-set-id]');
         const promises = Array.from(rows).map(async row => {
             const setId = parseInt(row.dataset.setId);
             if (isNaN(setId)) return;
-
-            // Skip sets whose toggle PATCH is already in flight — it already
-            // contains weight, reps and is_completed.
-            if (this._pendingToggleSetIds?.has(setId)) return;
 
             const weightInput = row.querySelector('[data-field="weight"]');
             const repsInput = row.querySelector('[data-field="reps"]');
@@ -2246,10 +2242,10 @@ const App = {
             if (!isNaN(reps)) payload.reps = reps;
             payload.is_completed = is_completed;
 
-            if (Object.keys(payload).length > 0) {
-                console.log('[flushPendingSetEdits] Flushing set', setId, payload);
-                await API.patch(`/workouts/sets/${setId}`, payload, this.state.tokens.access).catch(() => {});
-            }
+            if (Object.keys(payload).length <= 1 && !payload.is_completed) return;
+
+            console.log('[flushPendingSetEdits] Flushing set', setId, payload);
+            await API.patch(`/workouts/sets/${setId}`, payload, this.state.tokens.access).catch(() => {});
         });
         await Promise.all(promises);
     },

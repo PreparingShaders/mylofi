@@ -1410,7 +1410,8 @@ export const Components = {
         confirmText = 'Подтвердить',
         confirmClass = 'bg-primary-600 hover:bg-primary-700 text-white dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200 shadow-md',
         cancelText = 'Отмена',
-        cancelClass = 'bg-surface-100 dark:bg-white/5 text-surface-700 dark:text-surface-200 hover:bg-surface-200 dark:hover:bg-white/10 border border-surface-200 dark:border-white/10'
+        cancelClass = 'bg-surface-100 dark:bg-white/5 text-surface-700 dark:text-surface-200 hover:bg-surface-200 dark:hover:bg-white/10 border border-surface-200 dark:border-white/10',
+        instantClose = false
     } = {}) {
         return new Promise((resolve) => {
             const host = document.getElementById('modals') || document.body;
@@ -1431,15 +1432,24 @@ export const Components = {
             const confirmBtn = backdrop.querySelector('[data-modal-confirm]');
             const cancelBtn = backdrop.querySelector('[data-modal-cancel]');
 
-            let settled = false;
-            const close = (result) => {
+             let settled = false;
+             const close = (result) => {
                 if (settled) return;
                 settled = true;
                 document.removeEventListener('keydown', onKeydown);
-                backdrop.classList.remove('opacity-100');
-                card.classList.remove('scale-100', 'opacity-100');
-                card.classList.add('scale-95', 'opacity-0');
-                setTimeout(() => backdrop.remove(), 200);
+                if (instantClose) {
+                    // Instant close — remove the backdrop immediately so state
+                    // updates and DOM animations start without delay. Used for
+                    // destructive actions (set deletion) where the 200ms exit
+                    // animation felt like freezing.
+                    backdrop.remove();
+                } else {
+                    // Animated exit: fade out then remove from DOM.
+                    backdrop.classList.remove('opacity-100');
+                    card.classList.remove('scale-100', 'opacity-100');
+                    card.classList.add('scale-95', 'opacity-0');
+                    setTimeout(() => backdrop.remove(), 200);
+                }
                 resolve(result);
             };
 

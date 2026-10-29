@@ -1272,6 +1272,21 @@ input, select, textarea:focus {
     transform: scale(0.98);
 }
 
+/* ============ Neon & Depth Button Shadows ============ */
+/* Rich, soft neon shadows on glass surfaces and primary/lime accents to give
+   a premium depth. The glass shadow is an ambient lift; the accent shadow
+   carries the lime brand glow so pressed buttons read as lit from within. */
+.glass,
+.glass-strong {
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.bg-primary-600,
+.bg-lime-500,
+.drum-save-btn {
+    box-shadow: 0 4px 20px rgba(132, 204, 22, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
 /* Modal backdrop */
 .modal-backdrop {
     backdrop-filter: blur(4px);
@@ -3565,6 +3580,12 @@ input[data-field="reps"] {
     overflow: hidden;
     --fill-percent: 0%;
     --fill-color: transparent;
+    /* Crisp inner shadow and border for a sculpted liquid vessel appearance */
+    box-shadow:
+        inset 0 2px 6px rgba(0, 0, 0, 0.4),
+        inset 0 -2px 4px rgba(255, 255, 255, 0.15),
+        0 0 0 1px var(--border-color, #3f3f46),
+        0 4px 12px rgba(0, 0, 0, 0.2);
     will-change: clip-path;
 }
 .exercise-track-circle::before {
@@ -3574,13 +3595,40 @@ input[data-field="reps"] {
     background: var(--fill-color, transparent);
     clip-path: inset(calc(100% - var(--fill-percent, 0%)) 0 0 0);
     transition: clip-path 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-    animation: liquid-wave 3s ease-in-out infinite;
     z-index: 0;
+}
+.exercise-track-circle::after {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    pointer-events: none;
+    z-index: 2;
+}
+
+/* Sinusoidal wave at the fill boundary — positioned via bottom offset
+   that tracks --fill-percent, filled with --fill-color, animated
+   horizontally with translateX for a continuous scroll. */
+.wave-fill-svg {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: calc(var(--fill-percent, 0%) - 6px);
+    width: 100%;
+    height: 12px;
+    z-index: 1;
+    animation: liquid-wave 2s ease-in-out infinite;
+    pointer-events: none;
+    overflow: visible;
+}
+.wave-path {
+    fill: var(--fill-color, transparent);
 }
 
 @keyframes liquid-wave {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-2px); }
+    0%, 100% { transform: translateX(0); }
+    50% { transform: translateX(-44px); }
 }
 .exercise-track-circle .circle-content {
     position: relative;
@@ -3603,11 +3651,21 @@ input[data-field="reps"] {
 .rest-auto-toggle {
     transition: all 150ms ease;
 }
+/* Active state: glowing neon lime with subtle shadow */
 .rest-auto-toggle[aria-pressed="true"] {
     color: #84cc16;
+    box-shadow: 0 0 8px rgba(132, 204, 22, 0.4);
 }
 .dark .rest-auto-toggle[aria-pressed="true"] {
     color: #84cc16;
+    box-shadow: 0 0 12px rgba(132, 204, 22, 0.5);
+}
+/* Inactive state: muted surface gray */
+.rest-auto-toggle[aria-pressed="false"] {
+    color: #71717a;
+}
+.dark .rest-auto-toggle[aria-pressed="false"] {
+    color: #52525b;
 }
 
 /* Cancel circle (×) — solid red border */
@@ -3651,6 +3709,12 @@ input[data-field="reps"] {
     --border-color: #4d7c0c;
     color: white;
 }
+.exercise-track-circle.complete::before,
+.exercise-track-circle.complete::after,
+.exercise-track-circle.complete .wave-fill-svg {
+    animation: none !important;
+    transform: translateX(0);
+}
 
 /* Add circle (+) — dashed border */
 .exercise-track-circle.add {
@@ -3666,17 +3730,73 @@ input[data-field="reps"] {
     color: #84cc16;
 }
 
-/* ===== Per-set row delete button (start of row) ===== */
+/* ========== Workout card & exercise header ========== */
+.reorder-handle {
+    transition: all 150ms ease;
+}
+.reorder-handle:hover {
+    background: rgba(132, 204, 22, 0.08) !important;
+}
+
+/* Per-set row delete button (start of row) — compact red cross */
 .delete-set-btn-start {
     opacity: 0.5;
+    color: #ef4444;
     transition: all 150ms ease;
 }
 .delete-set-btn-start:hover {
     opacity: 1;
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.08) !important;
 }
 .delete-set-btn-start:focus-visible {
     outline: 2px solid currentColor;
     outline-offset: 1px;
+}
+
+/* ========== Exercise card 3-in-1 segmented tabs ========== */
+.exercise-tab-bar {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.exercise-tab-btn {
+    opacity: 0.5;
+    color: #71717a;
+    border: none;
+    background: transparent;
+    transition: all 150ms ease;
+}
+
+.exercise-tab-btn:hover {
+    opacity: 0.8;
+    color: #3f3f46;
+}
+
+.dark .exercise-tab-btn:hover {
+    color: #a1a1aa;
+}
+
+.exercise-tab-btn[data-active="true"] {
+    opacity: 1;
+    background: rgba(132, 204, 22, 0.12);
+    color: #4d7c0c;
+    box-shadow: inset 0 1px 2px rgba(132, 204, 22, 0.2);
+}
+
+.dark .exercise-tab-btn[data-active="true"] {
+    background: rgba(132, 204, 22, 0.15);
+    color: #84cc16;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.exercise-tab-panel {
+    animation: fadeIn 0.2s ease-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
 }
 
 /* The row of cards scrolls; the header above it must not inherit that scroll. */
@@ -3867,22 +3987,27 @@ body.has-network-banner main {
     max-width: 92vw;
     margin: 0 auto;
     box-sizing: border-box;
-    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+    padding: 0.875rem 0.875rem calc(0.75rem + env(safe-area-inset-bottom, 0px));
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 0.625rem !important;
 }
 
-/* Main layout: time left, controls right */
-.rest-timer-main {
-    display: flex;
-    align-items: center;
-    gap: 12px;
+/* Row 1: Mode toggle */
+.rest-timer-mode-toggle {
+    display: flex !important;
+    gap: 2px !important;
 }
 
-/* Time display: large, centered left */
+/* Row 2: Time display — horizontal, single line */
 .rest-timer-time {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 0.25rem !important;
+    text-align: center !important;
     min-width: 120px;
+    margin: 0 auto;
 }
 
 #rest-timer-remaining {
@@ -3897,65 +4022,58 @@ body.has-network-banner main {
 
 #rest-timer-state {
     opacity: 0.7;
+    font-size: 0.625rem;
+    text-transform: uppercase;
 }
 
-/* Controls: flex column */
+/* Row 3: Presets / custom input */
 .rest-timer-controls {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 0.625rem !important;
 }
 
-/* Mode toggle */
-.rest-timer-mode-toggle {
-    display: flex;
-    gap: 2px;
-}
-
-.mode-btn {
-    flex: 1;
-    height: 32px;
-}
-
-.mode-btn[data-active="true"] {
-    background: #1a2e05;
-    color: #84cc16;
-}
-
-/* Presets — horizontal scroll */
+/* Presets — scrollable and compact */
 .rest-timer-presets {
-    display: flex;
-    gap: 6px;
-    overflow-x: auto;
-    scroll-snap-type: x mandatory;
-    -webkit-overflow-scrolling: touch;
-    padding-bottom: 4px;
-    scrollbar-width: none;
+    display: flex !important;
+    gap: 6px !important;
+    overflow-x: auto !important;
+    scroll-snap-type: x mandatory !important;
+    -webkit-overflow-scrolling: touch !important;
+    padding-bottom: 4px !important;
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
 }
-
 .rest-timer-presets::-webkit-scrollbar {
-    display: none;
+    display: none !important;
 }
 
 .preset-btn {
-    flex-shrink: 0;
-    height: 32px;
-    padding: 0 10px;
-    scroll-snap-align: start;
+    flex-shrink: 0 !important;
+    height: 32px !important;
+    padding: 0 10px !important;
+    scroll-snap-align: start !important;
 }
 
-/* Custom input */
+/* Custom input — neat row alignment */
 .rest-timer-custom {
-    display: flex;
-    align-items: center;
-    gap: 4px;
+    display: flex !important;
+    align-items: center !important;
+    gap: 4px !important;
 }
 
-/* Dismiss button — full width bottom */
+/* Stopwatch mode content */
+[data-stopwatch-mode] {
+    display: none !important;
+}
+[data-stopwatch-mode].hidden {
+    display: none !important;
+}
+
+/* Row 4: Full-width dismiss button at the bottom */
 .rest-timer-dismiss {
-    width: 100%;
-    height: 40px;
+    width: 100% !important;
+    height: 40px !important;
 }
 
 /* Milliseconds animation */
