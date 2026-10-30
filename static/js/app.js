@@ -2182,8 +2182,14 @@ const App = {
             return;
         }
 
-        // Flush all active weight and rep inputs before completing
+        // Wait for any pending drum picker saves to complete
+        await new Promise(r => setTimeout(r, 100));
+
+        // Flush all active weight and rep inputs into session state before completing
         await this.flushPendingSetEdits();
+
+        // Ensure we have a valid token before the completion call
+        await this.ensureFreshToken();
 
         const durationSeconds = Workouts.sessionStartTimestamp
             ? Math.max(0, Math.floor((Date.now() - Workouts.sessionStartTimestamp) / 1000))
@@ -2206,7 +2212,20 @@ const App = {
                 await this.renderPage('workouts');
                 return;
             }
-            this.showToast(e.message || 'Ошибка завершения тренировки', 'error');
+            // Network failure: preserve local state, show informative toast
+            if (e?.isNetworkError) {
+                await Workouts.markSessionCompletedLocally(sessionId);
+                this.showToast('Тренировка завершена локально! Сеть недоступна, данные будут синхронизированы при появлении связи', 'info');
+                return;
+            }
+            // 401/404 or other HTTP error: show clear toast, keep workout screen intact
+            console.error('[handleCompleteWorkout] Failed:', { status: e?.status, message: e?.message });
+            const msg = e?.status === 401
+                ? 'Сессия истекла. Проверьте подключение и войдите снова.'
+                : e?.status === 404
+                ? 'Тренировка не найдена на сервере.'
+                : (e?.message || 'Ошибка завершения тренировки');
+            this.showToast(msg, 'error');
             return;
         }
         await this.renderPage('workouts');

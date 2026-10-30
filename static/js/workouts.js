@@ -1389,21 +1389,9 @@ export const Workouts = {
         if (stopwatchModeEl) stopwatchModeEl.classList.toggle('hidden', mode !== 'stopwatch');
         if (modeTimerBtn) {
             modeTimerBtn.setAttribute('data-active', mode === 'timer');
-            modeTimerBtn.classList.toggle('bg-primary-600', mode === 'timer');
-            modeTimerBtn.classList.toggle('text-white', mode === 'timer');
-            modeTimerBtn.classList.toggle('bg-surface-100', mode !== 'timer');
-            modeTimerBtn.classList.toggle('text-surface-600', mode !== 'timer');
-            modeTimerBtn.classList.toggle('dark:bg-white/5', mode !== 'timer');
-            modeTimerBtn.classList.toggle('dark:text-surface-400', mode !== 'timer');
         }
         if (modeStopwatchBtn) {
             modeStopwatchBtn.setAttribute('data-active', mode === 'stopwatch');
-            modeStopwatchBtn.classList.toggle('bg-primary-600', mode === 'stopwatch');
-            modeStopwatchBtn.classList.toggle('text-white', mode === 'stopwatch');
-            modeStopwatchBtn.classList.toggle('bg-surface-100', mode !== 'stopwatch');
-            modeStopwatchBtn.classList.toggle('text-surface-600', mode !== 'stopwatch');
-            modeStopwatchBtn.classList.toggle('dark:bg-white/5', mode !== 'stopwatch');
-            modeStopwatchBtn.classList.toggle('dark:text-surface-400', mode !== 'stopwatch');
         }
     },
 
@@ -1694,9 +1682,13 @@ export const Workouts = {
           });
 
         if (tabName === 'ai-analysis' && container && this.aiPlan) {
-            setTimeout(() => {
+            requestAnimationFrame(() => {
+                // Ensure the panel is visible first
+                const card = document.querySelector(`[data-exercise-id="${exerciseId}"]`);
+                const panel = card?.querySelector('[data-tab-panel="ai-analysis"]');
+                if (panel) panel.classList.remove('hidden');
                 this.updateAiPlanBadges(container);
-            }, 0);
+            });
         }
       },
 
@@ -1956,7 +1948,7 @@ export const Workouts = {
                         button.className = TOGGLE_BASE + ' ' + TOGGLE_COMPLETED;
                         button.textContent = '\u2713';
 
-                        row.querySelector('span.font-bold').classList.add(...SET_DIM);
+                        row.querySelector('[data-set-number]').classList.add(...SET_DIM);
                         row.querySelectorAll('input').forEach(inp => inp.classList.add(...SET_DIM));
                         row.querySelectorAll('label').forEach(lbl => lbl.classList.add(...SET_DIM));
 
@@ -1965,7 +1957,7 @@ export const Workouts = {
                         button.dataset.completed = 'false';
                         button.className = TOGGLE_BASE + ' ' + TOGGLE_UNCOMPLETED;
 
-                        const setNumberSpan = row.querySelector('span.font-bold');
+                        const setNumberSpan = row.querySelector('[data-set-number]');
                         setNumberSpan.classList.remove(...SET_DIM);
                         setNumberSpan.classList.add(SET_NUMBER_IDLE);
                         row.querySelectorAll('input').forEach(inp => inp.classList.remove(...SET_DIM));
@@ -2569,18 +2561,35 @@ export const Workouts = {
         }
 
          try {
-            const resp = await API.post(
-                `/workouts/sessions/${sessionId}/complete`,
-                { with_ai_analysis: true, duration_seconds: durationSeconds },
-                app.state.tokens.access,
-            );
-            console.log('[completeWorkoutWithAi] Complete endpoint response:', resp);
-        } catch (err) {
-            console.error('[Workouts] Complete with AI failed:', err);
-            app.showToast(err?.offlineQueued ? OFFLINE_COMPLETE_MESSAGE : (err?.message || 'Ошибка завершения тренировки'), 'error');
-            await app.renderPage('workouts');
-            return;
-        }
+             // Ensure fresh token before the completion call
+             await app.ensureFreshToken();
+             const resp = await API.post(
+                 `/workouts/sessions/${sessionId}/complete`,
+                 { with_ai_analysis: true, duration_seconds: durationSeconds },
+                 app.state.tokens.access,
+             );
+             console.log('[completeWorkoutWithAi] Complete endpoint response:', resp);
+         } catch (err) {
+             console.error('[Workouts] Complete with AI failed:', err);
+             if (err?.offlineQueued) {
+                 await Workouts.markSessionCompletedLocally(sessionId);
+                 app.showToast(OFFLINE_COMPLETE_MESSAGE, 'info');
+                 await app.renderPage('workouts');
+                 return;
+             }
+             if (err?.isNetworkError) {
+                 await Workouts.markSessionCompletedLocally(sessionId);
+                 app.showToast(OFFLINE_COMPLETE_MESSAGE, 'info');
+                 return;
+             }
+             const msg = err?.status === 401
+                 ? 'Сессия истекла. Проверьте подключение и войдите снова.'
+                 : err?.status === 404
+                 ? 'Тренировка не найдена на сервере.'
+                 : (err?.message || 'Ошибка завершения тренировки');
+             app.showToast(msg, 'error');
+             return;
+         }
 
         app.showToast('Тренировка завершена! ИИ-тренер формирует разбор в истории.', 'success');
         app.state.currentPage = 'history';
@@ -2711,7 +2720,7 @@ export const Workouts = {
                         aria-label="Удалить подход">
                     <span class="text-xs font-bold leading-none">✕</span>
                 </button>
-                <span class="font-bold w-6 text-center text-xs ${set.is_completed ? SET_DIM.join(' ') : SET_NUMBER_IDLE}">${set.set_number}</span>
+                <span class="font-bold w-6 text-center text-xs ${set.is_completed ? SET_DIM.join(' ') : SET_NUMBER_IDLE}" data-set-number="${set.set_number}">${set.set_number}</span>
                 <div class="w-14 flex flex-col items-center justify-center flex-shrink-0" title="Прошлый подход">
                     <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Пред.</label>
                     <span class="text-[11px] font-semibold text-surface-600 dark:text-surface-300 h-8 flex items-center justify-center truncate leading-tight">${prevText}</span>
@@ -2786,7 +2795,7 @@ export const Workouts = {
     renumberSetRows(card) {
         if (!card) return;
         card.querySelectorAll('[data-set-id]').forEach((row, i) => {
-            const span = row.querySelector('span.font-bold');
+            const span = row.querySelector('[data-set-number]');
             if (span) span.textContent = String(i + 1);
         });
     },
@@ -3352,8 +3361,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     style="--fill-percent: ${fillPercent}%; --fill-color: ${this.getFillColor(state)}; --border-color: ${this.getBorderColor(state, isActive)};"
                     data-track-state="${state}"
                     data-track-percent="${percent}">
-                <svg class="wave-fill-svg" viewBox="0 0 44 12" aria-hidden="true">
-                    <path class="wave-path" d="M0,12 L0,6 Q11,2 22,6 Q33,10 44,6 L44,12 Z" />
+                <svg class="wave-fill-svg" viewBox="0 0 88 16" preserveAspectRatio="none" aria-hidden="true">
+                    <path class="wave-path" d="M0,4 Q11,14 22,4 Q33,14 44,4 Q55,14 66,4 Q77,14 88,4 L88,16 L0,16 Z" fill="var(--fill-color, transparent)"/>
                 </svg>
                 <div class="circle-content">
                     ${state === 'complete'
@@ -3637,7 +3646,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
         // Save button — persist new order and re-render
         sheet.querySelector('[data-action="reorder-save"]')?.addEventListener('click', async () => {
-            const orderedIds = listContainer.querySelectorAll('[data-ex-id]').map(el => parseInt(el.dataset.exId));
+            const orderedIds = [...listContainer.querySelectorAll('[data-ex-id]')].map(el => parseInt(el.dataset.exId));
             const orderedExercises = orderedIds.map((id, i) => {
                 const ex = exercises.find(e => e.id === id);
                 return { ...ex, order: i };
@@ -3676,6 +3685,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         // Reset button — restore original order
         sheet.querySelector('[data-action="reorder-reset"]')?.addEventListener('click', () => {
             listContainer.innerHTML = exercises.map((ex, i) => this.renderReorderItem(ex, i, exercises.length)).join('');
+            renumberItems();
+            updateMoveButtonStates();
         });
 
         document.addEventListener('keydown', onKeydown);
@@ -3843,14 +3854,15 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         });
 
         // Exercise card tab switching (Dynamics / AI Advice / Timer)
-        container.querySelectorAll('[data-tab]').forEach(tab => {
-            tab.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const card = e.currentTarget.closest('[data-exercise-id]');
-                if (!card) return;
-                const tabName = e.currentTarget.dataset.tab;
-                this.switchExerciseTab(card.dataset.exerciseId, tabName, container);
-            });
+        // Use event delegation on the container so handlers survive DOM re-renders
+        container.addEventListener('click', (e) => {
+            const tab = e.target.closest('[data-tab]');
+            if (!tab) return;
+            e.stopPropagation();
+            const card = tab.closest('[data-exercise-id]');
+            if (!card) return;
+            const tabName = tab.dataset.tab;
+            this.switchExerciseTab(card.dataset.exerciseId, tabName, container);
         });
 
         // Bind per-row event handlers (toggle completion, drum picker, persistence)
@@ -4015,7 +4027,11 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             } else if (token) {
                 API.delete(`/workouts/sets/${removedSet.id}`, token)
                     .catch(err => {
-                        if (err?.message?.includes('not found') || err?.status === 404) {
+                        const msg = err?.message || '';
+                        const isNotFound = err?.status === 404
+                            || msg.toLowerCase().includes('not found')
+                            || msg.includes('не найден');
+                        if (isNotFound) {
                             return;
                         }
                         app.showToast(err.message || 'Ошибка удаления подхода', 'error');
@@ -4128,7 +4144,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         const repsInput = row?.querySelector('[data-field="reps"]') || null;
 
         const exerciseName = (card?.querySelector('h3')?.textContent || '').trim();
-        const setNumber = (row?.querySelector('span.font-bold')?.textContent || '').trim();
+        const setNumber = (row?.querySelector('[data-set-number]')?.textContent || '').trim();
 
         const startWeight = Math.max(0, parseFloat(weightInput?.value) || 0);
         const startReps = Math.min(DRUM_REPS_MAX, Math.max(1, parseInt(repsInput?.value, 10) || 1));

@@ -3582,10 +3582,10 @@ input[data-field="reps"] {
     --fill-color: transparent;
     /* Crisp inner shadow and border for a sculpted liquid vessel appearance */
     box-shadow:
-        inset 0 2px 6px rgba(0, 0, 0, 0.4),
-        inset 0 -2px 4px rgba(255, 255, 255, 0.15),
-        0 0 0 1px var(--border-color, #3f3f46),
-        0 4px 12px rgba(0, 0, 0, 0.2);
+        inset 0 2px 8px rgba(0, 0, 0, 0.5),
+        inset 0 -3px 6px rgba(255, 255, 255, 0.1),
+        0 0 0 2px var(--border-color, #3f3f46),  /* thicker border */
+        0 6px 16px rgba(0, 0, 0, 0.25);
     will-change: clip-path;
 }
 .exercise-track-circle::before {
@@ -3602,7 +3602,7 @@ input[data-field="reps"] {
     position: absolute;
     inset: 2px;
     border-radius: 50%;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 2px solid rgba(255, 255, 255, 0.2);  /* was 1px solid rgba(255,255,255,0.1) */
     pointer-events: none;
     z-index: 2;
 }
@@ -3614,11 +3614,11 @@ input[data-field="reps"] {
     position: absolute;
     left: 0;
     right: 0;
-    bottom: calc(var(--fill-percent, 0%) - 6px);
+    bottom: calc(var(--fill-percent, 0%) - 10px);  /* was -8px */
     width: 100%;
-    height: 12px;
+    height: 20px;  /* was 16px */
     z-index: 1;
-    animation: liquid-wave 2s ease-in-out infinite;
+    animation: liquid-wave 3s linear infinite;
     pointer-events: none;
     overflow: visible;
 }
@@ -3626,9 +3626,15 @@ input[data-field="reps"] {
     fill: var(--fill-color, transparent);
 }
 
+/* Stop wave animation for completed circles */
+.exercise-track-circle.complete .wave-fill-svg {
+    animation: none;
+    transform: translateX(0);
+}
+
 @keyframes liquid-wave {
     0%, 100% { transform: translateX(0); }
-    50% { transform: translateX(-44px); }
+    50% { transform: translateX(-50%); }
 }
 .exercise-track-circle .circle-content {
     position: relative;
@@ -3785,6 +3791,40 @@ input[data-field="reps"] {
 }
 
 .dark .exercise-tab-btn[data-active="true"] {
+    background: rgba(132, 204, 22, 0.15);
+    color: #84cc16;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+/* ===== Unified mode buttons (rest timer mode toggle) ===== */
+/* Matches .exercise-tab-btn styling exactly — relies on data-active attribute
+   set by JS instead of inline Tailwind utility classes for active state. */
+.mode-btn {
+    opacity: 0.5;
+    color: #71717a;
+    border: none;
+    background: transparent;
+    transition: all 150ms ease;
+    flex: 1;
+}
+
+.mode-btn:hover {
+    opacity: 0.8;
+    color: #3f3f46;
+}
+
+.dark .mode-btn:hover {
+    color: #a1a1aa;
+}
+
+.mode-btn[data-active="true"] {
+    opacity: 1;
+    background: rgba(132, 204, 22, 0.12);
+    color: #4d7c0c;
+    box-shadow: inset 0 1px 2px rgba(132, 204, 22, 0.2);
+}
+
+.dark .mode-btn[data-active="true"] {
     background: rgba(132, 204, 22, 0.15);
     color: #84cc16;
     box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
