@@ -732,7 +732,7 @@ export const Workouts = {
         }
     },
 
-    clearActiveSessionState(app) {
+    async clearActiveSessionState(app) {
         this.currentSession = null;
         this.sessionStartTimestamp = null;
         try {
@@ -742,6 +742,8 @@ export const Workouts = {
         if (app?.state) {
             app.state.currentSessionId = null;
         }
+        // Small delay to ensure localStorage writes complete before any subsequent reads
+        await new Promise(r => setTimeout(r, 0));
     },
 
     // AI verdict/summary (recovery advice, intensity conclusions, etc.) is
@@ -1082,6 +1084,33 @@ export const Workouts = {
             ]);
         } catch (error) {
             console.error('[Workouts] Load error:', error);
+        }
+
+        // FIX: If active session is not ACTIVE (race condition after completion or DB replication lag),
+        // retry up to 5 times with exponential backoff (300ms, 450ms, 675ms, 1012ms, 1518ms, max 2000ms).
+        let retries = 5;
+        let delay = 300;
+        while (activeSession && activeSession.status !== 'active' && retries > 0) {
+            console.log(`[Workouts] Active session status is "${activeSession.status}", retrying after ${delay}ms... (${retries} retries left)`);
+            await new Promise(r => setTimeout(r, delay));
+            try {
+                const retrySession = await API.get('/workouts/sessions/active', app.state.tokens.access).catch(() => null);
+                if (retrySession && retrySession.status !== 'active') {
+                    retries--;
+                    delay = Math.min(delay * 1.5, 2000);
+                    continue;
+                }
+                activeSession = retrySession;
+                break;
+            } catch (error) {
+                console.error('[Workouts] Retry fetch failed:', error);
+                retries--;
+                delay = Math.min(delay * 1.5, 2000);
+            }
+        }
+        if (activeSession && activeSession.status !== 'active') {
+            console.warn('[Workouts] All retries exhausted, session still not ACTIVE, treating as no active session');
+            activeSession = null;
         }
 
         // A workout started offline lives only in localStorage until it is synced
@@ -1448,6 +1477,8 @@ export const Workouts = {
     saveRestTimerMode(mode) {
         this.restTimerMode = mode;
         try { localStorage.setItem(REST_TIMER_MODE_KEY, mode); } catch (e) {}
+        this.applyRestTimerModeUI();
+        this.updateRestTimerUI();
     },
 
     saveRestTimerPreset(seconds) {
@@ -1458,7 +1489,10 @@ export const Workouts = {
     applyRestTimerModeUI() {
         const bar = document.getElementById('rest-timer-bar');
         if (!bar) return;
-        const mode = this.restTimerMode || 'timer';
+
+        this.restTimerMode = this.restTimerMode || this.getStoredRestTimerMode();
+        const mode = this.restTimerMode;
+
         const presetsEl = bar.querySelector('[data-timer-presets]');
         const customEl = bar.querySelector('[data-timer-custom]');
         const stopwatchModeEl = bar.querySelector('[data-stopwatch-mode]');
@@ -1603,8 +1637,11 @@ export const Workouts = {
         // In stopwatch mode there's no target timestamp — rearm from start time
         if (this.restTimerTargetTimestamp == null && this.restTimerStartTime != null) {
             // Stopwatch mode: rearm if we have a start time
+            this.restTimerMode = 'stopwatch';
         } else if (this.restTimerTargetTimestamp == null) {
             return;
+        } else {
+            this.restTimerMode = 'timer';
         }
         const bar = document.getElementById('rest-timer-bar');
         if (bar) bar.classList.remove('hidden');
@@ -1753,22 +1790,42 @@ if (timerActive) {
 // Switch the active tab for a specific exercise card.
   // Pass 'dynamics', 'ai-analysis', or 'timer'.
   switchExerciseTab(exerciseId, tabName, container) {
-      const card = document.querySelector(`[data-exercise-id="${exerciseId}"]`);
-      if (!card) return;
+      // Try container first, then fall back to document for robustness
+      const card = container?.querySelector(`[data-exercise-id="${exerciseId}"]`)
+          || document.querySelector(`[data-exercise-id="${exerciseId}"]`);
+      if (!card) {
+          console.warn('[Workouts] switchExerciseTab: card not found', { exerciseId, tabName, container: !!container });
+          return;
+      }
 
-      card.querySelectorAll('[data-tab]').forEach(tab => {
+      console.log('[Workouts] switchExerciseTab:', { exerciseId, tabName, cardFound: true });
+
+      const tabs = card.querySelectorAll('[data-tab]');
+      if (!tabs.length) {
+          console.warn('[Workouts] switchExerciseTab: no tab buttons found in card', { exerciseId });
+          return;
+      }
+      tabs.forEach(tab => {
           const isActive = tab.dataset.tab === tabName;
           tab.setAttribute('data-active', String(isActive));
           tab.setAttribute('aria-selected', String(isActive));
       });
 
-      card.querySelectorAll('[data-tab-panel]').forEach(panel => {
+      const panels = card.querySelectorAll('[data-tab-panel]');
+      console.log('[Workouts] switchExerciseTab: panels found', panels.length);
+      let foundPanel = false;
+      panels.forEach(panel => {
           if (panel.dataset.tabPanel === tabName) {
               panel.classList.remove('hidden');
+              console.log('[Workouts] switchExerciseTab: showing panel', tabName);
+              foundPanel = true;
           } else {
               panel.classList.add('hidden');
           }
       });
+      if (!foundPanel) {
+          console.warn('[Workouts] switchExerciseTab: target panel not found', { exerciseId, tabName });
+      }
 
       if (tabName === 'ai-analysis' && container) {
           requestAnimationFrame(async () => {
@@ -1779,11 +1836,18 @@ if (timerActive) {
               this.updateAiPlanBadges(container);
           });
       }
+
+      if (tabName === 'timer' && container) {
+          const exercise = this.currentSession?.exercises?.find(ex => String(ex.id) === String(exerciseId));
+          if (exercise) {
+              this.updateTimerPanel(exerciseId, exercise, container);
+          }
+      }
   },
 
      // Refresh the Timer panel content for an exercise (e.g. after the timer state changes).
-     updateTimerPanel(exerciseId, exercise) {
-         const card = document.querySelector(`[data-exercise-id="${exerciseId}"]`);
+     updateTimerPanel(exerciseId, exercise, container) {
+         const card = container?.querySelector(`[data-exercise-id="${exerciseId}"]`) || document.querySelector(`[data-exercise-id="${exerciseId}"]`);
          if (!card) return;
          const panelContent = card.querySelector('[data-timer-panel-content]');
          if (panelContent) {
@@ -2202,7 +2266,12 @@ if (timerActive) {
      * fetches from the backend and caches it.
      */
     async ensureAiPlanLoaded(app, sessionId) {
-        if (this.aiPlan && this.aiPlan.sessionId === sessionId && this.aiPlan.available !== false) return this.aiPlan;
+        // Force reload if aiPlan is not loaded, or if it's for a different session,
+        // or if it was previously marked as unavailable (available === false)
+        const shouldFetch = !this.aiPlan
+            || this.aiPlan.sessionId !== sessionId
+            || this.aiPlan.available === false;
+        if (!shouldFetch) return this.aiPlan;
         if (!navigator.onLine || app.state?.isOnline === false) return null;
         try {
             const plan = await this.loadAiPlan(app, { session_id: sessionId });
@@ -2612,7 +2681,7 @@ if (timerActive) {
         return true;
     },
 
-    /**
+/**
      * Finish a session and have the coach read it, in one press.
      *
      * The workout is completed first and on its own terms: if the completion
@@ -2623,6 +2692,7 @@ if (timerActive) {
      * second screen.
      */
     async completeWorkoutWithAi(app, event) {
+        app.state.completingWorkout = true;
         const sessionKey = event.target.closest('[data-session-id]')?.dataset.sessionId;
         const sessionId = parseInt(sessionKey, 10);
 
@@ -2630,16 +2700,19 @@ if (timerActive) {
         // has no id the coach could read. Say so instead of completing silently.
         if (isNaN(sessionId)) {
             app.showToast('ИИ-разбор недоступен: тренировка ещё не синхронизирована', 'info');
+            app.state.completingWorkout = false;
             await app.handleCompleteWorkout(event);
             return;
         }
         if (window.App?.state?.isOnline === false || navigator.onLine === false) {
             app.showToast(AI_OFFLINE_MESSAGE, 'info');
+            app.state.completingWorkout = false;
             await app.handleCompleteWorkout(event);
             return;
         }
         if (!app.state.user?.is_premium) {
             app.showToast(AI_PREMIUM_REQUIRED_MESSAGE, 'info');
+            app.state.completingWorkout = false;
             await app.handleCompleteWorkout(event);
             return;
         }
@@ -2650,7 +2723,10 @@ if (timerActive) {
             confirmText: 'Завершить и разобрать',
             confirmClass: 'bg-primary-600 hover:bg-primary-700 text-white dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200 font-semibold shadow-md',
             cancelText: 'Назад'
-         })) return;
+         })) {
+            app.state.completingWorkout = false;
+            return;
+        }
 
         await this.promptTemplateUpdateIfNeeded(app, this.currentSession);
 
@@ -2669,10 +2745,23 @@ if (timerActive) {
             ? Math.max(0, Math.floor((Date.now() - this.sessionStartTimestamp) / 1000))
             : null;
 
-        // The verdict takes tens of seconds, so the button says what is actually
+// The verdict takes tens of seconds, so the button says what is actually
         // happening instead of looking already finished. Every path below
         // re-renders the screen, which is what puts the button back.
         const button = event.target.closest('[data-action="complete-workout-ai"]');
+        const resetButton = () => {
+            if (button) {
+                button.disabled = false;
+                button.classList.remove('opacity-70', 'cursor-wait');
+                button.innerHTML = `
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    <span>Завершить и разобрать с ИИ</span>
+                `;
+            }
+        };
+
         if (button) {
             button.disabled = true;
             button.classList.add('opacity-70', 'cursor-wait');
@@ -2682,42 +2771,56 @@ if (timerActive) {
             `;
         }
 
-         try {
-             // Ensure fresh token before the completion call
-             await app.ensureFreshToken();
-             const resp = await API.post(
-                 `/workouts/sessions/${sessionId}/complete`,
-                 { with_ai_analysis: true, duration_seconds: durationSeconds },
-                 app.state.tokens.access,
-             );
-             console.log('[completeWorkoutWithAi] Complete endpoint response:', resp);
-} catch (err) {
-              console.error('[Workouts] Complete with AI failed:', err);
-              // Persist the DOM state before marking complete locally so the
-              // completed session keeps its real tonnage on a failed request.
-              this.syncSessionFromDOM();
-              if (err?.offlineQueued) {
-                  await Workouts.persistCompletedSessionLocally(sessionId, this.currentSession);
-                  app.showToast(OFFLINE_COMPLETE_MESSAGE, 'info');
-                  await app.renderPage('workouts');
-                  return;
-              }
-              if (err?.isNetworkError) {
-                  await Workouts.persistCompletedSessionLocally(sessionId, this.currentSession);
-                  app.showToast(OFFLINE_COMPLETE_MESSAGE, 'info');
-                  return;
-              }
-              const msg = err?.status === 401
-                  ? 'Сессия истекла. Проверьте подключение и войдите снова.'
-                  : err?.status === 404
-                  ? 'Тренировка не найдена на сервере.'
-                  : (err?.message || 'Ошибка завершения тренировки');
-              app.showToast(msg, 'error');
-              return;
-          }
+        try {
+            // Ensure fresh token before the completion call
+            await app.ensureFreshToken();
+            const resp = await API.post(
+                `/workouts/sessions/${sessionId}/complete`,
+                { with_ai_analysis: true, duration_seconds: durationSeconds },
+                app.state.tokens.access,
+            );
+            console.log('[completeWorkoutWithAi] Complete endpoint response:', resp);
+        } catch (err) {
+            console.error('[Workouts] Complete with AI failed:', err);
+            // Persist the DOM state before marking complete locally so the
+            // completed session keeps its real tonnage on a failed request.
+            this.syncSessionFromDOM();
+            if (err?.offlineQueued) {
+                await Workouts.persistCompletedSessionLocally(sessionId, this.currentSession);
+                Workouts.clearActiveSessionState(app);
+                app.showToast(OFFLINE_COMPLETE_MESSAGE, 'info');
+                await app.renderPage('workouts');
+                app.state.completingWorkout = false;
+                resetButton();
+                return;
+            }
+            if (err?.isNetworkError) {
+                await Workouts.persistCompletedSessionLocally(sessionId, this.currentSession);
+                Workouts.clearActiveSessionState(app);
+                app.showToast(OFFLINE_COMPLETE_MESSAGE, 'info');
+                app.state.completingWorkout = false;
+                resetButton();
+                return;
+            }
+            const msg = err?.status === 401
+                ? 'Сессия истекла. Проверьте подключение и войдите снова.'
+                : err?.status === 404
+                ? 'Тренировка не найдена на сервере.'
+                : (err?.message || 'Ошибка завершения тренировки');
+            app.showToast(msg, 'error');
+            app.state.completingWorkout = false;
+            resetButton();
+            return;
+        } finally {
+            // Button is reset in finally to ensure it happens even if
+            // renderHistoryDetail throws or navigation occurs
+            resetButton();
+        }
 
         app.showToast('Тренировка завершена! ИИ-тренер формирует разбор в истории.', 'success');
+
         Workouts.clearActiveSessionState(app);
+        app.state.completingWorkout = false;
         app.state.currentPage = 'history';
         app.elements.navItems.forEach(item => item.classList.toggle('active', item.dataset.page === 'history'));
         await this.renderHistoryDetail(app.elements.pageContent, app, sessionId);
@@ -2955,6 +3058,10 @@ if (timerActive) {
     },
 
     async renderWorkoutScreen(container, app, sessionId) {
+        if (!container) {
+            console.error('[Workouts] renderWorkoutScreen: container is null/undefined');
+            return;
+        }
         this.app = app;
         try {
         const incomingKey = sessionId === undefined || sessionId === null
@@ -3093,7 +3200,8 @@ if (timerActive) {
         const sessionIdForPolling = session.isLocal ? session.key : session.id;
         if (session.ai_plan_status === 'pending' && sessionIdForPolling && !this.isLocalSession(session)) {
             if (window.App?.state?.isOnline !== false && navigator.onLine !== false) {
-                // Start polling in background
+                // Start polling in background regardless of this.aiPlan state
+                // (plan may have become available between session load and now)
                 this.pollForAiPlan(app, sessionIdForPolling, container).catch(err => {
                     console.warn('[Workouts] AI plan polling failed:', err);
                 });
@@ -3326,7 +3434,9 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
               </div>
         `;
+        console.log('[Workouts] renderWorkoutScreen inserting HTML, container:', container?.tagName, container?.id);
         container.innerHTML = html;
+        console.log('[Workouts] HTML inserted, calling bindWorkoutScreenEvents');
 
         // Scroll to first exercise card (exercises are the first cards now)
         requestAnimationFrame(() => {
@@ -3951,6 +4061,11 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
     },
 
     bindWorkoutScreenEvents(container, app, session) {
+        if (!container) {
+            console.warn('[Workouts] bindWorkoutScreenEvents: container is null/undefined');
+            return;
+        }
+        console.log('[Workouts] bindWorkoutScreenEvents called, container:', container.tagName, container.id);
         const isLocal = this.isLocalSession(session);
         const sessionId = isLocal ? session.key : session.id;
         const token = app.state.tokens.access;
@@ -3958,6 +4073,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         // Exercise track circle click handlers
         container.querySelectorAll('[data-exercise-index]').forEach(circle => {
             circle.addEventListener('click', () => {
+                console.log('[Workouts] Exercise track circle clicked:', circle.dataset.exerciseIndex);
                 const index = parseInt(circle.dataset.exerciseIndex);
                 this.scrollToExerciseCard(index);
             });
@@ -3965,6 +4081,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
         // "+" circle (add exercise from track)
         container.querySelector('[data-action="add-exercise-from-track"]')?.addEventListener('click', async (e) => {
+            console.log('[Workouts] Add exercise from track clicked');
             e.stopPropagation();
             e.preventDefault();
             await this.showAddExerciseModal(app, session, sessionId);
@@ -4007,13 +4124,23 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         // Exercise card tab switching (Dynamics / AI Advice / Timer)
         // Use event delegation on the container so handlers survive DOM re-renders
         container.addEventListener('click', (e) => {
+            console.log('[Workouts] Container click detected:', e.target);
             const tab = e.target.closest('[data-tab]');
-            if (!tab) return;
+            if (!tab) {
+                console.log('[Workouts] Click was not on a tab');
+                return;
+            }
             e.stopPropagation();
+            console.log('[Workouts] Tab clicked:', tab);
             const card = tab.closest('[data-exercise-id]');
-            if (!card) return;
+            if (!card) {
+                console.warn('[Workouts] Tab click: no parent card with data-exercise-id found');
+                return;
+            }
             const tabName = tab.dataset.tab;
-            this.switchExerciseTab(card.dataset.exerciseId, tabName, container);
+            const exerciseId = card.dataset.exerciseId;
+            console.log('[Workouts] Switching tab:', { exerciseId, tabName });
+            this.switchExerciseTab(exerciseId, tabName, container);
         });
 
         // Bind per-row event handlers (toggle completion, drum picker, persistence)
@@ -4224,8 +4351,6 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 e.stopPropagation();
                 const mode = e.currentTarget.dataset.mode;
                 this.saveRestTimerMode(mode);
-                this.applyRestTimerModeUI();
-                this.updateRestTimerUI();
             });
         });
 
@@ -4641,6 +4766,10 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
     // Detailed history for one session: summary metrics, delta vs the previous
     // session, generated summary and per-exercise tonnage / e1RM trend lines.
     async renderHistoryDetail(container, app, sessionId) {
+        if (!container) {
+            console.error('[Workouts] renderHistoryDetail: container is null/undefined');
+            return;
+        }
         this.app = app;
         this.stopWorkoutTimer();
         container.innerHTML = Components.loadingSpinner();
@@ -4815,8 +4944,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         await this.mountAiDetailCard(container, app, detail.id);
     },
 
-    /**
-     * Puts the coach's verdict of a session into the history detail screen.
+/**
+     * Mount the AI analysis card in the history detail view.
      *
      * Opening the screen only reads: the card renders immediately, and a
      * session without a verdict shows a manual trigger ("Сформировать
@@ -4827,18 +4956,42 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
      * card is swapped in place when the answer arrives, so the session's
      * metrics, trends and set list underneath are not re-rendered under
      * the user's thumb.
+     *
+     * If the background AI analysis (started on completion) is still running,
+     * the endpoint returns `available: false` with a reason. In that case we
+     * show a loading state and poll until the analysis is ready.
      */
     async mountAiDetailCard(container, app, sessionId) {
         const host = container.querySelector('#ai-workout-detail');
         if (!host) return null;
 
-        const payload = await this.loadAiAnalysis(app, sessionId);
+        let payload = await this.loadAiAnalysis(app, sessionId);
         if (!payload) {
             host.remove();
             return null;
         }
 
-        const draw = (current, busy = false) => {
+        const draw = (current, busy = false, isLoading = false) => {
+            if (isLoading) {
+                host.innerHTML = `
+                    <section class="ai-workout glass rounded-3xl" aria-label="Разбор от ИИ-тренера">
+                        <div class="ai-workout__head">
+                            <span class="ai-workout__title">
+                                <svg class="ai-workout__icon" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>
+                                Разбор от ИИ-тренера
+                            </span>
+                        </div>
+                        <div class="ai-workout__loading flex items-center justify-center py-8">
+                            <svg class="animate-spin w-8 h-8 text-primary-600" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            <span class="ml-3 text-surface-500 dark:text-surface-400">ИИ анализирует тренировку...</span>
+                        </div>
+                    </section>
+                `;
+                return;
+            }
             host.innerHTML = Components.aiWorkoutCard(current, {
                 allowAnalyze: true,
                 analyzeLabel: 'Сформировать ИИ-разбор',
@@ -4848,9 +5001,6 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             const trigger = host.querySelector('[data-action="analyze-workout-ai"]');
             trigger?.addEventListener('click', async (e) => {
                 e.stopPropagation();
-                // Locked and spun right away, so the press is answered by
-                // the button itself; analyzeWorkout holds the cooldown
-                // that refuses the next ask for half a minute.
                 if (current?.available === true) {
                     app.showToast('Анализ тренировки уже сохранён.', 'info');
                     return;
@@ -4864,8 +5014,50 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             });
         };
 
+        // If analysis is not available yet but a background task is in progress,
+        // show loading state and poll for completion.
+        const isAnalysisInProgress = payload.available === false &&
+            payload.reason &&
+            (payload.reason.includes('in progress') ||
+             payload.reason.includes('pending') ||
+             payload.reason.includes('ожид') ||
+             payload.reason.includes('формир') ||
+             payload.reason.includes('выполня'));
+
+        if (isAnalysisInProgress) {
+            draw(payload, false, true);
+            payload = await this.pollForAiAnalysis(app, sessionId, { timeout: 60000, intervalMs: 3000 });
+            if (!payload) {
+                // Polling timed out, show the empty state with the trigger button
+                payload = await this.loadAiAnalysis(app, sessionId) || { available: false, reason: 'ИИ-разбор не готов. Попробуйте позже.' };
+            }
+        }
+
         draw(payload);
         return payload;
+    },
+
+    /**
+     * Poll for AI analysis completion when a background task is running.
+     * Returns the analysis payload when available, or null on timeout.
+     */
+    async pollForAiAnalysis(app, sessionId, { timeout = 60000, intervalMs = 3000 } = {}) {
+        const startTime = Date.now();
+        while (Date.now() - startTime < timeout) {
+            await new Promise(resolve => setTimeout(resolve, intervalMs));
+            if (window.App?.state?.isOnline === false || navigator.onLine === false) {
+                return null;
+            }
+            try {
+                const payload = await this.loadAiAnalysis(app, sessionId, { quiet: true });
+                if (payload?.available === true) {
+                    return payload;
+                }
+            } catch (err) {
+                console.warn('[Workouts] AI analysis poll failed:', err);
+            }
+        }
+        return null;
     },
 
 showQuickStartModal(app) {

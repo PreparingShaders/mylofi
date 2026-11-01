@@ -6,6 +6,7 @@ import secrets
 from jose import jwt, JWTError
 import bcrypt
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -149,23 +150,35 @@ async def _record_rotation(
     access_token: str,
     new_refresh_token: str,
     rotated_at: datetime,
-) -> None:
+) -> tuple[str, str]:
     """Persist a rotation so duplicate concurrent requests can be replayed idempotently."""
     # Purge expired records to keep the table small.
     await db.execute(
         delete(RotatedRefreshToken).where(RotatedRefreshToken.expires_at < rotated_at)
     )
     expires_at = rotated_at + timedelta(seconds=REFRESH_ROTATION_GRACE_SECONDS)
-    db.add(
-        RotatedRefreshToken(
-            user_id=user_id,
-            old_token_hash=old_token_hash,
-            new_access_token=access_token,
-            new_refresh_token=new_refresh_token,
-            expires_at=expires_at,
+
+    try:
+        db.add(
+            RotatedRefreshToken(
+                user_id=user_id,
+                old_token_hash=old_token_hash,
+                new_access_token=access_token,
+                new_refresh_token=new_refresh_token,
+                expires_at=expires_at,
+            )
         )
-    )
-    await db.commit()
+        await db.commit()
+        return access_token, new_refresh_token
+    except IntegrityError:
+        # Another concurrent request already recorded this rotation. Roll back
+        # our insert and return the existing pair so both callers get the same
+        # valid tokens instead of a 500 UniqueViolationError.
+        await db.rollback()
+        existing = await _find_recent_rotation(db, old_token_hash, rotated_at)
+        if existing:
+            return existing.new_access_token, existing.new_refresh_token
+        raise
 
 
 async def rotate_refresh_token(db: AsyncSession, refresh_token: str) -> tuple[str, str]:
@@ -195,7 +208,7 @@ async def rotate_refresh_token(db: AsyncSession, refresh_token: str) -> tuple[st
     # Create new token pair
     access_token, new_refresh = await create_user_tokens(db, user)
 
-    await _record_rotation(db, user.id, token_hash, access_token, new_refresh, now)
+    access_token, new_refresh = await _record_rotation(db, user.id, token_hash, access_token, new_refresh, now)
     return access_token, new_refresh
 
 

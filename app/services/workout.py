@@ -209,7 +209,12 @@ async def get_active_workout_session(db: AsyncSession, user_id: int) -> Optional
         )
         .order_by(WorkoutSession.started_at.desc())
     )
-    return result.scalar_one_or_none()
+    session = result.scalar_one_or_none()
+    logger.info(
+        "[get_active_workout_session] user_id=%s found=%s session_id=%s status=%s",
+        user_id, session is not None, session.id if session else None, session.status if session else None,
+    )
+    return session
 
 
 async def update_workout_session(
@@ -357,6 +362,10 @@ async def complete_workout_session(
     session.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
+    logger.info(
+        "[complete_workout_session] session_id=%s user_id=%s status changed to COMPLETED, committed",
+        session_id, user_id,
+    )
     return await get_workout_session(db, session.id, user_id)
 
 

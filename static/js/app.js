@@ -84,6 +84,9 @@ const App = {
         // (the back arrow). The resume handler honours it and does not pull
         // the user back into the workout they just closed.
         workoutScreenDismissed: false,
+        // Set during workout completion to prevent saveState from
+        // overwriting cleared active_session_id/active_workout.
+        completingWorkout: false,
         landingCarouselState: {},
         _showcaseImages: null,
         landingThemeState: { mode: 'system', dark: false },
@@ -487,22 +490,43 @@ const App = {
     },
 
     /**
-     * The workout that is in progress, as the server and the local storage
-     * see it.
+     * Resolve the active workout with retry logic to handle DB replication lag.
      *
-     * A workout started offline only exists in the local storage until the
-     * queue syncs it, so both sources are consulted. Returns null when
-     * nothing is running.
+     * The server may return a session that was just completed but hasn't been
+     * marked as COMPLETED in the read replica yet. Retry a few times with
+     * exponential backoff to wait for the status to propagate.
      */
     async resolveActiveWorkout() {
         const token = this.state.tokens?.access || null;
         let serverSession = null;
-        try {
-            // Read fresh: the read cache may still hold a session that was
-            // completed minutes ago.
-            serverSession = await API.getFresh('/workouts/sessions/active', token);
-        } catch (error) {
-            console.warn('[App] Active workout lookup failed:', error);
+
+        // Retry logic for DB replication lag
+        let retries = 5;
+        let delay = 300;
+        while (retries > 0) {
+            try {
+                serverSession = await API.getFresh('/workouts/sessions/active', token);
+                break;
+            } catch (error) {
+                console.warn('[App] Active workout lookup failed:', error);
+                break;
+            }
+
+            // If we got a session but it's not ACTIVE, wait and retry
+            if (serverSession && serverSession.status !== 'active') {
+                console.log(`[App] Server session status is "${serverSession.status}", retrying after ${delay}ms... (${retries} retries left)`);
+                await new Promise(r => setTimeout(r, delay));
+                retries--;
+                delay = Math.min(delay * 1.5, 2000);
+                continue;
+            }
+            break;
+        }
+
+        // If server returns a session that is not ACTIVE after retries, treat as null.
+        if (serverSession && serverSession.status !== 'active') {
+            console.log(`[App] Server session status is "${serverSession.status}" after retries, ignoring`);
+            serverSession = null;
         }
 
         // A workout started offline lives only in the local storage until
@@ -886,6 +910,14 @@ const App = {
     },
     
     saveState() {
+        // Skip persisting active session/workout during completion flow to avoid
+        // overwriting the cleared state from clearActiveSessionState().
+        if (this.state.completingWorkout) {
+            if (this.state.currentPage) {
+                localStorage.setItem('last_active_page', this.state.currentPage);
+            }
+            return;
+        }
         if (this.state.currentPage) {
             localStorage.setItem('last_active_page', this.state.currentPage);
         }
@@ -1797,10 +1829,14 @@ const App = {
 
         document.addEventListener('click', (e) => {
             const action = e.target.closest('[data-action]')?.dataset.action;
-            if (action) this.handleAction(action, e);
+            if (action) {
+                console.log('[App] Global click handler: action=', action, 'target:', e.target);
+                this.handleAction(action, e);
+            }
 
             const navItem = e.target.closest('.nav-item');
             if (navItem && navItem.dataset.page) {
+                console.log('[App] Nav click:', navItem.dataset.page);
                 this.showPage(navItem.dataset.page);
             }
         });
@@ -2181,6 +2217,7 @@ const App = {
     },
 
     async handleCompleteWorkout(event) {
+        this.state.completingWorkout = true;
         const sessionId = event.target.closest('[data-session-id]')?.dataset.sessionId;
         if (!await Components.confirmModal({
             title: 'Завершить тренировку?',
@@ -2188,7 +2225,10 @@ const App = {
             confirmText: 'Завершить',
             confirmClass: 'bg-primary-600 hover:bg-primary-700 text-white dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200 font-semibold shadow-md',
             cancelText: 'Назад'
-         })) return;
+         })) {
+            this.state.completingWorkout = false;
+            return;
+        }
 
         await Workouts.promptTemplateUpdateIfNeeded(this, Workouts.currentSession);
 
@@ -2198,6 +2238,8 @@ const App = {
 
         // A session created offline has no server id yet: close it locally and queue the request
         if (Workouts.completeLocalSession(this)) {
+            Workouts.clearActiveSessionState(this);
+            this.state.completingWorkout = false;
             await this.renderPage('workouts');
             return;
         }
@@ -2235,15 +2277,19 @@ const App = {
                 // Session is closed locally, the request goes out as soon as the network is back
                 Workouts.syncSessionFromDOM();
                 await Workouts.persistCompletedSessionLocally(sessionId, Workouts.currentSession);
+                Workouts.clearActiveSessionState(this);
                 this.showToast('Тренировка завершена! Сеть недоступна, данные будут синхронизированы при появлении связи', 'info');
                 await this.renderPage('workouts');
+                this.state.completingWorkout = false;
                 return;
             }
             // Network failure: preserve local state, show informative toast
             if (e?.isNetworkError) {
                 Workouts.syncSessionFromDOM();
                 await Workouts.persistCompletedSessionLocally(sessionId, Workouts.currentSession);
+                Workouts.clearActiveSessionState(this);
                 this.showToast('Тренировка завершена локально! Сеть недоступна, данные будут синхронизированы при появлении связи', 'info');
+                this.state.completingWorkout = false;
                 return;
             }
             // 401/404 or other HTTP error: persist locally so data survives a
@@ -2252,14 +2298,17 @@ const App = {
             console.error('[handleCompleteWorkout] Failed:', { status: e?.status, message: e?.message });
             Workouts.syncSessionFromDOM();
             await Workouts.persistCompletedSessionLocally(sessionId, Workouts.currentSession);
+            Workouts.clearActiveSessionState(this);
             const msg = e?.status === 401
                 ? 'Сессия истекла. Проверьте подключение и войдите снова.'
                 : e?.status === 404
                 ? 'Тренировка не найдена на сервере.'
                 : (e?.message || 'Ошибка завершения тренировки');
             this.showToast(msg, 'error');
+            this.state.completingWorkout = false;
             return;
         }
+        this.state.completingWorkout = false;
         await this.renderPage('workouts');
     },
 
@@ -2324,16 +2373,19 @@ const App = {
         Workouts.dismissRestTimer();
 
         if (Workouts.cancelLocalSession(this)) {
+            Workouts.clearActiveSessionState(this);
             await this.renderPage('workouts');
             return;
         }
         try {
             await API.post(`/workouts/sessions/${sessionId}/cancel`, null, this.state.tokens.access);
             Workouts.forgetAiPlan(sessionId);
+            Workouts.clearActiveSessionState(this);
             this.showToast('Тренировка отменена', 'info');
         } catch (e) {
             if (e?.offlineQueued) {
                 await Workouts.markSessionCancelledLocally(sessionId);
+                Workouts.clearActiveSessionState(this);
                 this.showToast('Тренировка отменена', 'info');
                 await this.renderPage('workouts');
                 return;
