@@ -638,6 +638,37 @@ export const Workouts = {
         this.saveLocalSession({ ...stored, name: session.name, exercises: session.exercises });
     },
 
+    /**
+     * Auto-save any session (local or server) to localStorage under a
+     * session-specific key so progress survives network drops and page reloads.
+     * Called on every weight/reps/toggle change so nothing is lost mid-workout.
+     */
+    autoSaveSession(session) {
+        if (!session) return;
+        const sessionId = session.isLocal ? session.key : String(session.id);
+        if (!sessionId) return;
+        try {
+            localStorage.setItem(`session_${sessionId}`, JSON.stringify(session));
+        } catch (error) {
+            console.error('[Workouts] Failed to auto-save session:', error);
+        }
+    },
+
+    /**
+     * Restore a previously auto-saved session from localStorage. Used as a
+     * fallback when the server is unreachable on page load / resume.
+     */
+    restoreSessionFromLocalStorage(sessionId) {
+        if (!sessionId) return null;
+        try {
+            const raw = localStorage.getItem(`session_${sessionId}`);
+            return raw ? JSON.parse(raw) : null;
+        } catch (error) {
+            console.warn('[Workouts] Failed to restore session from localStorage:', error);
+            return null;
+        }
+    },
+
     clearLocalSession() {
         localStorage.removeItem(LOCAL_SESSION_KEY);
     },
@@ -733,12 +764,19 @@ export const Workouts = {
     },
 
     async clearActiveSessionState(app) {
-        this.currentSession = null;
-        this.sessionStartTimestamp = null;
+        // Remember which session was just closed so resolveActiveWorkout() does
+        // not restore it from localStorage after a network error.
+        const lastClosedId = app?.state?.currentSessionId ?? null;
         try {
+            if (lastClosedId) {
+                localStorage.setItem('last_closed_session_id', String(lastClosedId));
+                localStorage.removeItem(`session_${lastClosedId}`);
+            }
             localStorage.removeItem('active_session_id');
             localStorage.removeItem('active_workout');
         } catch (e) {}
+        this.currentSession = null;
+        this.sessionStartTimestamp = null;
         if (app?.state) {
             app.state.currentSessionId = null;
         }
@@ -2008,7 +2046,14 @@ if (timerActive) {
             if (isLocal && session) {
                 this.persistLocalSession(session);
                 this.recordLocalSetPatch(session.key, setId, { [field]: value });
+                this.autoSaveSession(session);
                 return;
+            }
+
+            // Auto-save server sessions to localStorage so progress survives
+            // network drops mid-workout.
+            if (session) {
+                this.autoSaveSession(session);
             }
 
             if (app?.ensureFreshToken) await app.ensureFreshToken();
@@ -2160,10 +2205,18 @@ if (timerActive) {
                 if (isLocal && session) {
                     this.persistLocalSession(session);
                     this.recordLocalSetPatch(session.key, setId, payload);
+                    this.autoSaveSession(session);
                     button.disabled = false;
                     button.textContent = '\u2713';
                     return;
                 }
+
+                // Auto-save server sessions to localStorage so progress survives
+                // network drops mid-workout.
+                if (session) {
+                    this.autoSaveSession(session);
+                }
+
                 try {
                     app?._pendingToggleSetIds?.add(setId);
                     await API.patch(`/workouts/sets/${setId}`, payload, token);
@@ -2728,6 +2781,11 @@ if (timerActive) {
             return;
         }
 
+        // Мгновенный сброс активной сессии — плашка «Активная тренировка»
+        // должна исчезнуть сразу после клика, не дожидаясь ответа сервера.
+        Workouts.markSessionClosedLocally(sessionId);
+        Workouts.clearActiveSessionState(app);
+
         await this.promptTemplateUpdateIfNeeded(app, this.currentSession);
 
         // Persist any in-flight rest timer so its elapsed seconds are recorded
@@ -2786,8 +2844,10 @@ if (timerActive) {
             // completed session keeps its real tonnage on a failed request.
             this.syncSessionFromDOM();
             if (err?.offlineQueued) {
-                await Workouts.persistCompletedSessionLocally(sessionId, this.currentSession);
+                // Мгновенно сбрасываем активную сессию — не ждём сохранения.
+                Workouts.markSessionClosedLocally(sessionId);
                 Workouts.clearActiveSessionState(app);
+                await Workouts.persistCompletedSessionLocally(sessionId, this.currentSession);
                 app.showToast(OFFLINE_COMPLETE_MESSAGE, 'info');
                 await app.renderPage('workouts');
                 app.state.completingWorkout = false;
@@ -2795,9 +2855,21 @@ if (timerActive) {
                 return;
             }
             if (err?.isNetworkError) {
-                await Workouts.persistCompletedSessionLocally(sessionId, this.currentSession);
+                // Мгновенно сбрасываем активную сессию — пользователь должен сразу увидеть чистый экран.
+                Workouts.markSessionClosedLocally(sessionId);
                 Workouts.clearActiveSessionState(app);
+                await Workouts.persistCompletedSessionLocally(sessionId, this.currentSession);
+                // Enqueue the completion request so it is retried when the connection returns
+                const token = app.state.tokens.access;
+                API.enqueueRequest(
+                    'POST',
+                    `/workouts/sessions/${sessionId}/complete`,
+                    { with_ai_analysis: true, duration_seconds: durationSeconds },
+                    token,
+                    { offlineSessionKey: null }
+                );
                 app.showToast(OFFLINE_COMPLETE_MESSAGE, 'info');
+                await app.renderPage('workouts');
                 app.state.completingWorkout = false;
                 resetButton();
                 return;
@@ -2808,6 +2880,7 @@ if (timerActive) {
                 ? 'Тренировка не найдена на сервере.'
                 : (err?.message || 'Ошибка завершения тренировки');
             app.showToast(msg, 'error');
+            Workouts.clearActiveSessionState(app);
             app.state.completingWorkout = false;
             resetButton();
             return;

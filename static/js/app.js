@@ -498,6 +498,21 @@ const App = {
      */
     async resolveActiveWorkout() {
         const token = this.state.tokens?.access || null;
+
+        // Приоритетная блокировка воскрешения сессии: если last_closed_session_id
+        // совпадает с текущим ID сессии (или текущий ID отсутствует), сессия
+        // была только что завершена/отменена офлайн и физически не может быть
+        // восстановлена из любого локального кеша.
+        const currentSessionId = this.state.currentSessionId;
+        const lastClosedId = localStorage.getItem('last_closed_session_id');
+        if (lastClosedId && (String(currentSessionId) === String(lastClosedId) || !currentSessionId)) {
+            localStorage.removeItem('active_session_id');
+            localStorage.removeItem('active_workout');
+            if (currentSessionId) localStorage.removeItem(`session_${currentSessionId}`);
+            console.log('[App] resolveActiveWorkout blocked: session closed locally, returning null');
+            return null;
+        }
+
         let serverSession = null;
 
         // Retry logic for DB replication lag
@@ -541,6 +556,24 @@ const App = {
             // Completed or cancelled offline and not yet replayed on the
             // server: the local decision wins.
             active = null;
+        }
+
+        // Fallback: restore a server session previously auto-saved to
+        // localStorage when the server is unreachable (network drop mid-workout).
+        // Do NOT restore a session the user just completed/cancelled offline —
+        // it is recorded in last_closed_session_id.
+        if (!active && this.state.currentSessionId) {
+            const lastClosedId = localStorage.getItem('last_closed_session_id');
+            if (lastClosedId && lastClosedId === String(this.state.currentSessionId)) {
+                console.log('[App] Skipping localStorage restore: session was just closed locally');
+            } else {
+                const restored = Workouts.restoreSessionFromLocalStorage(this.state.currentSessionId);
+                if (restored) {
+                    console.log('[App] Restored session from localStorage due to server unreachable:', restored.id);
+                    active = restored;
+                    isLocal = false;
+                }
+            }
         }
 
         if (!active) return null;
@@ -2230,6 +2263,11 @@ const App = {
             return;
         }
 
+        // Мгновенный сброс активной сессии — плашка «Активная тренировка»
+        // должна исчезнуть сразу после клика, не дожидаясь ответа сервера.
+        Workouts.markSessionClosedLocally(sessionId);
+        Workouts.clearActiveSessionState(this);
+
         await Workouts.promptTemplateUpdateIfNeeded(this, Workouts.currentSession);
 
         // Persist any in-flight rest timer so its elapsed seconds are recorded
@@ -2275,20 +2313,34 @@ const App = {
         } catch (e) {
             if (e?.offlineQueued) {
                 // Session is closed locally, the request goes out as soon as the network is back
+                // Мгновенно сбрасываем активную сессию — не ждём сохранения в localStorage.
+                Workouts.markSessionClosedLocally(sessionId);
+                Workouts.clearActiveSessionState(this);
                 Workouts.syncSessionFromDOM();
                 await Workouts.persistCompletedSessionLocally(sessionId, Workouts.currentSession);
-                Workouts.clearActiveSessionState(this);
                 this.showToast('Тренировка завершена! Сеть недоступна, данные будут синхронизированы при появлении связи', 'info');
                 await this.renderPage('workouts');
                 this.state.completingWorkout = false;
                 return;
             }
-            // Network failure: preserve local state, show informative toast
+            // Network failure: preserve local state, queue completion for retry, clear active session
             if (e?.isNetworkError) {
+                // Мгновенно сбрасываем активную сессию — пользователь должен сразу увидеть чистый экран.
+                Workouts.markSessionClosedLocally(sessionId);
+                Workouts.clearActiveSessionState(this);
                 Workouts.syncSessionFromDOM();
                 await Workouts.persistCompletedSessionLocally(sessionId, Workouts.currentSession);
-                Workouts.clearActiveSessionState(this);
+                // Enqueue the completion request so it is retried when the connection returns
+                const token = this.state.tokens.access;
+                API.enqueueRequest(
+                    'POST',
+                    `/workouts/sessions/${sessionId}/complete`,
+                    durationSeconds !== null ? { duration_seconds: durationSeconds } : null,
+                    token,
+                    { offlineSessionKey: null }
+                );
                 this.showToast('Тренировка завершена локально! Сеть недоступна, данные будут синхронизированы при появлении связи', 'info');
+                await this.renderPage('workouts');
                 this.state.completingWorkout = false;
                 return;
             }
@@ -2309,6 +2361,7 @@ const App = {
             return;
         }
         this.state.completingWorkout = false;
+        Workouts.clearActiveSessionState(this);
         await this.renderPage('workouts');
     },
 
@@ -2374,6 +2427,16 @@ const App = {
 
         if (Workouts.cancelLocalSession(this)) {
             Workouts.clearActiveSessionState(this);
+            await this.renderPage('workouts');
+            return;
+        }
+        // Defensive: local session key is not an integer — never send it to
+        // the backend. Handle cancellation locally instead.
+        const LOCAL_SESSION_PLACEHOLDER = '__local_session__';
+        if (sessionId === LOCAL_SESSION_PLACEHOLDER || !/^\d+$/.test(String(sessionId))) {
+            Workouts.markSessionCancelledLocally(sessionId);
+            Workouts.clearActiveSessionState(this);
+            this.showToast('Тренировка отменена', 'info');
             await this.renderPage('workouts');
             return;
         }
