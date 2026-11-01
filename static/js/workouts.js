@@ -1,5 +1,5 @@
 console.log("[DEBUG] Loaded workouts.js");
-import { API } from './api.js';
+import { API, AI_PREVIEW_TIMEOUT_MS } from './api.js';
 import { Components } from './components.js';
 import { Utils } from './utils.js';
 import { DB } from './db.js';
@@ -81,6 +81,9 @@ const AI_OFFLINE_MESSAGE = 'ИИ-тренер работает только с �
 // Shown when the plan is asked for and does not arrive. The workout continues
 // either way: a plan is an addition to a session, never a condition for it.
 const AI_PLAN_UNAVAILABLE_MESSAGE = 'ИИ-план недоступен, тренировка без него';
+// Shown inside the AI advice panel while the plan is still arriving (or has not
+// been requested yet) so the tab is never silently empty.
+const AI_PLAN_LOADING_MESSAGE = 'ИИ-план загружается...';
 // One verdict ask per workout per half minute. The weekly allowance is spent
 // by the server; this keeps a thumb held down on the trigger from asking
 // again while the answer may still be on its way.
@@ -675,6 +678,26 @@ export const Workouts = {
         this.markSessionClosedLocally(sessionId);
     },
 
+    /**
+     * Persist a completed server session to localStorage so its real tonnage and
+     * set data survive a completion request that the server never saw (offline,
+     * token expiry, network failure). The session can later be re-synced when the
+     * connection returns.
+     */
+    persistCompletedSessionLocally(sessionId, session) {
+        if (!sessionId || !session) return;
+        try {
+            const payload = { ...session };
+            payload.status = 'completed';
+            payload.completed_at = new Date().toISOString();
+            payload.duration_seconds = this.getElapsedSeconds(payload);
+            localStorage.setItem(`completed_session_${sessionId}`, JSON.stringify(payload));
+            this.markSessionClosedLocally(sessionId);
+        } catch (error) {
+            console.error('[Workouts] Failed to persist completed session locally:', error);
+        }
+    },
+
     markSessionCancelledLocally(sessionId) {
         this.markSessionClosedLocally(sessionId);
     },
@@ -706,6 +729,18 @@ export const Workouts = {
     forgetAiPlan(sessionId) {
         if (sessionId) {
             try { localStorage.removeItem(`${LOCAL_AI_PLAN_KEY}${sessionId}`); } catch (err) {}
+        }
+    },
+
+    clearActiveSessionState(app) {
+        this.currentSession = null;
+        this.sessionStartTimestamp = null;
+        try {
+            localStorage.removeItem('active_session_id');
+            localStorage.removeItem('active_workout');
+        } catch (e) {}
+        if (app?.state) {
+            app.state.currentSessionId = null;
         }
     },
 
@@ -940,9 +975,55 @@ export const Workouts = {
         return session;
     },
 
+    /**
+     * Pull every live value off the rendered set rows and update the in-memory
+     * session so a completion request (or its failure) always carries what the
+     * coach actually typed. Without this, a network failure after the DOM was
+     * edited would leave the local cache holding stale or zeroed tonnage.
+     */
+    syncSessionFromDOM() {
+        if (!this.currentSession) return;
+        const rows = document.querySelectorAll('[data-set-id]');
+        rows.forEach(row => {
+            const setId = parseInt(row.dataset.setId, 10);
+            if (isNaN(setId)) return;
+            const weightInput = row.querySelector('[data-field="weight"]');
+            const repsInput = row.querySelector('[data-field="reps"]');
+            const toggleBtn = row.querySelector('[data-action="toggle-set"]');
+            const weight_kg = weightInput ? parseFloat(weightInput.value) : null;
+            const reps = repsInput ? parseInt(repsInput.value, 10) : null;
+            const is_completed = toggleBtn?.dataset.completed === 'true';
+            this.currentSession.exercises.forEach(ex => {
+                const set = ex.sets?.find(s => s.id === setId);
+                if (!set) return;
+                if (weight_kg != null && !isNaN(weight_kg)) set.weight_kg = weight_kg;
+                if (reps != null && !isNaN(reps)) set.reps = reps;
+                set.is_completed = is_completed;
+            });
+        });
+        // Persist to localStorage so the values survive a refresh even when the
+        // session lives on the server (cache it under the same key for simplicity),
+        // plus a session-specific key so server-session data is never clobbered by
+        // the local-only session slot.
+        try {
+            localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(this.currentSession));
+            const sessionId = this.currentSession.isLocal ? this.currentSession.key : String(this.currentSession.id);
+            if (sessionId) {
+                localStorage.setItem(`session_${sessionId}`, JSON.stringify(this.currentSession));
+            }
+        } catch (error) {
+            console.error('[Workouts] Failed to persist synced session:', error);
+        }
+    },
+
     completeLocalSession(app) {
         const session = this.getActiveLocalSession();
         if (!session) return false;
+        // Mirror the DOM into the local session before enqueueing the completion
+        // request, so offline completions carry the real tonnage.
+        if (this.currentSession && this.currentSession.key === session.key) {
+            session.exercises = this.currentSession.exercises;
+        }
         const token = app?.state?.tokens?.access || null;
         session.status = 'completed';
         session.completed_at = new Date().toISOString();
@@ -1558,7 +1639,8 @@ export const Workouts = {
             const elapsed = Math.floor(elapsedMs / 1000);
             remainingEl.textContent = this.formatTimer(elapsed);
             updateMs(elapsedMs);
-            remainingEl.classList.remove('text-surface-700', 'dark:text-surface-300');
+            remainingEl.classList.remove('text-surface-700', 'dark:text-surface-300',
+                'text-rose-500', 'dark:text-rose-400', 'animate-pulse');
             remainingEl.classList.add('text-lime-600', 'dark:text-lime-400');
             if (stateEl) stateEl.textContent = 'Секундомер';
             if (progressEl) progressEl.style.display = 'none';
@@ -1582,6 +1664,9 @@ export const Workouts = {
         if (remaining <= 0) {
             // Overtime: switch to count-up from the original start (elapsed > planned)
             this.restTimerOvertime = true;
+            // Force timer mode during overtime so the mode toggle and rest bar
+            // stay in sync - a timer that hit zero is still a timer, never a stopwatch.
+            this.restTimerMode = 'timer';
             const overtimeDisplay = elapsed;
             remainingEl.textContent = this.formatTimer(overtimeDisplay);
             const elapsedMs = Math.max(0, now - this.restTimerStartTime);
@@ -1626,22 +1711,26 @@ export const Workouts = {
 
          let html = '';
 
-         if (timerActive) {
-             const isStopwatch = this.restTimerMode === 'stopwatch';
-             const duration = this.restTimerMode === 'timer'
-                 ? this.formatTimer(Math.floor((this.restTimerPlannedDuration || this.restTimerPresetSeconds * 1000 || 90000) / 1000))
-                 : '—';
-             html += `
-                 <div class="mb-3 pb-3 border-b border-surface-200 dark:border-white/10">
-                     <div class="flex items-center gap-2 text-xs text-surface-500 dark:text-surface-400 mb-1">
-                         <span class="w-2 h-2 rounded-full bg-lime-500 animate-pulse"></span>
-                         <span>Таймер активен</span>
-                     </div>
-                     <div class="font-mono text-sm font-semibold text-lime-600 dark:text-lime-400 tabular-nums">${duration}</div>
-                     <div class="text-[10px] text-surface-500 dark:text-surface-400 mt-1">${isStopwatch ? 'Секундомер' : 'Обратный отсчёт'}</div>
-                 </div>
-             `;
-         }
+if (timerActive) {
+              const isStopwatch = this.restTimerMode === 'stopwatch';
+              const isOvertime = this.restTimerOvertime === true;
+              const duration = this.restTimerMode === 'timer'
+                  ? this.formatTimer(Math.floor((this.restTimerPlannedDuration || this.restTimerPresetSeconds * 1000 || 90000) / 1000))
+                  : '—';
+              const label = isOvertime
+                  ? 'Перерыв просрочен'
+                  : (isStopwatch ? 'Секундомер' : 'Обратный отсчёт');
+              html += `
+                  <div class="mb-3 pb-3 border-b border-surface-200 dark:border-white/10">
+                      <div class="flex items-center gap-2 text-xs text-surface-500 dark:text-surface-400 mb-1">
+                          <span class="w-2 h-2 rounded-full bg-lime-500 animate-pulse"></span>
+                          <span>Таймер активен</span>
+                      </div>
+                      <div class="font-mono text-sm font-semibold text-lime-600 dark:text-lime-400 tabular-nums">${duration}</div>
+                      <div class="text-[10px] text-surface-500 dark:text-surface-400 mt-1">${label}</div>
+                  </div>
+              `;
+          }
 
          if (restSets.length > 0) {
              html += '<div class="space-y-1">';
@@ -1661,36 +1750,36 @@ export const Workouts = {
          return html;
      },
 
-     // Switch the active tab for a specific exercise card.
-     // Pass 'dynamics', 'ai-analysis', or 'timer'.
-      switchExerciseTab(exerciseId, tabName, container) {
-          const card = document.querySelector(`[data-exercise-id="${exerciseId}"]`);
-          if (!card) return;
+// Switch the active tab for a specific exercise card.
+  // Pass 'dynamics', 'ai-analysis', or 'timer'.
+  switchExerciseTab(exerciseId, tabName, container) {
+      const card = document.querySelector(`[data-exercise-id="${exerciseId}"]`);
+      if (!card) return;
 
-          card.querySelectorAll('[data-tab]').forEach(tab => {
-              const isActive = tab.dataset.tab === tabName;
-              tab.setAttribute('data-active', String(isActive));
-              tab.setAttribute('aria-selected', String(isActive));
-          });
+      card.querySelectorAll('[data-tab]').forEach(tab => {
+          const isActive = tab.dataset.tab === tabName;
+          tab.setAttribute('data-active', String(isActive));
+          tab.setAttribute('aria-selected', String(isActive));
+      });
 
-          card.querySelectorAll('[data-tab-panel]').forEach(panel => {
-              if (panel.dataset.tabPanel === tabName) {
-                  panel.classList.remove('hidden');
-              } else {
-                  panel.classList.add('hidden');
+      card.querySelectorAll('[data-tab-panel]').forEach(panel => {
+          if (panel.dataset.tabPanel === tabName) {
+              panel.classList.remove('hidden');
+          } else {
+              panel.classList.add('hidden');
+          }
+      });
+
+      if (tabName === 'ai-analysis' && container) {
+          requestAnimationFrame(async () => {
+              const sessionId = this.currentSession?.id || this.currentSession?.key;
+              if (sessionId) {
+                  await this.ensureAiPlanLoaded(this.app, sessionId);
               }
+              this.updateAiPlanBadges(container);
           });
-
-        if (tabName === 'ai-analysis' && container && this.aiPlan) {
-            requestAnimationFrame(() => {
-                // Ensure the panel is visible first
-                const card = document.querySelector(`[data-exercise-id="${exerciseId}"]`);
-                const panel = card?.querySelector('[data-tab-panel="ai-analysis"]');
-                if (panel) panel.classList.remove('hidden');
-                this.updateAiPlanBadges(container);
-            });
-        }
-      },
+      }
+  },
 
      // Refresh the Timer panel content for an exercise (e.g. after the timer state changes).
      updateTimerPanel(exerciseId, exercise) {
@@ -2092,7 +2181,7 @@ export const Workouts = {
             return null;
         }
         try {
-            const payload = await API.postImmediate('/ai/workout-preview', body, app.state.tokens.access);
+            const payload = await API.postImmediate('/ai/workout-preview', body, app.state.tokens.access, AI_PREVIEW_TIMEOUT_MS);
             if (payload?.available) {
                 this.persistAiPlan(payload.session_id || body?.session_id, payload);
                 return payload;
@@ -2103,6 +2192,27 @@ export const Workouts = {
             // Never surfaced as an error toast: the workout is what the user came
             // for, and a plan that did not arrive is not a failure.
             console.warn('[Workouts] AI plan failed:', err);
+            return null;
+        }
+    },
+
+    /**
+     * Ensure AI plan is loaded for the given session. Idempotent — if the plan
+     * is already in memory for this session, returns immediately. Otherwise
+     * fetches from the backend and caches it.
+     */
+    async ensureAiPlanLoaded(app, sessionId) {
+        if (this.aiPlan && this.aiPlan.sessionId === sessionId && this.aiPlan.available !== false) return this.aiPlan;
+        if (!navigator.onLine || app.state?.isOnline === false) return null;
+        try {
+            const plan = await this.loadAiPlan(app, { session_id: sessionId });
+            if (plan) {
+                this.aiPlan = { ...plan, sessionId };
+                this.persistAiPlan(sessionId, this.aiPlan);
+            }
+            return this.aiPlan;
+        } catch (err) {
+            console.warn('[Workouts] AI plan fetch on tab switch failed:', err);
             return null;
         }
     },
@@ -2148,6 +2258,7 @@ export const Workouts = {
                 if (planApplied) return;
                 planApplied = true;
                 this.aiPlan = plan ? { ...plan, sessionId } : null;
+                if (this.aiPlan) this.persistAiPlan(sessionId, this.aiPlan);
                 this.updateAiPlanBadges(container);
             };
             // Listen for the plan over WebSocket; the polling below is the fallback
@@ -2156,9 +2267,7 @@ export const Workouts = {
             const wsHandler = (payload) => {
                 if (payload?.session_id === sessionId) {
                     if (wsCleanup) wsCleanup();
-                    this.aiPlan = { ...payload.plan, sessionId };
-                    this.persistAiPlan(sessionId, this.aiPlan);
-                    this.updateAiPlanBadges(container);
+                    applyPlan(payload.plan);
                     planApplied = true;
                 }
             };
@@ -2221,6 +2330,7 @@ export const Workouts = {
                 if (planApplied) return;
                 planApplied = true;
                 this.aiPlan = plan ? { ...plan, sessionId } : null;
+                if (this.aiPlan) this.persistAiPlan(sessionId, this.aiPlan);
                 this.updateAiPlanBadges(app.elements.pageContent);
             };
             // Listen for the plan over WebSocket; the polling below is the fallback
@@ -2229,9 +2339,7 @@ export const Workouts = {
             const wsHandler = (payload) => {
                 if (payload?.session_id === sessionId) {
                     if (wsCleanup) wsCleanup();
-                    this.aiPlan = { ...payload.plan, sessionId };
-                    this.persistAiPlan(sessionId, this.aiPlan);
-                    this.updateAiPlanBadges(app.elements.pageContent);
+                    applyPlan(payload.plan);
                     planApplied = true;
                 }
             };
@@ -2277,9 +2385,11 @@ export const Workouts = {
      * they arrive. Looks for exercise cards and updates their badges inside
      * the collapsible .ai-analysis-content block.
      */
-     updateAiPlanBadges(container) {
-        if (!container || !this.aiPlan) return;
+    updateAiPlanBadges(container, session = null) {
+        if (!container) return;
         const collapsed = this.isAiAnalysisCollapsed();
+        const sessionStatus = session?.ai_plan_status;
+        const planLoading = sessionStatus === 'pending' || (!this.aiPlan && sessionStatus !== 'failed' && sessionStatus !== 'no_exercises');
         container.querySelectorAll('.workout-card[data-exercise-id]').forEach(card => {
             const nameEl = card.querySelector('h3');
             const name = nameEl?.textContent || '';
@@ -2307,6 +2417,9 @@ export const Workouts = {
                 if (toggleBtn) {
                     toggleBtn.setAttribute('aria-expanded', String(!collapsed));
                 }
+            } else if (planLoading) {
+                contentEl.innerHTML = `<div class="ai-analysis_placeholder text-xs text-surface-500 dark:text-surface-400">${AI_PLAN_LOADING_MESSAGE}</div>`;
+                if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'false');
             } else {
                 contentEl.innerHTML = '';
                 if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'false');
@@ -2411,29 +2524,35 @@ export const Workouts = {
     },
 
     /**
-     * Poll the summary endpoint until the background analysis lands.
-     *
-     * The complete endpoint returns 202 immediately when `with_ai_analysis=true`;
-     * the verdict is produced by a background task. This caller polls the read
-     * endpoint with exponential backoff, up to a few minutes, so the user sees the
-     * coach's verdict as soon as it is ready rather than on the next page load.
+     * Poll for AI plan when status is pending (fallback when WS not available)
      */
-    async pollForAiAnalysis(app, sessionId, { timeoutMs = 180000, intervalMs = 3000 } = {}) {
-        const id = parseInt(sessionId);
-        if (isNaN(id)) return null;
-
-        const start = Date.now();
-        let delay = intervalMs;
-
-        while (Date.now() - start < timeoutMs) {
-            const payload = await this.loadAiAnalysis(app, id, { quiet: true });
-            if (payload) return payload;
-
-            await new Promise(resolve => setTimeout(resolve, delay));
-            delay = Math.min(delay * 2, 15000);
+    async pollForAiPlan(app, sessionId, container = null, { maxAttempts = 15, intervalMs = 3000 } = {}) {
+        if (window.App?.state?.isOnline === false || navigator.onLine === false) {
+            return null;
         }
-
-        app.showToast('ИИ-разбор ещё готовится, проверьте историю позже', 'info');
+        if (this.isLocalSession && this.isLocalSession({ isLocal: String(sessionId).startsWith('local-') })) {
+            return null;
+        }
+        
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            try {
+                const plan = await this.loadAiPlan(app, { session_id: sessionId });
+                if (plan) {
+                    this.aiPlan = { ...plan, sessionId };
+                    this.persistAiPlan(sessionId, this.aiPlan);
+                    if (container) {
+                        this.updateAiPlanBadges(container);
+                    }
+                    return plan;
+                }
+            } catch (err) {
+                console.warn(`[Workouts] AI plan poll attempt ${attempt + 1} failed:`, err);
+            }
+            
+            if (attempt < maxAttempts - 1) {
+                await new Promise(resolve => setTimeout(resolve, intervalMs));
+            }
+        }
         return null;
     },
 
@@ -2540,7 +2659,10 @@ export const Workouts = {
         await this.stopAndSaveRestTimer();
 
         // The coach reads the completed sets, so every typed value goes out
-        // before the session closes.
+        // before the session closes. Sync the DOM first so both the PATCH
+        // requests and the completion request carry the same data, and so a
+        // network failure still leaves the local cache populated.
+        this.syncSessionFromDOM();
         await app.flushPendingSetEdits();
 
         const durationSeconds = this.sessionStartTimestamp
@@ -2569,29 +2691,33 @@ export const Workouts = {
                  app.state.tokens.access,
              );
              console.log('[completeWorkoutWithAi] Complete endpoint response:', resp);
-         } catch (err) {
-             console.error('[Workouts] Complete with AI failed:', err);
-             if (err?.offlineQueued) {
-                 await Workouts.markSessionCompletedLocally(sessionId);
-                 app.showToast(OFFLINE_COMPLETE_MESSAGE, 'info');
-                 await app.renderPage('workouts');
-                 return;
-             }
-             if (err?.isNetworkError) {
-                 await Workouts.markSessionCompletedLocally(sessionId);
-                 app.showToast(OFFLINE_COMPLETE_MESSAGE, 'info');
-                 return;
-             }
-             const msg = err?.status === 401
-                 ? 'Сессия истекла. Проверьте подключение и войдите снова.'
-                 : err?.status === 404
-                 ? 'Тренировка не найдена на сервере.'
-                 : (err?.message || 'Ошибка завершения тренировки');
-             app.showToast(msg, 'error');
-             return;
-         }
+} catch (err) {
+              console.error('[Workouts] Complete with AI failed:', err);
+              // Persist the DOM state before marking complete locally so the
+              // completed session keeps its real tonnage on a failed request.
+              this.syncSessionFromDOM();
+              if (err?.offlineQueued) {
+                  await Workouts.persistCompletedSessionLocally(sessionId, this.currentSession);
+                  app.showToast(OFFLINE_COMPLETE_MESSAGE, 'info');
+                  await app.renderPage('workouts');
+                  return;
+              }
+              if (err?.isNetworkError) {
+                  await Workouts.persistCompletedSessionLocally(sessionId, this.currentSession);
+                  app.showToast(OFFLINE_COMPLETE_MESSAGE, 'info');
+                  return;
+              }
+              const msg = err?.status === 401
+                  ? 'Сессия истекла. Проверьте подключение и войдите снова.'
+                  : err?.status === 404
+                  ? 'Тренировка не найдена на сервере.'
+                  : (err?.message || 'Ошибка завершения тренировки');
+              app.showToast(msg, 'error');
+              return;
+          }
 
         app.showToast('Тренировка завершена! ИИ-тренер формирует разбор в истории.', 'success');
+        Workouts.clearActiveSessionState(app);
         app.state.currentPage = 'history';
         app.elements.navItems.forEach(item => item.classList.toggle('active', item.dataset.page === 'history'));
         await this.renderHistoryDetail(app.elements.pageContent, app, sessionId);
@@ -2884,6 +3010,20 @@ export const Workouts = {
             app.showToast('Нет активной тренировки', 'info');
             return;
         }
+        // Extract ai_plan from session if backend includes it (cold start / resume)
+        if (session.ai_plan_json && (!this.aiPlan || this.aiPlan.sessionId !== session.id)) {
+            try {
+                const parsedPlan = JSON.parse(session.ai_plan_json);
+                this.aiPlan = { ...parsedPlan, sessionId: session.id };
+                this.persistAiPlan(session.id, this.aiPlan);
+            } catch (e) {
+                console.warn('[Workouts] Failed to parse ai_plan_json:', e);
+            }
+        } else if (session.ai_plan && (!this.aiPlan || this.aiPlan.sessionId !== session.id)) {
+            // Fallback for backward compatibility
+            this.aiPlan = { ...session.ai_plan, sessionId: session.id };
+            this.persistAiPlan(session.id, this.aiPlan);
+        }
         // CRITICAL FIX: Ensure session has exercises — recover from template or
         // local session when the server returns an active session without them.
         if (!session.exercises || session.exercises.length === 0) {
@@ -2947,6 +3087,17 @@ export const Workouts = {
         if (!this.aiPlan) {
             const cachedPlan = this.restoreAiPlan(session.id || session.key);
             if (cachedPlan) this.aiPlan = { ...cachedPlan, sessionId: session.id || session.key };
+        }
+
+        // Handle pending AI plan status - start polling if needed
+        const sessionIdForPolling = session.isLocal ? session.key : session.id;
+        if (session.ai_plan_status === 'pending' && sessionIdForPolling && !this.isLocalSession(session)) {
+            if (window.App?.state?.isOnline !== false && navigator.onLine !== false) {
+                // Start polling in background
+                this.pollForAiPlan(app, sessionIdForPolling, container).catch(err => {
+                    console.warn('[Workouts] AI plan polling failed:', err);
+                });
+            }
         }
 
         app.state.currentSessionId = session.isLocal ? session.key : session.id;
@@ -4295,11 +4446,20 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             syncFromDrums();
         };
 
-        const save = () => {
+        const save = async () => {
             syncFromDrums();
             const weight = drumTenthsToWeight(weightTenths);
+            const setId = row?.dataset.setId ? parseInt(row.dataset.setId, 10) : null;
             if (field === 'weight' && weightInput) this.setInputValue(weightInput, this.formatDrumWeight(weight));
             if (repsInput) this.setInputValue(repsInput, reps);
+            // Persist immediately so a completion that races the 400ms debounced
+            // save never loses the just-picked weight or reps.
+            if (setId && app?.state?.tokens?.access) {
+                const patch = {};
+                if (field === 'weight') patch.weight_kg = weight;
+                else if (field === 'reps') patch.reps = reps;
+                await API.patch(`/workouts/sets/${setId}`, patch, app.state.tokens.access).catch(() => {});
+            }
             // No toast and no focus/scroll jump: the sheet closes in place, the
             // row keeps its completed state and the pulse confirms the write.
             this.flashSetSaved(row);

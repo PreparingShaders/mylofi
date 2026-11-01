@@ -180,6 +180,20 @@ const App = {
     },
 
     /**
+     * Check for any persisted auth data suggesting a previous session
+     * exists but tokens may have been evicted (e.g. iOS PWA).
+     */
+    hasSessionHint() {
+        // Check for any persisted auth data suggesting a previous session
+        return !!(
+            localStorage.getItem('user') ||
+            localStorage.getItem('refresh_token') ||
+            localStorage.getItem('access_token') ||
+            sessionStorage.getItem('auth_initiated')
+        );
+    },
+
+    /**
      * Attempt to recover the session via the HttpOnly refresh_token cookie.
      *
      * iOS standalone PWAs evict localStorage on process kill, so on cold start
@@ -198,7 +212,12 @@ const App = {
             this.saveTokens();
             this.showMainAndValidate();
         } catch (e) {
-            console.log('[App] Cookie refresh failed, falling back to landing:', e);
+            // Silent failure: no console.error for 401/403, just log at warn level
+            if (e?.status === 401 || e?.status === 403) {
+                console.warn('[App] Cookie refresh failed (no session):', e.message);
+            } else {
+                console.log('[App] Cookie refresh failed, falling back to landing:', e);
+            }
             this.showLanding();
         }
     },
@@ -297,7 +316,8 @@ const App = {
                     console.log('[App] Online, validating token...');
                     this.showMainAndValidate();
                 }
-            } else if (hasLocalRefresh || navigator.onLine) {
+            } else if ((hasLocalRefresh || this.hasSessionHint()) && navigator.onLine) {
+                // Only attempt cookie refresh if there's a hint of a previous session
                 // No access token in localStorage (iOS PWA eviction), but either
                 // a refresh token is cached OR we are online — attempt to recover
                 // the session via the HttpOnly refresh_token cookie.
@@ -2182,8 +2202,13 @@ const App = {
             return;
         }
 
+        // Sync the DOM into the in-memory session synchronously before anything
+        // else, so a network failure still preserves the real tonnage in
+        // localStorage and flushPendingSetEdits sends exactly what was synced.
+        Workouts.syncSessionFromDOM();
+
         // Wait for any pending drum picker saves to complete
-        await new Promise(r => setTimeout(r, 100));
+        await new Promise(r => setTimeout(r, 500));
 
         // Flush all active weight and rep inputs into session state before completing
         await this.flushPendingSetEdits();
@@ -2203,23 +2228,30 @@ const App = {
             );
             console.log('[handleCompleteWorkout] Complete endpoint response:', resp);
             Workouts.forgetAiPlan(sessionId);
+            Workouts.clearActiveSessionState(this);
             this.showToast('Тренировка завершена!', 'success');
         } catch (e) {
             if (e?.offlineQueued) {
                 // Session is closed locally, the request goes out as soon as the network is back
-                await Workouts.markSessionCompletedLocally(sessionId);
+                Workouts.syncSessionFromDOM();
+                await Workouts.persistCompletedSessionLocally(sessionId, Workouts.currentSession);
                 this.showToast('Тренировка завершена! Сеть недоступна, данные будут синхронизированы при появлении связи', 'info');
                 await this.renderPage('workouts');
                 return;
             }
             // Network failure: preserve local state, show informative toast
             if (e?.isNetworkError) {
-                await Workouts.markSessionCompletedLocally(sessionId);
+                Workouts.syncSessionFromDOM();
+                await Workouts.persistCompletedSessionLocally(sessionId, Workouts.currentSession);
                 this.showToast('Тренировка завершена локально! Сеть недоступна, данные будут синхронизированы при появлении связи', 'info');
                 return;
             }
-            // 401/404 or other HTTP error: show clear toast, keep workout screen intact
+            // 401/404 or other HTTP error: persist locally so data survives a
+            // token refresh or a missing session, then show a clear toast and
+            // keep the workout screen intact for retry.
             console.error('[handleCompleteWorkout] Failed:', { status: e?.status, message: e?.message });
+            Workouts.syncSessionFromDOM();
+            await Workouts.persistCompletedSessionLocally(sessionId, Workouts.currentSession);
             const msg = e?.status === 401
                 ? 'Сессия истекла. Проверьте подключение и войдите снова.'
                 : e?.status === 404
@@ -2243,30 +2275,38 @@ const App = {
      * change/blur) are persisted before the coach reads the completed sets.
      */
     async flushPendingSetEdits() {
-        const rows = document.querySelectorAll('[data-set-id]');
-        const promises = Array.from(rows).map(async row => {
-            const setId = parseInt(row.dataset.setId);
-            if (isNaN(setId)) return;
+        const session = Workouts.currentSession;
+        if (!session) return;
+        const failed = [];
+        // Refresh the token once before the batch so token expiry mid-flush
+        // doesn't cause every PATCH to fail silently.
+        await this.ensureFreshToken();
+        const promises = [];
+        for (const ex of (session.exercises || [])) {
+            for (const set of (ex.sets || [])) {
+                const setId = set.id;
+                if (setId == null) continue;
 
-            const weightInput = row.querySelector('[data-field="weight"]');
-            const repsInput = row.querySelector('[data-field="reps"]');
-            const toggleBtn = row.querySelector('[data-action="toggle-set"]');
+                const payload = {};
+                if (set.weight_kg != null && !isNaN(set.weight_kg)) payload.weight_kg = set.weight_kg;
+                if (set.reps != null && !isNaN(set.reps)) payload.reps = set.reps;
+                if (set.is_completed) payload.is_completed = true;
 
-            const weight_kg = weightInput ? parseFloat(weightInput.value) : null;
-            const reps = repsInput ? parseInt(repsInput.value) : null;
-            const is_completed = toggleBtn?.dataset.completed === 'true';
+                if (Object.keys(payload).length <= 1 && !payload.is_completed) continue;
 
-            const payload = {};
-            if (!isNaN(weight_kg)) payload.weight_kg = weight_kg;
-            if (!isNaN(reps)) payload.reps = reps;
-            payload.is_completed = is_completed;
-
-            if (Object.keys(payload).length <= 1 && !payload.is_completed) return;
-
-            console.log('[flushPendingSetEdits] Flushing set', setId, payload);
-            await API.patch(`/workouts/sets/${setId}`, payload, this.state.tokens.access).catch(() => {});
-        });
+                console.log('[flushPendingSetEdits] Flushing set', setId, payload);
+                promises.push(
+                    API.patch(`/workouts/sets/${setId}`, payload, this.state.tokens.access).catch(err => {
+                        console.error(`[flushPendingSetEdits] Failed to flush set ${setId}:`, err?.message || err);
+                        failed.push(setId);
+                    })
+                );
+            }
+        }
         await Promise.all(promises);
+        if (failed.length) {
+            console.warn('[flushPendingSetEdits] Sets that failed to persist:', failed);
+        }
     },
 
     async handleCancelWorkout(event) {

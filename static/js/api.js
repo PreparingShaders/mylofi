@@ -21,6 +21,9 @@ const QUEUEABLE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const HOST_CHECK_TIMEOUT_MS = 3000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
 const UPLOAD_TIMEOUT_MS = 8000;
+// The AI preview endpoint runs a background generation that the server allows
+// up to ~45s, so give the frontend a roomier budget than the default 10s.
+const AI_PREVIEW_TIMEOUT_MS = 60000;
 
 const READ_CACHE_PREFIX = 'offline_read_cache:';
 const READ_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -824,7 +827,7 @@ class APIClient {
      * tier's one weekly analysis on a session from yesterday. Both fail loudly
      * instead, and the UI already treats them as optional.
      */
-    postImmediate(endpoint, data, accessToken = null) { return this.request('POST', endpoint, data, accessToken, false, true); }
+    postImmediate(endpoint, data, accessToken = null, timeoutMs = null) { return this.request('POST', endpoint, data, accessToken, false, true, timeoutMs); }
     patch(endpoint, data, accessToken = null) { return this.request('PATCH', endpoint, data, accessToken); }
     delete(endpoint, accessToken = null) { return this.request('DELETE', endpoint, null, accessToken); }
     deleteMeal(mealId, accessToken = null) { return this.request('DELETE', `/nutrition/meals/${mealId}`, null, accessToken); }
@@ -842,3 +845,4 @@ class APIClient {
 }
 
 export const API = new APIClient();
+export { AI_PREVIEW_TIMEOUT_MS };
