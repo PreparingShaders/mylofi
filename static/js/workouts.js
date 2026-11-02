@@ -162,6 +162,8 @@ export const Workouts = {
     // Per-exercise auto-start preference for the rest timer. Stored as a Map
     // keyed by exercise id; missing entries default to true (auto-start on).
     restAutoStart: null,
+    // Active tab map per exercise during the session
+    exerciseActiveTabs: new Map(),
     // Cached completed history sessions, available to computePrevText for
     // dynamically inserted set rows that are added outside of renderWorkoutScreen.
     completedHistorySessions: [],
@@ -1525,26 +1527,9 @@ export const Workouts = {
     },
 
     applyRestTimerModeUI() {
-        const bar = document.getElementById('rest-timer-bar');
-        if (!bar) return;
-
         this.restTimerMode = this.restTimerMode || this.getStoredRestTimerMode();
-        const mode = this.restTimerMode;
-
-        const presetsEl = bar.querySelector('[data-timer-presets]');
-        const customEl = bar.querySelector('[data-timer-custom]');
-        const stopwatchModeEl = bar.querySelector('[data-stopwatch-mode]');
-        const modeTimerBtn = bar.querySelector('[data-mode="timer"]');
-        const modeStopwatchBtn = bar.querySelector('[data-mode="stopwatch"]');
-
-        if (presetsEl) presetsEl.classList.toggle('hidden', mode !== 'timer');
-        if (customEl) customEl.classList.toggle('hidden', mode !== 'timer');
-        if (stopwatchModeEl) stopwatchModeEl.classList.toggle('hidden', mode !== 'stopwatch');
-        if (modeTimerBtn) {
-            modeTimerBtn.setAttribute('data-active', mode === 'timer');
-        }
-        if (modeStopwatchBtn) {
-            modeStopwatchBtn.setAttribute('data-active', mode === 'stopwatch');
+        if (this.currentSession && this.app && this.app.elements && this.app.elements.pageContent) {
+            this.refreshAllTimerPanels(this.app.elements.pageContent);
         }
     },
 
@@ -1571,28 +1556,23 @@ export const Workouts = {
             this.restTimerTargetTimestamp = this.restTimerStartTime + this.restTimerPlannedDuration;
         }
 
-        const bar = document.getElementById('rest-timer-bar');
-        if (bar) bar.classList.remove('hidden');
         this.applyRestTimerModeUI();
         this.updateRestTimerUI();
         this.restTimerInterval = setInterval(() => this.updateRestTimerUI(), 100);
 
         if (exercise?.id) {
             this.switchExerciseTab(exercise.id, 'timer');
-            this.updateTimerPanel(exercise.id, exercise);
+            const container = this.app?.elements?.pageContent || document;
+            this.updateTimerPanel(exercise.id, exercise, container);
         }
     },
 
-    // Low-level: stop the interval and hide the bar without saving. The
-    // start time / owning set are NOT cleared so a backgrounded tab can rearm
-    // the interval on resume and keep measuring the same rest period.
+    // Low-level: stop the interval without saving.
     stopRestTimer() {
         if (this.restTimerInterval) {
             clearInterval(this.restTimerInterval);
             this.restTimerInterval = null;
         }
-        const bar = document.getElementById('rest-timer-bar');
-        if (bar) bar.classList.add('hidden');
     },
 
     // Stop the active timer and persist the elapsed seconds onto the set it
@@ -1681,8 +1661,6 @@ export const Workouts = {
         } else {
             this.restTimerMode = 'timer';
         }
-        const bar = document.getElementById('rest-timer-bar');
-        if (bar) bar.classList.remove('hidden');
         if (this.restTimerInterval) return;
         this.applyRestTimerModeUI();
         this.updateRestTimerUI();
@@ -1690,10 +1668,18 @@ export const Workouts = {
     },
 
     updateRestTimerUI() {
-        const remainingEl = document.getElementById('rest-timer-remaining');
-        const msEl = document.getElementById('rest-timer-ms');
-        const stateEl = document.getElementById('rest-timer-state');
-        const progressEl = document.getElementById('rest-timer-progress');
+        const sess = this.currentSession;
+        const activeSetId = this.activeRestForSetId;
+        if (activeSetId == null || !sess) return;
+        const ownerEx = this.findExerciseOfSet(sess, activeSetId);
+        const exId = ownerEx?.exercise?.id;
+        if (!exId) return;
+
+        const remainingEl = document.getElementById(`rest-timer-remaining-${exId}`);
+        const msEl = document.getElementById(`rest-timer-ms-${exId}`);
+        const stateEl = document.getElementById(`rest-timer-state-${exId}`);
+        const progressEl = document.getElementById(`rest-timer-progress-${exId}`);
+        const progressWrapEl = document.getElementById(`rest-timer-progress-wrap-${exId}`);
         if (!remainingEl) return;
 
         const mode = this.restTimerMode || 'timer';
@@ -1714,11 +1700,9 @@ export const Workouts = {
             const elapsed = Math.floor(elapsedMs / 1000);
             remainingEl.textContent = this.formatTimer(elapsed);
             updateMs(elapsedMs);
-            remainingEl.classList.remove('text-surface-700', 'dark:text-surface-300',
-                'text-rose-500', 'dark:text-rose-400', 'animate-pulse');
-            remainingEl.classList.add('text-lime-600', 'dark:text-lime-400');
+            remainingEl.className = 'font-mono text-3xl font-bold tabular-nums text-lime-600 dark:text-lime-400';
             if (stateEl) stateEl.textContent = 'Секундомер';
-            if (progressEl) progressEl.style.display = 'none';
+            if (progressWrapEl) progressWrapEl.style.display = 'none';
             return;
         }
 
@@ -1726,44 +1710,36 @@ export const Workouts = {
         if (this.restTimerTargetTimestamp == null) {
             remainingEl.textContent = '00:00';
             if (msEl) msEl.textContent = '00';
-            if (progressEl) progressEl.style.display = 'none';
+            if (progressWrapEl) progressWrapEl.style.display = 'none';
             return;
         }
 
         const now = Date.now();
         const remaining = Math.max(0, Math.ceil((this.restTimerTargetTimestamp - now) / 1000));
-        // elapsed is always measured from the original start anchor so that
-        // stopAndSaveRestTimer saves the total rest time (incl. overtime).
         const elapsed = Math.max(0, Math.floor((now - this.restTimerStartTime) / 1000));
 
         if (remaining <= 0) {
-            // Overtime: switch to count-up from the original start (elapsed > planned)
             this.restTimerOvertime = true;
-            // Force timer mode during overtime so the mode toggle and rest bar
-            // stay in sync - a timer that hit zero is still a timer, never a stopwatch.
             this.restTimerMode = 'timer';
             const overtimeDisplay = elapsed;
             remainingEl.textContent = this.formatTimer(overtimeDisplay);
             const elapsedMs = Math.max(0, now - this.restTimerStartTime);
             updateMs(elapsedMs);
-            remainingEl.classList.remove('text-lime-600', 'dark:text-lime-400', 'text-surface-700', 'dark:text-surface-300');
-            remainingEl.classList.add('text-rose-500', 'dark:text-rose-400');
+            remainingEl.className = 'font-mono text-3xl font-bold tabular-nums text-rose-500 dark:text-rose-400 animate-pulse';
             if (stateEl) stateEl.textContent = 'Перерыв просрочен';
-            if (progressEl) progressEl.style.display = 'none';
-            remainingEl.classList.add('animate-pulse');
+            if (progressWrapEl) progressWrapEl.style.display = 'none';
         } else {
             this.restTimerOvertime = false;
             remainingEl.textContent = this.formatTimer(remaining);
             const remainingMs = Math.max(0, this.restTimerTargetTimestamp - now);
             updateMs(remainingMs);
-            remainingEl.classList.remove('text-surface-700', 'dark:text-surface-300', 'text-rose-500', 'dark:text-rose-400', 'animate-pulse');
-            remainingEl.classList.add('text-lime-600', 'dark:text-lime-400');
+            remainingEl.className = 'font-mono text-3xl font-bold tabular-nums text-lime-600 dark:text-lime-400';
             if (stateEl) stateEl.textContent = 'Отдых';
+            if (progressWrapEl) progressWrapEl.style.display = 'block';
             if (progressEl) {
                 const totalSeconds = this.restTimerPlannedDuration ? this.restTimerPlannedDuration / 1000 : 90;
                 const progress = Math.min(100, (elapsed / totalSeconds) * 100);
                 progressEl.style.width = `${progress}%`;
-                progressEl.style.display = 'block';
             }
         }
     },
@@ -1776,109 +1752,167 @@ export const Workouts = {
              + `<span class="font-semibold">Отдых</span>`;
      },
 
-     // Render the Timer tab panel content for an exercise card: an active-timer
-     // indicator (when a rest timer is running for this exercise) plus a compact
-     // history of measured rest times per completed set.
+     // Render the Timer tab panel content for an exercise card: inline timer controls
+     // (mode toggle, presets, active timer countdown/stopwatch, progress bar, stop/save)
+     // plus history of measured rest times per completed set.
      renderTimerPanel(exercise) {
          const sets = exercise.sets || [];
-         const timerActive = this.activeRestForSetId && sets.some(s => s.id === this.activeRestForSetId);
+         const timerActive = this.activeRestForSetId != null || this.restTimerStartTime != null;
          const restSets = sets.filter(set => set.rest_time_seconds != null);
+         const mode = this.restTimerMode || this.getStoredRestTimerMode();
+         const currentPreset = this.restTimerPresetSeconds || this.getStoredRestTimerPreset();
 
-         let html = '';
+         let html = `
+             <div class="space-y-3">
+                 <div class="flex rounded-xl glass p-1 gap-1">
+                     <button type="button" data-action="rest-timer-mode" data-mode="timer"
+                             class="flex-1 py-1 px-2 rounded-lg text-xs font-semibold transition-colors ${mode === 'timer' ? 'bg-primary-600 text-white dark:bg-white dark:text-zinc-950 shadow-sm' : 'text-surface-600 dark:text-surface-300'}"
+                             aria-pressed="${mode === 'timer'}">
+                         Таймер
+                     </button>
+                     <button type="button" data-action="rest-timer-mode" data-mode="stopwatch"
+                             class="flex-1 py-1 px-2 rounded-lg text-xs font-semibold transition-colors ${mode === 'stopwatch' ? 'bg-primary-600 text-white dark:bg-white dark:text-zinc-950 shadow-sm' : 'text-surface-600 dark:text-surface-300'}"
+                             aria-pressed="${mode === 'stopwatch'}">
+                         Секундомер
+                     </button>
+                 </div>
+         `;
 
-if (timerActive) {
-              const isStopwatch = this.restTimerMode === 'stopwatch';
-              const isOvertime = this.restTimerOvertime === true;
-              const duration = this.restTimerMode === 'timer'
-                  ? this.formatTimer(Math.floor((this.restTimerPlannedDuration || this.restTimerPresetSeconds * 1000 || 90000) / 1000))
-                  : '—';
-              const label = isOvertime
-                  ? 'Перерыв просрочен'
-                  : (isStopwatch ? 'Секундомер' : 'Обратный отсчёт');
-              html += `
-                  <div class="mb-3 pb-3 border-b border-surface-200 dark:border-white/10">
-                      <div class="flex items-center gap-2 text-xs text-surface-500 dark:text-surface-400 mb-1">
-                          <span class="w-2 h-2 rounded-full bg-lime-500 animate-pulse"></span>
-                          <span>Таймер активен</span>
-                      </div>
-                      <div class="font-mono text-sm font-semibold text-lime-600 dark:text-lime-400 tabular-nums">${duration}</div>
-                      <div class="text-[10px] text-surface-500 dark:text-surface-400 mt-1">${label}</div>
-                  </div>
-              `;
-          }
+         if (mode === 'timer') {
+             const presets = [30, 60, 90, 120, 180];
+             const presetLabels = { 30: '30с', 60: '1м', 90: '1.5м', 120: '2м', 180: '3м' };
+             html += `
+                 <div class="flex flex-wrap gap-1.5" data-timer-presets>
+                     ${presets.map(sec => `
+                         <button type="button" data-action="rest-timer-preset" data-preset="${sec}"
+                                 class="flex-1 py-1.5 px-2 rounded-xl text-xs font-semibold glass transition-colors ${currentPreset === sec ? 'border-primary-500 text-primary-600 dark:text-primary-400 font-bold' : 'text-surface-600 dark:text-surface-300'}">
+                             ${presetLabels[sec] || (sec + 'с')}
+                         </button>
+                     `).join('')}
+                 </div>
+                 <div class="flex items-center gap-2" data-timer-custom>
+                     <input type="number" min="1" max="600" data-action="rest-timer-custom"
+                            value="${currentPreset}" placeholder="Сек"
+                            class="w-full glass-input rounded-xl px-3 py-1.5 text-xs font-mono tabular-nums">
+                     <span class="text-xs text-surface-500">сек</span>
+                 </div>
+             `;
+         }
+
+         if (timerActive) {
+             const isStopwatch = mode === 'stopwatch';
+             const isOvertime = this.restTimerOvertime === true;
+             const label = isOvertime ? 'Перерыв просрочен' : (isStopwatch ? 'Секундомер' : 'Отдых');
+             html += `
+                 <div class="p-3 rounded-2xl glass flex flex-col items-center justify-center space-y-2">
+                     <div class="flex items-center gap-2 text-xs text-surface-500 dark:text-surface-400">
+                         <span class="w-2 h-2 rounded-full bg-lime-500 animate-pulse"></span>
+                         <span id="rest-timer-state-${exercise.id}">${label}</span>
+                     </div>
+                     <div class="flex items-baseline gap-1 font-mono text-3xl font-bold tabular-nums ${isOvertime ? 'text-rose-500 dark:text-rose-400 animate-pulse' : 'text-lime-600 dark:text-lime-400'}">
+                         <span id="rest-timer-remaining-${exercise.id}">00:00</span>
+                         <span class="text-xs font-normal text-surface-400" id="rest-timer-ms-${exercise.id}">00</span>
+                     </div>
+                     <div class="w-full bg-surface-200 dark:bg-zinc-800 h-1.5 rounded-full overflow-hidden" id="rest-timer-progress-wrap-${exercise.id}">
+                         <div class="h-full bg-lime-500 transition-all duration-100" id="rest-timer-progress-${exercise.id}" style="width: 0%"></div>
+                     </div>
+                     <button type="button" data-action="dismiss-rest-timer"
+                             class="w-full py-2 bg-lime-600 hover:bg-lime-700 text-white dark:bg-lime-500 dark:hover:bg-lime-600 rounded-xl font-semibold text-xs transition-colors">
+                         Готов / Сохранить
+                     </button>
+                 </div>
+             `;
+         } else {
+             html += `
+                 <div class="text-center py-2 text-xs text-surface-500">
+                     Таймер отдыха не запущен
+                 </div>
+             `;
+         }
 
          if (restSets.length > 0) {
-             html += '<div class="space-y-1">';
+             html += `
+                 <div class="mt-3 pt-3 border-t border-surface-200 dark:border-white/10 space-y-1">
+                     <div class="text-[11px] uppercase tracking-wider text-surface-400 font-semibold mb-1">История отдыха</div>
+             `;
              restSets.forEach(set => {
                  html += `
-                     <div class="flex items-center justify-between py-1">
-                         <span class="text-xs text-surface-500">Подход ${set.set_number}</span>
-                         <span class="text-xs font-mono tabular-nums text-surface-600 dark:text-surface-300">${this.formatTimer(set.rest_time_seconds)}</span>
+                     <div class="flex items-center justify-between py-1 text-xs">
+                         <span class="text-surface-500">Подход ${set.set_number}</span>
+                         <span class="font-mono tabular-nums text-surface-600 dark:text-surface-300">${this.formatTimer(set.rest_time_seconds)}</span>
                      </div>
                  `;
              });
              html += '</div>';
-         } else if (!timerActive) {
-             html += '<div class="text-center py-2 text-xs text-surface-500">Нет данных о времени отдыха</div>';
          }
 
+         html += '</div>';
          return html;
      },
 
-// Switch the active tab for a specific exercise card.
-  // Pass 'dynamics', 'ai-analysis', or 'timer'.
-  switchExerciseTab(exerciseId, tabName, container) {
-      // Try container first, then fall back to document for robustness
-      const card = container?.querySelector(`[data-exercise-id="${exerciseId}"]`)
-          || document.querySelector(`[data-exercise-id="${exerciseId}"]`);
-      if (!card) {
-          console.warn('[Workouts] switchExerciseTab: card not found', { exerciseId, tabName, container: !!container });
-          return;
+  storeTabState(exerciseId, targetTab) {
+      if (!this.exerciseActiveTabs) {
+          this.exerciseActiveTabs = new Map();
       }
+      this.exerciseActiveTabs.set(String(exerciseId), targetTab);
+      try {
+          const obj = Object.fromEntries(this.exerciseActiveTabs);
+          localStorage.setItem('exerciseActiveTabs', JSON.stringify(obj));
+      } catch (e) {}
+  },
 
-      console.log('[Workouts] switchExerciseTab:', { exerciseId, tabName, cardFound: true });
-
-      const tabs = card.querySelectorAll('[data-tab]');
-      if (!tabs.length) {
-          console.warn('[Workouts] switchExerciseTab: no tab buttons found in card', { exerciseId });
-          return;
+  getStoredTabState(exerciseId) {
+      if (!this.exerciseActiveTabs) {
+          this.exerciseActiveTabs = new Map();
+          try {
+              const stored = localStorage.getItem('exerciseActiveTabs');
+              if (stored) {
+                  const parsed = JSON.parse(stored);
+                  Object.entries(parsed).forEach(([k, v]) => this.exerciseActiveTabs.set(k, v));
+              }
+          } catch (e) {}
       }
-      tabs.forEach(tab => {
-          const isActive = tab.dataset.tab === tabName;
-          tab.setAttribute('data-active', String(isActive));
-          tab.setAttribute('aria-selected', String(isActive));
+      return this.exerciseActiveTabs.get(String(exerciseId)) || 'dynamics';
+  },
+
+  // Switch the active tab for a specific exercise card with state persistence.
+  switchExerciseTab(exerciseId, targetTab, cardElement) {
+      const card = cardElement?.closest?.('[data-exercise-id]') || cardElement || document.querySelector(`[data-exercise-id="${exerciseId}"]`) || document.querySelector('.workout-card');
+      if (!card) return;
+
+      card.querySelectorAll('[data-tab]').forEach(btn => {
+          const t = btn.getAttribute('data-tab');
+          const match = t === targetTab || (targetTab === 'ai-analysis' && t === 'ai_advice') || (targetTab === 'ai_advice' && t === 'ai-analysis');
+          btn.setAttribute('data-active', match ? 'true' : 'false');
       });
 
-      const panels = card.querySelectorAll('[data-tab-panel]');
-      console.log('[Workouts] switchExerciseTab: panels found', panels.length);
-      let foundPanel = false;
-      panels.forEach(panel => {
-          if (panel.dataset.tabPanel === tabName) {
+      card.querySelectorAll('[data-tab-panel]').forEach(panel => {
+          const panelType = panel.getAttribute('data-tab-panel');
+          const match = panelType === targetTab || (targetTab === 'ai-analysis' && panelType === 'ai_advice') || (targetTab === 'ai_advice' && panelType === 'ai-analysis');
+          if (match) {
               panel.classList.remove('hidden');
-              console.log('[Workouts] switchExerciseTab: showing panel', tabName);
-              foundPanel = true;
           } else {
               panel.classList.add('hidden');
           }
       });
-      if (!foundPanel) {
-          console.warn('[Workouts] switchExerciseTab: target panel not found', { exerciseId, tabName });
-      }
 
-      if (tabName === 'ai-analysis' && container) {
+      this.storeTabState(exerciseId, targetTab);
+
+      const rootContainer = document.getElementById('workout-container') || card.closest('#workout-container') || document;
+      if ((targetTab === 'ai-analysis' || targetTab === 'ai_advice') && rootContainer) {
           requestAnimationFrame(async () => {
               const sessionId = this.currentSession?.id || this.currentSession?.key;
               if (sessionId) {
                   await this.ensureAiPlanLoaded(this.app, sessionId);
               }
-              this.updateAiPlanBadges(container);
+              this.updateAiPlanBadges(rootContainer);
           });
       }
 
-      if (tabName === 'timer' && container) {
+      if (targetTab === 'timer') {
           const exercise = this.currentSession?.exercises?.find(ex => String(ex.id) === String(exerciseId));
           if (exercise) {
-              this.updateTimerPanel(exerciseId, exercise, container);
+              this.updateTimerPanel(exerciseId, exercise, rootContainer);
           }
       }
   },
@@ -1891,6 +1925,14 @@ if (timerActive) {
          if (panelContent) {
              panelContent.innerHTML = this.renderTimerPanel(exercise);
          }
+     },
+
+     refreshAllTimerPanels(container) {
+         const sess = this.currentSession;
+         if (!sess || !sess.exercises) return;
+         sess.exercises.forEach(ex => {
+             this.updateTimerPanel(ex.id, ex, container);
+         });
      },
 
 
@@ -3322,6 +3364,11 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 .slice(-10);
 
             const isCollapsibleCollapsed = this.isAiAnalysisCollapsed();
+            const activeTab = this.getStoredTabState(ex.id);
+            const isDynamics = activeTab === 'dynamics';
+            const isAi = activeTab === 'ai-analysis' || activeTab === 'ai_advice';
+            const isTimer = activeTab === 'timer';
+
              return `
               <div class="workout-card snap-center glass rounded-3xl p-3 flex flex-col space-y-3" data-exercise-id="${ex.id}" data-has-history="${historyPoints.length > 0 ? 'true' : 'false'}">
                 <div class="flex justify-between items-start mb-3 gap-1.5">
@@ -3347,20 +3394,20 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
 
                     <div class="exercise-tabs">
                         <div class="exercise-tab-bar flex gap-1 p-1 rounded-xl mb-2">
-                            <button type="button" data-tab="dynamics" data-active="true"
+                            <button type="button" data-tab="dynamics" data-active="${isDynamics}"
                                     class="exercise-tab-btn flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold">Динамика</button>
-                            <button type="button" data-tab="ai-analysis" data-active="false"
+                            <button type="button" data-tab="ai-analysis" data-active="${isAi}"
                                     class="exercise-tab-btn flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold">ИИ-совет</button>
-                            <button type="button" data-tab="timer" data-active="false"
+                            <button type="button" data-tab="timer" data-active="${isTimer}"
                                     class="exercise-tab-btn flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold">Таймер</button>
                         </div>
                         <div class="exercise-tab-panels">
-                            <div data-tab-panel="dynamics" class="exercise-tab-panel">
+                            <div data-tab-panel="dynamics" data-panel="dynamics" class="exercise-tab-panel ${isDynamics ? '' : 'hidden'}">
                                 <div class="min-h-[120px]" data-sparkline>
                                     ${Components.sparkline(historyPoints, 60)}
                                 </div>
                             </div>
-                            <div data-tab-panel="ai-analysis" class="exercise-tab-panel hidden">
+                            <div data-tab-panel="ai-analysis" data-panel="ai-analysis" class="exercise-tab-panel ${isAi ? '' : 'hidden'}">
                                 <div class="ai-analysis-block" data-ai-analysis>
                                     <button type="button"
                                             data-action="toggle-ai-analysis"
@@ -3377,7 +3424,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                                     </div>
                                 </div>
                             </div>
-                            <div data-tab-panel="timer" class="exercise-tab-panel hidden" data-timer-panel-ex-id="${ex.id}">
+                            <div data-tab-panel="timer" data-panel="timer" class="exercise-tab-panel ${isTimer ? '' : 'hidden'}" data-timer-panel-ex-id="${ex.id}">
                                 <div class="timer-panel-content py-2" data-timer-panel-content>
                                     ${this.renderTimerPanel(ex)}
                                 </div>
@@ -3437,74 +3484,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 </div>
 
                  <div class="flex overflow-x-auto gap-3 pb-4 px-4 workout-carousel" id="carousel">
-                     ${allCards.join('')}
-                 </div>
-
-                      <div id="rest-timer-bar" class="hidden fixed bottom-16 left-0 right-0 z-50 rest-timer-bar"
-                         role="timer" aria-live="polite" aria-label="Таймер отдыха">
-                          <div class="rest-timer-bar__inner glass rounded-2xl w-full max-w-[92vw] mx-auto flex flex-col gap-2.5 p-3.5">
-                              <!-- Row 1: Mode toggle (Timer / Stopwatch) -->
-                              <div class="rest-timer-mode-toggle flex gap-1">
-                                  <button type="button" data-action="rest-timer-mode" data-mode="timer"
-                                          class="mode-btn flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-colors"
-                                          data-active="false">Таймер</button>
-                                  <button type="button" data-action="rest-timer-mode" data-mode="stopwatch"
-                                          class="mode-btn flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-colors"
-                                          data-active="false">Секундомер</button>
-                              </div>
-
-                              <!-- Row 2: Large countdown/count-up time + dynamic milliseconds -->
-                              <div class="rest-timer-time flex items-center gap-1">
-                                  <span id="rest-timer-remaining" class="font-mono text-2xl font-bold text-lime-600 dark:text-lime-400 tabular-nums">00:00</span>
-                                  <span id="rest-timer-ms" class="text-xs text-lime-600 dark:text-lime-400 tabular-nums">00</span>
-                                  <span id="rest-timer-state" class="text-[10px] font-semibold text-surface-500 dark:text-surface-400 uppercase">Отдых</span>
-                              </div>
-
-                              <!-- Row 3: Time presets / custom input with numeric keypad -->
-                              <div class="rest-timer-controls flex flex-col gap-2.5">
-                                  <!-- Presets (timer mode only) -->
-                                  <div id="rest-timer-presets" class="rest-timer-presets flex gap-1.5 overflow-x-auto pb-1" data-timer-presets>
-                                      ${REST_TIMER_PRESETS.map(sec => `
-                                          <button type="button" data-action="rest-timer-preset" data-preset="${sec}"
-                                                  class="preset-btn flex-shrink-0 px-2 py-1 rounded-lg text-xs font-semibold glass text-surface-600 dark:text-surface-400 hover:bg-surface-200 dark:hover:bg-white/10 transition-colors snap-start">
-                                              ${sec >= 60 ? `${sec / 60}м` : `${sec}с`}
-                                          </button>
-                                      `).join('')}
-                                  </div>
-
-                                  <!-- Custom input (timer mode only) -->
-                                  <div id="rest-timer-custom" class="rest-timer-custom flex items-center gap-1" data-timer-custom>
-                                      <input type="number" min="1" max="600" inputmode="numeric" data-action="rest-timer-custom"
-                                             class="w-20 h-7 text-center text-xs font-mono rounded-lg glass-input focus:outline-none focus:border-primary-500"
-                                             placeholder="90">
-                                      <span class="text-[10px] text-surface-500 dark:text-surface-400">сек</span>
-                                  </div>
-
-                                  <!-- Stopwatch mode content -->
-                                  <div data-stopwatch-mode class="hidden">
-                                      <div class="text-center text-xs text-surface-500 dark:text-surface-400">
-                                          Нажмите «Готов» для фиксации времени
-                                      </div>
-                                  </div>
-                              </div>
-
-                              <!-- Progress bar (managed by updateRestTimerUI) -->
-                              <div class="h-1 bg-surface-200 dark:bg-white/10 rounded-full overflow-hidden" data-timer-progress-container>
-                                  <div id="rest-timer-progress"
-                                       class="h-full w-0 bg-lime-500 dark:bg-lime-400 rounded-full transition-all duration-1000 ease-linear"
-                                       style="display: none;">
-                                  </div>
-                              </div>
-
-                              <!-- Row 4: Full-width "Готов" dismiss button -->
-                              <button id="rest-timer-dismiss" data-action="dismiss-rest-timer" type="button"
-                                      class="rest-timer-dismiss w-full py-2 rounded-xl bg-lime-600 dark:bg-lime-500 text-white font-bold text-sm transition-colors hover:bg-lime-700 dark:hover:bg-lime-400"
-                                      aria-label="Готов">
-                                  Готов
-                              </button>
-                          </div>
-                      </div>
-
+${allCards.join('')}
               </div>
         `;
         console.log('[Workouts] renderWorkoutScreen inserting HTML, container:', container?.tagName, container?.id);
@@ -4195,26 +4175,23 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         });
 
         // Exercise card tab switching (Dynamics / AI Advice / Timer)
-        // Use event delegation on the container so handlers survive DOM re-renders
-        container.addEventListener('click', (e) => {
-            console.log('[Workouts] Container click detected:', e.target);
-            const tab = e.target.closest('[data-tab]');
-            if (!tab) {
-                console.log('[Workouts] Click was not on a tab');
-                return;
-            }
-            e.stopPropagation();
-            console.log('[Workouts] Tab clicked:', tab);
-            const card = tab.closest('[data-exercise-id]');
-            if (!card) {
-                console.warn('[Workouts] Tab click: no parent card with data-exercise-id found');
-                return;
-            }
-            const tabName = tab.dataset.tab;
-            const exerciseId = card.dataset.exerciseId;
-            console.log('[Workouts] Switching tab:', { exerciseId, tabName });
-            this.switchExerciseTab(exerciseId, tabName, container);
-        });
+        const workoutContainerEl = document.getElementById('workout-container') || container;
+        if (workoutContainerEl && !workoutContainerEl._tabDelegationBound) {
+            workoutContainerEl._tabDelegationBound = true;
+            workoutContainerEl.addEventListener('click', (e) => {
+                const tabBtn = e.target.closest('[data-tab]');
+                if (!tabBtn) return;
+                
+                const exerciseCard = tabBtn.closest('[data-exercise-id]');
+                if (!exerciseCard) return;
+
+                const exerciseId = exerciseCard.getAttribute('data-exercise-id');
+                const targetTab = tabBtn.getAttribute('data-tab');
+
+                e.stopPropagation();
+                this.switchExerciseTab(exerciseId, targetTab, exerciseCard);
+            });
+        }
 
         // Bind per-row event handlers (toggle completion, drum picker, persistence)
         container.querySelectorAll('[data-set-id]').forEach(rowEl => {
@@ -4412,43 +4389,46 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             app.showPage('workouts');
         });
 
-        // Dismiss rest timer — persists elapsed time onto the owning set.
-        container.querySelector('[data-action="dismiss-rest-timer"]')?.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.stopAndSaveRestTimer(session);
-        });
-
-        // Rest timer mode toggle
-        container.querySelectorAll('[data-action="rest-timer-mode"]').forEach(btn => {
-            btn.addEventListener('click', (e) => {
+        // Rest timer action delegation on container
+        container.addEventListener('click', (e) => {
+            const modeBtn = e.target.closest('[data-action="rest-timer-mode"]');
+            if (modeBtn) {
                 e.stopPropagation();
-                const mode = e.currentTarget.dataset.mode;
+                const mode = modeBtn.dataset.mode;
                 this.saveRestTimerMode(mode);
-            });
-        });
+                this.refreshAllTimerPanels(container);
+                return;
+            }
 
-        // Rest timer preset selection (Timer mode)
-        container.querySelectorAll('[data-action="rest-timer-preset"]').forEach(btn => {
-            btn.addEventListener('click', (e) => {
+            const presetBtn = e.target.closest('[data-action="rest-timer-preset"]');
+            if (presetBtn) {
                 e.stopPropagation();
-                const seconds = parseInt(e.currentTarget.dataset.preset);
-                if (isNaN(seconds)) return;
-                this.saveRestTimerPreset(seconds);
-                // Apply preset to the running timer if in timer mode
-                if (this.restTimerMode === 'timer' && this.restTimerStartTime != null) {
-                    this.restTimerPlannedDuration = seconds * 1000;
-                    this.restTimerTargetTimestamp = this.restTimerStartTime + this.restTimerPlannedDuration;
-                    this.restTimerOvertime = false;
-                    this.updateRestTimerUI();
+                const seconds = parseInt(presetBtn.dataset.preset);
+                if (!isNaN(seconds)) {
+                    this.saveRestTimerPreset(seconds);
+                    if (this.restTimerMode === 'timer' && this.restTimerStartTime != null) {
+                        this.restTimerPlannedDuration = seconds * 1000;
+                        this.restTimerTargetTimestamp = this.restTimerStartTime + this.restTimerPlannedDuration;
+                        this.restTimerOvertime = false;
+                        this.updateRestTimerUI();
+                    }
+                    this.refreshAllTimerPanels(container);
                 }
-            });
+                return;
+            }
+
+            const dismissBtn = e.target.closest('[data-action="dismiss-rest-timer"]');
+            if (dismissBtn) {
+                e.stopPropagation();
+                this.stopAndSaveRestTimer(session);
+                return;
+            }
         });
 
-        // Rest timer custom input (Timer mode)
-        const customInput = container.querySelector('[data-action="rest-timer-custom"]');
-        if (customInput) {
-            customInput.addEventListener('change', (e) => {
-                const seconds = parseInt(e.target.value);
+        container.addEventListener('change', (e) => {
+            const customInput = e.target.closest('[data-action="rest-timer-custom"]');
+            if (customInput) {
+                const seconds = parseInt(customInput.value);
                 if (isNaN(seconds) || seconds < 1) return;
                 this.saveRestTimerPreset(seconds);
                 if (this.restTimerMode === 'timer' && this.restTimerStartTime != null) {
@@ -4457,8 +4437,9 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     this.restTimerOvertime = false;
                     this.updateRestTimerUI();
                 }
-            });
-        }
+                this.refreshAllTimerPanels(container);
+            }
+        });
     },
 
     // Writes a value into a set input and replays the native input/change events
