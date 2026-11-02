@@ -1534,6 +1534,16 @@ export const Workouts = {
         }
     },
 
+    updateTimerDuration(seconds) {
+        this.saveRestTimerPreset(seconds);
+        if (this.restTimerStartTime != null) {
+            this.restTimerPlannedDuration = seconds * 1000;
+            this.restTimerTargetTimestamp = this.restTimerStartTime + this.restTimerPlannedDuration;
+            this.restTimerOvertime = false;
+            this.updateRestTimerUI();
+        }
+    },
+
     // ===== Dual-mode rest timer helpers end =====
 
     startRestTimer(set, exercise, session) {
@@ -1582,22 +1592,31 @@ export const Workouts = {
     // Called when the next set is completed, or when the workout is finished.
     async stopAndSaveRestTimer(session) {
         const sess = session || this.currentSession;
-        if (!sess || this.restTimerStartTime == null || this.activeRestForSetId == null) {
+        if (!sess || this.restTimerStartTime == null) {
             this.stopRestTimer();
             return;
         }
         const elapsed = Math.max(0, Math.floor((Date.now() - this.restTimerStartTime) / 1000));
-        const setId = this.activeRestForSetId;
-
-        // Capture the owning exercise before clearing state, so we can refresh its Timer panel.
-        const ownerEx = this.findExerciseOfSet(sess, setId);
-
-        const targetSet = this.findSetInSession(sess, setId);
-        if (targetSet) {
-            targetSet.rest_time_seconds = elapsed;
-            this.applyRestTimeInline(setId, elapsed);
+        
+        // Find the set: activeRestForSetId, or if null, try to find the last completed set for the active exercise
+        let setId = this.activeRestForSetId;
+        if (!setId && this.activeRestExerciseId) {
+            const exercise = sess.exercises?.find(ex => String(ex.id) === String(this.activeRestExerciseId));
+            const lastSet = exercise?.sets?.filter(s => s.is_completed).pop();
+            setId = lastSet?.id;
         }
-        this.lastSavedRestSetId = setId;
+
+        if (setId) {
+            const targetSet = this.findSetInSession(sess, setId);
+            if (targetSet) {
+                targetSet.rest_time_seconds = elapsed;
+                // No longer rendering inline rest-time
+            }
+            this.lastSavedRestSetId = setId;
+        }
+
+        const ownerEx = setId ? this.findExerciseOfSet(sess, setId)?.exercise : 
+                        (this.activeRestExerciseId ? sess.exercises?.find(ex => String(ex.id) === String(this.activeRestExerciseId)) : null);
 
         this.stopRestTimer();
         this.activeRestForSetId = null;
@@ -1608,21 +1627,19 @@ export const Workouts = {
         this.restTimerOvertime = false;
         this.updateRestTimerUI();
 
-        // Refresh the Timer panel on the owning exercise card so the saved
-        // rest time appears without a full re-render.
-        if (ownerEx.exercise?.id) {
-            this.updateTimerPanel(ownerEx.exercise.id, ownerEx.exercise);
+        if (ownerEx?.id) {
+            this.updateTimerPanel(ownerEx.id, ownerEx, this.app?.elements?.pageContent || document);
         }
 
+        if (setId && !this.isLocalSession(sess)) {
+            const token = this.app?.state?.tokens?.access;
+            if (token) {
+                API.patch(`/workouts/sets/${setId}`, { rest_time_seconds: elapsed }, token).catch(() => {});
+            }
+        }
         if (this.isLocalSession(sess)) {
             this.persistLocalSession(sess);
-            this.recordLocalSetPatch(sess.key, setId, { rest_time_seconds: elapsed });
-            return;
-        }
-
-        const token = this.app?.state?.tokens?.access;
-        if (token) {
-            API.patch(`/workouts/sets/${setId}`, { rest_time_seconds: elapsed }, token).catch(() => {});
+            if (setId) this.recordLocalSetPatch(sess.key, setId, { rest_time_seconds: elapsed });
         }
     },
 
@@ -1798,14 +1815,15 @@ export const Workouts = {
 
          let html = `
              <div class="space-y-3">
-                 <div class="flex rounded-xl glass p-1 gap-1">
+                 <div class="relative flex rounded-xl glass p-1 gap-1">
+                     <span class="absolute top-1 bottom-1 w-[calc(50%-4px)] bg-primary-600 rounded-lg shadow-sm transition-transform duration-200 ${mode === 'stopwatch' ? 'translate-x-full' : 'translate-x-0'}"></span>
                      <button type="button" data-action="rest-timer-mode" data-mode="timer"
-                             class="flex-1 py-1 px-2 rounded-lg text-xs font-semibold transition-colors ${mode === 'timer' ? 'bg-primary-600 text-white dark:bg-white dark:text-zinc-950 shadow-sm' : 'text-surface-600 dark:text-surface-300'}"
+                             class="relative flex-1 py-1 px-2 rounded-lg text-xs font-semibold transition-colors ${mode === 'timer' ? 'text-white' : 'text-surface-600 dark:text-surface-300'}"
                              aria-pressed="${mode === 'timer'}">
                          Таймер
                      </button>
                      <button type="button" data-action="rest-timer-mode" data-mode="stopwatch"
-                             class="flex-1 py-1 px-2 rounded-lg text-xs font-semibold transition-colors ${mode === 'stopwatch' ? 'bg-primary-600 text-white dark:bg-white dark:text-zinc-950 shadow-sm' : 'text-surface-600 dark:text-surface-300'}"
+                             class="relative flex-1 py-1 px-2 rounded-lg text-xs font-semibold transition-colors ${mode === 'stopwatch' ? 'text-white' : 'text-surface-600 dark:text-surface-300'}"
                              aria-pressed="${mode === 'stopwatch'}">
                          Секундомер
                      </button>
@@ -1819,7 +1837,8 @@ export const Workouts = {
                  <div class="flex flex-wrap gap-1.5" data-timer-presets>
                      ${presets.map(sec => `
                          <button type="button" data-action="rest-timer-preset" data-preset="${sec}"
-                                 class="flex-1 py-1.5 px-2 rounded-xl text-xs font-semibold glass transition-colors ${currentPreset === sec ? 'border-primary-500 text-primary-600 dark:text-primary-400 font-bold' : 'text-surface-600 dark:text-surface-300'}">
+                                 class="flex-1 py-1.5 px-2 rounded-xl text-xs font-semibold glass transition-colors ${currentPreset === sec ? 'border border-primary-500 text-primary-600 dark:text-primary-400 font-bold bg-primary-500/10 shadow-sm' : 'text-surface-600 dark:text-surface-300'}"
+                                 aria-pressed="${currentPreset === sec}">
                              ${presetLabels[sec] || (sec + 'с')}
                          </button>
                      `).join('')}
@@ -1840,19 +1859,18 @@ export const Workouts = {
              const label = isOvertime ? 'Перерыв просрочен' : (isStopwatch ? 'Секундомер' : 'Отдых');
              timerDisplayHtml = `
                  <div class="p-3 rounded-2xl glass flex flex-col items-center justify-center space-y-2">
-                     <div class="flex items-center gap-2 text-xs text-surface-500 dark:text-surface-400">
-                         <span class="w-2 h-2 rounded-full bg-lime-500 animate-pulse"></span>
+                     <div class="hidden text-xs text-surface-500 dark:text-surface-400">
                          <span id="rest-timer-state-${exercise.id}">${label}</span>
                      </div>
-                     <div class="flex items-baseline gap-1 font-mono text-3xl font-bold tabular-nums ${isOvertime ? 'text-rose-500 dark:text-rose-400 animate-pulse' : 'text-lime-600 dark:text-lime-400'}">
+                     <div class="flex items-baseline gap-1 font-mono text-4xl font-bold tabular-nums ${isOvertime ? 'text-rose-500 dark:text-rose-400 animate-pulse' : 'text-lime-400 dark:text-lime-300'}">
                          <span id="rest-timer-remaining-${exercise.id}">00:00</span>
                          <span class="text-xs font-normal text-surface-400" id="rest-timer-ms-${exercise.id}">00</span>
                      </div>
-                     <div class="w-full bg-surface-200 dark:bg-zinc-800 h-1.5 rounded-full overflow-hidden" id="rest-timer-progress-wrap-${exercise.id}">
-                         <div class="h-full bg-lime-500 transition-all duration-100" id="rest-timer-progress-${exercise.id}" style="width: 0%"></div>
+                     <div class="w-full bg-surface-200 dark:bg-zinc-800 h-2 rounded-full overflow-hidden" id="rest-timer-progress-wrap-${exercise.id}">
+                         <div class="h-full bg-lime-400 dark:bg-lime-300 transition-all duration-100" id="rest-timer-progress-${exercise.id}" style="width: 0%"></div>
                      </div>
                      <button type="button" data-action="dismiss-rest-timer"
-                             class="w-full py-2 bg-lime-600 hover:bg-lime-700 text-white dark:bg-lime-500 dark:hover:bg-lime-600 rounded-xl font-semibold text-xs transition-colors">
+                             class="w-full py-2 bg-primary-600 hover:bg-primary-700 text-white dark:bg-primary-500 dark:hover:bg-primary-600 rounded-xl font-semibold text-xs transition-colors">
                          Готов / Сохранить
                      </button>
                  </div>
@@ -1865,6 +1883,7 @@ export const Workouts = {
              `;
          }
          html += `<div data-timer-display data-timer-panel-ex-id="${exercise.id}">${timerDisplayHtml}</div>`;
+
 
          if (restSets.length > 0) {
              html += `
@@ -1976,11 +1995,29 @@ export const Workouts = {
     // HTML fragment rendered inside the exercise card template after each set
     // row (except the last) when that set already has a measured rest time.
     renderRestTimeInline(set) {
-        return '';
+        if (!set || set.rest_time_seconds == null) return '';
+        return `<div class="rest-time-inline flex items-center gap-1 ml-4 mt-1 text-xs text-surface-500 dark:text-surface-400 font-mono tabular-nums">`
+            + `<span aria-hidden="true">⏱</span>`
+            + `<span class="font-mono tabular-nums">${this.formatTimer(set.rest_time_seconds)}</span>`
+            + `<span class="font-semibold">Отдых</span>`
+            + `</div>`;
     },
 
     applyRestTimeInline(setId, seconds) {
-        // Rest history is displayed inside the timer panel tab
+        const row = document.querySelector(`[data-set-id="${String(setId)}"]`);
+        if (!row) return;
+        const existing = row.nextElementSibling;
+        if (existing && existing.classList.contains('rest-time-inline')) {
+            existing.remove();
+        }
+        if (seconds != null) {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'rest-time-inline flex items-center gap-1 ml-4 mt-1 text-xs text-surface-500 dark:text-surface-400 font-mono tabular-nums';
+            wrapper.innerHTML = `<span aria-hidden="true">⏱</span>`
+                + `<span class="font-mono tabular-nums">${this.formatTimer(seconds)}</span>`
+                + `<span class="font-semibold">Отдых</span>`;
+            row.parentNode.insertBefore(wrapper, row.nextSibling);
+        }
     },
 
     // Shared previous-set text computation from completed history sessions.
@@ -4420,15 +4457,8 @@ ${allCards.join('')}
                 const mode = modeBtn.dataset.mode;
                 this.saveRestTimerMode(mode);
                 this.restTimerMode = mode;
-                if (this.restTimerStartTime != null) {
-                    const card = modeBtn.closest('[data-exercise-id]');
-                    const exerciseId = card?.dataset?.exerciseId;
-                    const exercise = exerciseId ? session.exercises?.find(ex => String(ex.id) === String(exerciseId)) : session.exercises?.[0];
-                    const set = exercise?.sets?.[exercise.sets.length - 1];
-                    this.startRestTimer(set, exercise, session);
-                } else {
-                    this.refreshAllTimerPanels(container);
-                }
+                // Just refresh to update the visual UI
+                this.refreshAllTimerPanels(container);
                 return;
             }
 
@@ -4437,15 +4467,26 @@ ${allCards.join('')}
                 e.stopPropagation();
                 const seconds = parseInt(presetBtn.dataset.preset);
                 if (!isNaN(seconds)) {
-                    this.saveRestTimerPreset(seconds);
+                    this.updateTimerDuration(seconds);
                     container.querySelectorAll('[data-action="rest-timer-custom"]').forEach(inp => {
                         if (inp.value != String(seconds)) inp.value = seconds;
                     });
-                    const card = presetBtn.closest('[data-exercise-id]');
-                    const exerciseId = card?.dataset?.exerciseId;
-                    const exercise = exerciseId ? session.exercises?.find(ex => String(ex.id) === String(exerciseId)) : session.exercises?.[0];
-                    const set = exercise?.sets?.[exercise.sets.length - 1];
-                    this.startRestTimer(set, exercise, session);
+                    container.querySelectorAll('[data-action="rest-timer-preset"]').forEach(btn => {
+                        const isActive = String(btn.dataset.preset) === String(seconds);
+                        btn.classList.toggle('border-primary-500', isActive);
+                        btn.classList.toggle('text-primary-600', isActive);
+                        btn.classList.toggle('dark:text-primary-400', isActive);
+                        btn.classList.toggle('font-bold', isActive);
+                        btn.classList.toggle('bg-primary-500/10', isActive);
+                    });
+                    this.refreshAllTimerPanels(container);
+                    if (this.restTimerStartTime == null) {
+                        const card = presetBtn.closest('[data-exercise-id]');
+                        const exerciseId = card?.dataset?.exerciseId;
+                        const exercise = exerciseId ? session.exercises?.find(ex => String(ex.id) === String(exerciseId)) : session.exercises?.[0];
+                        const set = exercise?.sets?.[exercise.sets.length - 1];
+                        this.startRestTimer(set, exercise, session);
+                    }
                 }
                 return;
             }
@@ -4463,15 +4504,18 @@ ${allCards.join('')}
             if (customInput) {
                 const seconds = parseInt(customInput.value);
                 if (isNaN(seconds) || seconds < 1) return;
-                this.saveRestTimerPreset(seconds);
+                this.updateTimerDuration(seconds);
                 container.querySelectorAll('[data-action="rest-timer-custom"]').forEach(inp => {
                     if (inp.value != String(seconds)) inp.value = seconds;
                 });
-                const card = customInput.closest('[data-exercise-id]');
-                const exerciseId = card?.dataset?.exerciseId;
-                const exercise = exerciseId ? session.exercises?.find(ex => String(ex.id) === String(exerciseId)) : session.exercises?.[0];
-                const set = exercise?.sets?.[exercise.sets.length - 1];
-                this.startRestTimer(set, exercise, session);
+                this.refreshAllTimerPanels(container);
+                if (this.restTimerStartTime == null) {
+                    const card = customInput.closest('[data-exercise-id]');
+                    const exerciseId = card?.dataset?.exerciseId;
+                    const exercise = exerciseId ? session.exercises?.find(ex => String(ex.id) === String(exerciseId)) : session.exercises?.[0];
+                    const set = exercise?.sets?.[exercise.sets.length - 1];
+                    this.startRestTimer(set, exercise, session);
+                }
             }
         });
     },
