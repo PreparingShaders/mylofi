@@ -157,6 +157,7 @@ export const Workouts = {
     // True when the countdown has reached zero and is now counting overtime.
     restTimerOvertime: false,
     activeRestForSetId: null,
+    activeRestExerciseId: null,
     lastSavedRestSetId: null,
     restSavedBySetId: null,
     // Per-exercise auto-start preference for the rest timer. Stored as a Map
@@ -1544,6 +1545,7 @@ export const Workouts = {
         this.restSavedBySetId = null;
         this.lastSavedRestSetId = null;
         this.activeRestForSetId = set?.id ?? null;
+        this.activeRestExerciseId = exercise?.id ?? (set ? this.findExerciseOfSet(session || this.currentSession, set.id)?.exercise?.id : null);
 
         if (this.restTimerMode === 'stopwatch') {
             // Stopwatch mode: no countdown target, counts up from zero
@@ -1599,6 +1601,7 @@ export const Workouts = {
 
         this.stopRestTimer();
         this.activeRestForSetId = null;
+        this.activeRestExerciseId = null;
         this.restTimerStartTime = null;
         this.restTimerTargetTimestamp = null;
         this.restTimerPlannedDuration = null;
@@ -1633,6 +1636,7 @@ export const Workouts = {
 
         this.stopRestTimer();
         this.activeRestForSetId = null;
+        this.activeRestExerciseId = null;
         this.restTimerStartTime = null;
         this.restTimerTargetTimestamp = null;
         this.restTimerPlannedDuration = null;
@@ -1669,79 +1673,106 @@ export const Workouts = {
 
     updateRestTimerUI() {
         const sess = this.currentSession;
-        const activeSetId = this.activeRestForSetId;
-        if (activeSetId == null || !sess) return;
-        const ownerEx = this.findExerciseOfSet(sess, activeSetId);
-        const exId = ownerEx?.exercise?.id;
-        if (!exId) return;
+        if (!sess) return;
 
-        const remainingEl = document.getElementById(`rest-timer-remaining-${exId}`);
-        const msEl = document.getElementById(`rest-timer-ms-${exId}`);
-        const stateEl = document.getElementById(`rest-timer-state-${exId}`);
-        const progressEl = document.getElementById(`rest-timer-progress-${exId}`);
-        const progressWrapEl = document.getElementById(`rest-timer-progress-wrap-${exId}`);
-        if (!remainingEl) return;
+        const activeExId = this.activeRestExerciseId || (this.activeRestForSetId != null ? this.findExerciseOfSet(sess, this.activeRestForSetId)?.exercise?.id : null);
+        const timerDisplays = document.querySelectorAll('[data-timer-display]');
 
-        const mode = this.restTimerMode || 'timer';
+        timerDisplays.forEach(displayEl => {
+            const exId = displayEl.getAttribute('data-timer-panel-ex-id');
+            const isActiveForThisEx = this.restTimerStartTime != null && activeExId != null && String(exId) === String(activeExId);
 
-        // Compute and render milliseconds (0-99) for the dynamic running effect.
-        const updateMs = (ms) => {
-            if (msEl) msEl.textContent = String(Math.floor(ms / 10) % 100).padStart(2, '0');
-        };
-
-        // Stopwatch mode: count up from start time, no countdown target
-        if (mode === 'stopwatch') {
-            if (this.restTimerStartTime == null) {
-                remainingEl.textContent = '00:00';
+            if (!isActiveForThisEx) {
+                if (!displayEl.textContent.includes('Таймер отдыха не запущен')) {
+                    displayEl.innerHTML = `<div class="text-center py-2 text-xs text-surface-500">Таймер отдыха не запущен</div>`;
+                }
                 return;
             }
+
+            const mode = this.restTimerMode || 'timer';
             const now = Date.now();
-            const elapsedMs = Math.max(0, now - this.restTimerStartTime);
-            const elapsed = Math.floor(elapsedMs / 1000);
-            remainingEl.textContent = this.formatTimer(elapsed);
-            updateMs(elapsedMs);
-            remainingEl.className = 'font-mono text-3xl font-bold tabular-nums text-lime-600 dark:text-lime-400';
-            if (stateEl) stateEl.textContent = 'Секундомер';
-            if (progressWrapEl) progressWrapEl.style.display = 'none';
-            return;
-        }
+            let displayValue, displayMs, cssClass, stateText, showProgress, progressPercent;
 
-        // Timer mode: countdown from target, switch to overtime at zero
-        if (this.restTimerTargetTimestamp == null) {
-            remainingEl.textContent = '00:00';
-            if (msEl) msEl.textContent = '00';
-            if (progressWrapEl) progressWrapEl.style.display = 'none';
-            return;
-        }
+            if (mode === 'stopwatch') {
+                const elapsedMs = Math.max(0, now - this.restTimerStartTime);
+                const elapsed = Math.floor(elapsedMs / 1000);
+                displayValue = this.formatTimer(elapsed);
+                displayMs = Math.floor(elapsedMs / 10) % 100;
+                cssClass = 'font-mono text-3xl font-bold tabular-nums text-lime-600 dark:text-lime-400';
+                stateText = 'Секундомер';
+                showProgress = false;
+            } else {
+                if (this.restTimerTargetTimestamp == null) {
+                    displayValue = '00:00';
+                    displayMs = 0;
+                    cssClass = 'font-mono text-3xl font-bold tabular-nums text-lime-600 dark:text-lime-400';
+                    stateText = 'Отдых';
+                    showProgress = false;
+                } else {
+                    const remaining = Math.max(0, Math.ceil((this.restTimerTargetTimestamp - now) / 1000));
+                    const elapsed = Math.max(0, Math.floor((now - this.restTimerStartTime) / 1000));
 
-        const now = Date.now();
-        const remaining = Math.max(0, Math.ceil((this.restTimerTargetTimestamp - now) / 1000));
-        const elapsed = Math.max(0, Math.floor((now - this.restTimerStartTime) / 1000));
-
-        if (remaining <= 0) {
-            this.restTimerOvertime = true;
-            this.restTimerMode = 'timer';
-            const overtimeDisplay = elapsed;
-            remainingEl.textContent = this.formatTimer(overtimeDisplay);
-            const elapsedMs = Math.max(0, now - this.restTimerStartTime);
-            updateMs(elapsedMs);
-            remainingEl.className = 'font-mono text-3xl font-bold tabular-nums text-rose-500 dark:text-rose-400 animate-pulse';
-            if (stateEl) stateEl.textContent = 'Перерыв просрочен';
-            if (progressWrapEl) progressWrapEl.style.display = 'none';
-        } else {
-            this.restTimerOvertime = false;
-            remainingEl.textContent = this.formatTimer(remaining);
-            const remainingMs = Math.max(0, this.restTimerTargetTimestamp - now);
-            updateMs(remainingMs);
-            remainingEl.className = 'font-mono text-3xl font-bold tabular-nums text-lime-600 dark:text-lime-400';
-            if (stateEl) stateEl.textContent = 'Отдых';
-            if (progressWrapEl) progressWrapEl.style.display = 'block';
-            if (progressEl) {
-                const totalSeconds = this.restTimerPlannedDuration ? this.restTimerPlannedDuration / 1000 : 90;
-                const progress = Math.min(100, (elapsed / totalSeconds) * 100);
-                progressEl.style.width = `${progress}%`;
+                    if (remaining <= 0) {
+                        this.restTimerOvertime = true;
+                        const overtimeDisplay = elapsed;
+                        displayValue = this.formatTimer(overtimeDisplay);
+                        displayMs = Math.floor((now - this.restTimerStartTime) / 10) % 100;
+                        cssClass = 'font-mono text-3xl font-bold tabular-nums text-rose-500 dark:text-rose-400 animate-pulse';
+                        stateText = 'Перерыв просрочен';
+                        showProgress = false;
+                    } else {
+                        this.restTimerOvertime = false;
+                        displayValue = this.formatTimer(remaining);
+                        displayMs = Math.floor((this.restTimerTargetTimestamp - now) / 10) % 100;
+                        cssClass = 'font-mono text-3xl font-bold tabular-nums text-lime-600 dark:text-lime-400';
+                        stateText = 'Отдых';
+                        showProgress = true;
+                        const totalSeconds = this.restTimerPlannedDuration ? this.restTimerPlannedDuration / 1000 : 90;
+                        progressPercent = Math.min(100, (elapsed / totalSeconds) * 100);
+                    }
+                }
             }
-        }
+
+            let remainingEl = displayEl.querySelector(`[id^="rest-timer-remaining-"]`);
+            if (!remainingEl) {
+                const exerciseId = exId;
+                const isOvertime = this.restTimerOvertime === true;
+                displayEl.innerHTML = `
+                    <div class="p-3 rounded-2xl glass flex flex-col items-center justify-center space-y-2">
+                        <div class="flex items-center gap-2 text-xs text-surface-500 dark:text-surface-400">
+                            <span class="w-2 h-2 rounded-full bg-lime-500 animate-pulse"></span>
+                            <span id="rest-timer-state-${exerciseId}">${stateText}</span>
+                        </div>
+                        <div class="flex items-baseline gap-1 font-mono text-3xl font-bold tabular-nums ${isOvertime ? 'text-rose-500 dark:text-rose-400 animate-pulse' : 'text-lime-600 dark:text-lime-400'}">
+                            <span id="rest-timer-remaining-${exerciseId}">00:00</span>
+                            <span class="text-xs font-normal text-surface-400" id="rest-timer-ms-${exerciseId}">00</span>
+                        </div>
+                        <div class="w-full bg-surface-200 dark:bg-zinc-800 h-1.5 rounded-full overflow-hidden" id="rest-timer-progress-wrap-${exerciseId}">
+                            <div class="h-full bg-lime-500 transition-all duration-100" id="rest-timer-progress-${exerciseId}" style="width: 0%"></div>
+                        </div>
+                        <button type="button" data-action="dismiss-rest-timer"
+                                class="w-full py-2 bg-lime-600 hover:bg-lime-700 text-white dark:bg-lime-500 dark:hover:bg-lime-600 rounded-xl font-semibold text-xs transition-colors">
+                            Готов / Сохранить
+                        </button>
+                    </div>
+                `;
+                remainingEl = displayEl.querySelector(`[id^="rest-timer-remaining-"]`);
+            }
+
+            const msEl = displayEl.querySelector(`[id^="rest-timer-ms-"]`);
+            const stateEl = displayEl.querySelector(`[id^="rest-timer-state-"]`);
+            const progressEl = displayEl.querySelector(`[id^="rest-timer-progress-"]`);
+            const progressWrapEl = displayEl.querySelector(`[id^="rest-timer-progress-wrap-"]`);
+
+            if (remainingEl) {
+                remainingEl.textContent = displayValue;
+                remainingEl.className = cssClass;
+            }
+            if (msEl) msEl.textContent = String(displayMs).padStart(2, '0');
+            if (stateEl) stateEl.textContent = stateText;
+            if (progressWrapEl) progressWrapEl.style.display = showProgress ? 'block' : 'none';
+            if (progressEl && showProgress) progressEl.style.width = `${progressPercent}%`;
+        });
     },
 
      // Shared inner markup for the muted rest-time line shown between set rows.
@@ -1757,7 +1788,10 @@ export const Workouts = {
      // plus history of measured rest times per completed set.
      renderTimerPanel(exercise) {
          const sets = exercise.sets || [];
-         const timerActive = this.activeRestForSetId != null || this.restTimerStartTime != null;
+         const sess = this.currentSession;
+         const activeExId = this.activeRestExerciseId || (this.activeRestForSetId != null && sess ? this.findExerciseOfSet(sess, this.activeRestForSetId)?.exercise?.id : null);
+         const timerActive = (this.activeRestForSetId != null || this.restTimerStartTime != null) &&
+             (activeExId == null || String(activeExId) === String(exercise.id));
          const restSets = sets.filter(set => set.rest_time_seconds != null);
          const mode = this.restTimerMode || this.getStoredRestTimerMode();
          const currentPreset = this.restTimerPresetSeconds || this.getStoredRestTimerPreset();
@@ -1799,11 +1833,12 @@ export const Workouts = {
              `;
          }
 
+         let timerDisplayHtml = '';
          if (timerActive) {
              const isStopwatch = mode === 'stopwatch';
              const isOvertime = this.restTimerOvertime === true;
              const label = isOvertime ? 'Перерыв просрочен' : (isStopwatch ? 'Секундомер' : 'Отдых');
-             html += `
+             timerDisplayHtml = `
                  <div class="p-3 rounded-2xl glass flex flex-col items-center justify-center space-y-2">
                      <div class="flex items-center gap-2 text-xs text-surface-500 dark:text-surface-400">
                          <span class="w-2 h-2 rounded-full bg-lime-500 animate-pulse"></span>
@@ -1823,12 +1858,13 @@ export const Workouts = {
                  </div>
              `;
          } else {
-             html += `
+             timerDisplayHtml = `
                  <div class="text-center py-2 text-xs text-surface-500">
                      Таймер отдыха не запущен
                  </div>
              `;
          }
+         html += `<div data-timer-display data-timer-panel-ex-id="${exercise.id}">${timerDisplayHtml}</div>`;
 
          if (restSets.length > 0) {
              html += `
@@ -1913,6 +1949,7 @@ export const Workouts = {
           const exercise = this.currentSession?.exercises?.find(ex => String(ex.id) === String(exerciseId));
           if (exercise) {
               this.updateTimerPanel(exerciseId, exercise, rootContainer);
+              this.updateRestTimerUI();
           }
       }
   },
@@ -1939,27 +1976,11 @@ export const Workouts = {
     // HTML fragment rendered inside the exercise card template after each set
     // row (except the last) when that set already has a measured rest time.
     renderRestTimeInline(set) {
-        if (!set || set.rest_time_seconds == null) return '';
-        return `<div class="rest-time-inline flex items-center gap-1 ml-4 mt-1 text-xs text-surface-500 dark:text-surface-400 font-mono tabular-nums">`
-            + `${this.restTimeLabelHtml(set.rest_time_seconds)}`
-            + `</div>`;
+        return '';
     },
 
-    // Insert, update, or remove the inline rest-time line for a set row in the
-    // live DOM (used when a rest time is saved or cleared without a full re-render).
     applyRestTimeInline(setId, seconds) {
-        const row = document.querySelector(`[data-set-id="${String(setId)}"]`);
-        if (!row) return;
-        const existing = row.nextElementSibling;
-        if (existing && existing.classList.contains('rest-time-inline')) {
-            existing.remove();
-        }
-        if (seconds != null) {
-            const wrapper = document.createElement('div');
-            wrapper.className = 'rest-time-inline flex items-center gap-1 ml-4 mt-1 text-xs text-surface-500 dark:text-surface-400 font-mono tabular-nums';
-            wrapper.innerHTML = this.restTimeLabelHtml(seconds);
-            row.parentNode.insertBefore(wrapper, row.nextSibling);
-        }
+        // Rest history is displayed inside the timer panel tab
     },
 
     // Shared previous-set text computation from completed history sessions.
@@ -3194,6 +3215,7 @@ export const Workouts = {
             restTimerPresetSeconds: this.restTimerPresetSeconds,
             restTimerOvertime: this.restTimerOvertime,
             activeRestForSetId: this.activeRestForSetId,
+            activeRestExerciseId: this.activeRestExerciseId,
             lastSavedRestSetId: this.lastSavedRestSetId,
             restSavedBySetId: this.restSavedBySetId,
         } : null;
@@ -3520,6 +3542,7 @@ ${allCards.join('')}
             this.restTimerPresetSeconds = savedRestState.restTimerPresetSeconds || this.getStoredRestTimerPreset();
             this.restTimerOvertime = savedRestState.restTimerOvertime || false;
             this.activeRestForSetId = savedRestState.activeRestForSetId;
+            this.activeRestExerciseId = savedRestState.activeRestExerciseId;
             this.lastSavedRestSetId = savedRestState.lastSavedRestSetId;
             this.restSavedBySetId = savedRestState.restSavedBySetId;
             this.restTimerTargetTimestamp = savedRestState.restTimerTargetTimestamp;
@@ -4396,7 +4419,16 @@ ${allCards.join('')}
                 e.stopPropagation();
                 const mode = modeBtn.dataset.mode;
                 this.saveRestTimerMode(mode);
-                this.refreshAllTimerPanels(container);
+                this.restTimerMode = mode;
+                if (this.restTimerStartTime != null) {
+                    const card = modeBtn.closest('[data-exercise-id]');
+                    const exerciseId = card?.dataset?.exerciseId;
+                    const exercise = exerciseId ? session.exercises?.find(ex => String(ex.id) === String(exerciseId)) : session.exercises?.[0];
+                    const set = exercise?.sets?.[exercise.sets.length - 1];
+                    this.startRestTimer(set, exercise, session);
+                } else {
+                    this.refreshAllTimerPanels(container);
+                }
                 return;
             }
 
@@ -4406,13 +4438,14 @@ ${allCards.join('')}
                 const seconds = parseInt(presetBtn.dataset.preset);
                 if (!isNaN(seconds)) {
                     this.saveRestTimerPreset(seconds);
-                    if (this.restTimerMode === 'timer' && this.restTimerStartTime != null) {
-                        this.restTimerPlannedDuration = seconds * 1000;
-                        this.restTimerTargetTimestamp = this.restTimerStartTime + this.restTimerPlannedDuration;
-                        this.restTimerOvertime = false;
-                        this.updateRestTimerUI();
-                    }
-                    this.refreshAllTimerPanels(container);
+                    container.querySelectorAll('[data-action="rest-timer-custom"]').forEach(inp => {
+                        if (inp.value != String(seconds)) inp.value = seconds;
+                    });
+                    const card = presetBtn.closest('[data-exercise-id]');
+                    const exerciseId = card?.dataset?.exerciseId;
+                    const exercise = exerciseId ? session.exercises?.find(ex => String(ex.id) === String(exerciseId)) : session.exercises?.[0];
+                    const set = exercise?.sets?.[exercise.sets.length - 1];
+                    this.startRestTimer(set, exercise, session);
                 }
                 return;
             }
@@ -4431,13 +4464,14 @@ ${allCards.join('')}
                 const seconds = parseInt(customInput.value);
                 if (isNaN(seconds) || seconds < 1) return;
                 this.saveRestTimerPreset(seconds);
-                if (this.restTimerMode === 'timer' && this.restTimerStartTime != null) {
-                    this.restTimerPlannedDuration = seconds * 1000;
-                    this.restTimerTargetTimestamp = this.restTimerStartTime + this.restTimerPlannedDuration;
-                    this.restTimerOvertime = false;
-                    this.updateRestTimerUI();
-                }
-                this.refreshAllTimerPanels(container);
+                container.querySelectorAll('[data-action="rest-timer-custom"]').forEach(inp => {
+                    if (inp.value != String(seconds)) inp.value = seconds;
+                });
+                const card = customInput.closest('[data-exercise-id]');
+                const exerciseId = card?.dataset?.exerciseId;
+                const exercise = exerciseId ? session.exercises?.find(ex => String(ex.id) === String(exerciseId)) : session.exercises?.[0];
+                const set = exercise?.sets?.[exercise.sets.length - 1];
+                this.startRestTimer(set, exercise, session);
             }
         });
     },
