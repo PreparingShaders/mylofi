@@ -4182,6 +4182,15 @@ body.has-network-banner main {
     background: rgba(20, 83, 45, 0.4);
     color: #bbf7d0;
 }
+
+.scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+    display: none;
+}
+
 .ai-analysis-badge.hidden {
     display: none;
 }
