@@ -3716,9 +3716,6 @@ ${allCards.join('')}
                     style="--fill-percent: ${fillPercent}%; --fill-color: ${this.getFillColor(state)}; --border-color: ${this.getBorderColor(state, isActive)};"
                     data-track-state="${state}"
                     data-track-percent="${percent}">
-                <svg class="wave-fill-svg" viewBox="0 0 88 16" preserveAspectRatio="none" aria-hidden="true">
-                    <path class="wave-path" d="M0,4 Q11,14 22,4 Q33,14 44,4 Q55,14 66,4 Q77,14 88,4 L88,16 L0,16 Z" fill="var(--fill-color, transparent)"/>
-                </svg>
                 <div class="circle-content">
                     ${state === 'complete'
                         ? '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>'
@@ -4442,7 +4439,6 @@ ${allCards.join('')}
                 e.stopPropagation();
                 const mode = modeBtn.dataset.mode;
                 this.saveRestTimerMode(mode);
-                this.refreshAllTimerPanels(container);
                 return;
             }
 
