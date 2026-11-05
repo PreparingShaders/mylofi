@@ -2252,6 +2252,28 @@ const App = {
     async handleCompleteWorkout(event) {
         this.state.completingWorkout = true;
         const sessionId = event.target.closest('[data-session-id]')?.dataset.sessionId;
+
+        // Validate workout has exercises with completed sets before confirmation
+        const session = Workouts.currentSession;
+        if (session) {
+            const hasValidExercises = session.exercises?.some(ex =>
+                ex.sets?.some(s => s.is_completed && (s.weight_kg > 0 || s.reps > 0 || s.duration > 0 || s.distance > 0))
+            );
+
+            if (!hasValidExercises) {
+                if (!await Components.confirmModal({
+                    title: 'Пустая тренировка',
+                    message: 'В тренировке нет выполненных подходов. Завершить всё равно?',
+                    confirmText: 'Да, завершить',
+                    confirmClass: 'bg-primary-600 hover:bg-primary-700 text-white dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200 font-semibold shadow-md',
+                    cancelText: 'Добавить подходы',
+                })) {
+                    this.state.completingWorkout = false;
+                    return;
+                }
+            }
+        }
+
         if (!await Components.confirmModal({
             title: 'Завершить тренировку?',
             message: 'Все невыполненные подходы не будут сохранены.',
@@ -2263,12 +2285,19 @@ const App = {
             return;
         }
 
+        // Save session reference BEFORE clearing state
+        const sessionToComplete = Workouts.currentSession;
+
         // Мгновенный сброс активной сессии — плашка «Активная тренировка»
         // должна исчезнуть сразу после клика, не дожидаясь ответа сервера.
         Workouts.markSessionClosedLocally(sessionId);
-        Workouts.clearActiveSessionState(this);
 
-        await Workouts.promptTemplateUpdateIfNeeded(this, Workouts.currentSession);
+        // Sync DOM to session BEFORE template prompt so local sessions
+        // have latest exercises when completeLocalSession reads from localStorage
+        Workouts.syncSessionFromDOM();
+
+        // Prompt for template update BEFORE clearing session state
+        await Workouts.promptTemplateUpdateIfNeeded(this, sessionToComplete);
 
         // Persist any in-flight rest timer so its elapsed seconds are recorded
         // on the previous set before the session is closed.
@@ -2313,11 +2342,9 @@ const App = {
         } catch (e) {
             if (e?.offlineQueued) {
                 // Session is closed locally, the request goes out as soon as the network is back
-                // Мгновенно сбрасываем активную сессию — не ждём сохранения в localStorage.
-                Workouts.markSessionClosedLocally(sessionId);
                 Workouts.clearActiveSessionState(this);
-                Workouts.syncSessionFromDOM();
-                await Workouts.persistCompletedSessionLocally(sessionId, Workouts.currentSession);
+                // Use saved session reference since currentSession is now null
+                await Workouts.persistCompletedSessionLocally(sessionId, sessionToComplete);
                 this.showToast('Тренировка завершена! Сеть недоступна, данные будут синхронизированы при появлении связи', 'info');
                 await this.renderPage('workouts');
                 this.state.completingWorkout = false;
@@ -2325,11 +2352,9 @@ const App = {
             }
             // Network failure: preserve local state, queue completion for retry, clear active session
             if (e?.isNetworkError) {
-                // Мгновенно сбрасываем активную сессию — пользователь должен сразу увидеть чистый экран.
-                Workouts.markSessionClosedLocally(sessionId);
                 Workouts.clearActiveSessionState(this);
-                Workouts.syncSessionFromDOM();
-                await Workouts.persistCompletedSessionLocally(sessionId, Workouts.currentSession);
+                // Use saved session reference since currentSession is now null
+                await Workouts.persistCompletedSessionLocally(sessionId, sessionToComplete);
                 // Enqueue the completion request so it is retried when the connection returns
                 const token = this.state.tokens.access;
                 API.enqueueRequest(
@@ -2349,7 +2374,7 @@ const App = {
             // keep the workout screen intact for retry.
             console.error('[handleCompleteWorkout] Failed:', { status: e?.status, message: e?.message });
             Workouts.syncSessionFromDOM();
-            await Workouts.persistCompletedSessionLocally(sessionId, Workouts.currentSession);
+            await Workouts.persistCompletedSessionLocally(sessionId, sessionToComplete);
             Workouts.clearActiveSessionState(this);
             const msg = e?.status === 401
                 ? 'Сессия истекла. Проверьте подключение и войдите снова.'

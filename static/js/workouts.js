@@ -716,11 +716,15 @@ export const Workouts = {
     persistCompletedSessionLocally(sessionId, session) {
         if (!sessionId || !session) return;
         try {
+            // Use the passed session (already synced from DOM before clearing state)
             const payload = { ...session };
             payload.status = 'completed';
             payload.completed_at = new Date().toISOString();
             payload.duration_seconds = this.getElapsedSeconds(payload);
-            localStorage.setItem(`completed_session_${sessionId}`, JSON.stringify(payload));
+
+            // Use consistent string key for both local and server sessions
+            const storageKey = `completed_session_${String(sessionId)}`;
+            localStorage.setItem(storageKey, JSON.stringify(payload));
             this.markSessionClosedLocally(sessionId);
         } catch (error) {
             console.error('[Workouts] Failed to persist completed session locally:', error);
@@ -729,6 +733,35 @@ export const Workouts = {
 
     markSessionCancelledLocally(sessionId) {
         this.markSessionClosedLocally(sessionId);
+    },
+
+    /**
+     * Detect and sync completed sessions from localStorage on app load.
+     * Tries to sync to server if online, otherwise leaves them for later.
+     */
+    recoverCompletedSessions(app) {
+        try {
+            const keys = Object.keys(localStorage).filter(k => k.startsWith('completed_session_'));
+            keys.forEach(async key => {
+                const sessionId = key.replace('completed_session_', '');
+                const session = JSON.parse(localStorage.getItem(key));
+                if (session && session.status === 'completed') {
+                    // Try to sync to server
+                    const token = app?.state?.tokens?.access;
+                    if (token && navigator.onLine) {
+                        try {
+                            await API.post(`/workouts/sessions/${sessionId}/sync-completed`, session, token);
+                            localStorage.removeItem(key);
+                            Workouts.forgetLocallyClosedSession(sessionId);
+                        } catch (err) {
+                            console.log('[Workouts] Will retry sync later:', err);
+                        }
+                    }
+                }
+            });
+        } catch (err) {
+            console.warn('[Workouts] Failed to recover completed sessions:', err);
+        }
     },
 
     // AI coaching plan (the pre-workout preview) is cached per session so it
@@ -1041,24 +1074,55 @@ export const Workouts = {
      */
     syncSessionFromDOM() {
         if (!this.currentSession) return;
-        const rows = document.querySelectorAll('[data-set-id]');
-        rows.forEach(row => {
-            const setId = parseInt(row.dataset.setId, 10);
-            if (isNaN(setId)) return;
-            const weightInput = row.querySelector('[data-field="weight"]');
-            const repsInput = row.querySelector('[data-field="reps"]');
-            const toggleBtn = row.querySelector('[data-action="toggle-set"]');
-            const weight_kg = weightInput ? parseFloat(weightInput.value) : null;
-            const reps = repsInput ? parseInt(repsInput.value, 10) : null;
-            const is_completed = toggleBtn?.dataset.completed === 'true';
-            this.currentSession.exercises.forEach(ex => {
-                const set = ex.sets?.find(s => s.id === setId);
-                if (!set) return;
-                if (weight_kg != null && !isNaN(weight_kg)) set.weight_kg = weight_kg;
-                if (reps != null && !isNaN(reps)) set.reps = reps;
-                set.is_completed = is_completed;
+
+        // Get all exercise cards from DOM
+        const exerciseCards = document.querySelectorAll('[data-exercise-id]');
+        const newExercises = [];
+
+        exerciseCards.forEach(card => {
+            const exId = card.dataset.exerciseId;
+            const nameEl = card.querySelector('[data-exercise-name]') || card.querySelector('h3, h4');
+            const name = nameEl?.textContent?.trim() || '';
+
+            // Get all sets for this exercise
+            const setRows = card.querySelectorAll('[data-set-id]');
+            const sets = [];
+            setRows.forEach(row => {
+                const setId = parseInt(row.dataset.setId, 10);
+                if (isNaN(setId)) return;
+                const weightInput = row.querySelector('[data-field="weight"]');
+                const repsInput = row.querySelector('[data-field="reps"]');
+                const durationInput = row.querySelector('[data-field="duration"]');
+                const distanceInput = row.querySelector('[data-field="distance"]');
+                const toggleBtn = row.querySelector('[data-action="toggle-set"]');
+
+                const weight_kg = weightInput ? parseFloat(weightInput.value) : null;
+                const reps = repsInput ? parseInt(repsInput.value, 10) : null;
+                const duration = durationInput ? parseInt(durationInput.value, 10) : null;
+                const distance = distanceInput ? parseFloat(distanceInput.value) : null;
+                const is_completed = toggleBtn?.dataset.completed === 'true';
+
+                sets.push({ id: setId, weight_kg, reps, duration, distance, is_completed });
             });
+
+            if (sets.length > 0) {
+                // Find existing exercise to preserve metadata
+                const existingEx = this.currentSession.exercises?.find(e => String(e.id) === String(exId));
+                newExercises.push({
+                    id: existingEx?.id || exId,
+                    name: existingEx?.name || name,
+                    order: existingEx?.order || newExercises.length,
+                    notes: existingEx?.notes,
+                    sets,
+                    exercise_type: existingEx?.exercise_type || 'weight_reps',
+                });
+            }
         });
+
+        if (newExercises.length > 0) {
+            this.currentSession.exercises = newExercises;
+        }
+
         // Persist to localStorage so the values survive a refresh even when the
         // session lives on the server (cache it under the same key for simplicity),
         // plus a session-specific key so server-session data is never clobbered by
@@ -1082,6 +1146,13 @@ export const Workouts = {
         if (this.currentSession && this.currentSession.key === session.key) {
             session.exercises = this.currentSession.exercises;
         }
+
+        // Validate: free-form workout must have at least one exercise
+        if (!session.exercises || session.exercises.length === 0) {
+            app?.showToast('Добавьте хотя бы одно упражнение перед завершением', 'error');
+            return false;
+        }
+
         const token = app?.state?.tokens?.access || null;
         session.status = 'completed';
         session.completed_at = new Date().toISOString();
@@ -1176,6 +1247,9 @@ export const Workouts = {
             // Completed offline and not yet replayed on the server
             activeSession = null;
         }
+
+        // Check for completed sessions in localStorage that need syncing
+        this.recoverCompletedSessions(app);
 
         const recentSessions = (historyData?.sessions || []).filter(s => s.status === 'completed');
         this.recentSessions = recentSessions;
@@ -2739,7 +2813,22 @@ let html = `
      * caller can proceed with normal completion.
      */
     async promptTemplateUpdateIfNeeded(app, session) {
-        if (!session || !this.exercisesModified) {
+        if (!session) {
+            console.warn('[Workouts] promptTemplateUpdateIfNeeded called with null session');
+            return true;
+        }
+        if (!this.exercisesModified) {
+            return true;
+        }
+
+        // Ensure we have latest exercises from DOM for server sessions
+        if (!session.isLocal) {
+            this.syncSessionFromDOM();
+        }
+
+        // Validate session has exercises
+        if (!session.exercises || session.exercises.length === 0) {
+            app.showToast('Нет упражнений для сохранения в шаблон', 'error');
             return true;
         }
 
@@ -2844,12 +2933,20 @@ let html = `
             return;
         }
 
+        // Save session reference BEFORE clearing state
+        const sessionToComplete = this.currentSession;
+
         // Мгновенный сброс активной сессии — плашка «Активная тренировка»
         // должна исчезнуть сразу после клика, не дожидаясь ответа сервера.
         Workouts.markSessionClosedLocally(sessionId);
-        Workouts.clearActiveSessionState(app);
 
-        await this.promptTemplateUpdateIfNeeded(app, this.currentSession);
+        // Sync DOM to session BEFORE clearing state
+        this.syncSessionFromDOM();
+
+        // Prompt for template update BEFORE clearing session state
+        await this.promptTemplateUpdateIfNeeded(app, sessionToComplete);
+
+        Workouts.clearActiveSessionState(app);
 
         // Persist any in-flight rest timer so its elapsed seconds are recorded
         // on the previous set before the session closes for analysis.
@@ -2859,7 +2956,7 @@ let html = `
         // before the session closes. Sync the DOM first so both the PATCH
         // requests and the completion request carry the same data, and so a
         // network failure still leaves the local cache populated.
-        this.syncSessionFromDOM();
+        // (Already synced above before clearing state)
         await app.flushPendingSetEdits();
 
         const durationSeconds = this.sessionStartTimestamp
@@ -2903,14 +3000,11 @@ let html = `
             console.log('[completeWorkoutWithAi] Complete endpoint response:', resp);
         } catch (err) {
             console.error('[Workouts] Complete with AI failed:', err);
-            // Persist the DOM state before marking complete locally so the
-            // completed session keeps its real tonnage on a failed request.
-            this.syncSessionFromDOM();
+            // Use saved session reference since currentSession is now null
             if (err?.offlineQueued) {
                 // Мгновенно сбрасываем активную сессию — не ждём сохранения.
-                Workouts.markSessionClosedLocally(sessionId);
                 Workouts.clearActiveSessionState(app);
-                await Workouts.persistCompletedSessionLocally(sessionId, this.currentSession);
+                await Workouts.persistCompletedSessionLocally(sessionId, sessionToComplete);
                 app.showToast(OFFLINE_COMPLETE_MESSAGE, 'info');
                 await app.renderPage('workouts');
                 app.state.completingWorkout = false;
@@ -2919,9 +3013,8 @@ let html = `
             }
             if (err?.isNetworkError) {
                 // Мгновенно сбрасываем активную сессию — пользователь должен сразу увидеть чистый экран.
-                Workouts.markSessionClosedLocally(sessionId);
                 Workouts.clearActiveSessionState(app);
-                await Workouts.persistCompletedSessionLocally(sessionId, this.currentSession);
+                await Workouts.persistCompletedSessionLocally(sessionId, sessionToComplete);
                 // Enqueue the completion request so it is retried when the connection returns
                 const token = app.state.tokens.access;
                 API.enqueueRequest(
@@ -6316,6 +6409,27 @@ ${allCards.join('')}
                 return;
             }
 
+            // For server sessions: optimistically add to currentSession
+            const optimisticEx = {
+                id: `temp-${Date.now()}`,
+                name: ex.name,
+                order: Math.max(0, ...(session.exercises?.map(e => e.order || 0) || [0])) + 1,
+                sets: Array.from({ length: ex.target_sets || 3 }, (_, i) => ({
+                    id: `temp-set-${Date.now()}-${i}`,
+                    exercise_id: `temp-${Date.now()}`,
+                    set_number: i + 1,
+                    weight_kg: 0,
+                    reps: 10,
+                    rest_seconds: 90,
+                    is_completed: false,
+                })),
+                exercise_type: ex.exercise_type || 'weight_reps',
+            };
+
+            session.exercises = [...(session.exercises || []), optimisticEx];
+            this.exercisesModified = true;
+            this.persistLocalSession(session); // Save optimistically
+
             const panel = document.querySelector('#add-exercise-modal > div');
             if (panel) {
                 panel.classList.add('opacity-70', 'cursor-wait');
@@ -6326,11 +6440,16 @@ ${allCards.join('')}
                     exercise_id: ex.id,
                 }, token);
                 app.showToast('Упражнение добавлено!', 'success');
+                // Re-render will fetch fresh session from server
                 await this.renderWorkoutScreen(app.elements.pageContent, app, sessionId);
             } catch (err) {
                 if (!err?.offlineQueued) {
                     app.showToast(err.message || 'Ошибка добавления упражнения', 'error');
+                    // Rollback optimistic add on non-network error
+                    session.exercises = session.exercises.filter(e => e.id !== optimisticEx.id);
+                    this.persistLocalSession(session);
                 } else {
+                    // Offline: keep optimistic add, will sync when online
                     await this.renderWorkoutScreen(app.elements.pageContent, app, sessionId);
                 }
             } finally {
