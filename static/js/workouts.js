@@ -1529,19 +1529,66 @@ export const Workouts = {
 
     applyRestTimerModeUI() {
         this.restTimerMode = this.restTimerMode || this.getStoredRestTimerMode();
-        if (this.currentSession && this.app && this.app.elements && this.app.elements.pageContent) {
-            this.refreshAllTimerPanels(this.app.elements.pageContent);
-        }
+        this.updateAllTimerControlsUI();
+        this.updateRestTimerUI();
     },
 
     updateTimerDuration(seconds) {
         this.saveRestTimerPreset(seconds);
+        this.updateAllTimerControlsUI();
         if (this.restTimerStartTime != null) {
             this.restTimerPlannedDuration = seconds * 1000;
             this.restTimerTargetTimestamp = this.restTimerStartTime + this.restTimerPlannedDuration;
             this.restTimerOvertime = false;
             this.updateRestTimerUI();
         }
+    },
+
+    updateAllTimerControlsUI() {
+        const mode = this.restTimerMode || this.getStoredRestTimerMode();
+        const currentPreset = this.restTimerPresetSeconds || this.getStoredRestTimerPreset();
+        const presetValues = [30, 60, 90, 120, 180];
+        const activePreset = presetValues.includes(currentPreset) ? currentPreset : null;
+
+        document.querySelectorAll('[data-tab-panel="timer"]').forEach(panel => {
+            const panelContent = panel.querySelector('.timer-panel-content[data-timer-panel-content]');
+            if (!panelContent) return;
+
+            const modeToggle = panelContent.querySelector('.relative.flex.rounded-md.glass');
+            if (modeToggle) {
+                const indicator = modeToggle.querySelector('span.absolute.inset-y-0\\.5');
+                if (indicator) {
+                    indicator.style.transform = mode === 'stopwatch' ? 'translateX(100%)' : 'translateX(0)';
+                }
+            }
+
+            panelContent.querySelectorAll('[data-action="rest-timer-mode"]').forEach(btn => {
+                const btnMode = btn.dataset.mode;
+                const isActive = btnMode === mode;
+                if (isActive) {
+                    btn.className = 'relative z-10 flex-1 py-1 px-1.5 rounded-[6px] text-[10px] font-semibold transition-all duration-200 text-white shadow-sm';
+                } else {
+                    btn.className = 'relative z-10 flex-1 py-1 px-1.5 rounded-[6px] text-[10px] font-semibold transition-all duration-200 text-surface-600 dark:text-surface-300';
+                }
+                btn.setAttribute('aria-pressed', String(isActive));
+            });
+
+            panelContent.querySelectorAll('[data-action="rest-timer-preset"]').forEach(btn => {
+                const presetSec = parseInt(btn.dataset.preset);
+                const isActive = !isNaN(presetSec) && presetSec === activePreset;
+                if (isActive) {
+                    btn.className = 'flex-shrink-0 px-2.5 py-1 rounded-md text-[10px] font-semibold transition-colors bg-primary-600 text-white dark:bg-primary-500 dark:text-zinc-950 shadow-[0_0_0_1px_rgba(132,204,22,0.5)] shadow-sm';
+                } else {
+                    btn.className = 'flex-shrink-0 px-2.5 py-1 rounded-md text-[10px] font-semibold transition-colors bg-white/5 dark:bg-white/10 text-surface-600 dark:text-surface-300 hover:bg-white/10 dark:hover:bg-white/20';
+                }
+                btn.setAttribute('aria-pressed', String(isActive));
+            });
+
+            const customInput = panelContent.querySelector('[data-action="rest-timer-custom"]');
+            if (customInput) {
+                customInput.value = String(currentPreset);
+            }
+        });
     },
 
     // ===== Dual-mode rest timer helpers end =====
@@ -1814,8 +1861,8 @@ export const Workouts = {
          const presetValues = [30, 60, 90, 120, 180];
          const activePreset = presetValues.includes(currentPreset) ? currentPreset : null;
 
-         let html = `
-             <div class="space-y-1 p-1">
+let html = `
+              <div class="space-y-1 p-1">
                  <div class="relative flex rounded-md glass p-0.5 gap-0.5">
                      <span class="absolute inset-y-0.5 w-[calc(50%-2px)] bg-primary-600 rounded-[6px] shadow-[0_2px_4px_rgba(132,204,22,0.4)] transition-transform duration-200 ease-out ${mode === 'stopwatch' ? 'translate-x-full' : 'translate-x-0'}"></span>
                      <button type="button" data-action="rest-timer-mode" data-mode="timer"
@@ -1831,8 +1878,9 @@ export const Workouts = {
                  </div>
          `;
 
-         if (mode === 'timer') {
-             const presets = [30, 60, 90, 120, 180];
+          const showPresets = true;
+          if (showPresets) {
+              const presets = [30, 60, 90, 120, 180];
              const presetLabels = { 30: '30с', 60: '1м', 90: '1.5м', 120: '2м', 180: '3м' };
              html += `
                  <div class="flex items-center gap-1.5 overflow-x-auto scrollbar-hide pb-1" data-timer-presets>
@@ -1958,10 +2006,12 @@ export const Workouts = {
      updateTimerPanel(exerciseId, exercise, container) {
          const card = container?.querySelector(`[data-exercise-id="${exerciseId}"]`) || document.querySelector(`[data-exercise-id="${exerciseId}"]`);
          if (!card) return;
-         const panelContent = card.querySelector('[data-timer-panel-content]');
-         if (panelContent) {
-             panelContent.innerHTML = this.renderTimerPanel(exercise);
-         }
+      const panelContent = card.querySelector('[data-tab-panel="timer"] > .timer-panel-content[data-timer-panel-content]');
+      if (!panelContent) {
+          console.warn('[Workouts] Timer panel content not found for exercise', exerciseId);
+          return;
+      }
+      panelContent.innerHTML = this.renderTimerPanel(exercise);
      },
 
      refreshAllTimerPanels(container) {
@@ -4156,6 +4206,20 @@ ${allCards.join('')}
             console.warn('[Workouts] bindWorkoutScreenEvents: container is null/undefined');
             return;
         }
+        // Remove any existing delegated listeners to prevent duplicates on re-render
+        container.removeEventListener('click', this._boundWorkoutClickHandler);
+        container.removeEventListener('input', this._boundWorkoutInputHandler);
+        container.removeEventListener('change', this._boundWorkoutChangeHandler);
+
+        // Store bound handlers for cleanup
+        this._boundWorkoutClickHandler = this._handleWorkoutClick.bind(this);
+        this._boundWorkoutInputHandler = this._handleWorkoutInput.bind(this);
+        this._boundWorkoutChangeHandler = this._handleWorkoutChange.bind(this);
+
+        container.addEventListener('click', this._boundWorkoutClickHandler);
+        container.addEventListener('input', this._boundWorkoutInputHandler);
+        container.addEventListener('change', this._boundWorkoutChangeHandler);
+
         console.log('[Workouts] bindWorkoutScreenEvents called, container:', container.tagName, container.id);
         const isLocal = this.isLocalSession(session);
         const sessionId = isLocal ? session.key : session.id;
@@ -4432,65 +4496,68 @@ ${allCards.join('')}
             app.showPage('workouts');
         });
 
-        // Rest timer action delegation on container
-        container.addEventListener('click', (e) => {
-            const modeBtn = e.target.closest('[data-action="rest-timer-mode"]');
-            if (modeBtn) {
-                e.stopPropagation();
-                const mode = modeBtn.dataset.mode;
-                this.saveRestTimerMode(mode);
-                return;
-            }
+        // Rest timer action delegation handled by _handleWorkoutClick (bound at top of bindWorkoutScreenEvents)
 
-            const presetBtn = e.target.closest('[data-action="rest-timer-preset"]');
-            if (presetBtn) {
-                e.stopPropagation();
-                const seconds = parseInt(presetBtn.dataset.preset);
-                if (!isNaN(seconds)) {
-                    this.updateTimerDuration(seconds);
-                    this.refreshAllTimerPanels(container);
-                }
-                return;
-            }
+    },
 
-            const dismissBtn = e.target.closest('[data-action="dismiss-rest-timer"]');
-            if (dismissBtn) {
-                e.stopPropagation();
-                this.stopAndSaveRestTimer(session);
-                return;
-            }
-        });
+    _handleWorkoutClick(e) {
+        const modeBtn = e.target.closest('[data-action="rest-timer-mode"]');
+        if (modeBtn) {
+            e.stopPropagation();
+            const mode = modeBtn.dataset.mode;
+            this.saveRestTimerMode(mode);
+            this.updateAllTimerControlsUI();
+            return;
+        }
 
-        container.addEventListener('input', (e) => {
-            const customInput = e.target.closest('[data-action="rest-timer-custom"]');
-            if (customInput) {
-                const value = parseInt(customInput.value);
-                const panel = customInput.closest('[data-tab-panel="timer"]') || customInput.closest('.space-y-1');
-                if (panel) {
-                    panel.querySelectorAll('[data-action="rest-timer-preset"]').forEach(btn => {
-                        const presetSec = parseInt(btn.dataset.preset);
-                        const isActive = !isNaN(value) && presetSec === value;
-                        if (isActive) {
-                            btn.className = 'flex-shrink-0 px-2.5 py-1 rounded-md text-[10px] font-semibold transition-colors bg-primary-600 text-white dark:bg-primary-500 dark:text-zinc-950 shadow-[0_0_0_1px_rgba(132,204,22,0.5)] shadow-sm';
-                            btn.setAttribute('aria-pressed', 'true');
-                        } else {
-                            btn.className = 'flex-shrink-0 px-2.5 py-1 rounded-md text-[10px] font-semibold transition-colors bg-white/5 dark:bg-white/10 text-surface-600 dark:text-surface-300 hover:bg-white/10 dark:hover:bg-white/20';
-                            btn.setAttribute('aria-pressed', 'false');
-                        }
-                    });
-                }
-            }
-        });
-
-        container.addEventListener('change', (e) => {
-            const customInput = e.target.closest('[data-action="rest-timer-custom"]');
-            if (customInput) {
-                const seconds = parseInt(customInput.value);
-                if (isNaN(seconds) || seconds < 1) return;
+        const presetBtn = e.target.closest('[data-action="rest-timer-preset"]');
+        if (presetBtn) {
+            e.stopPropagation();
+            const seconds = parseInt(presetBtn.dataset.preset);
+            if (!isNaN(seconds)) {
                 this.updateTimerDuration(seconds);
-                this.refreshAllTimerPanels(container);
+                this.updateAllTimerControlsUI();
             }
-        });
+            return;
+        }
+
+        const dismissBtn = e.target.closest('[data-action="dismiss-rest-timer"]');
+        if (dismissBtn) {
+            e.stopPropagation();
+            this.stopAndSaveRestTimer(null);
+            return;
+        }
+    },
+
+    _handleWorkoutInput(e) {
+        const customInput = e.target.closest('[data-action="rest-timer-custom"]');
+        if (customInput) {
+            const value = parseInt(customInput.value);
+            const panel = customInput.closest('[data-tab-panel="timer"]') || customInput.closest('.space-y-1');
+            if (panel) {
+                panel.querySelectorAll('[data-action="rest-timer-preset"]').forEach(btn => {
+                    const presetSec = parseInt(btn.dataset.preset);
+                    const isActive = !isNaN(value) && presetSec === value;
+                    if (isActive) {
+                        btn.className = 'flex-shrink-0 px-2.5 py-1 rounded-md text-[10px] font-semibold transition-colors bg-primary-600 text-white dark:bg-primary-500 dark:text-zinc-950 shadow-[0_0_0_1px_rgba(132,204,22,0.5)] shadow-sm';
+                        btn.setAttribute('aria-pressed', 'true');
+                    } else {
+                        btn.className = 'flex-shrink-0 px-2.5 py-1 rounded-md text-[10px] font-semibold transition-colors bg-white/5 dark:bg-white/10 text-surface-600 dark:text-surface-300 hover:bg-white/10 dark:hover:bg-white/20';
+                        btn.setAttribute('aria-pressed', 'false');
+                    }
+                });
+            }
+        }
+    },
+
+    _handleWorkoutChange(e) {
+        const customInput = e.target.closest('[data-action="rest-timer-custom"]');
+        if (customInput) {
+            const seconds = parseInt(customInput.value);
+            if (isNaN(seconds) || seconds < 1) return;
+            this.updateTimerDuration(seconds);
+            this.updateAllTimerControlsUI();
+        }
     },
 
     // Writes a value into a set input and replays the native input/change events
