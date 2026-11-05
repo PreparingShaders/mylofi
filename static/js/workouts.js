@@ -16,11 +16,6 @@ const SET_NUMBER_IDLE = 'text-surface-500';
 const TONNAGE_MARKER_RADIUS = 6;
 
 const LOCK_ICON = '<svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>';
-const QUICK_GOALS = [
-    { value: 'strength', title: 'Сила', subtitle: 'Базовые движения, 3×5' },
-    { value: 'hypertrophy', title: 'Набор массы', subtitle: 'Компаундные + изоляция, 3×10' },
-    { value: 'endurance', title: 'Выносливость', subtitle: 'Лёгкий вес, много подходов, 2×15' },
-];
 
 // Drum picker geometry: must stay in sync with .drum / .drum-item in styles.css.
 // The live item height is read from --drum-item-height so compact viewports can
@@ -900,6 +895,26 @@ export const Workouts = {
         };
     },
 
+    /**
+     * Create a completely empty local workout session (no exercises).
+     * Used for "Free-form Workout" / "Blank Slate" flow.
+     */
+    buildEmptyLocalSession() {
+        return {
+            key: `local-${Date.now()}`,
+            isLocal: true,
+            status: 'active',
+            name: 'Свободная тренировка',
+            started_at: new Date().toISOString(),
+            completed_at: null,
+            duration_seconds: null,
+            exercises: [],
+            pendingPatches: [],
+            remoteSessionId: null,
+            setIdMap: {},
+        };
+    },
+
     recordLocalSetPatch(sessionKey, setId, patch) {
         const session = this.getLocalSession();
         if (!session || session.key !== sessionKey) return;
@@ -1251,59 +1266,35 @@ export const Workouts = {
 
                 ${templatesWidget}
 
+                <!-- Main Action: Start Free-form Workout -->
                 <div class="mb-6">
-                    <h3 class="text-sm font-semibold text-surface-500 uppercase tracking-wider mb-3">Быстрый старт</h3>
-                    <div class="flex overflow-x-auto snap-x snap-mandatory gap-2.5 pb-3 scrollbar-none -mx-4 px-4">
-                        <!-- Card 1: Quick Start -->
-                        <div class="min-w-[216px] max-w-[234px] snap-center glass border ${hasActiveSession ? 'border-surface-200/70 dark:border-white/10' : ''} rounded-2xl p-3.5 flex flex-col justify-between shadow-sm ${hasActiveSession ? 'opacity-60' : 'cursor-pointer btn-press'}" data-action="${hasActiveSession ? '' : 'quick-start-workout'}">
-                            <div>
-                                <div class="w-9 h-9 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-2.5">
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                                </div>
-                                <h4 class="font-bold text-base mb-1">Быстрый старт</h4>
-                                <p class="text-[11px] text-surface-500 dark:text-surface-400">Готовая тренировка под цель: сила, масса или выносливость</p>
-                            </div>
-                            ${hasActiveSession
-                                ? `<span class="mt-3 text-[11px] font-semibold bg-surface-200 dark:bg-white/5 text-surface-500 dark:text-surface-400 px-2.5 py-1.5 rounded-xl text-center flex items-center justify-center gap-1.5">${LOCK_ICON}<span>Активна тренировка</span></span>`
-                                : '<span class="mt-3 text-[11px] font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-2.5 py-1.5 rounded-xl text-center">Начать сразу →</span>'}
-                        </div>
+                    <button data-action="start-empty-workout"
+                            class="w-full py-4 glass-strong border border-primary-500/30 rounded-2xl flex items-center justify-center gap-3 shadow-lg ${hasActiveSession ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer btn-press hover:border-primary-500'}">
+                        <svg class="w-6 h-6 text-primary-600 dark:text-primary-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                        </svg>
+                        <span class="text-lg font-bold ${hasActiveSession ? 'text-surface-400 dark:text-surface-500' : 'text-primary-600 dark:text-primary-400'}">
+                            ${hasActiveSession ? 'Активная тренировка' : 'Начать тренировку'}
+                        </span>
+                    </button>
+                </div>
 
-                        <!-- Card 2: History -->
-                        <div class="min-w-[216px] max-w-[234px] snap-center glass border rounded-2xl p-3.5 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="view-history">
-                            <div>
-                                <div class="w-9 h-9 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-2.5">
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                                </div>
-                                <h4 class="font-bold text-base mb-1">История</h4>
-                                <p class="text-[11px] text-surface-500 dark:text-surface-400">${recentSessions.length > 0 ? `Завершено ${recentSessions.length} тренировок, детальный разбор` : 'Хронология тренировок и разбор каждой'}</p>
-                            </div>
-                            <span class="mt-3 text-[11px] font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-2.5 py-1.5 rounded-xl text-center">Открыть историю →</span>
+                <!-- Secondary actions row (History, Build Template, Records) -->
+                <div class="grid grid-cols-2 gap-3 mb-6">
+                    <button data-action="view-history" class="glass rounded-xl p-4 flex flex-col items-center gap-2 cursor-pointer btn-press">
+                        <div class="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                         </div>
-
-                        <!-- Card 3: Build Custom -->
-                        <div class="min-w-[216px] max-w-[234px] snap-center glass border rounded-2xl p-3.5 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="show-build-workout">
-                            <div>
-                                <div class="w-9 h-9 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-2.5">
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                                </div>
-                                <h4 class="font-bold text-base mb-1">Собрать тренировку</h4>
-                                <p class="text-[11px] text-surface-500 dark:text-surface-400">Создать и сохранить свой шаблон из каталога (220+)</p>
-                            </div>
-                            <span class="mt-3 text-[11px] font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-2.5 py-1.5 rounded-xl text-center">Создать шаблон →</span>
+                        <span class="text-sm font-semibold">История</span>
+                        <span class="text-[11px] text-surface-500">${recentSessions.length > 0 ? `${recentSessions.length} тренировок` : 'Пусто'}</span>
+                    </button>
+                    <button data-action="show-build-workout" class="glass rounded-xl p-4 flex flex-col items-center gap-2 cursor-pointer btn-press">
+                        <div class="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                         </div>
-
-                        <!-- Card 4: Personal Records -->
-                        <div class="min-w-[216px] max-w-[234px] snap-center glass border rounded-2xl p-3.5 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="view-records">
-                            <div>
-                                <div class="w-9 h-9 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-2.5">
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-1l2 2 4-4m-5.5-8.5L19 3l2 2-3 3-2-2z"/></svg>
-                                </div>
-                                <h4 class="font-bold text-base mb-1">Личные рекорды (PR)</h4>
-                                <p class="text-[11px] text-surface-500 dark:text-surface-400">${records.length > 0 ? `Максимумы по ${records.length} упражнениям` : 'Максимальные веса по упражнениям'}</p>
-                            </div>
-                            <span class="mt-3 text-[11px] font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-2.5 py-1.5 rounded-xl text-center">Смотреть рекорды →</span>
-                        </div>
-                    </div>
+                        <span class="text-sm font-semibold">Собрать шаблон</span>
+                        <span class="text-[11px] text-surface-500">Каталог 220+ упр.</span>
+                    </button>
                 </div>
             </div>
         `;
@@ -1316,14 +1307,16 @@ export const Workouts = {
         this.refreshTonnageModule(app).catch(error =>
             console.warn('[Workouts] Tonnage refresh failed:', error));
 
+        container.querySelector('[data-action="start-empty-workout"]')?.addEventListener('click', (e) => {
+            if (hasActiveSession) return; // Disabled state handled by CSS
+            e.stopPropagation();
+            this.startEmptyWorkout(app);
+        });
         container.querySelectorAll('[data-action="show-build-workout"]').forEach(el => {
             el.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.showBuildWorkout(app);
             });
-        });
-        container.querySelectorAll('[data-action="quick-start-workout"]').forEach(el => {
-            el.addEventListener('click', () => this.showQuickStartModal(app));
         });
         container.querySelectorAll('[data-action="view-records"]').forEach(el => {
             el.addEventListener('click', () => this.renderPersonalRecords(container, app, records));
@@ -2549,78 +2542,6 @@ let html = `
         }
     },
 
-    /** The quick-start variants are chosen by goal, so the goal travels with the plan. */
-    async startQuickWorkoutWithAi(app, goal, btn) {
-        if (navigator.onLine === false) {
-            app.showToast(AI_OFFLINE_MESSAGE, 'info');
-            return;
-        }
-        if (!app.state.user?.is_premium) {
-            app.showToast(AI_PREMIUM_REQUIRED_MESSAGE, 'info');
-            return;
-        }
-        if (this.isGeneratingPreview) return;
-        this.isGeneratingPreview = true;
-        if (btn) btn.disabled = true;
-        const goalLabel = (QUICK_GOALS.find(g => g.value === goal) || {}).title;
-
-        const overlayState = Camera.showLoadingOverlay(document.body, Camera.workoutHints);
-
-        try {
-            await app.ensureFreshToken();
-            const { session_id: sessionId } = await API.post(
-                '/workouts/sessions/quick-start',
-                { goal, with_ai_plan: true, reduce: true },
-                app.state.tokens.access,
-            );
-            Camera.markLoadingComplete(overlayState.overlay);
-            await new Promise(r => setTimeout(r, 500));
-            Camera.hideLoadingOverlay(overlayState);
-            // Render workout screen immediately without waiting for AI plan
-            await this.renderWorkoutScreen(app.elements.pageContent, app, sessionId);
-            let planApplied = false;
-            const applyPlan = (plan) => {
-                if (planApplied) return;
-                planApplied = true;
-                this.aiPlan = plan ? { ...plan, sessionId } : null;
-                if (this.aiPlan) this.persistAiPlan(sessionId, this.aiPlan);
-                this.updateAiPlanBadges(app.elements.pageContent);
-            };
-            // Listen for the plan over WebSocket; the polling below is the fallback
-            // when the socket is not connected or the message is missed.
-            let wsCleanup = null;
-            const wsHandler = (payload) => {
-                if (payload?.session_id === sessionId) {
-                    if (wsCleanup) wsCleanup();
-                    applyPlan(payload.plan);
-                    planApplied = true;
-                }
-            };
-            await app.waitForRealtimeConnected(3000);
-            if (app.realtime) {
-                wsCleanup = app.realtime.on('workout_plan_ready', wsHandler);
-            }
-            // Load AI plan in background and update badges reactively (polling fallback)
-            this.loadAiPlan(app, { goal, name: `Быстрый старт: ${goalLabel}`, session_id: sessionId, reduce: true })
-                .then(plan => {
-                    if (wsCleanup) wsCleanup();
-                    applyPlan(plan);
-                })
-                .catch(err => {
-                    if (wsCleanup) wsCleanup();
-                    console.warn('[Workouts] AI plan background load failed:', err);
-                });
-        } catch (err) {
-            console.error('[Workouts] Quick start with AI error:', err);
-            Camera.hideLoadingOverlay(overlayState);
-            app.showToast(err?.message || 'Ошибка быстрого старта', 'error');
-            await this.render(app.elements.pageContent, app);
-        } finally {
-            this.isGeneratingPreview = false;
-            if (btn) btn.disabled = false;
-        }
-    },
-
     /**
      * The coach's plan for one exercise card, matched by name the way the server matched
      * it: session exercises are free-text names, so the comparison trims and folds
@@ -2812,27 +2733,34 @@ let html = `
     /**
      * If the workout came from a template and the user added, removed or
      * reordered sets, give them a chance to save the structure back to the
-     * template before the session is closed. Returns true when the user
-     * chose to update the template (or there was nothing to update), so the
+     * template before the session is closed.
+     * For free-form workouts (no template_id), offer to save as a NEW template.
+     * Returns true when the user chose to update/create template (or there was nothing to update), so the
      * caller can proceed with normal completion.
      */
     async promptTemplateUpdateIfNeeded(app, session) {
-        if (!session || !session.template_id || !this.exercisesModified) {
+        if (!session || !this.exercisesModified) {
             return true;
         }
+
+        const hasTemplateId = !!session.template_id;
+        const title = hasTemplateId ? 'Состав подходов изменен' : 'Сохранить тренировку как шаблон?';
+        const message = hasTemplateId
+            ? 'Вы изменяли структуру подходов. Сохранить новую схему в шаблон?'
+            : 'Эта тренировка не привязана к шаблону. Сохранить её как новый шаблон для повторного использования?';
+        const confirmText = hasTemplateId ? 'Обновить шаблон' : 'Сохранить как шаблон';
 
         const updated = await Components.confirmModal({
-            title: 'Состав подходов изменен',
-            message: 'Вы изменяли структуру подходов. Сохранить новую схему в шаблон?',
-            confirmText: 'Обновить шаблон',
+            title,
+            message,
+            confirmText,
             confirmClass: 'bg-primary-600 hover:bg-primary-700 text-white dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200 font-semibold shadow-md',
-            cancelText: 'Только для этой тренировки',
+            cancelText: hasTemplateId ? 'Только для этой тренировки' : 'Не сохранять',
         });
 
-        if (!updated) {
-            return true;
-        }
+        if (!updated) return true;
 
+        // Build exercises payload from current session
         const exercises = session.exercises.map(ex => {
             const firstSet = ex.sets?.[0];
             const completedSet = ex.sets?.find(s => s.is_completed && s.reps !== null && s.reps !== undefined);
@@ -2849,19 +2777,23 @@ let html = `
         });
 
         try {
-            await API.patch(
-                `/workouts/templates/${session.template_id}`,
-                { exercises },
-                app.state.tokens.access,
-            );
-            app.showToast('Шаблон обновлён', 'success');
+            if (hasTemplateId) {
+                // Update existing template
+                await API.patch(
+                    `/workouts/templates/${session.template_id}`,
+                    { exercises },
+                    app.state.tokens.access,
+                );
+                app.showToast('Шаблон обновлён', 'success');
+            } else {
+                // Create NEW template from free-form workout
+                const templateName = session.name || 'Моя тренировка';
+                const resp = await API.post('/workouts/templates', { name: templateName, exercises }, app.state.tokens.access);
+                app.showToast(`Шаблон "${templateName}" сохранён`, 'success');
+            }
         } catch (e) {
-            app.showToast(e?.offlineQueued
-                ? 'Шаблон будет обновлён при появлении связи'
-                : (e.message || 'Не удалось обновить шаблон'),
-                e?.offlineQueued ? 'info' : 'error');
+            app.showToast(e?.offlineQueued ? 'Сохранится при появлении связи' : (e.message || 'Ошибка сохранения'), e?.offlineQueued ? 'info' : 'error');
         }
-
         return true;
     },
 
@@ -3338,7 +3270,10 @@ let html = `
         }
         // CRITICAL FIX: Ensure session has exercises — recover from template or
         // local session when the server returns an active session without them.
-        if (!session.exercises || session.exercises.length === 0) {
+        // BUT: Allow empty exercises for LOCAL free-form sessions (no template_id)
+        // where user adds exercises on the fly.
+        const isFreeFormLocal = this.isLocalSession(session) && !session.template_id;
+        if ((!session.exercises || session.exercises.length === 0) && !isFreeFormLocal) {
             console.warn('[Workouts] Session has no exercises, attempting recovery...');
 
             // Try to get exercises from local session if this is a local session
@@ -3382,11 +3317,16 @@ let html = `
                 }
             }
 
-            // Final fallback — if still empty, show error
+            // Final fallback — if still empty (and not free-form), show error
             if (!session.exercises || session.exercises.length === 0) {
                 app.showToast('Ошибка: в тренировке нет упражнений', 'error');
                 return;
             }
+        }
+
+        // For free-form local sessions, ensure exercises array exists (empty is OK)
+        if (isFreeFormLocal && !session.exercises) {
+            session.exercises = [];
         }
         // The plan belongs to the session it was made for: resuming that one keeps
         // the badges, and starting any other workout drops them.
@@ -5236,106 +5176,16 @@ ${allCards.join('')}
         return null;
     },
 
-showQuickStartModal(app) {
-        this.app = app;
-        const modal = document.createElement('div');
-        modal.id = 'quick-start-modal';
-        modal.className = 'fixed inset-0 z-50 flex items-center justify-center modal-backdrop pointer-events-auto';
-        modal.innerHTML = `
-            <div class="glass-strong rounded-2xl p-6 mx-4 max-w-sm w-full">
-                <div class="flex justify-between items-center mb-1">
-                    <h3 class="text-lg font-bold">Быстрый старт</h3>
-                    <button type="button" data-action="close-quick-start" class="text-surface-500 hover:text-surface-900 dark:text-surface-400 p-1">✕</button>
-                </div>
-                <p class="text-xs text-surface-500 dark:text-surface-400 mb-4">
-                    Выберите цель — упражнения и подходы подставятся автоматически, веса берутся из прошлых тренировок.
-                </p>
-                <div class="space-y-3">
-                    ${QUICK_GOALS.map(goal => `
-                        <div class="glass rounded-2xl p-3">
-                            <div class="mb-2">
-                                <span class="block font-semibold text-sm">${goal.title}</span>
-                                <span class="block text-[11px] text-surface-500 dark:text-surface-400">${goal.subtitle}</span>
-                            </div>
-                            <div class="flex items-center gap-2">
-                                <button type="button" data-goal="${goal.value}"
-                                        class="flex-1 px-3.5 py-2 text-xs font-semibold whitespace-nowrap rounded-xl bg-primary-600 text-white hover:bg-primary-700 btn-press">
-                                    Старт
-                                </button>
-                                <button type="button" data-goal-ai="${goal.value}"
-                                         title="Старт + ИИ" aria-label="Начать ${goal.title} с ИИ-тренером"
-                                         class="flex-1 px-3.5 py-2 text-xs font-semibold whitespace-nowrap rounded-xl bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300 hover:bg-purple-500/20 dark:hover:bg-purple-500/30 btn-press">
-                                    ✦ Старт + ИИ
-                                </button>
-                            </div>
-                        </div>
-                    `).join('')}
-                </div>
-                <p class="text-[11px] text-surface-500 dark:text-surface-400 mt-3">
-                    Кнопка с роботом запускает ту же тренировку и просит ИИ-тренер подобрать вес, повторы и отдых под вашу историю.
-                </p>
-            </div>
-        `;
-
-        const onKeydown = (e) => {
-            if (e.key === 'Escape') close();
-        };
-        const close = () => {
-            document.removeEventListener('keydown', onKeydown);
-            modal.remove();
-        };
-
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) close();
-        });
-        modal.querySelector('[data-action="close-quick-start"]').addEventListener('click', close);
-        modal.querySelectorAll('[data-goal]').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                const goal = btn.dataset.goal;
-                close();
-                await this.startQuickWorkout(app, goal);
-            });
-        });
-        modal.querySelectorAll('[data-goal-ai]').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                if (this.isGeneratingPreview) return;
-                const goal = btn.dataset.goalAi;
-                btn.disabled = true;
-                close();
-                try {
-                    await this.startQuickWorkoutWithAi(app, goal, btn);
-                } finally {
-                    if (btn) btn.disabled = false;
-                }
-            });
-        });
-        document.addEventListener('keydown', onKeydown);
-
-        (document.getElementById('modals') || document.body).appendChild(modal);
-    },
-
-    async startQuickWorkout(app, goal) {
+    async startEmptyWorkout(app) {
         this.app = app;
         this.stopWorkoutTimer();
 
-        // Exercises for a quick start are picked by the server, so it requires a connection
-        if (navigator.onLine === false) {
-            app.showToast('Быстрый старт требует подключения к интернету. Выберите шаблон — он работает офлайн', 'info');
-            return;
-        }
+        // Create empty local session immediately (no network needed)
+        const session = this.buildEmptyLocalSession();
+        this.saveLocalSession(session);
 
-        // Запускаем API запрос СРАЗУ, параллельно с отсчетом
-        const sessionPromise = API.post('/workouts/sessions/quick-start', { goal }, app.state.tokens.access);
-        this.renderCountdown(app.elements.pageContent, () => {});
-
-        try {
-            const { session_id } = await sessionPromise;
-            await this.renderWorkoutScreen(app.elements.pageContent, app, session_id);
-        } catch (err) {
-            console.error('Quick start error:', err);
-            app.showToast(err?.offlineQueued ? 'Быстрый старт требует подключения к интернету. Выберите шаблон — он работает офлайн' : (err.message || 'Ошибка быстрого старта'), 'error');
-            await this.render(app.elements.pageContent, app);
-        }
+        // Open workout screen directly
+        await this.renderWorkoutScreen(app.elements.pageContent, app, session.key);
     },
 
     renderPersonalRecords(container, app, records = null) {
