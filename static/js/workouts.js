@@ -4210,6 +4210,8 @@ ${allCards.join('')}
         container.removeEventListener('click', this._boundWorkoutClickHandler);
         container.removeEventListener('input', this._boundWorkoutInputHandler);
         container.removeEventListener('change', this._boundWorkoutChangeHandler);
+        // Remove previous set delete handler to prevent duplicate modals on click
+        container.removeEventListener('click', this._boundSetDeleteHandler);
 
         // Store bound handlers for cleanup
         this._boundWorkoutClickHandler = this._handleWorkoutClick.bind(this);
@@ -4478,7 +4480,9 @@ ${allCards.join('')}
             }
         };
 
-        container.addEventListener('click', handleSetDelete);
+        // Store bound handler for cleanup on re-render
+        this._boundSetDeleteHandler = handleSetDelete;
+        container.addEventListener('click', this._boundSetDeleteHandler);
 
         // Add Exercise button (before completion card)
         container.querySelector('[data-action="add-exercise"]')?.addEventListener('click', async (e) => {
