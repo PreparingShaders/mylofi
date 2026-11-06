@@ -2417,6 +2417,13 @@ const App = {
                 const setId = set.id;
                 if (setId == null) continue;
 
+                // Skip temporary/local set IDs (negative numbers, temp-* strings)
+                // to avoid 404 errors that trigger false offline detection
+                if (!Workouts.isRealSetId(setId)) {
+                    console.log('[flushPendingSetEdits] Skipping temp set ID:', setId);
+                    continue;
+                }
+
                 const payload = {};
                 if (set.weight_kg != null && !isNaN(set.weight_kg)) payload.weight_kg = set.weight_kg;
                 if (set.reps != null && !isNaN(set.reps)) payload.reps = set.reps;

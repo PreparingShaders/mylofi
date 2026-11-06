@@ -1,4 +1,4 @@
-# Fix Workout Completion - Set Doubling & History Sync + Offline History Display
+# Fix Workout Completion - Set Doubling & History Sync + Offline History Display + Sync 422 Fix
 
 ## Problem 1: Set Count Doubling (3 → 6)
 When saving a free-form workout as a template, `target_sets` becomes 6 instead of 3.
@@ -18,10 +18,29 @@ Completed free-form (local) workouts don't appear in history until they sync wit
 ## Problem 3: History Doesn't Show Offline Workouts Immediately
 When user completes workout offline, it saves locally but history screen only shows server data. User sees empty history until sync completes.
 
+## Problem 4: 422 Error on Offline Sync Endpoint
+When `trySyncCompletedSession` calls `POST /workouts/sessions/sync-offline`, the backend returns 422 (Unprocessable Entity).
+
+**Root Cause**: The frontend sends the raw local session object which includes extra fields not in the `OfflineSessionSyncRequest` schema:
+- `key`, `isLocal`, `status`, `pendingPatches`, `remoteSessionId`, `setIdMap` - not in schema
+- Sets have `id`, `exercise_id` - not in `WorkoutSetCreate` schema
+- Exercises have `id`, `exercise_type` - not in `WorkoutSessionExerciseCreate` schema
+- Some sets may have `reps: null` if user left input empty (but `reps` is required in backend)
+
+## Problem 5: Sets Not Auto-Completing When Weight/Reps Filled
+When user fills weight and reps but forgets to press the checkbox, the set is not marked as completed. On workout completion, these sets may be skipped or not counted.
+
+**Root Cause**: `syncSessionFromDOM` only reads `is_completed` from the checkbox state (`toggleBtn?.dataset.completed === 'true'`). It doesn't infer completion from filled inputs.
+
+## Problem 6: 404 Errors from Temp Set IDs in flushPendingSetEdits
+When completing a server workout that has optimistically added exercises (with temp IDs like `temp-set-...` or negative IDs like `-100001`), `flushPendingSetEdits` sends PATCH requests to `/workouts/sets/{tempId}` which returns 404. The error handler treats this as a network failure.
+
+**Root Cause**: `flushPendingSetEdits` in app.js iterates all sets in the session and sends PATCH for each, without checking if the set ID is a real server ID vs a temporary/local ID.
+
 ---
 
 ## Affected Files
-- `static/js/workouts.js` - `syncSessionFromDOM`, `completeLocalSession`, `recoverCompletedSessions`, `renderHistory`, `renderHistoryList`
+- `static/js/workouts.js` - `syncSessionFromDOM`, `completeLocalSession`, `recoverCompletedSessions`, `renderHistory`, `renderHistoryList`, `trySyncCompletedSession`
 - `static/js/app.js` - `handleCompleteWorkout` (operation order fix)
 
 ---
@@ -412,6 +431,189 @@ renderHistoryList(container, app, historyState, failed) {
 }
 ```
 
+### Fix 8: Transform Session Data for Sync-Offline Endpoint (NEW)
+**File**: `static/js/workouts.js`, function `trySyncCompletedSession` (line 768)
+
+The backend `OfflineSessionSyncRequest` schema expects only specific fields. The raw local session has extra fields that cause 422 validation errors. Transform the session before sending:
+
+```javascript
+// Helper to transform local session to match OfflineSessionSyncRequest schema
+buildOfflineSyncPayload(session) {
+    // Only include fields defined in the backend schema
+    const payload = {
+        name: session.name || 'Свободная тренировка',
+        template_id: session.template_id || null,
+        notes: session.notes || null,
+        started_at: session.started_at,
+        completed_at: session.completed_at,
+        duration_seconds: session.duration_seconds || 0,
+        exercises: (session.exercises || []).map(ex => ({
+            name: ex.name,
+            order: ex.order || 0,
+            notes: ex.notes || null,
+            sets: (ex.sets || []).map(set => ({
+                set_number: set.set_number,
+                weight_kg: set.weight_kg ?? null,
+                reps: set.reps ?? 10,  // reps is REQUIRED in backend (ge=1), default to 10 if missing
+                rpe: set.rpe ?? null,
+                is_completed: set.is_completed ?? false,
+                rest_seconds: set.rest_seconds ?? null,
+                rest_time_seconds: set.rest_time_seconds ?? null,
+            })).filter(set => set.set_number > 0) // Ensure valid set numbers
+        })).filter(ex => ex.sets.length > 0) // Only include exercises with valid sets
+    };
+    
+    return payload;
+},
+
+// Updated trySyncCompletedSession
+async trySyncCompletedSession(app, sessionId, session, storageKey) {
+    const token = app?.state?.tokens?.access;
+    if (token && navigator.onLine) {
+        try {
+            // Transform session to match backend schema
+            const syncPayload = this.buildOfflineSyncPayload(session);
+            
+            // Use the sync-offline endpoint that accepts full session data
+            const response = await API.post(`/workouts/sessions/sync-offline`, syncPayload, token);
+            localStorage.removeItem(storageKey);
+            Workouts.forgetLocallyClosedSession(sessionId);
+            // Dispatch event so any pending patches in queue get remapped via resolveQueuedItem
+            window.dispatchEvent(new CustomEvent('mylofi:local-session-synced', {
+                detail: { sessionId: response.id },
+            }));
+        } catch (err) {
+            console.log('[Workouts] Will retry sync later:', err);
+        }
+    }
+},
+```
+
+Also update the `recoverCompletedSessions` helper to use the transformed payload:
+
+```javascript
+// Helper to avoid duplication
+async trySyncCompletedSession(app, sessionId, session, storageKey) {
+    const token = app?.state?.tokens?.access;
+    if (token && navigator.onLine) {
+        try {
+            // Transform session to match backend schema
+            const syncPayload = this.buildOfflineSyncPayload(session);
+            
+            await API.post(`/workouts/sessions/sync-offline`, syncPayload, token);
+            localStorage.removeItem(storageKey);
+            Workouts.forgetLocallyClosedSession(sessionId);
+        } catch (err) {
+            console.log('[Workouts] Will retry sync later:', err);
+        }
+    }
+},
+```
+
+---
+
+### Fix 9: Auto-Complete Sets When Weight/Reps Filled
+**File**: `static/js/workouts.js`, function `syncSessionFromDOM` (line 1075)
+
+Modify the set processing to infer completion from filled inputs:
+
+```javascript
+setRows.forEach(row => {
+    const setId = parseInt(row.dataset.setId, 10);
+    if (isNaN(setId)) return;
+    
+    // Deduplicate: skip if we've already processed this setId
+    if (seenSetIds.has(setId)) return;
+    seenSetIds.add(setId);
+    
+    const weightInput = row.querySelector('[data-field="weight"]');
+    const repsInput = row.querySelector('[data-field="reps"]');
+    const durationInput = row.querySelector('[data-field="duration"]');
+    const distanceInput = row.querySelector('[data-field="distance"]');
+    const toggleBtn = row.querySelector('[data-action="toggle-set"]');
+    
+    const weight_kg = weightInput ? parseFloat(weightInput.value) : null;
+    const reps = repsInput ? parseInt(repsInput.value, 10) : null;
+    const duration = durationInput ? parseInt(durationInput.value, 10) : null;
+    const distance = distanceInput ? parseFloat(distanceInput.value) : null;
+    const is_completed = toggleBtn?.dataset.completed === 'true';
+    
+    // AUTO-COMPLETE: If weight and reps are filled (for weight_reps exercises)
+    // or duration is filled (for duration_only/duration_distance exercises),
+    // treat as completed even without checkbox.
+    const hasWeightRepsData = weight_kg !== null && !isNaN(weight_kg) && reps !== null && !isNaN(reps);
+    const hasDurationData = duration !== null && !isNaN(duration);
+    const inferredCompleted = hasWeightRepsData || hasDurationData;
+    
+    sets.push({ 
+        id: setId, 
+        weight_kg, 
+        reps, 
+        duration, 
+        distance, 
+        is_completed: is_completed || inferredCompleted 
+    });
+});
+```
+
+### Fix 10: Skip Temp Set IDs in flushPendingSetEdits
+**File**: `static/js/app.js`, function `flushPendingSetEdits` (line 2407)
+
+Add a helper to Workouts to check if a set ID is a real server ID, and use it in flushPendingSetEdits:
+
+**Step 1: Add helper to Workouts (static/js/workouts.js, around line 1015)**
+
+```javascript
+// Check if a set ID is a real server-assigned ID (positive integer)
+isRealSetId(setId) {
+    return typeof setId === 'number' && setId > 0 && Number.isInteger(setId);
+},
+```
+
+**Step 2: Update flushPendingSetEdits (static/js/app.js, line 2407)**
+
+```javascript
+async flushPendingSetEdits() {
+    const session = Workouts.currentSession;
+    if (!session) return;
+    const failed = [];
+    await this.ensureFreshToken();
+    const promises = [];
+    for (const ex of (session.exercises || [])) {
+        for (const set of (ex.sets || [])) {
+            const setId = set.id;
+            if (setId == null) continue;
+            
+            // Skip temporary/local set IDs (negative numbers, temp-* strings)
+            // to avoid 404 errors that trigger false offline detection
+            if (!Workouts.isRealSetId(setId)) {
+                console.log('[flushPendingSetEdits] Skipping temp set ID:', setId);
+                continue;
+            }
+            
+            const payload = {};
+            if (set.weight_kg != null && !isNaN(set.weight_kg)) payload.weight_kg = set.weight_kg;
+            if (set.reps != null && !isNaN(set.reps)) payload.reps = set.reps;
+            if (set.is_completed) payload.is_completed = true;
+            
+            if (Object.keys(payload).length <= 1 && !payload.is_completed) continue;
+            
+            console.log('[flushPendingSetEdits] Flushing set', setId, payload);
+            promises.push(
+                API.patch(`/workouts/sets/${setId}`, payload, this.state.tokens.access).catch(err => {
+                    console.error(`[flushPendingSetEdits] Failed to flush set ${setId}:`, err?.message || err);
+                    failed.push(setId);
+                })
+            );
+        }
+    }
+    await Promise.all(promises);
+    if (failed.length) {
+        console.warn('[flushPendingSetEdits] Sets that failed to persist:', failed);
+    }
+},
+```
+
 ---
 
 ## Testing Requirements
@@ -440,6 +642,9 @@ Expected: All tests pass.
 | **NEW**: Complete free-form workout offline, open History tab | Workout appears immediately with "Ожидает синхронизации" badge |
 | **NEW**: Come online after offline completion | Badge disappears, session syncs to server |
 | **NEW**: History shows mixed server + local sessions | All sessions visible, sorted by date |
+| **NEW**: Sync-offline endpoint returns 201 (not 422) | Session created on server, local storage cleared |
+| **NEW**: User fills weight/reps but forgets checkbox | Set auto-completes, appears in history |
+| **NEW**: Server workout with optimistically added exercises | No 404 errors on temp set IDs during flush |
 
 ---
 
@@ -449,6 +654,9 @@ Expected: All tests pass.
 3. Revert `recoverCompletedSessions` to not check `LOCAL_SESSION_KEY`
 4. Revert `handleCompleteWorkout` operation order
 5. Revert `renderHistory` and `renderHistoryList` to original versions
+6. Revert `trySyncCompletedSession` to send raw session object
+7. Revert auto-complete logic in `syncSessionFromDOM`
+8. Revert `isRealSetId` helper and `flushPendingSetEdits` temp ID check
 
 ---
 

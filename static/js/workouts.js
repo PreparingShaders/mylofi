@@ -764,13 +764,42 @@ export const Workouts = {
         }
     },
 
+    // Transform local session to match OfflineSessionSyncRequest schema
+    buildOfflineSyncPayload(session) {
+        return {
+            name: session.name || 'Свободная тренировка',
+            template_id: session.template_id || null,
+            notes: session.notes || null,
+            started_at: session.started_at,
+            completed_at: session.completed_at,
+            duration_seconds: session.duration_seconds || 0,
+            exercises: (session.exercises || []).map(ex => ({
+                name: ex.name,
+                order: ex.order || 0,
+                notes: ex.notes || null,
+                sets: (ex.sets || []).map(set => ({
+                    set_number: set.set_number,
+                    weight_kg: set.weight_kg ?? null,
+                    reps: set.reps ?? 10,
+                    rpe: set.rpe ?? null,
+                    is_completed: set.is_completed ?? false,
+                    rest_seconds: set.rest_seconds ?? null,
+                    rest_time_seconds: set.rest_time_seconds ?? null,
+                })).filter(set => set.set_number > 0)
+            })).filter(ex => ex.sets.length > 0)
+        };
+    },
+
     // Helper to avoid duplication
     async trySyncCompletedSession(app, sessionId, session, storageKey) {
         const token = app?.state?.tokens?.access;
         if (token && navigator.onLine) {
             try {
-                // Use the new sync-offline endpoint that accepts full session data
-                const response = await API.post(`/workouts/sessions/sync-offline`, session, token);
+                // Transform session to match backend schema
+                const syncPayload = this.buildOfflineSyncPayload(session);
+
+                // Use the sync-offline endpoint that accepts full session data
+                const response = await API.post(`/workouts/sessions/sync-offline`, syncPayload, token);
                 localStorage.removeItem(storageKey);
                 Workouts.forgetLocallyClosedSession(sessionId);
                 // Dispatch event so any pending patches in queue get remapped via resolveQueuedItem
@@ -986,6 +1015,11 @@ export const Workouts = {
         return session.setIdMap?.[String(setId)] ?? null;
     },
 
+    // Check if a set ID is a real server-assigned ID (positive integer)
+    isRealSetId(setId) {
+        return typeof setId === 'number' && setId > 0 && Number.isInteger(setId);
+    },
+
     // Queue items referring to a not-yet-synced local session are rewritten once the
     // real session (and its set ids) are known; `false` means "not ready yet".
     resolveQueuedItem(item) {
@@ -1110,6 +1144,9 @@ export const Workouts = {
             const nameEl = card.querySelector('[data-exercise-name]') || card.querySelector('h3, h4');
             const name = nameEl?.textContent?.trim() || '';
 
+            // Find existing exercise in session to get exercise_type and sets
+            const existingEx = this.currentSession.exercises?.find(e => String(e.id) === String(exId));
+
             const setRows = card.querySelectorAll('[data-set-id]');
             const sets = [];
 
@@ -1133,11 +1170,37 @@ export const Workouts = {
                 const distance = distanceInput ? parseFloat(distanceInput.value) : null;
                 const is_completed = toggleBtn?.dataset.completed === 'true';
 
-                sets.push({ id: setId, weight_kg, reps, duration, distance, is_completed });
+                // AUTO-COMPLETE: If weight and reps are filled (for weight_reps exercises)
+                // or duration is filled (for duration_only/duration_distance exercises),
+                // treat as completed even without checkbox.
+                const exType = existingEx?.exercise_type || 'weight_reps';
+                const hasWeightRepsData = weight_kg !== null && !isNaN(weight_kg) && reps !== null && !isNaN(reps);
+                const hasDurationData = duration !== null && !isNaN(duration);
+                let inferredCompleted = false;
+                if (exType === 'weight_reps') {
+                    inferredCompleted = hasWeightRepsData;
+                } else if (exType === 'duration_only' || exType === 'duration_distance') {
+                    inferredCompleted = hasDurationData;
+                }
+
+                // Find existing set in session to preserve set_number, exercise_id, rest_seconds, etc.
+                let existingSet = null;
+                if (existingEx?.sets) {
+                    existingSet = existingEx.sets.find(s => s.id === setId);
+                }
+
+                // Merge DOM values into existing set (preserving set_number, exercise_id, rest_seconds, etc.)
+                const mergedSet = existingSet ? { ...existingSet } : { id: setId };
+                mergedSet.weight_kg = weight_kg;
+                mergedSet.reps = reps;
+                mergedSet.duration = duration;
+                mergedSet.distance = distance;
+                mergedSet.is_completed = is_completed || inferredCompleted;
+
+                sets.push(mergedSet);
             });
 
             if (sets.length > 0) {
-                const existingEx = this.currentSession.exercises?.find(e => String(e.id) === String(exId));
                 newExercises.push({
                     id: existingEx?.id || exId,
                     name: existingEx?.name || name,
