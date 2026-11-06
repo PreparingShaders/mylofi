@@ -25,6 +25,7 @@ from app.schemas import (
     ExerciseCatalogCreate,
     ExerciseCatalogUpdate,
     BuildWorkoutSessionRequest,
+    OfflineSessionSyncRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -172,6 +173,57 @@ async def create_workout_session(
                 is_completed=set_data.is_completed,
                 rest_seconds=set_data.rest_seconds,
                 rest_time_seconds=set_data.rest_time_seconds,
+            )
+            db.add(workout_set)
+
+    await db.commit()
+    return await get_workout_session(db, session.id, user_id)
+
+
+async def sync_offline_session(
+    db: AsyncSession,
+    user_id: int,
+    session_data: "OfflineSessionSyncRequest",
+) -> WorkoutSession:
+    """Create a server session from offline-completed workout data."""
+    from app.schemas import OfflineSessionSyncRequest
+    from app.models import WorkoutSession, WorkoutSessionExercise, WorkoutSet, WorkoutSessionStatus
+    from datetime import datetime, timezone
+
+    session = WorkoutSession(
+        user_id=user_id,
+        template_id=session_data.template_id,
+        name=session_data.name,
+        notes=session_data.notes,
+        started_at=session_data.started_at,
+        completed_at=session_data.completed_at,
+        status=WorkoutSessionStatus.COMPLETED,
+        duration_seconds=session_data.duration_seconds,
+    )
+    db.add(session)
+    await db.flush()
+
+    for ex_data in session_data.exercises:
+        exercise = WorkoutSessionExercise(
+            session_id=session.id,
+            name=ex_data.name,
+            order=ex_data.order,
+            notes=ex_data.notes,
+        )
+        db.add(exercise)
+        await db.flush()
+
+        for set_data in ex_data.sets:
+            workout_set = WorkoutSet(
+                exercise_id=exercise.id,
+                set_number=set_data.set_number,
+                weight_kg=set_data.weight_kg,
+                reps=set_data.reps,
+                rpe=set_data.rpe,
+                is_completed=set_data.is_completed,
+                rest_seconds=set_data.rest_seconds,
+                rest_time_seconds=set_data.rest_time_seconds,
+                completed_at=session_data.completed_at if set_data.is_completed else None,
             )
             db.add(workout_set)
 

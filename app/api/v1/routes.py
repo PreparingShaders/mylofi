@@ -28,6 +28,7 @@ from app.schemas import (
     MealListResponse,
     MealResponse,
     MealUpdate,
+    OfflineSessionSyncRequest,
     PasswordResetConfirm,
     PhotoUploadResponse,
     QuickStartWorkoutRequest,
@@ -136,6 +137,7 @@ from app.services.workout import (
     get_workout_template,
     get_workout_templates,
     quick_start_workout,
+    sync_offline_session,
     update_exercise,
     update_set_completion,
     update_workout_session,
@@ -1421,6 +1423,21 @@ async def create_workout_session_endpoint(
         )
 
     session = await create_workout_session(db, current_user.id, session_data)
+    return session
+
+
+@router.post(
+    "/workouts/sessions/sync-offline",
+    response_model=WorkoutSessionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def sync_offline_session_endpoint(
+    session_data: OfflineSessionSyncRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Sync a workout session completed offline."""
+    session = await sync_offline_session(db, current_user.id, session_data)
     return session
 
 

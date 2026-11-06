@@ -698,6 +698,14 @@ class WorkoutSessionCreate(WorkoutSessionBase):
     exercises: List[WorkoutSessionExerciseCreate] = []
 
 
+class OfflineSessionSyncRequest(WorkoutSessionBase):
+    """Full session data from an offline-completed workout."""
+    started_at: datetime
+    completed_at: datetime
+    duration_seconds: int = Field(ge=0)
+    exercises: List[WorkoutSessionExerciseCreate] = []
+
+
 class WorkoutSessionUpdate(BaseModel):
     name: Optional[str] = Field(None, max_length=255)
     status: Optional[WorkoutSessionStatus] = None
@@ -903,6 +911,7 @@ __all__ = [
     "WorkoutSessionUpdate",
     "WorkoutSessionResponse",
     "WorkoutHistoryResponse",
+    "OfflineSessionSyncRequest",
     "WSMessageType",
     "WSMessage",
     "WSMealUpdatePayload",

@@ -2294,7 +2294,8 @@ const App = {
 
         // Sync DOM to session BEFORE template prompt so local sessions
         // have latest exercises when completeLocalSession reads from localStorage
-        Workouts.syncSessionFromDOM();
+        const workoutContainer = document.getElementById('carousel') || document.querySelector('.workout-carousel');
+        Workouts.syncSessionFromDOM(workoutContainer);
 
         // Prompt for template update BEFORE clearing session state
         await Workouts.promptTemplateUpdateIfNeeded(this, sessionToComplete);
@@ -2314,7 +2315,8 @@ const App = {
         // Sync the DOM into the in-memory session synchronously before anything
         // else, so a network failure still preserves the real tonnage in
         // localStorage and flushPendingSetEdits sends exactly what was synced.
-        Workouts.syncSessionFromDOM();
+        const workoutContainer2 = document.getElementById('carousel') || document.querySelector('.workout-carousel');
+        Workouts.syncSessionFromDOM(workoutContainer2);
 
         // Wait for any pending drum picker saves to complete
         await new Promise(r => setTimeout(r, 500));
@@ -2373,7 +2375,8 @@ const App = {
             // token refresh or a missing session, then show a clear toast and
             // keep the workout screen intact for retry.
             console.error('[handleCompleteWorkout] Failed:', { status: e?.status, message: e?.message });
-            Workouts.syncSessionFromDOM();
+            const workoutContainer = document.getElementById('carousel') || document.querySelector('.workout-carousel');
+            Workouts.syncSessionFromDOM(workoutContainer);
             await Workouts.persistCompletedSessionLocally(sessionId, sessionToComplete);
             Workouts.clearActiveSessionState(this);
             const msg = e?.status === 401

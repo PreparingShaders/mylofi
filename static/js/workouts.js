@@ -739,28 +739,47 @@ export const Workouts = {
      * Detect and sync completed sessions from localStorage on app load.
      * Tries to sync to server if online, otherwise leaves them for later.
      */
-    recoverCompletedSessions(app) {
+    async recoverCompletedSessions(app) {
         try {
+            // Check completed_session_* keys
             const keys = Object.keys(localStorage).filter(k => k.startsWith('completed_session_'));
-            keys.forEach(async key => {
+            await Promise.all(keys.map(async key => {
                 const sessionId = key.replace('completed_session_', '');
                 const session = JSON.parse(localStorage.getItem(key));
                 if (session && session.status === 'completed') {
-                    // Try to sync to server
-                    const token = app?.state?.tokens?.access;
-                    if (token && navigator.onLine) {
-                        try {
-                            await API.post(`/workouts/sessions/${sessionId}/sync-completed`, session, token);
-                            localStorage.removeItem(key);
-                            Workouts.forgetLocallyClosedSession(sessionId);
-                        } catch (err) {
-                            console.log('[Workouts] Will retry sync later:', err);
-                        }
-                    }
+                    await this.trySyncCompletedSession(app, sessionId, session, key);
                 }
-            });
+            }));
+
+            // ALSO check offline_local_session for completed local sessions
+            const localSessionRaw = localStorage.getItem(LOCAL_SESSION_KEY);
+            if (localSessionRaw) {
+                const localSession = JSON.parse(localSessionRaw);
+                if (localSession && localSession.status === 'completed' && localSession.key) {
+                    await this.trySyncCompletedSession(app, localSession.key, localSession, LOCAL_SESSION_KEY);
+                }
+            }
         } catch (err) {
             console.warn('[Workouts] Failed to recover completed sessions:', err);
+        }
+    },
+
+    // Helper to avoid duplication
+    async trySyncCompletedSession(app, sessionId, session, storageKey) {
+        const token = app?.state?.tokens?.access;
+        if (token && navigator.onLine) {
+            try {
+                // Use the new sync-offline endpoint that accepts full session data
+                const response = await API.post(`/workouts/sessions/sync-offline`, session, token);
+                localStorage.removeItem(storageKey);
+                Workouts.forgetLocallyClosedSession(sessionId);
+                // Dispatch event so any pending patches in queue get remapped via resolveQueuedItem
+                window.dispatchEvent(new CustomEvent('mylofi:local-session-synced', {
+                    detail: { sessionId: response.id },
+                }));
+            } catch (err) {
+                console.log('[Workouts] Will retry sync later:', err);
+            }
         }
     },
 
@@ -1071,25 +1090,37 @@ export const Workouts = {
      * session so a completion request (or its failure) always carries what the
      * coach actually typed. Without this, a network failure after the DOM was
      * edited would leave the local cache holding stale or zeroed tonnage.
+     * 
+     * @param {HTMLElement|null} container - Optional workout container to scope the query.
+     *   Defaults to the workout carousel/screen container.
      */
-    syncSessionFromDOM() {
+    syncSessionFromDOM(container) {
         if (!this.currentSession) return;
 
-        // Get all exercise cards from DOM
-        const exerciseCards = document.querySelectorAll('[data-exercise-id]');
+        // Default to the workout screen container if not provided
+        const root = container || document.getElementById('carousel') || document.querySelector('.workout-carousel') || document;
+
+        // Get exercise cards ONLY from the workout container
+        const exerciseCards = root.querySelectorAll('[data-exercise-id]');
         const newExercises = [];
+        const seenSetIds = new Set();
 
         exerciseCards.forEach(card => {
             const exId = card.dataset.exerciseId;
             const nameEl = card.querySelector('[data-exercise-name]') || card.querySelector('h3, h4');
             const name = nameEl?.textContent?.trim() || '';
 
-            // Get all sets for this exercise
             const setRows = card.querySelectorAll('[data-set-id]');
             const sets = [];
+
             setRows.forEach(row => {
                 const setId = parseInt(row.dataset.setId, 10);
                 if (isNaN(setId)) return;
+
+                // Deduplicate: skip if we've already processed this setId
+                if (seenSetIds.has(setId)) return;
+                seenSetIds.add(setId);
+
                 const weightInput = row.querySelector('[data-field="weight"]');
                 const repsInput = row.querySelector('[data-field="reps"]');
                 const durationInput = row.querySelector('[data-field="duration"]');
@@ -1106,7 +1137,6 @@ export const Workouts = {
             });
 
             if (sets.length > 0) {
-                // Find existing exercise to preserve metadata
                 const existingEx = this.currentSession.exercises?.find(e => String(e.id) === String(exId));
                 newExercises.push({
                     id: existingEx?.id || exId,
@@ -1157,7 +1187,13 @@ export const Workouts = {
         session.status = 'completed';
         session.completed_at = new Date().toISOString();
         session.duration_seconds = this.getElapsedSeconds(session);
+
+        // Save as active session (for immediate UI)
         this.saveLocalSession(session);
+
+        // ALSO persist as completed session for recovery/sync to server
+        this.persistCompletedSessionLocally(session.key, session);
+
         API.enqueueRequest(
             'POST',
             `/workouts/sessions/${LOCAL_SESSION_PLACEHOLDER}/complete`,
@@ -2823,7 +2859,8 @@ let html = `
 
         // Ensure we have latest exercises from DOM for server sessions
         if (!session.isLocal) {
-            this.syncSessionFromDOM();
+            const workoutContainer = document.getElementById('carousel') || document.querySelector('.workout-carousel');
+            this.syncSessionFromDOM(workoutContainer);
         }
 
         // Validate session has exercises
@@ -2941,7 +2978,8 @@ let html = `
         Workouts.markSessionClosedLocally(sessionId);
 
         // Sync DOM to session BEFORE clearing state
-        this.syncSessionFromDOM();
+        const workoutContainer = document.getElementById('carousel') || document.querySelector('.workout-carousel');
+        this.syncSessionFromDOM(workoutContainer);
 
         // Prompt for template update BEFORE clearing session state
         await this.promptTemplateUpdateIfNeeded(app, sessionToComplete);
@@ -4850,12 +4888,48 @@ ${allCards.join('')}
             return;
         }
 
-        historyState.sessions = (data?.sessions || [])
-            .slice()
+        // Get local completed sessions that haven't synced yet
+        const localSessions = this.getLocalCompletedSessions();
+
+        // Merge server sessions with local sessions (local first, newest first)
+        const serverSessions = (data?.sessions || []).slice();
+        const allSessions = [...localSessions, ...serverSessions]
             .sort((a, b) => new Date(b.completed_at || b.started_at) - new Date(a.completed_at || a.started_at));
-        historyState.total = data?.total || 0;
+
+        historyState.sessions = allSessions;
+        historyState.total = (data?.total || 0) + localSessions.length;
+        historyState.hasLocalSessions = localSessions.length > 0;
 
         this.renderHistoryList(container, app, historyState, false);
+    },
+
+    // New helper: Get locally completed sessions from localStorage
+    getLocalCompletedSessions() {
+        const sessions = [];
+        try {
+            // Check completed_session_* keys
+            const keys = Object.keys(localStorage).filter(k => k.startsWith('completed_session_'));
+            keys.forEach(key => {
+                const session = JSON.parse(localStorage.getItem(key));
+                if (session && session.status === 'completed') {
+                    session._localOnly = true;
+                    sessions.push(session);
+                }
+            });
+
+            // Check offline_local_session
+            const localSessionRaw = localStorage.getItem(LOCAL_SESSION_KEY);
+            if (localSessionRaw) {
+                const localSession = JSON.parse(localSessionRaw);
+                if (localSession && localSession.status === 'completed') {
+                    localSession._localOnly = true;
+                    sessions.push(localSession);
+                }
+            }
+        } catch (err) {
+            console.warn('[Workouts] Failed to read local completed sessions:', err);
+        }
+        return sessions;
     },
 
     renderHistoryList(container, app, historyState, failed) {
@@ -4873,8 +4947,10 @@ ${allCards.join('')}
             groups.get(label).push(session);
         });
 
-        const statusLabel = (status) =>
-            status === 'completed' ? 'Завершена' : status === 'cancelled' ? 'Отменена' : 'Активна';
+        const statusLabel = (status, isLocalOnly) => {
+            if (isLocalOnly) return 'Ожидает синхронизации';
+            return status === 'completed' ? 'Завершена' : status === 'cancelled' ? 'Отменена' : 'Активна';
+        };
 
         const groupBlocks = [...groups.entries()].map(([label, items]) => `
             <div class="mb-5">
@@ -4883,16 +4959,23 @@ ${allCards.join('')}
                     ${items.map(session => {
                         const metrics = this.getWorkoutMetrics(session);
                         const stamp = new Date(session.completed_at || session.started_at);
-                        // The coach only reads a session that was actually done, so
-                        // an active or cancelled row never offers the analysis.
+                        const isLocalOnly = session._localOnly === true;
                         const analyzable = (session.status === 'completed' || !session.status)
                             && metrics.completed > 0
-                            && !isNaN(parseInt(session.id));
+                            && !isNaN(parseInt(session.id))
+                            && !isLocalOnly;
                         return `
                             <div class="glass rounded-2xl p-4 cursor-pointer btn-press" data-action="open-history-session" data-session-id="${session.id}">
                                 <div class="flex items-start justify-between gap-3">
                                     <div class="min-w-0 flex-1">
-                                        <h4 class="font-semibold text-sm truncate" title="${this.escapeHtml(session.name || 'Тренировка')}">${this.escapeHtml(session.name || 'Тренировка')}</h4>
+                                        <div class="flex items-center gap-2">
+                                            <h4 class="font-semibold text-sm truncate" title="${this.escapeHtml(session.name || 'Тренировка')}">${this.escapeHtml(session.name || 'Тренировка')}</h4>
+                                            ${isLocalOnly ? `
+                                                <span class="flex-shrink-0 px-2 py-0.5 text-[10px] font-medium bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 rounded-full border border-amber-300 dark:border-amber-700">
+                                                    Ожидает синхронизации
+                                                </span>
+                                            ` : ''}
+                                        </div>
                                         <p class="text-xs text-surface-500 dark:text-surface-400 mt-1">
                                             ${isNaN(stamp.getTime()) ? '—' : `${Utils.formatDate(stamp.toISOString())} · ${Utils.formatTime(stamp.toISOString())}`}
                                         </p>
@@ -4907,7 +4990,7 @@ ${allCards.join('')}
                                     <span>·</span>
                                     <span>${(session.exercises || []).length} упр.</span>
                                     <span>·</span>
-                                    <span>${statusLabel(session.status)}</span>
+                                    <span>${statusLabel(session.status, isLocalOnly)}</span>
                                     ${analyzable ? `<button type="button" data-action="history-analyze-ai" data-session-id="${session.id}"
                                             class="ml-auto flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold ${session.has_ai_analysis ? 'bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300' : 'bg-surface-100 dark:bg-white/5 text-surface-500 dark:text-surface-400'}">
                                             <span class="badge">✦ ИИ</span>
@@ -4931,6 +5014,13 @@ ${allCards.join('')}
                 ${failed
                     ? '<div class="text-xs text-amber-600 dark:text-amber-400 mb-3">Не удалось обновить список, показаны ранее загруженные данные</div>'
                     : ''}
+
+                ${historyState.hasLocalSessions ? `
+                    <div class="text-xs text-amber-600 dark:text-amber-400 mb-3 flex items-center gap-1">
+                        <span>⏳</span>
+                        <span>Некоторые тренировки ожидают синхронизации с сервером</span>
+                    </div>
+                ` : ''}
 
                 ${sessions.length === 0
                     ? `<div class="text-center py-8 text-surface-400">Ещё нет тренировок. Начните первую!</div>`
