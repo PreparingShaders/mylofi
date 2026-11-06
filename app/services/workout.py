@@ -484,6 +484,81 @@ async def get_workout_history(
     return sessions, total
 
 
+async def get_workout_history_stats(
+    db: AsyncSession,
+    user_id: int,
+    period: str = "all",
+) -> dict:
+    """Get aggregate statistics for history period.
+    
+    Args:
+        db: Database session
+        user_id: User ID
+        period: Time period filter - 'week', 'month', or 'all'
+    
+    Returns:
+        Dictionary with total_workouts, total_tonnage_kg, total_duration_seconds,
+        avg_duration_seconds, total_sets, completed_sets
+    """
+    from datetime import datetime, timedelta, timezone
+    
+    # Determine date filter based on period
+    now = datetime.now(timezone.utc)
+    if period == "week":
+        start_date = now - timedelta(days=7)
+    elif period == "month":
+        start_date = now - timedelta(days=30)
+    else:  # 'all'
+        start_date = None
+    
+    # Base query for completed sessions
+    base_query = (
+        select(WorkoutSession)
+        .where(
+            WorkoutSession.user_id == user_id,
+            WorkoutSession.status == WorkoutSessionStatus.COMPLETED,
+        )
+        .options(
+            selectinload(WorkoutSession.exercises).selectinload(WorkoutSessionExercise.sets)
+        )
+    )
+    
+    if start_date:
+        base_query = base_query.where(WorkoutSession.completed_at >= start_date)
+    
+    result = await db.execute(base_query.order_by(WorkoutSession.started_at.desc()))
+    sessions = result.scalars().all()
+    
+    # Aggregate statistics
+    total_workouts = len(sessions)
+    total_tonnage_kg = 0
+    total_duration_seconds = 0
+    total_sets = 0
+    completed_sets = 0
+    
+    for session in sessions:
+        total_duration_seconds += session.duration_seconds or 0
+        for exercise in session.exercises or []:
+            for set_ in exercise.sets or []:
+                total_sets += 1
+                if set_.is_completed:
+                    completed_sets += 1
+                    total_tonnage_kg += (set_.weight_kg or 0) * (set_.reps or 0)
+    
+    avg_duration_seconds = (
+        total_duration_seconds // total_workouts if total_workouts > 0 else 0
+    )
+    
+    return {
+        "total_workouts": total_workouts,
+        "total_tonnage_kg": int(total_tonnage_kg),
+        "total_duration_seconds": total_duration_seconds,
+        "avg_duration_seconds": avg_duration_seconds,
+        "total_sets": total_sets,
+        "completed_sets": completed_sets,
+    }
+
+
 async def update_set_completion(
     db: AsyncSession,
     set_id: int,

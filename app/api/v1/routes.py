@@ -47,6 +47,7 @@ from app.schemas import (
     WorkoutCompletionRequest,
     WorkoutCompletionResponse,
     WorkoutHistoryResponse,
+    WorkoutHistoryStatsResponse,
     WorkoutSessionCreate,
     WorkoutSessionResponse,
     WorkoutSessionUpdate,
@@ -131,6 +132,7 @@ from app.services.workout import (
     get_exercises,
     get_filtered_tonnage,
     get_workout_history,
+    get_workout_history_stats,
     get_workout_session,
     get_workout_session_detail,
     get_workout_statistics,
@@ -1639,6 +1641,17 @@ async def get_workout_history_endpoint(
     """Get workout history with pagination"""
     sessions, total = await get_workout_history(db, current_user.id, limit, offset)
     return WorkoutHistoryResponse(sessions=sessions, total=total)
+
+
+@router.get("/workouts/history/stats", response_model=WorkoutHistoryStatsResponse)
+async def get_workout_history_stats_endpoint(
+    period: str = Query("all", pattern="^(week|month|all)$"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get aggregate statistics for workout history period"""
+    stats = await get_workout_history_stats(db, current_user.id, period)
+    return WorkoutHistoryStatsResponse(**stats)
 
 
 @router.get("/workouts/statistics")

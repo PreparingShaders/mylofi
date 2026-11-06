@@ -4194,3 +4194,64 @@ body.has-network-banner main {
 .ai-analysis-badge.hidden {
     display: none;
 }
+
+/* ============ History Tab Redesign ============ */
+
+/* Summary panel card hover effects */
+.history-summary-panel .glass {
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.history-summary-panel .glass:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+.dark .history-summary-panel .glass:hover {
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* Period tab active state */
+.history-period-tab[aria-selected="true"],
+.history-period-tab-filter[aria-selected="true"] {
+    background: #18181b;
+    color: #fafafa;
+}
+.dark .history-period-tab[aria-selected="true"],
+.dark .history-period-tab-filter[aria-selected="true"] {
+    background: #fafafa;
+    color: #09090b;
+}
+
+/* Search input focus states */
+#history-search-input:focus {
+    outline: none;
+    ring: 2px;
+    ring-color: #84cc16;
+    box-shadow: 0 0 0 3px rgba(132, 204, 22, 0.2);
+}
+.dark #history-search-input:focus {
+    box-shadow: 0 0 0 3px rgba(132, 204, 22, 0.3);
+}
+
+/* Exercise preview truncation with tooltip */
+.history-summary-panel .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* Week separator styling */
+.history-week-separator {
+    border-top: 1px dashed rgba(24, 24, 27, 0.1);
+    margin: 0.5rem 0;
+}
+.dark .history-week-separator {
+    border-top-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Card press animation for history cards */
+.history-summary-panel .btn-press:active,
+.glass.rounded-2xl.p-4.btn-press:active {
+    transform: scale(0.98);
+    transition: transform 0.05s ease;
+}

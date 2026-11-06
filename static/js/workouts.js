@@ -4934,14 +4934,97 @@ ${allCards.join('')}
         }));
     },
 
+    // Render summary statistics panel for history
+    async renderHistorySummary(container, app, period = 'all') {
+        let stats = null;
+        try {
+            const response = await API.get(`/workouts/history/stats?period=${period}`, app.state.tokens.access);
+            stats = response;
+        } catch (error) {
+            console.error('[Workouts] History stats load error:', error);
+        }
+
+        const formatDuration = (seconds) => {
+            if (!seconds) return '0 мин';
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            return h > 0 ? `${h} ч ${m} мин` : `${m} мин`;
+        };
+
+        const formatTonnage = (kg) => {
+            if (kg >= 1000) return `${(kg / 1000).toFixed(1)} т`;
+            return `${Math.round(kg)} кг`;
+        };
+
+        const periodLabels = { week: 'Неделя', month: 'Месяц', all: 'Всё время' };
+
+        return `
+            <div class="history-summary-panel mb-4" data-period="${period}">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="text-sm font-semibold text-surface-700 dark:text-surface-300">Сводка за ${periodLabels[period] || periodLabels.all}</h3>
+                    <div class="flex items-center gap-1" role="tablist" aria-label="Период">
+                        ${Object.entries(periodLabels).map(([key, label]) => `
+                            <button
+                                type="button"
+                                role="tab"
+                                aria-selected="${key === period}"
+                                data-period="${key}"
+                                class="history-period-tab px-3 py-1.5 text-xs font-semibold rounded-xl transition-colors ${key === period
+                                    ? 'bg-primary-600 text-white shadow-sm'
+                                    : 'text-surface-500 hover:text-surface-700 dark:text-surface-400 dark:hover:text-surface-200 bg-surface-100 dark:bg-white/5'}"
+                            >${label}</button>
+                        `).join('')}
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="glass rounded-2xl p-3">
+                        <div class="text-[10px] font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider mb-1">Тренировок</div>
+                        <div class="text-2xl font-bold text-primary-600 dark:text-primary-400 tabular-nums">${stats?.total_workouts ?? 0}</div>
+                    </div>
+                    <div class="glass rounded-2xl p-3">
+                        <div class="text-[10px] font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider mb-1">Тоннаж</div>
+                        <div class="text-2xl font-bold text-lime-600 dark:text-lime-400 tabular-nums">${formatTonnage(stats?.total_tonnage_kg ?? 0)}</div>
+                    </div>
+                    <div class="glass rounded-2xl p-3">
+                        <div class="text-[10px] font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider mb-1">Общее время</div>
+                        <div class="text-2xl font-bold text-surface-700 dark:text-surface-300 tabular-nums">${formatDuration(stats?.total_duration_seconds ?? 0)}</div>
+                    </div>
+                    <div class="glass rounded-2xl p-3">
+                        <div class="text-[10px] font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider mb-1">Ср. длительность</div>
+                        <div class="text-2xl font-bold text-surface-700 dark:text-surface-300 tabular-nums">${formatDuration(stats?.avg_duration_seconds ?? 0)}</div>
+                    </div>
+                    <div class="glass rounded-2xl p-3 col-span-2">
+                        <div class="text-[10px] font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider mb-1">Подходы</div>
+                        <div class="flex items-baseline gap-2">
+                            <span class="text-2xl font-bold text-surface-700 dark:text-surface-300 tabular-nums">${stats?.completed_sets ?? 0}</span>
+                            <span class="text-surface-400">/</span>
+                            <span class="text-2xl font-bold text-surface-500 dark:text-surface-400 tabular-nums">${stats?.total_sets ?? 0}</span>
+                            <span class="text-xs text-surface-400 ml-auto">завершено / всего</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
     // Chronological history: newest first, grouped by month, with a
     // "load more" page that keeps the sessions already on screen.
     async renderHistory(container, app, { limit = 20, append = false } = {}) {
         this.app = app;
         this.stopWorkoutTimer();
 
-        const historyState = this.historyState || { limit: limit, total: 0, sessions: [] };
-        if (!append) historyState.limit = limit;
+        const historyState = this.historyState || { 
+            limit: limit, 
+            total: 0, 
+            sessions: [], 
+            period: 'all',
+            searchQuery: '',
+        };
+        if (!append) {
+            historyState.limit = limit;
+            historyState.period = historyState.period || 'all';
+            historyState.searchQuery = historyState.searchQuery || '';
+        }
         this.historyState = historyState;
 
         let data;
@@ -4971,7 +5054,11 @@ ${allCards.join('')}
         historyState.total = (data?.total || 0) + localSessions.length;
         historyState.hasLocalSessions = localSessions.length > 0;
 
-        this.renderHistoryList(container, app, historyState, false);
+        // Fetch stats for the current period
+        const summaryHtml = await this.renderHistorySummary(container, app, historyState.period);
+
+        // Render full history with summary, search/filter, and list
+        this.renderHistoryList(container, app, historyState, false, summaryHtml);
     },
 
     // New helper: Get locally completed sessions from localStorage
@@ -5003,19 +5090,48 @@ ${allCards.join('')}
         return sessions;
     },
 
-    renderHistoryList(container, app, historyState, failed) {
-        const sessions = historyState.sessions || [];
-        const hasMore = sessions.length < (historyState.total || 0);
-        this.recentSessions = sessions.filter(s => s.status === 'completed');
+renderHistoryList(container, app, historyState, failed, summaryHtml = '') {
+        const allSessions = historyState.sessions || [];
+        const period = historyState.period || 'all';
+        const searchQuery = (historyState.searchQuery || '').toLowerCase().trim();
 
-        const groups = new Map();
-        sessions.forEach(session => {
+        // Filter sessions by period
+        const now = new Date();
+        let periodStart = null;
+        if (period === 'week') {
+            periodStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        } else if (period === 'month') {
+            periodStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        }
+
+        const filteredSessions = allSessions.filter(session => {
             const stamp = new Date(session.completed_at || session.started_at);
-            const label = isNaN(stamp.getTime())
-                ? 'Без даты'
-                : stamp.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
-            if (!groups.has(label)) groups.set(label, []);
-            groups.get(label).push(session);
+            if (periodStart && stamp < periodStart) return false;
+            if (searchQuery) {
+                const nameMatch = (session.name || '').toLowerCase().includes(searchQuery);
+                const exerciseMatch = (session.exercises || []).some(ex => 
+                    (ex.name || '').toLowerCase().includes(searchQuery)
+                );
+                if (!nameMatch && !exerciseMatch) return false;
+            }
+            return true;
+        });
+
+        const hasMore = filteredSessions.length < (historyState.total || 0);
+        this.recentSessions = filteredSessions.filter(s => s.status === 'completed');
+
+        // Group by month, then by week within month
+        const monthGroups = new Map();
+        filteredSessions.forEach(session => {
+            const stamp = new Date(session.completed_at || session.started_at);
+            if (isNaN(stamp.getTime())) {
+                if (!monthGroups.has('Без даты')) monthGroups.set('Без даты', []);
+                monthGroups.get('Без даты').push(session);
+                return;
+            }
+            const monthLabel = stamp.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+            if (!monthGroups.has(monthLabel)) monthGroups.set(monthLabel, []);
+            monthGroups.get(monthLabel).push(session);
         });
 
         const statusLabel = (status, isLocalOnly) => {
@@ -5023,63 +5139,151 @@ ${allCards.join('')}
             return status === 'completed' ? 'Завершена' : status === 'cancelled' ? 'Отменена' : 'Активна';
         };
 
-        const groupBlocks = [...groups.entries()].map(([label, items]) => `
-            <div class="mb-5">
-                <h3 class="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">${this.escapeHtml(label)}</h3>
-                <div class="space-y-2">
-                    ${items.map(session => {
-                        const metrics = this.getWorkoutMetrics(session);
-                        const stamp = new Date(session.completed_at || session.started_at);
-                        const isLocalOnly = session._localOnly === true;
-                        const analyzable = (session.status === 'completed' || !session.status)
-                            && metrics.completed > 0
-                            && !isNaN(parseInt(session.id))
-                            && !isLocalOnly;
-                        return `
-                            <div class="glass rounded-2xl p-4 cursor-pointer btn-press" data-action="open-history-session" data-session-id="${session.id}">
-                                <div class="flex items-start justify-between gap-3">
-                                    <div class="min-w-0 flex-1">
-                                        <div class="flex items-center gap-2">
-                                            <h4 class="font-semibold text-sm truncate" title="${this.escapeHtml(session.name || 'Тренировка')}">${this.escapeHtml(session.name || 'Тренировка')}</h4>
-                                            ${isLocalOnly ? `
-                                                <span class="flex-shrink-0 px-2 py-0.5 text-[10px] font-medium bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 rounded-full border border-amber-300 dark:border-amber-700">
-                                                    Ожидает синхронизации
-                                                </span>
-                                            ` : ''}
+        // Build exercise preview for a session
+        const buildExercisePreview = (session) => {
+            const exercises = session.exercises || [];
+            if (exercises.length === 0) return '';
+            const topExercises = exercises.slice(0, 3);
+            const previewLines = topExercises.map(ex => {
+                const completedSets = (ex.sets || []).filter(s => s.is_completed);
+                if (completedSets.length === 0) return null;
+                const setStrs = completedSets.map(s => `${s.weight_kg ?? '?'}×${s.reps ?? '?'}`).join(', ');
+                return `${this.escapeHtml(ex.name)}: ${setStrs} (${completedSets.length} подх.)`;
+            }).filter(Boolean);
+            if (previewLines.length === 0) return '';
+            const more = exercises.length > 3 ? ` +${exercises.length - 3} упр.` : '';
+            return `<div class="mt-2 text-[11px] text-surface-500 dark:text-surface-400 line-clamp-2 whitespace-pre-line">${previewLines.join('\n')}${more}</div>`;
+        };
+
+        // Group sessions by week within each month
+        const getWeekLabel = (date) => {
+            const startOfWeek = new Date(date);
+            startOfWeek.setDate(date.getDate() - date.getDay() + 1); // Monday
+            const endOfWeek = new Date(startOfWeek);
+            endOfWeek.setDate(startOfWeek.getDate() + 6);
+            return `${startOfWeek.getDate()}.${String(startOfWeek.getMonth() + 1).padStart(2, '0')}–${endOfWeek.getDate()}.${String(endOfWeek.getMonth() + 1).padStart(2, '0')}`;
+        };
+
+        const monthBlocks = [...monthGroups.entries()].map(([monthLabel, items]) => {
+            // Sort items by date descending
+            items.sort((a, b) => new Date(b.completed_at || b.started_at) - new Date(a.completed_at || a.started_at));
+            
+            // Group by week
+            const weekGroups = new Map();
+            items.forEach(session => {
+                const stamp = new Date(session.completed_at || session.started_at);
+                if (isNaN(stamp.getTime())) {
+                    if (!weekGroups.has('Без даты')) weekGroups.set('Без даты', []);
+                    weekGroups.get('Без даты').push(session);
+                    return;
+                }
+                const weekLabel = getWeekLabel(stamp);
+                if (!weekGroups.has(weekLabel)) weekGroups.set(weekLabel, []);
+                weekGroups.get(weekLabel).push(session);
+            });
+
+            const weekBlocks = [...weekGroups.entries()].map(([weekLabel, weekItems]) => `
+                <div class="mb-3">
+                    ${weekLabel !== 'Без даты' && monthGroups.size > 1 ? `
+                        <h4 class="text-xs font-medium text-surface-500 dark:text-surface-400 mb-1 px-1">${this.escapeHtml(weekLabel)}</h4>
+                    ` : ''}
+                    <div class="space-y-2">
+                        ${weekItems.map(session => {
+                            const metrics = this.getWorkoutMetrics(session);
+                            const stamp = new Date(session.completed_at || session.started_at);
+                            const isLocalOnly = session._localOnly === true;
+                            const analyzable = (session.status === 'completed' || !session.status)
+                                && metrics.completed > 0
+                                && !isNaN(parseInt(session.id))
+                                && !isLocalOnly;
+                            const exercisePreview = buildExercisePreview(session);
+                            return `
+                                <div class="glass rounded-2xl p-4 cursor-pointer btn-press" data-action="open-history-session" data-session-id="${session.id}">
+                                    <div class="flex items-start justify-between gap-3">
+                                        <div class="min-w-0 flex-1">
+                                            <div class="flex items-center gap-2">
+                                                <h4 class="font-semibold text-sm truncate" title="${this.escapeHtml(session.name || 'Тренировка')}">${this.escapeHtml(session.name || 'Тренировка')}</h4>
+                                                ${isLocalOnly ? `
+                                                    <span class="flex-shrink-0 px-2 py-0.5 text-[10px] font-medium bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 rounded-full border border-amber-300 dark:border-amber-700">
+                                                        Ожидает синхронизации
+                                                    </span>
+                                                ` : ''}
+                                            </div>
+                                            <p class="text-xs text-surface-500 dark:text-surface-400 mt-1">
+                                                ${isNaN(stamp.getTime()) ? '—' : `${Utils.formatDate(stamp.toISOString())} · ${Utils.formatTime(stamp.toISOString())}`}
+                                            </p>
+                                            ${exercisePreview}
                                         </div>
-                                        <p class="text-xs text-surface-500 dark:text-surface-400 mt-1">
-                                            ${isNaN(stamp.getTime()) ? '—' : `${Utils.formatDate(stamp.toISOString())} · ${Utils.formatTime(stamp.toISOString())}`}
-                                        </p>
+                                        <div class="text-right flex-shrink-0">
+                                            <p class="text-sm font-bold text-primary-600 dark:text-primary-400">${Math.round(metrics.tonnage)} кг</p>
+                                            <p class="text-[11px] text-surface-400">${metrics.completed}/${metrics.total} подх.</p>
+                                        </div>
                                     </div>
-                                    <div class="text-right flex-shrink-0">
-                                        <p class="text-sm font-bold text-primary-600 dark:text-primary-400">${Math.round(metrics.tonnage)} кг</p>
-                                        <p class="text-[11px] text-surface-400">${metrics.completed}/${metrics.total} подх.</p>
-                                    </div>
-                                </div>
-                                <div class="flex items-center gap-2 mt-2 text-[11px] text-surface-400">
-                                    <span>${Utils.formatDuration(session.duration_seconds || 0)}</span>
-                                    <span>·</span>
-                                    <span>${(session.exercises || []).length} упр.</span>
-                                    <span>·</span>
-                                    <span>${statusLabel(session.status, isLocalOnly)}</span>
-                                    ${analyzable ? `<button type="button" data-action="history-analyze-ai" data-session-id="${session.id}"
-                                            class="ml-auto flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold ${session.has_ai_analysis ? 'bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300' : 'bg-surface-100 dark:bg-white/5 text-surface-500 dark:text-surface-400'}">
+                                    <div class="flex items-center gap-2 mt-2 text-[11px] text-surface-400">
+                                        <span>${Utils.formatDuration(session.duration_seconds || 0)}</span>
+                                        <span>·</span>
+                                        <span>${(session.exercises || []).length} упр.</span>
+                                        <span>·</span>
+                                        <span>${statusLabel(session.status, isLocalOnly)}</span>
+                                        ${analyzable ? `<button type="button" data-action="history-analyze-ai" data-session-id="${session.id}"
+                                                class="ml-auto flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold ${session.has_ai_analysis ? 'bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300' : 'bg-surface-100 dark:bg-white/5 text-surface-500 dark:text-surface-400'}">
                                             <span class="badge">✦ ИИ</span>
                                             <span>${session.has_ai_analysis ? 'Пересчитать' : 'Разобрать'}</span>
                                         </button>` : ''}
+                                    </div>
                                 </div>
-                            </div>
-                        `;
-                    }).join('')}
+                            `;
+                        }).join('')}
+                    </div>
                 </div>
-            </div>
-        `).join('');
+            `).join('');
 
+            return `
+                <div class="mb-5">
+                    <h3 class="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">${this.escapeHtml(monthLabel)}</h3>
+                    ${weekBlocks}
+                </div>
+            `;
+        }).join('');
+
+        const searchInputId = 'history-search-input';
         const html = `
             <div class="p-4">
                 <div class="flex items-center mb-4">
                     <button data-action="back-to-workouts" class="mr-3 text-surface-500 hover:text-surface-900">←</button>
                     <h2 class="text-xl font-bold">История тренировок</h2>
+                </div>
+
+                ${summaryHtml}
+
+                <!-- Search & Filter Bar -->
+                <div class="mb-4 space-y-3">
+                    <div class="relative">
+                        <input
+                            type="search"
+                            id="${searchInputId}"
+                            placeholder="Поиск по названию или упражнению…"
+                            value="${this.escapeHtml(historyState.searchQuery || '')}"
+                            class="w-full px-4 py-2.5 pl-10 glass rounded-xl text-sm bg-surface-50 dark:bg-white/5 placeholder:text-surface-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20"
+                            aria-label="Поиск тренировок"
+                        >
+                        <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                        </svg>
+                    </div>
+                    <div class="flex items-center gap-2 overflow-x-auto pb-2" role="tablist" aria-label="Период">
+                        ${['all', 'month', 'week'].map(key => `
+                            <button
+                                type="button"
+                                role="tab"
+                                aria-selected="${key === period}"
+                                data-period="${key}"
+                                class="history-period-tab-filter px-3 py-1.5 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap flex-shrink-0 ${key === period
+                                    ? 'bg-primary-600 text-white shadow-sm'
+                                    : 'text-surface-500 hover:text-surface-700 dark:text-surface-400 dark:hover:text-surface-200 bg-surface-100 dark:bg-white/5'}"
+                            >${key === 'all' ? 'Всё время' : key === 'month' ? 'Месяц' : 'Неделя'}</button>
+                        `).join('')}
+                    </div>
                 </div>
 
                 ${failed
@@ -5093,19 +5297,42 @@ ${allCards.join('')}
                     </div>
                 ` : ''}
 
-                ${sessions.length === 0
-                    ? `<div class="text-center py-8 text-surface-400">Ещё нет тренировок. Начните первую!</div>`
-                    : `${groupBlocks}
-                        ${hasMore ? '<button type="button" data-action="history-load-more" class="w-full py-2.5 glass rounded-xl text-sm font-semibold">Показать ещё</button>' : ''}`}
+                ${filteredSessions.length === 0
+                    ? `<div class="text-center py-8 text-surface-400">${searchQuery ? 'Ничего не найдено. Попробуйте другой запрос.' : 'Ещё нет тренировок. Начните первую!'}</div>`
+                    : `${monthBlocks}
+                        ${hasMore ? '<button type="button" data-action="history-load-more" class="w-full py-2.5 glass rounded-xl text-sm font-semibold mt-4">Показать ещё</button>' : ''}`}
             </div>
         `;
 
         container.innerHTML = html;
 
+        // Attach search input listener with debounce
+        const searchInput = container.querySelector(`#${searchInputId}`);
+        if (searchInput) {
+            let debounceTimer = null;
+            searchInput.addEventListener('input', (e) => {
+                clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(() => {
+                    historyState.searchQuery = e.target.value;
+                    this.renderHistoryList(container, app, historyState, false, summaryHtml);
+                }, 300);
+            });
+        }
+
+        // Attach period filter listeners
+        container.querySelectorAll('[data-period]').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const newPeriod = e.currentTarget.dataset.period;
+                if (newPeriod === historyState.period) return;
+                historyState.period = newPeriod;
+                // Refetch stats for new period
+                const newSummaryHtml = await this.renderHistorySummary(container, app, newPeriod);
+                this.renderHistoryList(container, app, historyState, false, newSummaryHtml);
+            });
+        });
+
         container.querySelectorAll('[data-action="history-analyze-ai"]').forEach(btn => {
             btn.addEventListener('click', (e) => {
-                // The row itself opens the session detail; the coach button is a
-                // sibling action, so the click must not travel up to it.
                 e.stopPropagation();
                 const sessionId = parseInt(e.currentTarget.dataset.sessionId);
                 if (!isNaN(sessionId)) {

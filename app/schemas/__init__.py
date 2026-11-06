@@ -739,6 +739,15 @@ class WorkoutHistoryResponse(BaseModel):
     total: int
 
 
+class WorkoutHistoryStatsResponse(BaseModel):
+    total_workouts: int
+    total_tonnage_kg: int
+    total_duration_seconds: int
+    avg_duration_seconds: int
+    total_sets: int
+    completed_sets: int
+
+
 # Exercise catalog schemas
 class WorkoutGoal(str, Enum):
     STRENGTH = "strength"
@@ -911,6 +920,7 @@ __all__ = [
     "WorkoutSessionUpdate",
     "WorkoutSessionResponse",
     "WorkoutHistoryResponse",
+    "WorkoutHistoryStatsResponse",
     "OfflineSessionSyncRequest",
     "WSMessageType",
     "WSMessage",
