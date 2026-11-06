@@ -32,10 +32,19 @@ When user fills weight and reps but forgets to press the checkbox, the set is no
 
 **Root Cause**: `syncSessionFromDOM` only reads `is_completed` from the checkbox state (`toggleBtn?.dataset.completed === 'true'`). It doesn't infer completion from filled inputs.
 
-## Problem 6: 404 Errors from Temp Set IDs in flushPendingSetEdits
-When completing a server workout that has optimistically added exercises (with temp IDs like `temp-set-...` or negative IDs like `-100001`), `flushPendingSetEdits` sends PATCH requests to `/workouts/sets/{tempId}` which returns 404. The error handler treats this as a network failure.
+## Problem 7: Temp Set IDs Cause 404 Errors in Multiple Network Request Points
+When a server workout has optimistically added exercises (with temp IDs like `temp-set-...` or negative IDs like `-100001`), multiple code paths send PATCH/POST requests to `/workouts/sets/{tempId}` which returns 404. The error handler treats this as a network failure, showing "Сеть недоступна".
 
-**Root Cause**: `flushPendingSetEdits` in app.js iterates all sets in the session and sends PATCH for each, without checking if the set ID is a real server ID vs a temporary/local ID.
+**Root Cause**: Several places in workouts.js and app.js send set updates to the server without checking if the set ID is a real server ID vs a temporary/local ID.
+
+## Problem 8: Default 3 Sets Per Exercise - Poor UX for Free-form Workouts
+When adding a new exercise (especially in free-form workouts), it creates 3 empty sets by default. User has to fill all 3 or delete extras.
+
+**Desired UX**: 
+- Default to **1 set** per new exercise
+- When user clicks "+ Add Set", the new set should **copy weight and reps from the previous set** (already partially implemented but needs refinement)
+
+---
 
 ---
 
@@ -512,50 +521,6 @@ async trySyncCompletedSession(app, sessionId, session, storageKey) {
 
 ---
 
-### Fix 9: Auto-Complete Sets When Weight/Reps Filled
-**File**: `static/js/workouts.js`, function `syncSessionFromDOM` (line 1075)
-
-Modify the set processing to infer completion from filled inputs:
-
-```javascript
-setRows.forEach(row => {
-    const setId = parseInt(row.dataset.setId, 10);
-    if (isNaN(setId)) return;
-    
-    // Deduplicate: skip if we've already processed this setId
-    if (seenSetIds.has(setId)) return;
-    seenSetIds.add(setId);
-    
-    const weightInput = row.querySelector('[data-field="weight"]');
-    const repsInput = row.querySelector('[data-field="reps"]');
-    const durationInput = row.querySelector('[data-field="duration"]');
-    const distanceInput = row.querySelector('[data-field="distance"]');
-    const toggleBtn = row.querySelector('[data-action="toggle-set"]');
-    
-    const weight_kg = weightInput ? parseFloat(weightInput.value) : null;
-    const reps = repsInput ? parseInt(repsInput.value, 10) : null;
-    const duration = durationInput ? parseInt(durationInput.value, 10) : null;
-    const distance = distanceInput ? parseFloat(distanceInput.value) : null;
-    const is_completed = toggleBtn?.dataset.completed === 'true';
-    
-    // AUTO-COMPLETE: If weight and reps are filled (for weight_reps exercises)
-    // or duration is filled (for duration_only/duration_distance exercises),
-    // treat as completed even without checkbox.
-    const hasWeightRepsData = weight_kg !== null && !isNaN(weight_kg) && reps !== null && !isNaN(reps);
-    const hasDurationData = duration !== null && !isNaN(duration);
-    const inferredCompleted = hasWeightRepsData || hasDurationData;
-    
-    sets.push({ 
-        id: setId, 
-        weight_kg, 
-        reps, 
-        duration, 
-        distance, 
-        is_completed: is_completed || inferredCompleted 
-    });
-});
-```
-
 ### Fix 10: Skip Temp Set IDs in flushPendingSetEdits
 **File**: `static/js/app.js`, function `flushPendingSetEdits` (line 2407)
 
@@ -614,6 +579,158 @@ async flushPendingSetEdits() {
 },
 ```
 
+### Fix 11: Extend Temp ID Network Blocking to All Set Request Points
+**File**: `static/js/workouts.js` - Multiple locations
+
+Apply `isRealSetId` check to ALL network requests that use set IDs. The following locations need updates:
+
+**1. Line 1850 - Rest timer PATCH:**
+```javascript
+// Before sending rest_time_seconds PATCH
+if (Workouts.isRealSetId(setId)) {
+    API.patch(`/workouts/sets/${setId}`, { rest_time_seconds: elapsed }, token).catch(() => {});
+}
+```
+
+**2. Line 2306 - Auto-complete next set PATCH:**
+```javascript
+// Before sending PATCH for next set
+if (Workouts.isRealSetId(nextSetId)) {
+    API.patch(`/workouts/sets/${nextSetId}`, patch, token).catch(() => {});
+}
+```
+
+**3. Line 2358 - Drum picker value PATCH:**
+```javascript
+// Before sending PATCH for field update
+if (Workouts.isRealSetId(setId)) {
+    await API.patch(`/workouts/sets/${setId}`, { [field]: value }, token);
+}
+```
+
+**4. Line 2519 - Set completion PATCH:**
+```javascript
+// Before sending PATCH for set completion
+if (Workouts.isRealSetId(setId)) {
+    await API.patch(`/workouts/sets/${setId}`, payload, token);
+}
+```
+
+**5. Line 2554 - Clear rest time PATCH:**
+```javascript
+// Before sending PATCH to clear rest_time_seconds
+if (Workouts.isRealSetId(savedSetId)) {
+    API.patch(`/workouts/sets/${savedSetId}`, { rest_time_seconds: null }, token).catch(() => {});
+}
+```
+
+**6. Line 4504 - Add set POST (already has isLocal check, but add explicit check):**
+```javascript
+// Already handles isLocal, but add safety check
+if (!isLocal && !Workouts.isRealSetId(exercise.id)) {
+    // Skip if exercise itself has temp ID
+    return;
+}
+```
+
+**7. Line 4599 - Delete set:**
+```javascript
+// Before sending DELETE
+if (Workouts.isRealSetId(removedSet.id)) {
+    API.delete(`/workouts/sets/${removedSet.id}`, token)
+}
+```
+
+**8. Line 4896 - AI plan badge update PATCH:**
+```javascript
+// Before sending PATCH
+if (Workouts.isRealSetId(setId)) {
+    await API.patch(`/workouts/sets/${setId}`, patch, app.state.tokens.access).catch(() => {});
+}
+```
+
+**9. Line 1088 - Pending patches replay (already uses setIdMap, should be OK but verify):**
+```javascript
+// This one uses realSetId from setIdMap, which should already be real IDs
+// But add safety check:
+if (realSetId && Workouts.isRealSetId(realSetId)) {
+    await API.enqueueRequest('PATCH', `/workouts/sets/${realSetId}`, patch, token, { prepend: true });
+}
+```
+
+### Fix 12: New UX - Default 1 Set Per Exercise, Copy Previous on Add
+**File**: `static/js/workouts.js` - Multiple locations
+
+**1. Line 943 - buildLocalSessionFromTemplate (template-based sessions):**
+```javascript
+// Change default from 3 to 1
+const targetSets = Math.max(1, ex.target_sets || 1);  // was: || 3
+```
+
+**2. Line 2960 - Workout session exercise target_sets default:**
+```javascript
+target_sets: ex.sets?.length ?? 1,  // was: ?? 3
+```
+
+**3. Line 3235 - Template exercise display (keep as-is for template view):**
+```javascript
+// Keep this as-is for template editing
+```
+
+**4. Line 3487 - renderWorkoutScreen targetSets default:**
+```javascript
+const targetSets = Math.max(1, ex.target_sets || 1);  // was: || 3
+```
+
+**5. Line 3492 - Same as above**
+
+**6. Line 5932 - Template modal default sets input (keep as 3 for template creation):**
+```javascript
+// Keep as 3 for template creation - templates are meant to have multiple sets
+```
+
+**7. Line 5983 - Template creation payload (keep as user input):**
+```javascript
+// Keep as user input
+```
+
+**8. Line 6424 - Template creation default sets (keep as 3 for templates):**
+```javascript
+// Keep as 3 for template creation
+```
+
+**9. Line 6538 - Optimistic exercise add for server sessions (CHANGE THIS):**
+```javascript
+sets: Array.from({ length: 1 }, (_, i) => ({  // was: ex.target_sets || 3
+    id: `temp-set-${Date.now()}-${i}`,
+    exercise_id: `temp-${Date.now()}`,
+    set_number: i + 1,
+    weight_kg: 0,
+    reps: 10,
+    rest_seconds: 90,
+    is_completed: false,
+})),
+```
+
+**10. Line 6570 - Same location, default to 1 set instead of 3**
+
+**11. Lines 4484-4485 - Add set button (already copies from previous, but refine):**
+```javascript
+// Current logic already copies from lastSet, but ensure it works for both local and server
+const lastSet = (exercise.sets || [])[(exercise.sets || []).length - 1] || { set_number: 0, weight_kg: null, reps: 10, rest_seconds: 90 };
+const newSet = {
+    id: isLocal ? TEMP_SET_ID_BASE - Math.floor(Math.random() * 999999) : null,
+    exercise_id: exercise.id,
+    set_number: (lastSet.set_number || 0) + 1,
+    // Copy weight if previous set had weight > 0, otherwise null
+    weight_kg: (lastSet.weight_kg !== null && lastSet.weight_kg > 0) ? lastSet.weight_kg : null,
+    // Copy reps if previous set had reps > 0, otherwise default to 10
+    reps: (lastSet.reps !== null && lastSet.reps > 0) ? lastSet.reps : 10,
+    rest_seconds: lastSet.rest_seconds || 90,
+    is_completed: false,
+};
+```
+
 ---
 
 ## Testing Requirements
@@ -645,6 +762,9 @@ Expected: All tests pass.
 | **NEW**: Sync-offline endpoint returns 201 (not 422) | Session created on server, local storage cleared |
 | **NEW**: User fills weight/reps but forgets checkbox | Set auto-completes, appears in history |
 | **NEW**: Server workout with optimistically added exercises | No 404 errors on temp set IDs during flush |
+| **NEW**: Add new exercise in free-form workout | Creates 1 set by default (not 3) |
+| **NEW**: Click "+ Add Set" on filled set | New set copies weight/reps from previous |
+| **NEW**: Multiple network request points with temp IDs | No 404 errors anywhere in console |
 
 ---
 
@@ -657,6 +777,9 @@ Expected: All tests pass.
 6. Revert `trySyncCompletedSession` to send raw session object
 7. Revert auto-complete logic in `syncSessionFromDOM`
 8. Revert `isRealSetId` helper and `flushPendingSetEdits` temp ID check
+9. Revert temp ID checks in all 9 network request points
+10. Revert default set count from 1 to 3 in local sessions
+11. Revert add-set copy logic to previous version
 
 ---
 

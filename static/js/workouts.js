@@ -940,7 +940,7 @@ export const Workouts = {
             .sort((a, b) => (a.order || 0) - (b.order || 0))
             .map((ex, index) => {
                 const exerciseId = TEMP_EXERCISE_ID_BASE - index;
-                const targetSets = Math.max(1, ex.target_sets || 3);
+                const targetSets = Math.max(1, ex.target_sets || 1);
                 return {
                     id: exerciseId,
                     name: ex.name,
@@ -1083,6 +1083,10 @@ export const Workouts = {
                 const realSetId = setIdMap[String(setId)];
                 if (!realSetId) {
                     console.warn('[Workouts] Skipping offline patch for unmapped set', setId);
+                    continue;
+                }
+                if (!this.isRealSetId(realSetId)) {
+                    console.warn('[Workouts] Skipping offline patch for non-real set ID', realSetId);
                     continue;
                 }
                 await API.enqueueRequest('PATCH', `/workouts/sets/${realSetId}`, patch, token, { prepend: true });
@@ -1844,7 +1848,7 @@ export const Workouts = {
             this.updateTimerPanel(ownerEx.id, ownerEx, this.app?.elements?.pageContent || document);
         }
 
-        if (setId && !this.isLocalSession(sess)) {
+        if (setId && !this.isLocalSession(sess) && this.isRealSetId(setId)) {
             const token = this.app?.state?.tokens?.access;
             if (token) {
                 API.patch(`/workouts/sets/${setId}`, { rest_time_seconds: elapsed }, token).catch(() => {});
@@ -2302,7 +2306,7 @@ let html = `
                         if (isLocal && session) {
                             this.persistLocalSession(session);
                             this.recordLocalSetPatch(session.key, nextSetId, patch);
-                        } else if (token) {
+                        } else if (token && this.isRealSetId(nextSetId)) {
                             API.patch(`/workouts/sets/${nextSetId}`, patch, token).catch(() => {});
                         }
                     }
@@ -2516,7 +2520,9 @@ let html = `
 
                 try {
                     app?._pendingToggleSetIds?.add(setId);
-                    await API.patch(`/workouts/sets/${setId}`, payload, token);
+                    if (this.isRealSetId(setId)) {
+                        await API.patch(`/workouts/sets/${setId}`, payload, token);
+                    }
                 } catch (err) {
                     if (err?.offlineQueued) {
                         // Silent: the global network banner reflects offline/syncing status
@@ -2550,7 +2556,7 @@ let html = `
         if (isLocal && session) {
             this.persistLocalSession(session);
             this.recordLocalSetPatch(session.key, savedSetId, { rest_time_seconds: null });
-        } else if (token) {
+        } else if (token && this.isRealSetId(savedSetId)) {
             API.patch(`/workouts/sets/${savedSetId}`, { rest_time_seconds: null }, token).catch(() => {});
         }
         this.applyRestTimeInline(savedSetId, null);
@@ -3484,7 +3490,7 @@ let html = `
                     const template = await API.get(`/workouts/templates/${session.template_id}`, app.state.tokens.access);
                     if (template && template.exercises && template.exercises.length > 0) {
                         session.exercises = template.exercises.map((ex, index) => {
-                            const targetSets = Math.max(1, ex.target_sets || 3);
+                            const targetSets = Math.max(1, ex.target_sets || 1);
                             return {
                                 id: ex.id || `temp-${index}`,
                                 name: ex.name,
@@ -4476,13 +4482,15 @@ ${allCards.join('')}
                 const exercise = (session.exercises || []).find(ex => ex.id === exId);
                 if (!exercise) return;
                 this.exercisesModified = true;
-                const lastSet = (exercise.sets || [])[(exercise.sets || []).length - 1] || { set_number: 0 };
+                const lastSet = (exercise.sets || [])[(exercise.sets || []).length - 1] || { set_number: 0, weight_kg: null, reps: 10, rest_seconds: 90 };
                 const newSet = {
                     id: isLocal ? TEMP_SET_ID_BASE - Math.floor(Math.random() * 999999) : null,
                     exercise_id: exercise.id,
                     set_number: (lastSet.set_number || 0) + 1,
-                    weight_kg: isLocal ? (lastSet.weight_kg !== null && lastSet.weight_kg > 0 ? lastSet.weight_kg : null) : (lastSet.weight_kg || null),
-                    reps: (lastSet.reps && lastSet.reps > 0) ? lastSet.reps : 10,
+                    // Copy weight if previous set had weight > 0, otherwise null
+                    weight_kg: (lastSet.weight_kg !== null && lastSet.weight_kg > 0) ? lastSet.weight_kg : null,
+                    // Copy reps if previous set had reps > 0, otherwise default to 10
+                    reps: (lastSet.reps !== null && lastSet.reps > 0) ? lastSet.reps : 10,
                     rest_seconds: lastSet.rest_seconds || 90,
                     is_completed: false,
                 };
@@ -4595,7 +4603,7 @@ ${allCards.join('')}
             if (isLocal) {
                 this.persistLocalSession(session);
                 this.recordLocalSetPatch(session.key, removedSet.id, { _deleted: true });
-            } else if (token) {
+            } else if (token && this.isRealSetId(removedSet.id)) {
                 API.delete(`/workouts/sets/${removedSet.id}`, token)
                     .catch(err => {
                         const msg = err?.message || '';
@@ -4889,7 +4897,7 @@ ${allCards.join('')}
             if (repsInput) this.setInputValue(repsInput, reps);
             // Persist immediately so a completion that races the 400ms debounced
             // save never loses the just-picked weight or reps.
-            if (setId && app?.state?.tokens?.access) {
+            if (setId && app?.state?.tokens?.access && this.isRealSetId(setId)) {
                 const patch = {};
                 if (field === 'weight') patch.weight_kg = weight;
                 else if (field === 'reps') patch.reps = reps;
@@ -6535,7 +6543,7 @@ ${allCards.join('')}
             if (isLocal) {
                 const newExerciseId = TEMP_EXERCISE_ID_BASE - Math.floor(Math.random() * 10000);
                 const maxOrder = Math.max(0, ...session.exercises.map(e => e.order || 0));
-                const targetSets = Math.max(1, ex.target_sets || 3);
+                const targetSets = Math.max(1, ex.target_sets || 1);
                 let setCounter = 0;
                 const newLocalEx = {
                     id: newExerciseId,
@@ -6567,7 +6575,7 @@ ${allCards.join('')}
                 id: `temp-${Date.now()}`,
                 name: ex.name,
                 order: Math.max(0, ...(session.exercises?.map(e => e.order || 0) || [0])) + 1,
-                sets: Array.from({ length: ex.target_sets || 3 }, (_, i) => ({
+                sets: Array.from({ length: ex.target_sets || 1 }, (_, i) => ({
                     id: `temp-set-${Date.now()}-${i}`,
                     exercise_id: `temp-${Date.now()}`,
                     set_number: i + 1,
