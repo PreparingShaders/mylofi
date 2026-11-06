@@ -2252,6 +2252,7 @@ const App = {
     async handleCompleteWorkout(event) {
         this.state.completingWorkout = true;
         const sessionId = event.target.closest('[data-session-id]')?.dataset.sessionId;
+        if (!sessionId) return;
 
         // Validate workout has exercises with completed sets before confirmation
         const session = Workouts.currentSession;
@@ -2389,7 +2390,6 @@ const App = {
             return;
         }
         this.state.completingWorkout = false;
-        Workouts.clearActiveSessionState(this);
         await this.renderPage('workouts');
     },
 

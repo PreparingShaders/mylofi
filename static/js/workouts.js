@@ -845,7 +845,10 @@ export const Workouts = {
     async clearActiveSessionState(app) {
         // Remember which session was just closed so resolveActiveWorkout() does
         // not restore it from localStorage after a network error.
-        const lastClosedId = app?.state?.currentSessionId ?? null;
+        // Use the session ID from localStorage if app state is already cleared
+        const lastClosedId = app?.state?.currentSessionId
+            ?? localStorage.getItem('active_session_id')
+            ?? null;
         try {
             if (lastClosedId) {
                 localStorage.setItem('last_closed_session_id', String(lastClosedId));
@@ -5047,12 +5050,23 @@ ${allCards.join('')}
 
         // Merge server sessions with local sessions (local first, newest first)
         const serverSessions = (data?.sessions || []).slice();
-        const allSessions = [...localSessions, ...serverSessions]
+
+        // DEDUPLICATION: Create a Set of server session IDs for O(1) lookup
+        const serverSessionIds = new Set(serverSessions.map(s => String(s.id)));
+
+        // Filter out local sessions that already exist on the server (by ID)
+        const uniqueLocalSessions = localSessions.filter(local => {
+            const localId = String(local.id || local.key || '');
+            return localId && !serverSessionIds.has(localId);
+        });
+
+        // Combine: unique local sessions first, then all server sessions
+        const allSessions = [...uniqueLocalSessions, ...serverSessions]
             .sort((a, b) => new Date(b.completed_at || b.started_at) - new Date(a.completed_at || a.started_at));
 
         historyState.sessions = allSessions;
-        historyState.total = (data?.total || 0) + localSessions.length;
-        historyState.hasLocalSessions = localSessions.length > 0;
+        historyState.total = (data?.total || 0) + uniqueLocalSessions.length;
+        historyState.hasLocalSessions = uniqueLocalSessions.length > 0;
 
         // Fetch stats for the current period
         const summaryHtml = await this.renderHistorySummary(container, app, historyState.period);
@@ -6770,7 +6784,8 @@ renderHistoryList(container, app, historyState, failed, summaryHtml = '') {
             if (isLocal) {
                 const newExerciseId = TEMP_EXERCISE_ID_BASE - Math.floor(Math.random() * 10000);
                 const maxOrder = Math.max(0, ...session.exercises.map(e => e.order || 0));
-                const targetSets = Math.max(1, ex.target_sets || 1);
+                // FORCE 1 set for free-form additions, ignore catalog default
+                const targetSets = 1;
                 let setCounter = 0;
                 const newLocalEx = {
                     id: newExerciseId,
@@ -6802,7 +6817,7 @@ renderHistoryList(container, app, historyState, failed, summaryHtml = '') {
                 id: `temp-${Date.now()}`,
                 name: ex.name,
                 order: Math.max(0, ...(session.exercises?.map(e => e.order || 0) || [0])) + 1,
-                sets: Array.from({ length: ex.target_sets || 1 }, (_, i) => ({
+                sets: Array.from({ length: 1 }, (_, i) => ({
                     id: `temp-set-${Date.now()}-${i}`,
                     exercise_id: `temp-${Date.now()}`,
                     set_number: i + 1,
