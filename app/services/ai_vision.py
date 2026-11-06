@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 # Every single upstream call is bounded. Without a hard timeout a hanging
 # worker keeps the background task (and the frontend poll loop) alive
 # indefinitely, which is exactly the failure mode this module must not have.
-MODEL_REQUEST_TIMEOUT = 20.0
-MODEL_CONNECT_TIMEOUT = 10.0
+MODEL_REQUEST_TIMEOUT = 90.0
+MODEL_CONNECT_TIMEOUT = 30.0
 
 # The user comment is context, not an instruction: it is flattened to a single
 # line and capped so a long note cannot crowd out the rest of the prompt.
@@ -380,9 +380,26 @@ async def _call_gemini(model_name: str, base64_img: str, client: httpx.AsyncClie
                 {"text": prompt},
                 {"inline_data": {"mime_type": "image/jpeg", "data": base64_img}}
             ]
-        }]
+        }],
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": 2048,
+            "topP": 0.95,
+            "topK": 40,
+        }
     }
-    response = await client.post(url, json=payload, timeout=MODEL_REQUEST_TIMEOUT)
+    payload_size = len(json.dumps(payload))
+    logger.debug(
+        f"[AI Vision] Calling Gemini vision: model={model_name}, "
+        f"payload_bytes={payload_size}, base64_chars={len(base64_img)}, url={url}"
+    )
+    start = time.perf_counter()
+    response = await client.post(url, json=payload)
+    elapsed = time.perf_counter() - start
+    logger.debug(
+        f"[AI Vision] Gemini response: status={response.status_code}, "
+        f"elapsed={elapsed:.2f}s, body_preview={response.text[:500]}"
+    )
     response.raise_for_status()
     data = response.json()
     candidates = data.get("candidates", [])
@@ -406,9 +423,23 @@ async def _call_openrouter(model_name: str, base64_img: str, client: httpx.Async
                 {"type": "text", "text": prompt},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}
             ]
-        }]
+        }],
+        "temperature": 0.1,
+        "max_tokens": 2048,
+        "top_p": 0.95,
     }
-    response = await client.post(url, headers=headers, json=payload, timeout=MODEL_REQUEST_TIMEOUT)
+    payload_size = len(json.dumps(payload))
+    logger.debug(
+        f"[AI Vision] Calling OpenRouter vision: model={model_name}, "
+        f"payload_bytes={payload_size}, base64_chars={len(base64_img)}, url={url}"
+    )
+    start = time.perf_counter()
+    response = await client.post(url, headers=headers, json=payload)
+    elapsed = time.perf_counter() - start
+    logger.debug(
+        f"[AI Vision] OpenRouter response: status={response.status_code}, "
+        f"elapsed={elapsed:.2f}s, body_preview={response.text[:500]}"
+    )
     response.raise_for_status()
     data = response.json()
     choices = data.get("choices", [])
@@ -424,8 +455,20 @@ async def _call_openrouter(model_name: str, base64_img: str, client: httpx.Async
 # models, timeouts and fallbacks next to the vision one.
 async def _call_gemini_text(model_name: str, client: httpx.AsyncClient, prompt: str) -> Dict[str, Any]:
     url = f"{WORKER_BASE_URL}/v1beta/models/{model_name}:generateContent?key={settings.GEMINI_API_KEY}"
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
-    response = await client.post(url, json=payload, timeout=MODEL_REQUEST_TIMEOUT)
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": 2048,
+            "topP": 0.95,
+            "topK": 40,
+        }
+    }
+    logger.debug(
+        f"[AI Summary] Calling Gemini text: model={model_name}, "
+        f"prompt_size={len(prompt)} chars, timeout={MODEL_REQUEST_TIMEOUT}s"
+    )
+    response = await client.post(url, json=payload)
     response.raise_for_status()
     data = response.json()
     candidates = data.get("candidates", [])
@@ -441,8 +484,18 @@ async def _call_openrouter_text(model_name: str, client: httpx.AsyncClient, prom
         "Authorization": f"Bearer {settings.OPEN_ROUTER_API_KEY}",
         "Content-Type": "application/json",
     }
-    payload = {"model": model_name, "messages": [{"role": "user", "content": prompt}]}
-    response = await client.post(url, headers=headers, json=payload, timeout=MODEL_REQUEST_TIMEOUT)
+    payload = {
+        "model": model_name,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "max_tokens": 2048,
+        "top_p": 0.95,
+    }
+    logger.debug(
+        f"[AI Summary] Calling OpenRouter text: model={model_name}, "
+        f"prompt_size={len(prompt)} chars, timeout={MODEL_REQUEST_TIMEOUT}s"
+    )
+    response = await client.post(url, headers=headers, json=payload)
     response.raise_for_status()
     data = response.json()
     choices = data.get("choices", [])

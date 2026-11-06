@@ -1364,13 +1364,8 @@ try {
                                     <h3 class="text-xs font-semibold text-red-400 uppercase tracking-wider">Ошибка синхронизации</h3>
                                     <button id="clear-failed" class="text-xs text-red-500 hover:text-red-400">Очистить все</button>
                                 </div>
-                                ${failedItems.map((item) => `
-                                    <div class="glass rounded-lg p-2 mb-1">
-                                        <p class="text-sm text-surface-600 dark:text-surface-300">${getFriendlyEndpointLabel(item.endpoint) || 'Запрос'}</p>
-                                        <p class="text-xs text-surface-500 truncate">${item.error || 'Неизвестная ошибка'}</p>
-                                    </div>
-                                `).join('')}
-                                <button id="retry-failed" class="w-full py-2 mt-1 bg-sky-500 hover:bg-sky-600 text-white text-sm font-medium rounded-xl">Повторить сейчас</button>
+                                ${failedItems.map((item) => Components.failedSyncItem(item)).join('')}
+                                <button id="retry-failed" class="w-full py-2 mt-1 bg-sky-500 hover:bg-sky-600 text-white text-sm font-medium rounded-xl">Повторить всё</button>
                             </div>
                         </div>
                         `
@@ -1875,6 +1870,48 @@ try {
 
     bindFailedItems() {
         const container = this.app.elements.pageContent;
+
+        // Individual retry buttons for each failed sync item
+        container.querySelectorAll('[data-action="retry-failed-sync-item"]').forEach((btn) => {
+            btn.onclick = async () => {
+                const itemId = btn.dataset.syncItemId;
+                if (!itemId) return;
+                btn.disabled = true;
+                btn.innerHTML = `<svg class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>`;
+                try {
+                    // Reset the item status to PENDING so it gets picked up by processQueue
+                    await DB.updateSyncQueue(Number(itemId), {
+                        status: DB.SYNC_STATUS.PENDING,
+                        retryCount: 0,
+                        error: null,
+                        updatedAt: Date.now(),
+                    });
+                    await SyncEngine.processQueue();
+                } catch (e) {
+                    console.error('[Nutrition] Retry failed sync item:', e);
+                }
+                this.app.renderPage('nutrition');
+            };
+        });
+
+        // Individual delete buttons for each failed sync item
+        container.querySelectorAll('[data-action="delete-failed-sync-item"]').forEach((btn) => {
+            btn.onclick = async () => {
+                const itemId = btn.dataset.syncItemId;
+                if (!itemId) return;
+                try {
+                    await DB.deleteSyncQueue(Number(itemId));
+                    // Also delete the local meal if it exists
+                    const item = await DB.get('sync_queue', Number(itemId));
+                    if (item?.tempId) {
+                        await DB.deleteMeal(item.tempId);
+                    }
+                } catch (e) {
+                    console.error('[Nutrition] Delete failed sync item:', e);
+                }
+                this.app.renderPage('nutrition');
+            };
+        });
 
         const retryBtn = container.querySelector('#retry-failed');
         if (retryBtn) {

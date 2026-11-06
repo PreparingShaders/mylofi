@@ -945,13 +945,13 @@ async def process_meal_photo_task(meal_id: int, tz_offset_minutes: int = 0) -> N
             with Image.open(meal.photo_path) as img:
                 if img.mode in ("RGBA", "LA", "P"):
                     img = img.convert("RGB")
-                max_dim = 1024
+                max_dim = 512
                 if max(img.size) > max_dim:
                     ratio = max_dim / max(img.size)
                     new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
                     img = img.resize(new_size, Image.Resampling.LANCZOS)
                 buffer = io.BytesIO()
-                img.save(buffer, format="JPEG", quality=80, optimize=True)
+                img.save(buffer, format="JPEG", quality=60, optimize=True)
                 buffer.seek(0)
                 base64_img = base64.b64encode(buffer.read()).decode("utf-8")
 

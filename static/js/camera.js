@@ -306,6 +306,7 @@ export const Camera = {
         const realId = response.id ?? response.meal_id;
         if (!realId) return;
         try {
+            console.log('[Camera] handleSyncedMeal: merging temp meal', { tempId: item.tempId, realId, store: item.store });
             const existing = await DB.getMeal(realId) || await DB.getMeal(item.tempId);
             const merged = {
                 ...(existing || {}),
@@ -318,6 +319,14 @@ export const Camera = {
             await DB.saveMeal(merged);
             if (item.tempId !== realId) {
                 await DB.deleteMeal(item.tempId);
+                console.log('[Camera] Deleted temp meal', { tempId: item.tempId });
+            }
+            // Verify the sync queue item was deleted
+            const queueItem = await DB.get('sync_queue', item.id);
+            if (queueItem) {
+                console.warn('[Camera] Sync queue item still exists after sync:', item.id);
+            } else {
+                console.log('[Camera] Sync queue item verified deleted:', item.id);
             }
             window.dispatchEvent(new CustomEvent('mylofi:meal-synced', { detail: { mealId: realId } }));
         } catch (error) {

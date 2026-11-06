@@ -30,7 +30,9 @@ export const NetworkBanner = {
     hideTimer: null,
     state: 'hidden',
     offlineDebounceTimer: null,
+    onlineDebounceTimer: null,
     OFFLINE_DEBOUNCE_MS: 3000,
+    ONLINE_DEBOUNCE_MS: 1000,
 
     init() {
         if (this.initialized) return;
@@ -117,6 +119,10 @@ export const NetworkBanner = {
             clearTimeout(this.offlineDebounceTimer);
             this.offlineDebounceTimer = null;
         }
+        if (this.onlineDebounceTimer) {
+            clearTimeout(this.onlineDebounceTimer);
+            this.onlineDebounceTimer = null;
+        }
     },
 
     render(state) {
@@ -155,10 +161,24 @@ export const NetworkBanner = {
         this.el.classList.add('is-visible');
         document.body.classList.add('has-network-banner');
 
-        SyncEngine.processQueue().catch((error) => {
-            if (SyncEngine.authFailed) return;
-            console.warn('[NetworkBanner] processQueue failed:', error);
-        });
+        // Debounce online event to avoid rapid online/offline cycles
+        this.onlineDebounceTimer = setTimeout(async () => {
+            // Only trigger sync if there are pending items
+            try {
+                const pendingCount = await SyncEngine.getPendingCount();
+                if (pendingCount > 0) {
+                    console.log('[NetworkBanner] Pending items found, triggering sync');
+                    SyncEngine.processQueue().catch((error) => {
+                        if (SyncEngine.authFailed) return;
+                        console.warn('[NetworkBanner] processQueue failed:', error);
+                    });
+                } else {
+                    console.log('[NetworkBanner] No pending items, skipping sync');
+                }
+            } catch (e) {
+                console.warn('[NetworkBanner] Failed to check pending count:', e);
+            }
+        }, this.ONLINE_DEBOUNCE_MS);
 
         this.hideTimer = setTimeout(() => this.hide(), HIDE_DELAY_MS);
     },
