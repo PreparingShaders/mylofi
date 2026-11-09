@@ -33,7 +33,6 @@ from app.schemas import (
     PhotoUploadResponse,
     QuickStartWorkoutRequest,
     QuickStartWorkoutResponse,
-    RefreshTokenRequest,
     ResendCodeRequest,
     TemplateStartRequest,
     Token,
@@ -152,7 +151,6 @@ from fastapi import (
     Depends,
     File,
     Form,
-    Header,
     HTTPException,
     Query,
     UploadFile,
@@ -906,7 +904,7 @@ async def upload_meal_photo(
             detail=meal_ai_limit.message,
         )
 
-    # Check file size
+    # Read file content (validates size at same time)
     file_content = await file.read()
     max_size = settings.MAX_FILE_SIZE_MB * 1024 * 1024
     if len(file_content) > max_size:
@@ -925,7 +923,7 @@ async def upload_meal_photo(
             f"stored at {parsed_eaten_at.isoformat()}Z"
         )
 
-    # Save photo
+    # Save photo using reliable byte-based method
     photo_path, thumbnail_path = await save_uploaded_photo(
         file_content, file.filename or "photo.jpg"
     )

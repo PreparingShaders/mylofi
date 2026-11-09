@@ -233,12 +233,14 @@ export const Camera = {
      */
     async pollMealAnalysisStatus(mealId, accessToken) {
         const POLL_INTERVAL_MS = 800;
-        const POLL_TIMEOUT_MS = 45000;
+        const POLL_TIMEOUT_MS = 95000;
         const MAX_CONSECUTIVE_ERRORS = 3;
         // How long a live push is awaited before the poll backstop runs.
         const LIVE_PUSH_WAIT_MS = 8000;
+        const MAX_POLL_INTERVAL_MS = 5000;
         const deadline = Date.now() + POLL_TIMEOUT_MS;
         let consecutiveErrors = 0;
+        let pollInterval = POLL_INTERVAL_MS;
 
         const waiter = this.createAnalysisWaiter(mealId);
 
@@ -272,7 +274,8 @@ export const Camera = {
 
                 if (Date.now() >= deadline) break;
                 if (!window.App?.realtime?.isConnected()) {
-                    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+                    await new Promise((resolve) => setTimeout(resolve, pollInterval));
+                    pollInterval = Math.min(pollInterval * 1.5, MAX_POLL_INTERVAL_MS);
                 }
             }
 

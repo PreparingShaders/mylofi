@@ -35,6 +35,7 @@ for _noisy_logger in ("httpx", "httpcore", "sqlalchemy", "sqlalchemy.engine"):
 # Handle on the startup recap task. A bare `create_task` result can be garbage
 # collected mid-flight, which would kill the run halfway through its users.
 _daily_summary_task: asyncio.Task | None = None
+_stuck_meal_cleanup_task: asyncio.Task | None = None
 
 
 async def _write_yesterday_summaries() -> None:
@@ -53,11 +54,33 @@ async def _write_yesterday_summaries() -> None:
         logging.getLogger(__name__).exception("[Startup] Daily summary pass failed")
 
 
+async def _stuck_meal_cleanup_loop() -> None:
+    """Periodically fail meals stuck in PENDING/PROCESSING.
+
+    Background tasks don't survive process restarts. If the worker dies while
+    `process_meal_photo_task` is running, the meal stays PROCESSING forever.
+    The startup `fail_stale_meals` catches restarts, but a crash mid-run
+    leaves a gap. This loop closes it by running every minute.
+    """
+    logger = logging.getLogger(__name__)
+    while True:
+        try:
+            await asyncio.sleep(60)
+            async with async_session_maker() as session:
+                healed = await fail_stale_meals(session)
+                if healed:
+                    logger.info(f"[Cleanup] Failed {healed} stuck meal(s)")
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.exception("[Cleanup] Stuck meal cleanup pass failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     await init_db()
-    global _daily_summary_task
+    global _daily_summary_task, _stuck_meal_cleanup_task
     async with async_session_maker() as session:
         # A restart is the usual reason a meal never left pending/processing:
         # the analysis task died with the previous process and cannot report
@@ -67,11 +90,15 @@ async def lifespan(app: FastAPI):
             logging.getLogger(__name__).info(f"[Startup] Failed {healed} stuck meal(s)")
         await seed_exercise_catalog(session)
     _daily_summary_task = asyncio.create_task(_write_yesterday_summaries())
+    _stuck_meal_cleanup_task = asyncio.create_task(_stuck_meal_cleanup_loop())
     yield
     # Shutdown
     if _daily_summary_task is not None:
         _daily_summary_task.cancel()
         _daily_summary_task = None
+    if _stuck_meal_cleanup_task is not None:
+        _stuck_meal_cleanup_task.cancel()
+        _stuck_meal_cleanup_task = None
     await close_db()
 
 

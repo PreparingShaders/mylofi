@@ -20,7 +20,7 @@ const QUEUEABLE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 const HOST_CHECK_TIMEOUT_MS = 3000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
-const UPLOAD_TIMEOUT_MS = 8000;
+const UPLOAD_TIMEOUT_MS = 30000;
 // The AI preview endpoint runs a background generation that the server allows
 // up to ~45s, so give the frontend a roomier budget than the default 10s.
 const AI_PREVIEW_TIMEOUT_MS = 60000;
