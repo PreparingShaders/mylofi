@@ -233,12 +233,14 @@ export const Camera = {
      */
     async pollMealAnalysisStatus(mealId, accessToken) {
         const POLL_INTERVAL_MS = 800;
-        const POLL_TIMEOUT_MS = 45000;
+        const POLL_TIMEOUT_MS = 95000;
         const MAX_CONSECUTIVE_ERRORS = 3;
         // How long a live push is awaited before the poll backstop runs.
         const LIVE_PUSH_WAIT_MS = 8000;
+        const MAX_POLL_INTERVAL_MS = 5000;
         const deadline = Date.now() + POLL_TIMEOUT_MS;
         let consecutiveErrors = 0;
+        let pollInterval = POLL_INTERVAL_MS;
 
         const waiter = this.createAnalysisWaiter(mealId);
 
@@ -272,7 +274,8 @@ export const Camera = {
 
                 if (Date.now() >= deadline) break;
                 if (!window.App?.realtime?.isConnected()) {
-                    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+                    await new Promise((resolve) => setTimeout(resolve, pollInterval));
+                    pollInterval = Math.min(pollInterval * 1.5, MAX_POLL_INTERVAL_MS);
                 }
             }
 
@@ -306,6 +309,7 @@ export const Camera = {
         const realId = response.id ?? response.meal_id;
         if (!realId) return;
         try {
+            console.log('[Camera] handleSyncedMeal: merging temp meal', { tempId: item.tempId, realId, store: item.store });
             const existing = await DB.getMeal(realId) || await DB.getMeal(item.tempId);
             const merged = {
                 ...(existing || {}),
@@ -318,6 +322,14 @@ export const Camera = {
             await DB.saveMeal(merged);
             if (item.tempId !== realId) {
                 await DB.deleteMeal(item.tempId);
+                console.log('[Camera] Deleted temp meal', { tempId: item.tempId });
+            }
+            // Verify the sync queue item was deleted
+            const queueItem = await DB.get('sync_queue', item.id);
+            if (queueItem) {
+                console.warn('[Camera] Sync queue item still exists after sync:', item.id);
+            } else {
+                console.log('[Camera] Sync queue item verified deleted:', item.id);
             }
             window.dispatchEvent(new CustomEvent('mylofi:meal-synced', { detail: { mealId: realId } }));
         } catch (error) {
@@ -462,16 +474,6 @@ export const Camera = {
             const overlayState = this.showLoadingOverlay(container);
             const token = this.app?.state?.tokens?.access || window.App?.state?.tokens?.access || null;
             try {
-                // Proactive host reachability probe. navigator.onLine stays
-                // true under L3 blocks and silent DNS/SNI drops, so a
-                // lightweight GET /health with a short timeout is the only
-                // reliable pre-flight check before we commit to an 8s
-                // upload that would otherwise hang on mobile Safari.
-                const hostReachable = await API.checkHostReachable(token);
-                if (!hostReachable) {
-                    throw Object.assign(new Error('Сеть недоступна'), { isNetworkError: true, status: 0 });
-                }
-
                 const formData = new FormData();
                 formData.append('file', compressedBlob, 'photo.webp');
                 if (notes) formData.append('notes', notes);
@@ -532,6 +534,13 @@ export const Camera = {
      */
     async queueOfflineMeal(blob, notes, mealType = null) {
         await DB.init();
+
+        if (!(blob instanceof Blob) || blob.size === 0) {
+            console.error('[Camera] Invalid blob for offline queue:', { blob, type: blob?.constructor?.name, size: blob?.size });
+            throw new Error('Invalid blob: cannot queue empty or non-Blob data');
+        }
+
+        console.log('[Camera] Queueing offline meal:', { blobSize: blob.size, blobType: blob.type, notes: !!notes, mealType });
         const tempId = DB.generateTempId();
         const timeFields = this.mealTimeFields();
         const meal = {

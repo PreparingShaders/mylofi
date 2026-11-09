@@ -643,6 +643,25 @@ class WorkoutSetResponse(WorkoutSetBase):
     created_at: datetime
 
 
+class CreateSetRequest(BaseModel):
+    """Create a single set on an existing session exercise."""
+
+    exercise_id: int = Field(gt=0)
+    set_number: Optional[int] = Field(None, ge=1)
+    weight_kg: Optional[float] = None
+    reps: Optional[int] = Field(None, ge=1)
+    rest_seconds: Optional[int] = Field(None, ge=0)
+
+
+class AddExerciseToSessionRequest(BaseModel):
+    """Add an exercise from the catalog to an in-progress session."""
+
+    exercise_id: int = Field(gt=0)
+    target_sets: Optional[int] = Field(None, ge=1)
+    default_reps: Optional[int] = Field(None, ge=1)
+    default_rest_seconds: Optional[int] = Field(None, ge=0)
+
+
 class WorkoutSessionExerciseBase(BaseModel):
     name: str = Field(max_length=255)
     order: int = 0
@@ -679,6 +698,14 @@ class WorkoutSessionCreate(WorkoutSessionBase):
     exercises: List[WorkoutSessionExerciseCreate] = []
 
 
+class OfflineSessionSyncRequest(WorkoutSessionBase):
+    """Full session data from an offline-completed workout."""
+    started_at: datetime
+    completed_at: datetime
+    duration_seconds: int = Field(ge=0)
+    exercises: List[WorkoutSessionExerciseCreate] = []
+
+
 class WorkoutSessionUpdate(BaseModel):
     name: Optional[str] = Field(None, max_length=255)
     status: Optional[WorkoutSessionStatus] = None
@@ -710,6 +737,15 @@ class WorkoutSessionResponse(WorkoutSessionBase):
 class WorkoutHistoryResponse(BaseModel):
     sessions: List[WorkoutSessionResponse]
     total: int
+
+
+class WorkoutHistoryStatsResponse(BaseModel):
+    total_workouts: int
+    total_tonnage_kg: int
+    total_duration_seconds: int
+    avg_duration_seconds: int
+    total_sets: int
+    completed_sets: int
 
 
 # Exercise catalog schemas
@@ -884,6 +920,8 @@ __all__ = [
     "WorkoutSessionUpdate",
     "WorkoutSessionResponse",
     "WorkoutHistoryResponse",
+    "WorkoutHistoryStatsResponse",
+    "OfflineSessionSyncRequest",
     "WSMessageType",
     "WSMessage",
     "WSMealUpdatePayload",

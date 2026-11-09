@@ -20,7 +20,10 @@ const QUEUEABLE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 const HOST_CHECK_TIMEOUT_MS = 3000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
-const UPLOAD_TIMEOUT_MS = 8000;
+const UPLOAD_TIMEOUT_MS = 30000;
+// The AI preview endpoint runs a background generation that the server allows
+// up to ~45s, so give the frontend a roomier budget than the default 10s.
+const AI_PREVIEW_TIMEOUT_MS = 60000;
 
 const READ_CACHE_PREFIX = 'offline_read_cache:';
 const READ_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -96,6 +99,18 @@ class RealtimeSocket {
         this.closedByUser = false;
         this.waitingForOnline = false;
 
+        // Debounce timers for status stability
+        this._statusDebounceTimer = null;
+        this._pendingStatus = null;
+        this._stableStatus = 'idle';
+
+        // Debounce delays (ms)
+        this._debounceDelays = {
+            open: 1500,    // Wait 1.5s stable before confirming online
+            closed: 3000,  // Wait 3s stable before confirming offline
+            connecting: 0  // No debounce for connecting
+        };
+
         // An outage stops the reconnect loop until the browser says the
         // network is back; without this the socket would hammer a link that
         // is known to be down.
@@ -133,8 +148,43 @@ class RealtimeSocket {
     }
 
     setStatus(status) {
+        // Clear any pending debounce
+        if (this._statusDebounceTimer) {
+            clearTimeout(this._statusDebounceTimer);
+            this._statusDebounceTimer = null;
+        }
+
+        // If status hasn't actually changed (stable), no need to debounce
+        if (this._stableStatus === status) {
+            this._pendingStatus = null;
+            return;
+        }
+
+        const delay = this._debounceDelays[status] ?? 0;
+        
+        if (delay === 0) {
+            // No debounce needed (e.g., 'connecting')
+            this._doSetStatus(status);
+            return;
+        }
+
+        // Debounce: wait for stable status
+        this._pendingStatus = status;
+        this._statusDebounceTimer = setTimeout(() => {
+            this._statusDebounceTimer = null;
+            // Only commit if status hasn't flipped again during wait
+            if (this._pendingStatus === status) {
+                this._doSetStatus(status);
+            }
+            this._pendingStatus = null;
+        }, delay);
+    }
+
+    // Internal method that actually emits the status
+    _doSetStatus(status) {
         if (this.status === status) return;
         this.status = status;
+        this._stableStatus = status;
         this.emit('status', status);
         window.dispatchEvent(new CustomEvent('mylofi:realtime-status', { detail: { status } }));
     }
@@ -422,24 +472,6 @@ class APIClient {
     isTimeoutError(error) {
         return error?.name === 'AbortError' || error?.isNetworkError === true && error?.status === 0 && error?.cause?.name === 'AbortError';
     }
-
-    async checkHostReachable(accessToken = null) {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), HOST_CHECK_TIMEOUT_MS);
-        try {
-            const response = await fetch(`${window.location.origin}/health`, {
-                method: 'GET',
-                headers: this.getHeaders(accessToken, false),
-                credentials: 'include',
-                signal: controller.signal,
-            });
-            return response.ok;
-        } catch (error) {
-            return false;
-        } finally {
-            clearTimeout(timeoutId);
-        }
-    }
     
     readQueue() {
         return SyncEngine.getPendingItems();
@@ -464,6 +496,7 @@ class APIClient {
             store: options.store ?? null,
             formData: options.formData ?? null,
             prepend: options.prepend || false,
+            isSessionCreation: options.isSessionCreation ?? false,
         });
         this.invalidateReadCache(endpoint);
         console.log(`[API] Queued offline request: ${method} ${endpoint}`);
@@ -592,13 +625,45 @@ class APIClient {
 
         if (isFormData && item.formData) {
             const fd = new FormData();
-            if (item.formData.blob instanceof Blob) {
-                fd.append('file', item.formData.blob, item.formData.filename || 'photo.webp');
+            const storedBlob = item.formData.blob;
+            const filename = item.formData.filename || 'photo.webp';
+
+            console.log('[API] Replaying FormData item:', {
+                endpoint: item.endpoint,
+                hasBlob: !!storedBlob,
+                blobType: storedBlob?.constructor?.name,
+                blobSize: storedBlob?.size,
+                isBlobInstance: storedBlob instanceof Blob,
+                filename,
+                fieldsKeys: Object.keys(item.formData.fields || {}),
+            });
+
+            let blobToUse = null;
+            if (storedBlob instanceof Blob && storedBlob.size > 0) {
+                blobToUse = storedBlob;
+            } else if (storedBlob && typeof storedBlob === 'object' && storedBlob.size > 0) {
+                try {
+                    blobToUse = new Blob([storedBlob], { type: storedBlob.type || 'image/webp' });
+                    console.warn('[API] Reconstructed Blob from plain object:', { size: blobToUse.size, type: blobToUse.type });
+                } catch (reconstructError) {
+                    console.error('[API] Failed to reconstruct Blob:', reconstructError);
+                }
+            } else {
+                console.error('[API] Invalid or empty blob in queued item:', storedBlob);
             }
+
+            if (blobToUse) {
+                fd.append('file', blobToUse, filename);
+            } else {
+                console.error('[API] No valid blob to upload, request will likely fail');
+            }
+
             const fields = item.formData.fields || {};
             for (const [key, value] of Object.entries(fields)) {
                 if (value !== undefined && value !== null) fd.append(key, value);
             }
+
+            console.log('[API] FormData entries for replay:', Array.from(fd.entries()));
             data = fd;
         }
 
@@ -824,7 +889,7 @@ class APIClient {
      * tier's one weekly analysis on a session from yesterday. Both fail loudly
      * instead, and the UI already treats them as optional.
      */
-    postImmediate(endpoint, data, accessToken = null) { return this.request('POST', endpoint, data, accessToken, false, true); }
+    postImmediate(endpoint, data, accessToken = null, timeoutMs = null) { return this.request('POST', endpoint, data, accessToken, false, true, timeoutMs); }
     patch(endpoint, data, accessToken = null) { return this.request('PATCH', endpoint, data, accessToken); }
     delete(endpoint, accessToken = null) { return this.request('DELETE', endpoint, null, accessToken); }
     deleteMeal(mealId, accessToken = null) { return this.request('DELETE', `/nutrition/meals/${mealId}`, null, accessToken); }
@@ -842,3 +907,4 @@ class APIClient {
 }
 
 export const API = new APIClient();
+export { AI_PREVIEW_TIMEOUT_MS };

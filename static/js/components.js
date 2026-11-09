@@ -1,6 +1,7 @@
 console.log("[DEBUG] Loaded components.js");
 import { Utils } from './utils.js';
 import { DB } from './db.js';
+import { getFriendlyEndpointLabel } from './sync.js';
 
 let sparklineSeq = 0;
 let tonnageChartSeq = 0;
@@ -786,9 +787,45 @@ export const Components = {
             const motivation = typeof recommendation?.motivation === 'string' ? recommendation.motivation.trim() : '';
             if (!focus && !motivation) return '';
             return `<div class="ai-tip" data-ai-tip>${focus ? `<div class="ai-tip__focus">${escapeHtml(focus)}</div>` : ''}${motivation ? `<div class="ai-tip__motivation">${escapeHtml(motivation)}</div>` : ''}</div>`;
-        },
+},
 
-        /**
+    /**
+     * Failed sync queue item card with retry/delete actions.
+     * Used in the nutrition page to show items that failed to sync.
+     */
+    failedSyncItem(item) {
+        const endpointLabel = getFriendlyEndpointLabel(item.endpoint);
+        const errorMsg = item.error || 'Неизвестная ошибка';
+        const createdAt = item.createdAt ? new Date(item.createdAt).toLocaleString('ru-RU') : '—';
+        const retryCount = item.retryCount ?? 0;
+        const itemId = item.id ?? '';
+
+        return `
+            <div class="failed-sync-item glass rounded-lg p-3 mb-2 border border-red-500/20" data-sync-item-id="${itemId}">
+                <div class="flex items-start justify-between gap-2">
+                    <div class="flex-1 min-w-0">
+                        <p class="text-sm font-medium text-surface-900 dark:text-zinc-100">${escapeHtml(endpointLabel)}</p>
+                        <p class="text-xs text-red-500 truncate mt-0.5">${escapeHtml(errorMsg)}</p>
+                        <p class="text-[10px] text-surface-500 mt-1">Попыток: ${retryCount} • В очереди с: ${escapeHtml(createdAt)}</p>
+                    </div>
+                    <div class="flex items-center gap-1.5 shrink-0">
+                        <button type="button" data-action="retry-failed-sync-item" data-sync-item-id="${itemId}"
+                                class="btn-press glass-badge p-2 text-surface-600 dark:text-surface-300 hover:bg-lime-500/10 hover:text-lime-600 dark:hover:text-lime-400"
+                                aria-label="Повторить синхронизацию" title="Повторить">
+                            ${this.mealActionIcon('retry', 'w-4 h-4')}
+                        </button>
+                        <button type="button" data-action="delete-failed-sync-item" data-sync-item-id="${itemId}"
+                                class="btn-press glass-badge p-2 text-surface-600 dark:text-surface-300 hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400"
+                                aria-label="Удалить из очереди" title="Удалить">
+                            ${this.mealActionIcon('trash', 'w-4 h-4')}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    /**
          * Nutrition dashboard: title row with the period switcher, then a single
      * ring slide for the selected period. The period tabs live in the title
      * row, so switching granularity costs no extra vertical space - the card
@@ -1410,7 +1447,8 @@ export const Components = {
         confirmText = 'Подтвердить',
         confirmClass = 'bg-primary-600 hover:bg-primary-700 text-white dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200 shadow-md',
         cancelText = 'Отмена',
-        cancelClass = 'bg-surface-100 dark:bg-white/5 text-surface-700 dark:text-surface-200 hover:bg-surface-200 dark:hover:bg-white/10 border border-surface-200 dark:border-white/10'
+        cancelClass = 'bg-surface-100 dark:bg-white/5 text-surface-700 dark:text-surface-200 hover:bg-surface-200 dark:hover:bg-white/10 border border-surface-200 dark:border-white/10',
+        instantClose = false
     } = {}) {
         return new Promise((resolve) => {
             const host = document.getElementById('modals') || document.body;
@@ -1431,15 +1469,24 @@ export const Components = {
             const confirmBtn = backdrop.querySelector('[data-modal-confirm]');
             const cancelBtn = backdrop.querySelector('[data-modal-cancel]');
 
-            let settled = false;
-            const close = (result) => {
+             let settled = false;
+             const close = (result) => {
                 if (settled) return;
                 settled = true;
                 document.removeEventListener('keydown', onKeydown);
-                backdrop.classList.remove('opacity-100');
-                card.classList.remove('scale-100', 'opacity-100');
-                card.classList.add('scale-95', 'opacity-0');
-                setTimeout(() => backdrop.remove(), 200);
+                if (instantClose) {
+                    // Instant close — remove the backdrop immediately so state
+                    // updates and DOM animations start without delay. Used for
+                    // destructive actions (set deletion) where the 200ms exit
+                    // animation felt like freezing.
+                    backdrop.remove();
+                } else {
+                    // Animated exit: fade out then remove from DOM.
+                    backdrop.classList.remove('opacity-100');
+                    card.classList.remove('scale-100', 'opacity-100');
+                    card.classList.add('scale-95', 'opacity-0');
+                    setTimeout(() => backdrop.remove(), 200);
+                }
                 resolve(result);
             };
 

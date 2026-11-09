@@ -6,7 +6,6 @@ import shutil
 import base64
 import asyncio
 import logging
-import traceback
 import time
 from datetime import datetime, date, timedelta, timezone
 from typing import Any, Optional, List
@@ -163,36 +162,17 @@ async def save_uploaded_photo(
     file_content: bytes,
     original_filename: str
 ) -> tuple[str, str]:
-    """Save uploaded photo and return (photo_path, thumbnail_path).
-
-    The client already compresses to WebP before uploading; this is the
-    server-side fallback that normalizes whatever arrives. Every stored
-    photo is resized to at most 1024x1024 and saved as WebP, so the
-    analysis task and the `/uploads` static mount always see one format
-    at a bounded size.
-    """
+    """Save uploaded photo bytes as-is. Returns (photo_path, thumbnail_path)."""
     upload_dir = await ensure_upload_dir()
     filename = generate_photo_filename(original_filename)
     photo_path = os.path.join(upload_dir, filename)
     thumbnail_path = os.path.join(upload_dir, "thumbnails", filename)
 
-    # Normalize the upload: proportional resize to max 1024x1024,
-    # transparency/palette flattened to RGB, saved as optimized WebP.
-    # A payload Pillow cannot decode falls back to the raw bytes so the
-    # meal record is still created and the analysis task reports a
-    # proper failure instead of the upload vanishing.
-    try:
-        with Image.open(io.BytesIO(file_content)) as img:
-            img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
-            if img.mode in ("RGBA", "LA", "P"):
-                img = img.convert("RGB")
-            img.save(photo_path, "WEBP", quality=80, optimize=True)
-    except Exception:
-        with open(photo_path, "wb") as f:
-            f.write(file_content)
+    # Save original bytes directly - no processing, no verification
+    with open(photo_path, "wb") as f:
+        f.write(file_content)
 
-    # Create thumbnail (using Pillow). Saved as WebP to match the
-    # `.webp` extension the static mount derives the content type from.
+    # Thumbnail: try to create from saved file, fallback to copy
     try:
         with Image.open(photo_path) as img:
             img.thumbnail((400, 400), Image.Resampling.LANCZOS)
@@ -200,7 +180,6 @@ async def save_uploaded_photo(
                 img = img.convert("RGB")
             img.save(thumbnail_path, "WEBP", quality=80, optimize=True)
     except Exception:
-        # If thumbnail creation fails, use the normalized photo
         shutil.copy2(photo_path, thumbnail_path)
 
     return photo_path, thumbnail_path
@@ -860,8 +839,7 @@ def _user_facing_error(error: BaseException) -> str:
 
 
 async def process_meal_photo_task(meal_id: int, tz_offset_minutes: int = 0) -> None:
-    """
-    Background task to process meal photo with AI vision cascade.
+    """Background task to process meal photo with AI vision cascade.
     Runs in isolated DB session to avoid blocking main request thread.
 
     `tz_offset_minutes` is the offset the upload came from: it places the
@@ -875,6 +853,7 @@ async def process_meal_photo_task(meal_id: int, tz_offset_minutes: int = 0) -> N
     logger.info(f"[AI Task] Starting analysis for meal {meal_id}")
 
     async with async_session_maker() as db:
+        meal = None
         try:
             result = await db.execute(select(Meal).where(Meal.id == meal_id))
             meal = result.scalar_one_or_none()
@@ -941,19 +920,28 @@ async def process_meal_photo_task(meal_id: int, tz_offset_minutes: int = 0) -> N
             # actually written in even if the profile changes later.
             persona = normalize_persona(persona)
 
-            # Compress and resize image before encoding
-            with Image.open(meal.photo_path) as img:
-                if img.mode in ("RGBA", "LA", "P"):
-                    img = img.convert("RGB")
-                max_dim = 1024
-                if max(img.size) > max_dim:
-                    ratio = max_dim / max(img.size)
-                    new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
-                    img = img.resize(new_size, Image.Resampling.LANCZOS)
-                buffer = io.BytesIO()
-                img.save(buffer, format="JPEG", quality=80, optimize=True)
-                buffer.seek(0)
-                base64_img = base64.b64encode(buffer.read()).decode("utf-8")
+            # Compress for AI (512px JPEG q60)
+            try:
+                with Image.open(meal.photo_path) as img:
+                    if img.mode in ("RGBA", "LA", "P"):
+                        img = img.convert("RGB")
+                    max_dim = 512
+                    if max(img.size) > max_dim:
+                        ratio = max_dim / max(img.size)
+                        new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
+                        img = img.resize(new_size, Image.Resampling.LANCZOS)
+                    buffer = io.BytesIO()
+                    img.save(buffer, format="JPEG", quality=60, optimize=True)
+                    buffer.seek(0)
+                    base64_img = base64.b64encode(buffer.read()).decode("utf-8")
+            except UnidentifiedImageError:
+                await mark_meal_failed(
+                    db,
+                    meal_id,
+                    "Invalid image file",
+                    "Не удалось прочитать фото. Попробуйте загрузить другое изображение.",
+                )
+                return
 
             logger.info(
                 f"[AI Task] Image compressed successfully for meal {meal_id}: "
@@ -1020,35 +1008,18 @@ async def process_meal_photo_task(meal_id: int, tz_offset_minutes: int = 0) -> N
                 carbs_g=meal.carbs_g,
             )
 
+        except asyncio.TimeoutError:
+            await mark_meal_failed(db, meal_id, f"Timeout after {AI_TASK_TIMEOUT}s", "Анализ ИИ занял слишком много времени")
+        except FileNotFoundError:
+            await mark_meal_failed(db, meal_id, "File not found", "Фото не найдено на сервере")
         except Exception as e:
-            elapsed = time.perf_counter() - started_at
-            # Full traceback to stderr for debugging, structured copy for the log.
-            traceback.print_exc()
-            logger.exception(
-                f"[AI Task] Meal {meal_id} analysis failed after {elapsed:.1f}s: "
-                f"{type(e).__name__}: {e}"
-            )
-
-            error_text = f"{type(e).__name__}: {e}".strip()
-            user_text = _user_facing_error(e)
-
-            # The failing statement may have left the session mid-transaction;
-            # without a rollback the status update below would fail too.
+            logger.exception(f"[AI Task] Meal {meal_id} failed: {e}")
+            await mark_meal_failed(db, meal_id, f"{type(e).__name__}: {e}", _user_facing_error(e))
+        finally:
+            # Ensure meal is not stuck in PROCESSING
             try:
-                await db.rollback()
-            except Exception as db_error:
-                logger.error(f"[AI Task] Rollback failed for meal {meal_id}: {db_error}")
-
-            try:
-                await mark_meal_failed(
-                    db,
-                    meal_id,
-                    error_text[:2000],
-                    user_text,
-                )
-                logger.info(f"[AI Task] Meal {meal_id} marked as FAILED")
-            except Exception as db_error:
-                logger.error(
-                    f"[AI Task] Failed to mark meal {meal_id} as FAILED: {db_error}"
-                )
-                traceback.print_exc()
+                if meal is not None and meal.status == MealStatus.PROCESSING:
+                    await db.rollback()
+                    await mark_meal_failed(db, meal_id, "Task crashed", "Сбой сервера при анализе")
+            except Exception:
+                pass

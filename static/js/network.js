@@ -1,6 +1,4 @@
 console.log("[DEBUG] Loaded network.js");
-import { API } from './api.js';
-import { SyncEngine } from './sync.js';
 
 const OFFLINE_MESSAGE = 'Офлайн-режим: данные сохранятся локально';
 const RESTORED_MESSAGE = 'Связь восстановлена. Синхронизируем...';
@@ -34,8 +32,6 @@ export const NetworkBanner = {
         if (this.initialized) return;
         this.initialized = true;
         this.mount();
-
-        window.addEventListener('offline', () => this.showOffline());
         // The safe-area inset follows the orientation, so the banner's own
         // height has to be re-measured when the viewport changes.
         window.addEventListener('resize', () => this.syncHeight());
@@ -143,12 +139,9 @@ export const NetworkBanner = {
         this.render('restored');
         this.el.classList.add('is-visible');
         document.body.classList.add('has-network-banner');
-
-        SyncEngine.processQueue().catch((error) => {
-            if (SyncEngine.authFailed) return;
-            console.warn('[NetworkBanner] processQueue failed:', error);
-        });
-
+        
+        // App.flushOfflineQueue() triggered by WebSocket open event
+        
         this.hideTimer = setTimeout(() => this.hide(), HIDE_DELAY_MS);
     },
 
@@ -160,29 +153,20 @@ export const NetworkBanner = {
     },
 
     // Re-evaluate state without interrupting a freshly shown "restored" message.
-    // When online, performs an explicit host reachability check to detect L3
-    // blocks and captive portals where navigator.onLine is unreliable.
+    // Authoritative state comes from App (set by WebSocket).
     async refresh(skipHostCheck = false) {
-        if (navigator.onLine === false) {
+        // Read authoritative state from App (set by WebSocket)
+        const isOnline = window.App?.state?.isOnline ?? navigator.onLine;
+        
+        if (!isOnline) {
             if (this.state !== 'offline') {
                 this.showOffline();
             }
             return this.state;
         }
 
-        if (skipHostCheck) {
-            if (this.state !== 'hidden') {
-                this.showRestored();
-            }
-            return this.state;
-        }
-
-        const reachable = await API.checkHostReachable();
-        if (!reachable) {
-            if (this.state !== 'offline') {
-                this.showOffline();
-            }
-        } else if (this.state !== 'hidden') {
+        // Online - show restored briefly then hide
+        if (this.state !== 'hidden') {
             this.showRestored();
         }
         return this.state;

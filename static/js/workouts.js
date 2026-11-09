@@ -1,11 +1,11 @@
 console.log("[DEBUG] Loaded workouts.js");
-import { API } from './api.js';
+import { API, AI_PREVIEW_TIMEOUT_MS } from './api.js';
 import { Components } from './components.js';
 import { Utils } from './utils.js';
 import { DB } from './db.js';
 import { Camera } from './camera.js';
 
-const TOGGLE_BASE = 'flex-shrink-0 w-11 h-11 rounded-2xl text-xl font-bold transition-all flex items-center justify-center';
+const TOGGLE_BASE = 'flex-shrink-0 w-9 h-9 rounded-2xl text-lg font-bold transition-all flex items-center justify-center';
 const TOGGLE_COMPLETED = 'bg-lime-400 text-zinc-950 border-lime-400 shadow-[0_0_12px_rgba(163,230,53,0.4)]';
 const TOGGLE_UNCOMPLETED = 'glass text-surface-400 dark:text-surface-500';
 const SET_DIM = ['text-surface-400', 'dark:text-surface-600'];
@@ -16,11 +16,6 @@ const SET_NUMBER_IDLE = 'text-surface-500';
 const TONNAGE_MARKER_RADIUS = 6;
 
 const LOCK_ICON = '<svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>';
-const QUICK_GOALS = [
-    { value: 'strength', title: 'Сила', subtitle: 'Базовые движения, 3×5' },
-    { value: 'hypertrophy', title: 'Набор массы', subtitle: 'Компаундные + изоляция, 3×10' },
-    { value: 'endurance', title: 'Выносливость', subtitle: 'Лёгкий вес, много подходов, 2×15' },
-];
 
 // Drum picker geometry: must stay in sync with .drum / .drum-item in styles.css.
 // The live item height is read from --drum-item-height so compact viewports can
@@ -67,6 +62,11 @@ const SET_SAVED_FLASH_MS = 1000;
 const SET_ADVANCE_DELAY_MS = 350;
 // gap-4 between carousel cards, used to derive the horizontal scroll step.
 const CAROUSEL_GAP_PX = 16;
+// Rest timer presets in seconds for the countdown mode.
+const REST_TIMER_PRESETS = [30, 60, 90, 120, 180];
+// Key for persisting the chosen rest timer mode across sessions.
+const REST_TIMER_MODE_KEY = 'restTimerMode';
+const REST_TIMER_PRESET_KEY = 'restTimerLastPreset';
 
 // The coach answers at the two ends of a session and both calls are refused
 // offline: the plan is wanted before the first set and the verdict right after
@@ -76,6 +76,9 @@ const AI_OFFLINE_MESSAGE = 'ИИ-тренер работает только с �
 // Shown when the plan is asked for and does not arrive. The workout continues
 // either way: a plan is an addition to a session, never a condition for it.
 const AI_PLAN_UNAVAILABLE_MESSAGE = 'ИИ-план недоступен, тренировка без него';
+// Shown inside the AI advice panel while the plan is still arriving (or has not
+// been requested yet) so the tab is never silently empty.
+const AI_PLAN_LOADING_MESSAGE = 'ИИ-план загружается...';
 // One verdict ask per workout per half minute. The weekly allowance is spent
 // by the server; this keeps a thumb held down on the trigger from asking
 // again while the answer may still be on its way.
@@ -104,6 +107,9 @@ export const Workouts = {
     // rather than on the session object because it describes the workout the user
     // is doing right now and must not survive into the next one.
     aiPlan: null,
+    // Whether the set structure of any exercise was changed (add/remove set)
+    // during this session - used to prompt for a template update on completion.
+    exercisesModified: false,
     // Analysis request in flight: the trigger on the workout card disables
     // itself while the cascade is running, so a second tap cannot spend the
     // weekly allowance twice.
@@ -130,9 +136,33 @@ export const Workouts = {
     // unchecking the set that triggered it can undo the written value.
     restTimerInterval: null,
     restTimerStartTime: null,
+    // Absolute target timestamp the rest timer is counting down towards.
+    // Using an absolute anchor (instead of elapsed-time arithmetic) means the
+    // value is correct immediately after a backgrounded/frozen tab resumes,
+    // without drift from the interval having been suspended.
+    restTimerTargetTimestamp: null,
+    // Planned duration in milliseconds — restored alongside the target so
+    // the progress bar and save logic keep working on resume.
+    restTimerPlannedDuration: null,
+    // Dual-mode rest timer: 'timer' (countdown with presets) or
+    // 'stopwatch' (count-up). Mode and last-used preset are persisted to
+    // localStorage so the user's preference survives across workouts.
+    restTimerMode: null,
+    restTimerPresetSeconds: null,
+    // True when the countdown has reached zero and is now counting overtime.
+    restTimerOvertime: false,
     activeRestForSetId: null,
+    activeRestExerciseId: null,
     lastSavedRestSetId: null,
     restSavedBySetId: null,
+    // Per-exercise auto-start preference for the rest timer. Stored as a Map
+    // keyed by exercise id; missing entries default to true (auto-start on).
+    restAutoStart: null,
+    // Active tab map per exercise during the session
+    exerciseActiveTabs: new Map(),
+    // Cached completed history sessions, available to computePrevText for
+    // dynamically inserted set rows that are added outside of renderWorkoutScreen.
+    completedHistorySessions: [],
 
     escapeHtml(value) {
         return String(value ?? '')
@@ -483,11 +513,11 @@ export const Workouts = {
                 <div class="px-4 pb-4 overflow-y-auto space-y-4">
                     <div>
                         <label class="text-[11px] uppercase tracking-wider text-zinc-500 font-semibold">Период (даты)</label>
-                        <div class="grid grid-cols-2 gap-2 mt-1.5">
+                        <div class="flex gap-2 mt-1.5">
                             <input type="date" data-filter="start_date" value="${this.escapeHtml(filters.start_date)}"
-                                   class="px-3 py-2.5 text-sm glass-input rounded-xl">
+                                   class="flex-1 px-3 py-2.5 text-sm glass-input rounded-xl">
                             <input type="date" data-filter="end_date" value="${this.escapeHtml(filters.end_date)}"
-                                   class="px-3 py-2.5 text-sm glass-input rounded-xl">
+                                   class="flex-1 px-3 py-2.5 text-sm glass-input rounded-xl">
                         </div>
                         <p class="text-[11px] text-zinc-500 mt-1.5">Указанные даты заменяют переключатель «Неделя / Месяц / Всё время».</p>
                     </div>
@@ -606,6 +636,37 @@ export const Workouts = {
         this.saveLocalSession({ ...stored, name: session.name, exercises: session.exercises });
     },
 
+    /**
+     * Auto-save any session (local or server) to localStorage under a
+     * session-specific key so progress survives network drops and page reloads.
+     * Called on every weight/reps/toggle change so nothing is lost mid-workout.
+     */
+    autoSaveSession(session) {
+        if (!session) return;
+        const sessionId = session.isLocal ? session.key : String(session.id);
+        if (!sessionId) return;
+        try {
+            localStorage.setItem(`session_${sessionId}`, JSON.stringify(session));
+        } catch (error) {
+            console.error('[Workouts] Failed to auto-save session:', error);
+        }
+    },
+
+    /**
+     * Restore a previously auto-saved session from localStorage. Used as a
+     * fallback when the server is unreachable on page load / resume.
+     */
+    restoreSessionFromLocalStorage(sessionId) {
+        if (!sessionId) return null;
+        try {
+            const raw = localStorage.getItem(`session_${sessionId}`);
+            return raw ? JSON.parse(raw) : null;
+        } catch (error) {
+            console.warn('[Workouts] Failed to restore session from localStorage:', error);
+            return null;
+        }
+    },
+
     clearLocalSession() {
         localStorage.removeItem(LOCAL_SESSION_KEY);
     },
@@ -646,8 +707,109 @@ export const Workouts = {
         this.markSessionClosedLocally(sessionId);
     },
 
+    /**
+     * Persist a completed server session to localStorage so its real tonnage and
+     * set data survive a completion request that the server never saw (offline,
+     * token expiry, network failure). The session can later be re-synced when the
+     * connection returns.
+     */
+    persistCompletedSessionLocally(sessionId, session) {
+        if (!sessionId || !session) return;
+        try {
+            // Use the passed session (already synced from DOM before clearing state)
+            const payload = { ...session };
+            payload.status = 'completed';
+            payload.completed_at = new Date().toISOString();
+            payload.duration_seconds = this.getElapsedSeconds(payload);
+
+            // Use consistent string key for both local and server sessions
+            const storageKey = `completed_session_${String(sessionId)}`;
+            localStorage.setItem(storageKey, JSON.stringify(payload));
+            this.markSessionClosedLocally(sessionId);
+        } catch (error) {
+            console.error('[Workouts] Failed to persist completed session locally:', error);
+        }
+    },
+
     markSessionCancelledLocally(sessionId) {
         this.markSessionClosedLocally(sessionId);
+    },
+
+    /**
+     * Detect and sync completed sessions from localStorage on app load.
+     * Tries to sync to server if online, otherwise leaves them for later.
+     */
+    async recoverCompletedSessions(app) {
+        try {
+            // Check completed_session_* keys
+            const keys = Object.keys(localStorage).filter(k => k.startsWith('completed_session_'));
+            await Promise.all(keys.map(async key => {
+                const sessionId = key.replace('completed_session_', '');
+                const session = JSON.parse(localStorage.getItem(key));
+                if (session && session.status === 'completed') {
+                    await this.trySyncCompletedSession(app, sessionId, session, key);
+                }
+            }));
+
+            // ALSO check offline_local_session for completed local sessions
+            const localSessionRaw = localStorage.getItem(LOCAL_SESSION_KEY);
+            if (localSessionRaw) {
+                const localSession = JSON.parse(localSessionRaw);
+                if (localSession && localSession.status === 'completed' && localSession.key) {
+                    await this.trySyncCompletedSession(app, localSession.key, localSession, LOCAL_SESSION_KEY);
+                }
+            }
+        } catch (err) {
+            console.warn('[Workouts] Failed to recover completed sessions:', err);
+        }
+    },
+
+    // Transform local session to match OfflineSessionSyncRequest schema
+    buildOfflineSyncPayload(session) {
+        return {
+            name: session.name || 'Свободная тренировка',
+            template_id: session.template_id || null,
+            notes: session.notes || null,
+            started_at: session.started_at,
+            completed_at: session.completed_at,
+            duration_seconds: session.duration_seconds || 0,
+            exercises: (session.exercises || []).map(ex => ({
+                name: ex.name,
+                order: ex.order || 0,
+                notes: ex.notes || null,
+                sets: (ex.sets || []).map(set => ({
+                    set_number: set.set_number,
+                    weight_kg: set.weight_kg ?? null,
+                    reps: set.reps ?? 10,
+                    rpe: set.rpe ?? null,
+                    is_completed: set.is_completed ?? false,
+                    rest_seconds: set.rest_seconds ?? null,
+                    rest_time_seconds: set.rest_time_seconds ?? null,
+                })).filter(set => set.set_number > 0)
+            })).filter(ex => ex.sets.length > 0)
+        };
+    },
+
+    // Helper to avoid duplication
+    async trySyncCompletedSession(app, sessionId, session, storageKey) {
+        const token = app?.state?.tokens?.access;
+        if (token && navigator.onLine) {
+            try {
+                // Transform session to match backend schema
+                const syncPayload = this.buildOfflineSyncPayload(session);
+
+                // Use the sync-offline endpoint that accepts full session data
+                const response = await API.post(`/workouts/sessions/sync-offline`, syncPayload, token);
+                localStorage.removeItem(storageKey);
+                Workouts.forgetLocallyClosedSession(sessionId);
+                // Dispatch event so any pending patches in queue get remapped via resolveQueuedItem
+                window.dispatchEvent(new CustomEvent('mylofi:local-session-synced', {
+                    detail: { sessionId: response.id },
+                }));
+            } catch (err) {
+                console.log('[Workouts] Will retry sync later:', err);
+            }
+        }
     },
 
     // AI coaching plan (the pre-workout preview) is cached per session so it
@@ -678,6 +840,30 @@ export const Workouts = {
         if (sessionId) {
             try { localStorage.removeItem(`${LOCAL_AI_PLAN_KEY}${sessionId}`); } catch (err) {}
         }
+    },
+
+    async clearActiveSessionState(app) {
+        // Remember which session was just closed so resolveActiveWorkout() does
+        // not restore it from localStorage after a network error.
+        // Use the session ID from localStorage if app state is already cleared
+        const lastClosedId = app?.state?.currentSessionId
+            ?? localStorage.getItem('active_session_id')
+            ?? null;
+        try {
+            if (lastClosedId) {
+                localStorage.setItem('last_closed_session_id', String(lastClosedId));
+                localStorage.removeItem(`session_${lastClosedId}`);
+            }
+            localStorage.removeItem('active_session_id');
+            localStorage.removeItem('active_workout');
+        } catch (e) {}
+        this.currentSession = null;
+        this.sessionStartTimestamp = null;
+        if (app?.state) {
+            app.state.currentSessionId = null;
+        }
+        // Small delay to ensure localStorage writes complete before any subsequent reads
+        await new Promise(r => setTimeout(r, 0));
     },
 
     // AI verdict/summary (recovery advice, intensity conclusions, etc.) is
@@ -757,7 +943,7 @@ export const Workouts = {
             .sort((a, b) => (a.order || 0) - (b.order || 0))
             .map((ex, index) => {
                 const exerciseId = TEMP_EXERCISE_ID_BASE - index;
-                const targetSets = Math.max(1, ex.target_sets || 3);
+                const targetSets = Math.max(1, ex.target_sets || 1);
                 return {
                     id: exerciseId,
                     name: ex.name,
@@ -793,6 +979,26 @@ export const Workouts = {
         };
     },
 
+    /**
+     * Create a completely empty local workout session (no exercises).
+     * Used for "Free-form Workout" / "Blank Slate" flow.
+     */
+    buildEmptyLocalSession() {
+        return {
+            key: `local-${Date.now()}`,
+            isLocal: true,
+            status: 'active',
+            name: 'Свободная тренировка',
+            started_at: new Date().toISOString(),
+            completed_at: null,
+            duration_seconds: null,
+            exercises: [],
+            pendingPatches: [],
+            remoteSessionId: null,
+            setIdMap: {},
+        };
+    },
+
     recordLocalSetPatch(sessionKey, setId, patch) {
         const session = this.getLocalSession();
         if (!session || session.key !== sessionKey) return;
@@ -812,6 +1018,11 @@ export const Workouts = {
         return session.setIdMap?.[String(setId)] ?? null;
     },
 
+    // Check if a set ID is a real server-assigned ID (positive integer)
+    isRealSetId(setId) {
+        return typeof setId === 'number' && setId > 0 && Number.isInteger(setId);
+    },
+
     // Queue items referring to a not-yet-synced local session are rewritten once the
     // real session (and its set ids) are known; `false` means "not ready yet".
     resolveQueuedItem(item) {
@@ -819,10 +1030,19 @@ export const Workouts = {
         if (!item.endpoint.includes(LOCAL_SESSION_PLACEHOLDER)) return item;
         const session = this.getLocalSession();
         const remoteSessionId = session?.remoteSessionId ?? null;
+        
+        // If this IS the session creation request, it doesn't need placeholder replacement
+        // The server will create the session and return the real ID
+        if (item.isSessionCreation) {
+            return item;  // Send as-is to create session on server
+        }
+        
         if (!remoteSessionId) {
-            // The session creation was dropped: let the request fail instead of blocking the queue
+            // Session creation failed or not processed yet
             return session?.createFailed ? item : false;
         }
+        
+        // Replace placeholder with real session ID for completion/patches
         return {
             ...item,
             endpoint: item.endpoint.replace(LOCAL_SESSION_PLACEHOLDER, String(remoteSessionId)),
@@ -846,6 +1066,30 @@ export const Workouts = {
             this.saveLocalSession(session);
         }
 
+        // NEW: Handle session creation response
+        if (!failed && item.isSessionCreation && response?.id) {
+            const session = this.getLocalSession();
+            if (session && session.key === item.offlineSessionKey) {
+                session.remoteSessionId = response.id;
+                // Also capture exercise/set IDs from response for patch mapping
+                const remoteExercises = response.exercises || [];
+                const setIdMap = {};
+                (session.exercises || []).forEach((localEx, exIndex) => {
+                    const remoteEx = remoteExercises[exIndex]; // Template order matches
+                    if (remoteEx) {
+                        (localEx.sets || []).forEach((localSet, setIndex) => {
+                            const remoteSet = (remoteEx.sets || [])[setIndex];
+                            if (remoteSet) setIdMap[String(localSet.id)] = remoteSet.id;
+                        });
+                    }
+                });
+                session.setIdMap = setIdMap;
+                this.saveLocalSession(session);
+                console.log(`[Workouts] Session creation synced: local ${session.key} → server ${response.id}`);
+            }
+        }
+
+        // Existing completion response path (when completion is the first response)
         if (!failed && response?.id && !session.remoteSessionId) {
             const remoteExercises = response.exercises || [];
             const findRemoteExercise = (localEx, exIndex) =>
@@ -877,6 +1121,10 @@ export const Workouts = {
                     console.warn('[Workouts] Skipping offline patch for unmapped set', setId);
                     continue;
                 }
+                if (!this.isRealSetId(realSetId)) {
+                    console.warn('[Workouts] Skipping offline patch for non-real set ID', realSetId);
+                    continue;
+                }
                 await API.enqueueRequest('PATCH', `/workouts/sets/${realSetId}`, patch, token, { prepend: true });
             }
 
@@ -906,19 +1154,162 @@ export const Workouts = {
     async startLocalSessionFromTemplate(app, template, createEndpoint) {
         const session = this.buildLocalSessionFromTemplate(template);
         this.saveLocalSession(session);
-        await API.markQueuedRequest('POST', createEndpoint, { offlineSessionKey: session.key });
+        
+        // CHANGE: Actually enqueue the session creation request instead of just marking
+        await API.enqueueRequest(
+            'POST',
+            createEndpoint,
+            {},  // Empty body - server creates from template
+            app?.state?.tokens?.access || null,
+            { 
+                offlineSessionKey: session.key,
+                isSessionCreation: true,  // NEW: Flag for resolver
+                prepend: false  // Normal ordering
+            }
+        );
+        
         app?.showToast(OFFLINE_START_MESSAGE, 'info');
         return session;
+    },
+
+    /**
+     * Pull every live value off the rendered set rows and update the in-memory
+     * session so a completion request (or its failure) always carries what the
+     * coach actually typed. Without this, a network failure after the DOM was
+     * edited would leave the local cache holding stale or zeroed tonnage.
+     * 
+     * @param {HTMLElement|null} container - Optional workout container to scope the query.
+     *   Defaults to the workout carousel/screen container.
+     */
+    syncSessionFromDOM(container) {
+        if (!this.currentSession) return;
+
+        // Default to the workout screen container if not provided
+        const root = container || document.getElementById('carousel') || document.querySelector('.workout-carousel') || document;
+
+        // Get exercise cards ONLY from the workout container
+        const exerciseCards = root.querySelectorAll('[data-exercise-id]');
+        const newExercises = [];
+        const seenSetIds = new Set();
+
+        exerciseCards.forEach(card => {
+            const exId = card.dataset.exerciseId;
+            const nameEl = card.querySelector('[data-exercise-name]') || card.querySelector('h3, h4');
+            const name = nameEl?.textContent?.trim() || '';
+
+            // Find existing exercise in session to get exercise_type and sets
+            const existingEx = this.currentSession.exercises?.find(e => String(e.id) === String(exId));
+
+            const setRows = card.querySelectorAll('[data-set-id]');
+            const sets = [];
+
+            setRows.forEach(row => {
+                const setId = parseInt(row.dataset.setId, 10);
+                if (isNaN(setId)) return;
+
+                // Deduplicate: skip if we've already processed this setId
+                if (seenSetIds.has(setId)) return;
+                seenSetIds.add(setId);
+
+                const weightInput = row.querySelector('[data-field="weight"]');
+                const repsInput = row.querySelector('[data-field="reps"]');
+                const durationInput = row.querySelector('[data-field="duration"]');
+                const distanceInput = row.querySelector('[data-field="distance"]');
+                const toggleBtn = row.querySelector('[data-action="toggle-set"]');
+
+                const weight_kg = weightInput ? parseFloat(weightInput.value) : null;
+                const reps = repsInput ? parseInt(repsInput.value, 10) : null;
+                const duration = durationInput ? parseInt(durationInput.value, 10) : null;
+                const distance = distanceInput ? parseFloat(distanceInput.value) : null;
+                const is_completed = toggleBtn?.dataset.completed === 'true';
+
+                // AUTO-COMPLETE: If weight and reps are filled (for weight_reps exercises)
+                // or duration is filled (for duration_only/duration_distance exercises),
+                // treat as completed even without checkbox.
+                const exType = existingEx?.exercise_type || 'weight_reps';
+                const hasWeightRepsData = weight_kg !== null && !isNaN(weight_kg) && reps !== null && !isNaN(reps);
+                const hasDurationData = duration !== null && !isNaN(duration);
+                let inferredCompleted = false;
+                if (exType === 'weight_reps') {
+                    inferredCompleted = hasWeightRepsData;
+                } else if (exType === 'duration_only' || exType === 'duration_distance') {
+                    inferredCompleted = hasDurationData;
+                }
+
+                // Find existing set in session to preserve set_number, exercise_id, rest_seconds, etc.
+                let existingSet = null;
+                if (existingEx?.sets) {
+                    existingSet = existingEx.sets.find(s => s.id === setId);
+                }
+
+                // Merge DOM values into existing set (preserving set_number, exercise_id, rest_seconds, etc.)
+                const mergedSet = existingSet ? { ...existingSet } : { id: setId };
+                mergedSet.weight_kg = weight_kg;
+                mergedSet.reps = reps;
+                mergedSet.duration = duration;
+                mergedSet.distance = distance;
+                mergedSet.is_completed = is_completed || inferredCompleted;
+
+                sets.push(mergedSet);
+            });
+
+            if (sets.length > 0) {
+                newExercises.push({
+                    id: existingEx?.id || exId,
+                    name: existingEx?.name || name,
+                    order: existingEx?.order || newExercises.length,
+                    notes: existingEx?.notes,
+                    sets,
+                    exercise_type: existingEx?.exercise_type || 'weight_reps',
+                });
+            }
+        });
+
+        if (newExercises.length > 0) {
+            this.currentSession.exercises = newExercises;
+        }
+
+        // Persist to localStorage so the values survive a refresh even when the
+        // session lives on the server (cache it under the same key for simplicity),
+        // plus a session-specific key so server-session data is never clobbered by
+        // the local-only session slot.
+        try {
+            localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(this.currentSession));
+            const sessionId = this.currentSession.isLocal ? this.currentSession.key : String(this.currentSession.id);
+            if (sessionId) {
+                localStorage.setItem(`session_${sessionId}`, JSON.stringify(this.currentSession));
+            }
+        } catch (error) {
+            console.error('[Workouts] Failed to persist synced session:', error);
+        }
     },
 
     completeLocalSession(app) {
         const session = this.getActiveLocalSession();
         if (!session) return false;
+        // Mirror the DOM into the local session before enqueueing the completion
+        // request, so offline completions carry the real tonnage.
+        if (this.currentSession && this.currentSession.key === session.key) {
+            session.exercises = this.currentSession.exercises;
+        }
+
+        // Validate: free-form workout must have at least one exercise
+        if (!session.exercises || session.exercises.length === 0) {
+            app?.showToast('Добавьте хотя бы одно упражнение перед завершением', 'error');
+            return false;
+        }
+
         const token = app?.state?.tokens?.access || null;
         session.status = 'completed';
         session.completed_at = new Date().toISOString();
         session.duration_seconds = this.getElapsedSeconds(session);
+
+        // Save as active session (for immediate UI)
         this.saveLocalSession(session);
+
+        // ALSO persist as completed session for recovery/sync to server
+        this.persistCompletedSessionLocally(session.key, session);
+
         API.enqueueRequest(
             'POST',
             `/workouts/sessions/${LOCAL_SESSION_PLACEHOLDER}/complete`,
@@ -974,6 +1365,33 @@ export const Workouts = {
             console.error('[Workouts] Load error:', error);
         }
 
+        // FIX: If active session is not ACTIVE (race condition after completion or DB replication lag),
+        // retry up to 5 times with exponential backoff (300ms, 450ms, 675ms, 1012ms, 1518ms, max 2000ms).
+        let retries = 5;
+        let delay = 300;
+        while (activeSession && activeSession.status !== 'active' && retries > 0) {
+            console.log(`[Workouts] Active session status is "${activeSession.status}", retrying after ${delay}ms... (${retries} retries left)`);
+            await new Promise(r => setTimeout(r, delay));
+            try {
+                const retrySession = await API.get('/workouts/sessions/active', app.state.tokens.access).catch(() => null);
+                if (retrySession && retrySession.status !== 'active') {
+                    retries--;
+                    delay = Math.min(delay * 1.5, 2000);
+                    continue;
+                }
+                activeSession = retrySession;
+                break;
+            } catch (error) {
+                console.error('[Workouts] Retry fetch failed:', error);
+                retries--;
+                delay = Math.min(delay * 1.5, 2000);
+            }
+        }
+        if (activeSession && activeSession.status !== 'active') {
+            console.warn('[Workouts] All retries exhausted, session still not ACTIVE, treating as no active session');
+            activeSession = null;
+        }
+
         // A workout started offline lives only in localStorage until it is synced
         if (!activeSession) {
             activeSession = this.getActiveLocalSession();
@@ -981,6 +1399,9 @@ export const Workouts = {
             // Completed offline and not yet replayed on the server
             activeSession = null;
         }
+
+        // Check for completed sessions in localStorage that need syncing
+        this.recoverCompletedSessions(app);
 
         const recentSessions = (historyData?.sessions || []).filter(s => s.status === 'completed');
         this.recentSessions = recentSessions;
@@ -1071,59 +1492,35 @@ export const Workouts = {
 
                 ${templatesWidget}
 
+                <!-- Main Action: Start Free-form Workout -->
                 <div class="mb-6">
-                    <h3 class="text-sm font-semibold text-surface-500 uppercase tracking-wider mb-3">Быстрый старт</h3>
-                    <div class="flex overflow-x-auto snap-x snap-mandatory gap-2.5 pb-3 scrollbar-none -mx-4 px-4">
-                        <!-- Card 1: Quick Start -->
-                        <div class="min-w-[216px] max-w-[234px] snap-center glass border ${hasActiveSession ? 'border-surface-200/70 dark:border-white/10' : ''} rounded-2xl p-3.5 flex flex-col justify-between shadow-sm ${hasActiveSession ? 'opacity-60' : 'cursor-pointer btn-press'}" data-action="${hasActiveSession ? '' : 'quick-start-workout'}">
-                            <div>
-                                <div class="w-9 h-9 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-2.5">
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                                </div>
-                                <h4 class="font-bold text-base mb-1">Быстрый старт</h4>
-                                <p class="text-[11px] text-surface-500 dark:text-surface-400">Готовая тренировка под цель: сила, масса или выносливость</p>
-                            </div>
-                            ${hasActiveSession
-                                ? `<span class="mt-3 text-[11px] font-semibold bg-surface-200 dark:bg-white/5 text-surface-500 dark:text-surface-400 px-2.5 py-1.5 rounded-xl text-center flex items-center justify-center gap-1.5">${LOCK_ICON}<span>Активна тренировка</span></span>`
-                                : '<span class="mt-3 text-[11px] font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-2.5 py-1.5 rounded-xl text-center">Начать сразу →</span>'}
-                        </div>
+                    <button data-action="start-empty-workout"
+                            class="w-full py-4 glass-strong border border-primary-500/30 rounded-2xl flex items-center justify-center gap-3 shadow-lg ${hasActiveSession ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer btn-press hover:border-primary-500'}">
+                        <svg class="w-6 h-6 text-primary-600 dark:text-primary-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                        </svg>
+                        <span class="text-lg font-bold ${hasActiveSession ? 'text-surface-400 dark:text-surface-500' : 'text-primary-600 dark:text-primary-400'}">
+                            ${hasActiveSession ? 'Активная тренировка' : 'Начать тренировку'}
+                        </span>
+                    </button>
+                </div>
 
-                        <!-- Card 2: History -->
-                        <div class="min-w-[216px] max-w-[234px] snap-center glass border rounded-2xl p-3.5 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="view-history">
-                            <div>
-                                <div class="w-9 h-9 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-2.5">
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                                </div>
-                                <h4 class="font-bold text-base mb-1">История</h4>
-                                <p class="text-[11px] text-surface-500 dark:text-surface-400">${recentSessions.length > 0 ? `Завершено ${recentSessions.length} тренировок, детальный разбор` : 'Хронология тренировок и разбор каждой'}</p>
-                            </div>
-                            <span class="mt-3 text-[11px] font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-2.5 py-1.5 rounded-xl text-center">Открыть историю →</span>
+                <!-- Secondary actions row (History, Build Template, Records) -->
+                <div class="grid grid-cols-2 gap-3 mb-6">
+                    <button data-action="view-history" class="glass rounded-xl p-4 flex flex-col items-center gap-2 cursor-pointer btn-press">
+                        <div class="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                         </div>
-
-                        <!-- Card 3: Build Custom -->
-                        <div class="min-w-[216px] max-w-[234px] snap-center glass border rounded-2xl p-3.5 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="show-build-workout">
-                            <div>
-                                <div class="w-9 h-9 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-2.5">
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                                </div>
-                                <h4 class="font-bold text-base mb-1">Собрать тренировку</h4>
-                                <p class="text-[11px] text-surface-500 dark:text-surface-400">Создать и сохранить свой шаблон из каталога (220+)</p>
-                            </div>
-                            <span class="mt-3 text-[11px] font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-2.5 py-1.5 rounded-xl text-center">Создать шаблон →</span>
+                        <span class="text-sm font-semibold">История</span>
+                        <span class="text-[11px] text-surface-500">${recentSessions.length > 0 ? `${recentSessions.length} тренировок` : 'Пусто'}</span>
+                    </button>
+                    <button data-action="show-build-workout" class="glass rounded-xl p-4 flex flex-col items-center gap-2 cursor-pointer btn-press">
+                        <div class="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                         </div>
-
-                        <!-- Card 4: Personal Records -->
-                        <div class="min-w-[216px] max-w-[234px] snap-center glass border rounded-2xl p-3.5 flex flex-col justify-between shadow-sm cursor-pointer btn-press" data-action="view-records">
-                            <div>
-                                <div class="w-9 h-9 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-2.5">
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-1l2 2 4-4m-5.5-8.5L19 3l2 2-3 3-2-2z"/></svg>
-                                </div>
-                                <h4 class="font-bold text-base mb-1">Личные рекорды (PR)</h4>
-                                <p class="text-[11px] text-surface-500 dark:text-surface-400">${records.length > 0 ? `Максимумы по ${records.length} упражнениям` : 'Максимальные веса по упражнениям'}</p>
-                            </div>
-                            <span class="mt-3 text-[11px] font-semibold bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 px-2.5 py-1.5 rounded-xl text-center">Смотреть рекорды →</span>
-                        </div>
-                    </div>
+                        <span class="text-sm font-semibold">Собрать шаблон</span>
+                        <span class="text-[11px] text-surface-500">Каталог 220+ упр.</span>
+                    </button>
                 </div>
             </div>
         `;
@@ -1136,14 +1533,16 @@ export const Workouts = {
         this.refreshTonnageModule(app).catch(error =>
             console.warn('[Workouts] Tonnage refresh failed:', error));
 
+        container.querySelector('[data-action="start-empty-workout"]')?.addEventListener('click', (e) => {
+            if (hasActiveSession) return; // Disabled state handled by CSS
+            e.stopPropagation();
+            this.startEmptyWorkout(app);
+        });
         container.querySelectorAll('[data-action="show-build-workout"]').forEach(el => {
             el.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.showBuildWorkout(app);
             });
-        });
-        container.querySelectorAll('[data-action="quick-start-workout"]').forEach(el => {
-            el.addEventListener('click', () => this.showQuickStartModal(app));
         });
         container.querySelectorAll('[data-action="view-records"]').forEach(el => {
             el.addEventListener('click', () => this.renderPersonalRecords(container, app, records));
@@ -1281,7 +1680,13 @@ export const Workouts = {
     },
 
     startWorkoutTimer(session, elementId = 'workout-timer') {
-        this.stopWorkoutTimer();
+        // Only clear the workout timer interval — do NOT dismiss the rest timer.
+        // The rest timer state survives across re-renders and resumes; dismissing
+        // it here would wipe the target timestamp just restored by the caller.
+        if (this.workoutTimerInterval) {
+            clearInterval(this.workoutTimerInterval);
+            this.workoutTimerInterval = null;
+        }
         if (!session || !session.started_at) return;
 
         const startTime = new Date(session.started_at).getTime();
@@ -1313,28 +1718,139 @@ export const Workouts = {
         this.dismissRestTimer();
     },
 
-    startRestTimer(set, exercise, session) {
-        this.stopRestTimer();
-        this.restTimerStartTime = Date.now();
-        this.activeRestForSetId = set?.id ?? null;
-        this.lastSavedRestSetId = null;
-        this.restSavedBySetId = null;
-        const bar = document.getElementById('rest-timer-bar');
-        if (bar) bar.classList.remove('hidden');
-        this.updateRestTimerUI();
-        this.restTimerInterval = setInterval(() => this.updateRestTimerUI(), 1000);
+    // ===== Dual-mode rest timer helpers =====
+
+    getStoredRestTimerMode() {
+        try {
+            const stored = localStorage.getItem(REST_TIMER_MODE_KEY);
+            return (stored === 'timer' || stored === 'stopwatch') ? stored : 'timer';
+        } catch (e) { return 'timer'; }
     },
 
-    // Low-level: stop the interval and hide the bar without saving. The
-    // start time / owning set are NOT cleared so a backgrounded tab can rearm
-    // the interval on resume and keep measuring the same rest period.
+    getStoredRestTimerPreset() {
+        try {
+            const stored = parseInt(localStorage.getItem(REST_TIMER_PRESET_KEY));
+            return !isNaN(stored) && stored > 0 ? stored : 90;
+        } catch (e) { return 90; }
+    },
+
+    saveRestTimerMode(mode) {
+        this.restTimerMode = mode;
+        try { localStorage.setItem(REST_TIMER_MODE_KEY, mode); } catch (e) {}
+        this.applyRestTimerModeUI();
+        this.updateRestTimerUI();
+    },
+
+    saveRestTimerPreset(seconds) {
+        this.restTimerPresetSeconds = seconds;
+        try { localStorage.setItem(REST_TIMER_PRESET_KEY, String(seconds)); } catch (e) {}
+    },
+
+    applyRestTimerModeUI() {
+        this.restTimerMode = this.restTimerMode || this.getStoredRestTimerMode();
+        this.updateAllTimerControlsUI();
+        this.updateRestTimerUI();
+    },
+
+    updateTimerDuration(seconds) {
+        this.saveRestTimerPreset(seconds);
+        this.updateAllTimerControlsUI();
+        if (this.restTimerStartTime != null) {
+            this.restTimerPlannedDuration = seconds * 1000;
+            this.restTimerTargetTimestamp = this.restTimerStartTime + this.restTimerPlannedDuration;
+            this.restTimerOvertime = false;
+            this.updateRestTimerUI();
+        }
+    },
+
+    updateAllTimerControlsUI() {
+        const mode = this.restTimerMode || this.getStoredRestTimerMode();
+        const currentPreset = this.restTimerPresetSeconds || this.getStoredRestTimerPreset();
+        const presetValues = [30, 60, 90, 120, 180];
+        const activePreset = presetValues.includes(currentPreset) ? currentPreset : null;
+
+        document.querySelectorAll('[data-tab-panel="timer"]').forEach(panel => {
+            const panelContent = panel.querySelector('.timer-panel-content[data-timer-panel-content]');
+            if (!panelContent) return;
+
+            const modeToggle = panelContent.querySelector('.relative.flex.rounded-md.glass');
+            if (modeToggle) {
+                const indicator = modeToggle.querySelector('span.absolute.inset-y-0\\.5');
+                if (indicator) {
+                    indicator.style.transform = mode === 'stopwatch' ? 'translateX(100%)' : 'translateX(0)';
+                }
+            }
+
+            panelContent.querySelectorAll('[data-action="rest-timer-mode"]').forEach(btn => {
+                const btnMode = btn.dataset.mode;
+                const isActive = btnMode === mode;
+                if (isActive) {
+                    btn.className = 'relative z-10 flex-1 py-1 px-1.5 rounded-[6px] text-[10px] font-semibold transition-all duration-200 text-white shadow-sm';
+                } else {
+                    btn.className = 'relative z-10 flex-1 py-1 px-1.5 rounded-[6px] text-[10px] font-semibold transition-all duration-200 text-surface-600 dark:text-surface-300';
+                }
+                btn.setAttribute('aria-pressed', String(isActive));
+            });
+
+            panelContent.querySelectorAll('[data-action="rest-timer-preset"]').forEach(btn => {
+                const presetSec = parseInt(btn.dataset.preset);
+                const isActive = !isNaN(presetSec) && presetSec === activePreset;
+                if (isActive) {
+                    btn.className = 'flex-shrink-0 px-2.5 py-1 rounded-md text-[10px] font-semibold transition-colors bg-primary-600 text-white dark:bg-primary-500 dark:text-zinc-950 shadow-[0_0_0_1px_rgba(132,204,22,0.5)] shadow-sm';
+                } else {
+                    btn.className = 'flex-shrink-0 px-2.5 py-1 rounded-md text-[10px] font-semibold transition-colors bg-white/5 dark:bg-white/10 text-surface-600 dark:text-surface-300 hover:bg-white/10 dark:hover:bg-white/20';
+                }
+                btn.setAttribute('aria-pressed', String(isActive));
+            });
+
+            const customInput = panelContent.querySelector('[data-action="rest-timer-custom"]');
+            if (customInput) {
+                customInput.value = String(currentPreset);
+            }
+        });
+    },
+
+    // ===== Dual-mode rest timer helpers end =====
+
+    startRestTimer(set, exercise, session) {
+        this.stopRestTimer();
+        this.restTimerMode = this.restTimerMode || this.getStoredRestTimerMode();
+        this.restTimerPresetSeconds = this.restTimerPresetSeconds || this.getStoredRestTimerPreset();
+        this.restTimerStartTime = Date.now();
+        this.restTimerOvertime = false;
+        this.restSavedBySetId = null;
+        this.lastSavedRestSetId = null;
+        this.activeRestForSetId = set?.id ?? null;
+        this.activeRestExerciseId = exercise?.id ?? (set ? this.findExerciseOfSet(session || this.currentSession, set.id)?.exercise?.id : null);
+
+        if (this.restTimerMode === 'stopwatch') {
+            // Stopwatch mode: no countdown target, counts up from zero
+            this.restTimerTargetTimestamp = null;
+            this.restTimerPlannedDuration = null;
+        } else {
+            // Timer mode: count down from the configured preset
+            const durationSec = this.restTimerPresetSeconds || (set.rest_seconds || 90);
+            this.restTimerPlannedDuration = durationSec * 1000;
+            this.restTimerTargetTimestamp = this.restTimerStartTime + this.restTimerPlannedDuration;
+        }
+
+        this.applyRestTimerModeUI();
+        this.updateRestTimerUI();
+        this.restTimerInterval = setInterval(() => this.updateRestTimerUI(), 100);
+
+        if (exercise?.id) {
+            this.switchExerciseTab(exercise.id, 'timer');
+            const container = this.app?.elements?.pageContent || document;
+            this.updateTimerPanel(exercise.id, exercise, container);
+        }
+    },
+
+    // Low-level: stop the interval without saving.
     stopRestTimer() {
         if (this.restTimerInterval) {
             clearInterval(this.restTimerInterval);
             this.restTimerInterval = null;
         }
-        const bar = document.getElementById('rest-timer-bar');
-        if (bar) bar.classList.add('hidden');
     },
 
     // Stop the active timer and persist the elapsed seconds onto the set it
@@ -1342,97 +1858,401 @@ export const Workouts = {
     // Called when the next set is completed, or when the workout is finished.
     async stopAndSaveRestTimer(session) {
         const sess = session || this.currentSession;
-        if (!sess || this.restTimerStartTime == null || this.activeRestForSetId == null) {
+        if (!sess || this.restTimerStartTime == null) {
             this.stopRestTimer();
             return;
         }
         const elapsed = Math.max(0, Math.floor((Date.now() - this.restTimerStartTime) / 1000));
-        const setId = this.activeRestForSetId;
-
-        const targetSet = this.findSetInSession(sess, setId);
-        if (targetSet) {
-            targetSet.rest_time_seconds = elapsed;
+        
+        // Find the set: activeRestForSetId, or if null, try to find the last completed set for the active exercise
+        let setId = this.activeRestForSetId;
+        if (!setId && this.activeRestExerciseId) {
+            const exercise = sess.exercises?.find(ex => String(ex.id) === String(this.activeRestExerciseId));
+            const lastSet = exercise?.sets?.filter(s => s.is_completed).pop();
+            setId = lastSet?.id;
         }
-        this.lastSavedRestSetId = setId;
+
+        if (setId) {
+            const targetSet = this.findSetInSession(sess, setId);
+            if (targetSet) {
+                targetSet.rest_time_seconds = elapsed;
+                this.applyRestTimeInline(setId, elapsed);
+            }
+            this.lastSavedRestSetId = setId;
+        }
+
+        const ownerEx = setId ? this.findExerciseOfSet(sess, setId)?.exercise : 
+                        (this.activeRestExerciseId ? sess.exercises?.find(ex => String(ex.id) === String(this.activeRestExerciseId)) : null);
 
         this.stopRestTimer();
         this.activeRestForSetId = null;
+        this.activeRestExerciseId = null;
         this.restTimerStartTime = null;
+        this.restTimerTargetTimestamp = null;
+        this.restTimerPlannedDuration = null;
+        this.restTimerOvertime = false;
         this.updateRestTimerUI();
 
+        if (ownerEx?.id) {
+            this.updateTimerPanel(ownerEx.id, ownerEx, this.app?.elements?.pageContent || document);
+        }
+
+        if (setId && !this.isLocalSession(sess) && this.isRealSetId(setId)) {
+            const token = this.app?.state?.tokens?.access;
+            if (token) {
+                API.patch(`/workouts/sets/${setId}`, { rest_time_seconds: elapsed }, token).catch(() => {});
+            }
+        }
         if (this.isLocalSession(sess)) {
             this.persistLocalSession(sess);
-            this.recordLocalSetPatch(sess.key, setId, { rest_time_seconds: elapsed });
-            return;
-        }
-
-        const token = this.app?.state?.tokens?.access;
-        if (token) {
-            API.patch(`/workouts/sets/${setId}`, { rest_time_seconds: elapsed }, token).catch(() => {});
+            if (setId) this.recordLocalSetPatch(sess.key, setId, { rest_time_seconds: elapsed });
         }
     },
 
-    // Discard the running timer without persisting (user tapped "Готов" or the
-    // set that owns the timer was unchecked). The save chain is forgotten.
+    // Discard the running timer without persisting (the set that owns the timer
+    // was unchecked). The save chain is forgotten. The "Готов" button uses
+    // stopAndSaveRestTimer() instead, so this is only for abortive paths.
     dismissRestTimer() {
+        const setId = this.activeRestForSetId;
+        const sess = this.currentSession;
+        const ownerEx = setId != null && sess ? this.findExerciseOfSet(sess, setId) : { exercise: null };
+
         this.stopRestTimer();
         this.activeRestForSetId = null;
+        this.activeRestExerciseId = null;
         this.restTimerStartTime = null;
+        this.restTimerTargetTimestamp = null;
+        this.restTimerPlannedDuration = null;
+        this.restTimerOvertime = false;
         this.lastSavedRestSetId = null;
         this.restSavedBySetId = null;
+        // Persist the current mode so it survives across workouts
+        this.restTimerMode = this.getStoredRestTimerMode();
+
+        // Refresh the Timer panel on the owning exercise card.
+        if (ownerEx.exercise?.id) {
+            this.updateTimerPanel(ownerEx.exercise.id, ownerEx.exercise);
+        }
     },
 
-    // Re-arm the interval after a backgrounded/frozen tab resumes. The start
-    // time anchor is kept across the suspend, so the count-up value is correct
+    // Re-arm the interval after a backgrounded/frozen tab resumes. The target
+    // timestamp is kept across the suspend, so the count-down value is correct
     // immediately; only the ticking interval needs to be re-created.
     rearmRestTimer() {
-        if (this.restTimerStartTime == null) return;
+        // In stopwatch mode there's no target timestamp — rearm from start time
+        if (this.restTimerTargetTimestamp == null && this.restTimerStartTime != null) {
+            // Stopwatch mode: rearm if we have a start time
+            this.restTimerMode = 'stopwatch';
+        } else if (this.restTimerTargetTimestamp == null) {
+            return;
+        } else {
+            this.restTimerMode = 'timer';
+        }
         if (this.restTimerInterval) return;
-        const bar = document.getElementById('rest-timer-bar');
-        if (bar) bar.classList.remove('hidden');
+        this.applyRestTimerModeUI();
         this.updateRestTimerUI();
-        this.restTimerInterval = setInterval(() => this.updateRestTimerUI(), 1000);
+        this.restTimerInterval = setInterval(() => this.updateRestTimerUI(), 100);
     },
 
     updateRestTimerUI() {
-        const remainingEl = document.getElementById('rest-timer-remaining');
-        const stateEl = document.getElementById('rest-timer-state');
-        const progressEl = document.getElementById('rest-timer-progress');
-        if (!remainingEl) return;
+        const sess = this.currentSession;
+        if (!sess) return;
 
-        if (this.restTimerStartTime == null) {
-            remainingEl.textContent = '00:00';
-            if (progressEl) progressEl.style.display = 'none';
-            return;
-        }
+        const activeExId = this.activeRestExerciseId || (this.activeRestForSetId != null ? this.findExerciseOfSet(sess, this.activeRestForSetId)?.exercise?.id : null);
+        const timerDisplays = document.querySelectorAll('[data-timer-display]');
 
-        const elapsed = Math.max(0, Math.floor((Date.now() - this.restTimerStartTime) / 1000));
-        remainingEl.textContent = this.formatTimer(elapsed);
-        remainingEl.classList.remove('text-surface-700', 'dark:text-surface-300');
-        remainingEl.classList.add('text-lime-600', 'dark:text-lime-400');
-        if (stateEl) stateEl.textContent = 'Отдых';
-        if (progressEl) progressEl.style.display = 'none';
+        timerDisplays.forEach(displayEl => {
+            const exId = displayEl.getAttribute('data-timer-panel-ex-id');
+            const isActiveForThisEx = this.restTimerStartTime != null && activeExId != null && String(exId) === String(activeExId);
+
+            if (!isActiveForThisEx) {
+                if (!displayEl.textContent.includes('Таймер отдыха не запущен')) {
+                    displayEl.innerHTML = `<div class="text-center py-2 text-xs text-surface-500">Таймер отдыха не запущен</div>`;
+                }
+                return;
+            }
+
+            const mode = this.restTimerMode || 'timer';
+            const now = Date.now();
+            let displayValue, displayMs, cssClass, stateText, showProgress, progressPercent;
+
+            if (mode === 'stopwatch') {
+                const elapsedMs = Math.max(0, now - this.restTimerStartTime);
+                const elapsed = Math.floor(elapsedMs / 1000);
+                displayValue = this.formatTimer(elapsed);
+                displayMs = Math.floor(elapsedMs / 10) % 100;
+                cssClass = 'font-mono text-3xl font-bold tabular-nums text-lime-600 dark:text-lime-400';
+                stateText = 'Секундомер';
+                showProgress = false;
+            } else {
+                if (this.restTimerTargetTimestamp == null) {
+                    displayValue = '00:00';
+                    displayMs = 0;
+                    cssClass = 'font-mono text-3xl font-bold tabular-nums text-lime-600 dark:text-lime-400';
+                    stateText = 'Отдых';
+                    showProgress = false;
+                } else {
+                    const remaining = Math.max(0, Math.ceil((this.restTimerTargetTimestamp - now) / 1000));
+                    const elapsed = Math.max(0, Math.floor((now - this.restTimerStartTime) / 1000));
+
+                    if (remaining <= 0) {
+                        this.restTimerOvertime = true;
+                        const overtimeDisplay = elapsed;
+                        displayValue = this.formatTimer(overtimeDisplay);
+                        displayMs = Math.floor((now - this.restTimerStartTime) / 10) % 100;
+                        cssClass = 'font-mono text-3xl font-bold tabular-nums text-rose-500 dark:text-rose-400 animate-pulse';
+                        stateText = 'Перерыв просрочен';
+                        showProgress = false;
+                    } else {
+                        this.restTimerOvertime = false;
+                        displayValue = this.formatTimer(remaining);
+                        displayMs = Math.floor((this.restTimerTargetTimestamp - now) / 10) % 100;
+                        cssClass = 'font-mono text-3xl font-bold tabular-nums text-lime-600 dark:text-lime-400';
+                        stateText = 'Отдых';
+                        showProgress = true;
+                        const totalSeconds = this.restTimerPlannedDuration ? this.restTimerPlannedDuration / 1000 : 90;
+                        progressPercent = Math.min(100, (elapsed / totalSeconds) * 100);
+                    }
+                }
+            }
+
+            let remainingEl = displayEl.querySelector(`[id^="rest-timer-remaining-"]`);
+            if (!remainingEl) {
+                const exerciseId = exId;
+                const isOvertime = this.restTimerOvertime === true;
+                displayEl.innerHTML = `
+                    <div class="p-3 rounded-2xl glass flex flex-col items-center justify-center space-y-2">
+                        <div class="flex items-center gap-2 text-xs text-surface-500 dark:text-surface-400">
+                            <span class="w-2 h-2 rounded-full bg-lime-500 animate-pulse"></span>
+                            <span id="rest-timer-state-${exerciseId}">${stateText}</span>
+                        </div>
+                        <div class="flex items-baseline gap-1 font-mono text-3xl font-bold tabular-nums ${isOvertime ? 'text-rose-500 dark:text-rose-400 animate-pulse' : 'text-lime-600 dark:text-lime-400'}">
+                            <span id="rest-timer-remaining-${exerciseId}">00:00</span>
+                            <span class="text-xs font-normal text-surface-400" id="rest-timer-ms-${exerciseId}">00</span>
+                        </div>
+                        <div class="w-full bg-surface-200 dark:bg-zinc-800 h-1.5 rounded-full overflow-hidden" id="rest-timer-progress-wrap-${exerciseId}">
+                            <div class="h-full bg-lime-500 transition-all duration-100" id="rest-timer-progress-${exerciseId}" style="width: 0%"></div>
+                        </div>
+                        <button type="button" data-action="dismiss-rest-timer"
+                                class="w-full py-2 bg-lime-600 hover:bg-lime-700 text-white dark:bg-lime-500 dark:hover:bg-lime-600 rounded-xl font-semibold text-xs transition-colors">
+                            Готов / Сохранить
+                        </button>
+                    </div>
+                `;
+                remainingEl = displayEl.querySelector(`[id^="rest-timer-remaining-"]`);
+            }
+
+            const msEl = displayEl.querySelector(`[id^="rest-timer-ms-"]`);
+            const stateEl = displayEl.querySelector(`[id^="rest-timer-state-"]`);
+            const progressEl = displayEl.querySelector(`[id^="rest-timer-progress-"]`);
+            const progressWrapEl = displayEl.querySelector(`[id^="rest-timer-progress-wrap-"]`);
+
+            if (remainingEl) {
+                remainingEl.textContent = displayValue;
+                remainingEl.className = cssClass;
+            }
+            if (msEl) msEl.textContent = String(displayMs).padStart(2, '0');
+            if (stateEl) stateEl.textContent = stateText;
+            if (progressWrapEl) progressWrapEl.style.display = showProgress ? 'block' : 'none';
+            if (progressEl && showProgress) progressEl.style.width = `${progressPercent}%`;
+        });
     },
 
-    // Shared inner markup for the muted rest-time line shown between set rows.
-    restTimeLabelHtml(seconds) {
-        const secs = Math.floor(Number(seconds) || 0);
-        return `<span aria-hidden="true">⏱</span>`
-            + `<span class="font-mono tabular-nums">${this.formatTimer(secs)}</span>`
-            + `<span class="font-semibold">Отдых</span>`;
-    },
+     // Shared inner markup for the muted rest-time line shown between set rows.
+     restTimeLabelHtml(seconds) {
+         const secs = Math.floor(Number(seconds) || 0);
+         return `<span aria-hidden="true">⏱</span>`
+             + `<span class="font-mono tabular-nums">${this.formatTimer(secs)}</span>`
+             + `<span class="font-semibold">Отдых</span>`;
+     },
+
+     // Render the Timer tab panel content for an exercise card: inline timer controls
+     // (mode toggle, presets, active timer countdown/stopwatch, progress bar, stop/save)
+     // plus history of measured rest times per completed set.
+     renderTimerPanel(exercise) {
+         const sets = exercise.sets || [];
+         const sess = this.currentSession;
+         const activeExId = this.activeRestExerciseId || (this.activeRestForSetId != null && sess ? this.findExerciseOfSet(sess, this.activeRestForSetId)?.exercise?.id : null);
+         const timerActive = (this.activeRestForSetId != null || this.restTimerStartTime != null) &&
+             (activeExId == null || String(activeExId) === String(exercise.id));
+         const mode = this.restTimerMode || this.getStoredRestTimerMode();
+         const currentPreset = this.restTimerPresetSeconds || this.getStoredRestTimerPreset();
+         const presetValues = [30, 60, 90, 120, 180];
+         const activePreset = presetValues.includes(currentPreset) ? currentPreset : null;
+
+let html = `
+              <div class="space-y-1 p-1">
+                 <div class="relative flex rounded-md glass p-0.5 gap-0.5">
+                     <span class="absolute inset-y-0.5 w-[calc(50%-2px)] bg-primary-600 rounded-[6px] shadow-[0_2px_4px_rgba(132,204,22,0.4)] transition-transform duration-200 ease-out ${mode === 'stopwatch' ? 'translate-x-full' : 'translate-x-0'}"></span>
+                     <button type="button" data-action="rest-timer-mode" data-mode="timer"
+                             class="relative z-10 flex-1 py-1 px-1.5 rounded-[6px] text-[10px] font-semibold transition-all duration-200 ${mode === 'timer' ? 'text-white shadow-sm' : 'text-surface-600 dark:text-surface-300'}"
+                             aria-pressed="${mode === 'timer'}">
+                         Таймер
+                     </button>
+                     <button type="button" data-action="rest-timer-mode" data-mode="stopwatch"
+                             class="relative z-10 flex-1 py-1 px-1.5 rounded-[6px] text-[10px] font-semibold transition-all duration-200 ${mode === 'stopwatch' ? 'text-white shadow-sm' : 'text-surface-600 dark:text-surface-300'}"
+                             aria-pressed="${mode === 'stopwatch'}">
+                         Секундомер
+                     </button>
+                 </div>
+         `;
+
+          const showPresets = true;
+          if (showPresets) {
+              const presets = [30, 60, 90, 120, 180];
+             const presetLabels = { 30: '30с', 60: '1м', 90: '1.5м', 120: '2м', 180: '3м' };
+             html += `
+                 <div class="flex items-center gap-1.5 overflow-x-auto scrollbar-hide pb-1" data-timer-presets>
+                     ${presets.map(sec => `
+                         <button type="button" data-action="rest-timer-preset" data-preset="${sec}"
+                                 class="flex-shrink-0 px-2.5 py-1 rounded-md text-[10px] font-semibold transition-colors ${activePreset === sec 
+                                     ? 'bg-primary-600 text-white dark:bg-primary-500 dark:text-zinc-950 shadow-[0_0_0_1px_rgba(132,204,22,0.5)] shadow-sm' 
+                                     : 'bg-white/5 dark:bg-white/10 text-surface-600 dark:text-surface-300 hover:bg-white/10 dark:hover:bg-white/20'}"
+                                 aria-pressed="${activePreset === sec}">
+                             ${presetLabels[sec] || (sec + 'с')}
+                         </button>
+                     `).join('')}
+                     <div class="flex-shrink-0 flex items-center gap-1" data-timer-custom>
+                         <input type="number" min="1" max="600" data-action="rest-timer-custom"
+                                value="${currentPreset}" placeholder="Сек"
+                                class="w-14 glass-input rounded-md px-2 py-1 text-[10px] font-mono tabular-nums text-center">
+                         <span class="text-[10px] text-surface-500 whitespace-nowrap">сек</span>
+                     </div>
+                 </div>
+             `;
+         }
+
+         let timerDisplayHtml = '';
+         if (timerActive) {
+             const isOvertime = this.restTimerOvertime === true;
+             timerDisplayHtml = `
+                 <div class="p-1 rounded-md glass flex flex-col items-center justify-center space-y-0.5">
+                     <div class="flex items-baseline gap-0.5 font-mono text-lg font-bold tabular-nums ${isOvertime ? 'text-rose-500 dark:text-rose-400 animate-pulse' : 'text-lime-400 dark:text-lime-300'}">
+                         <span id="rest-timer-remaining-${exercise.id}">00:00</span>
+                         <span class="text-[8px] font-normal text-surface-400" id="rest-timer-ms-${exercise.id}">00</span>
+                     </div>
+                     <div class="w-full bg-surface-200 dark:bg-zinc-800 h-1 rounded-full overflow-hidden" id="rest-timer-progress-wrap-${exercise.id}">
+                         <div class="h-full bg-lime-400 dark:bg-lime-300 transition-all duration-100" id="rest-timer-progress-${exercise.id}" style="width: 0%"></div>
+                     </div>
+                     <button type="button" data-action="dismiss-rest-timer"
+                             class="w-full py-1 bg-primary-600 hover:bg-primary-700 text-white dark:bg-primary-500 dark:hover:bg-primary-600 rounded-md font-semibold text-[10px] transition-colors">
+                         Готов / Сохранить
+                     </button>
+                 </div>
+             `;
+         } else {
+             timerDisplayHtml = `
+                 <div class="text-center py-1 text-[10px] text-surface-500">
+                     Таймер отдыха не запущен
+                 </div>
+             `;
+         }
+         html += `<div data-timer-display data-timer-panel-ex-id="${exercise.id}">${timerDisplayHtml}</div>`;
+
+         html += '</div>';
+         return html;
+     },
+
+  storeTabState(exerciseId, targetTab) {
+      if (!this.exerciseActiveTabs) {
+          this.exerciseActiveTabs = new Map();
+      }
+      this.exerciseActiveTabs.set(String(exerciseId), targetTab);
+      try {
+          const obj = Object.fromEntries(this.exerciseActiveTabs);
+          localStorage.setItem('exerciseActiveTabs', JSON.stringify(obj));
+      } catch (e) {}
+  },
+
+  getStoredTabState(exerciseId) {
+      if (!this.exerciseActiveTabs) {
+          this.exerciseActiveTabs = new Map();
+          try {
+              const stored = localStorage.getItem('exerciseActiveTabs');
+              if (stored) {
+                  const parsed = JSON.parse(stored);
+                  Object.entries(parsed).forEach(([k, v]) => this.exerciseActiveTabs.set(k, v));
+              }
+          } catch (e) {}
+      }
+      return this.exerciseActiveTabs.get(String(exerciseId)) || 'timer';
+  },
+
+  // Switch the active tab for a specific exercise card with state persistence.
+  switchExerciseTab(exerciseId, targetTab, cardElement) {
+      const card = cardElement?.closest?.('[data-exercise-id]') || cardElement || document.querySelector(`[data-exercise-id="${exerciseId}"]`) || document.querySelector('.workout-card');
+      if (!card) return;
+
+      card.querySelectorAll('[data-tab]').forEach(btn => {
+          const t = btn.getAttribute('data-tab');
+          const match = t === targetTab || (targetTab === 'ai-analysis' && t === 'ai_advice') || (targetTab === 'ai_advice' && t === 'ai-analysis');
+          btn.setAttribute('data-active', match ? 'true' : 'false');
+      });
+
+      card.querySelectorAll('[data-tab-panel]').forEach(panel => {
+          const panelType = panel.getAttribute('data-tab-panel');
+          const match = panelType === targetTab || (targetTab === 'ai-analysis' && panelType === 'ai_advice') || (targetTab === 'ai_advice' && panelType === 'ai-analysis');
+          if (match) {
+              panel.classList.remove('hidden');
+          } else {
+              panel.classList.add('hidden');
+          }
+      });
+
+      this.storeTabState(exerciseId, targetTab);
+
+      const rootContainer = document.getElementById('workout-container') || card.closest('#workout-container') || document;
+      if ((targetTab === 'ai-analysis' || targetTab === 'ai_advice') && rootContainer) {
+          requestAnimationFrame(async () => {
+              const sessionId = this.currentSession?.id || this.currentSession?.key;
+              if (sessionId) {
+                  await this.ensureAiPlanLoaded(this.app, sessionId);
+              }
+              this.updateAiPlanBadges(rootContainer);
+          });
+      }
+
+      if (targetTab === 'timer') {
+          const exercise = this.currentSession?.exercises?.find(ex => String(ex.id) === String(exerciseId));
+          if (exercise) {
+              this.updateTimerPanel(exerciseId, exercise, rootContainer);
+              this.updateRestTimerUI();
+          }
+      }
+  },
+
+     // Refresh the Timer panel content for an exercise (e.g. after the timer state changes).
+     updateTimerPanel(exerciseId, exercise, container) {
+         const card = container?.querySelector(`[data-exercise-id="${exerciseId}"]`) || document.querySelector(`[data-exercise-id="${exerciseId}"]`);
+         if (!card) return;
+      const panelContent = card.querySelector('[data-tab-panel="timer"] > .timer-panel-content[data-timer-panel-content]');
+      if (!panelContent) {
+          console.warn('[Workouts] Timer panel content not found for exercise', exerciseId);
+          return;
+      }
+      panelContent.innerHTML = this.renderTimerPanel(exercise);
+     },
+
+     refreshAllTimerPanels(container) {
+         const sess = this.currentSession;
+         if (!sess || !sess.exercises) return;
+         sess.exercises.forEach(ex => {
+             this.updateTimerPanel(ex.id, ex, container);
+         });
+     },
+
 
     // HTML fragment rendered inside the exercise card template after each set
     // row (except the last) when that set already has a measured rest time.
     renderRestTimeInline(set) {
         if (!set || set.rest_time_seconds == null) return '';
-        return `<div class="rest-time-inline flex items-center gap-1 ml-4 mt-1 text-xs text-surface-500 dark:text-surface-400 font-mono tabular-nums">`
-            + `${this.restTimeLabelHtml(set.rest_time_seconds)}`
+        return `<div class="rest-time-inline flex items-center gap-1 ml-4 mt-0.5 text-[10px] text-surface-500 dark:text-surface-400 font-mono tabular-nums">`
+            + `<span aria-hidden="true">⏱</span>`
+            + `<span class="font-semibold text-surface-600 dark:text-surface-300">Отдых:</span>`
+            + `<span class="font-mono tabular-nums">${this.formatTimer(set.rest_time_seconds)}</span>`
             + `</div>`;
     },
 
-    // Insert, update, or remove the inline rest-time line for a set row in the
-    // live DOM (used when a rest time is saved or cleared without a full re-render).
     applyRestTimeInline(setId, seconds) {
         const row = document.querySelector(`[data-set-id="${String(setId)}"]`);
         if (!row) return;
@@ -1442,9 +2262,333 @@ export const Workouts = {
         }
         if (seconds != null) {
             const wrapper = document.createElement('div');
-            wrapper.className = 'rest-time-inline flex items-center gap-1 ml-4 mt-1 text-xs text-surface-500 dark:text-surface-400 font-mono tabular-nums';
-            wrapper.innerHTML = this.restTimeLabelHtml(seconds);
+            wrapper.className = 'rest-time-inline flex items-center gap-1 ml-4 mt-0.5 text-[10px] text-surface-500 dark:text-surface-400 font-mono tabular-nums';
+            wrapper.innerHTML = `<span aria-hidden="true">⏱</span>`
+                + `<span class="font-semibold text-surface-600 dark:text-surface-300">Отдых:</span>`
+                + `<span class="font-mono tabular-nums">${this.formatTimer(seconds)}</span>`;
             row.parentNode.insertBefore(wrapper, row.nextSibling);
+        }
+    },
+
+    // Shared previous-set text computation from completed history sessions.
+    // Used by both the initial render and dynamic set insertion so "ПРЕД." values match.
+    computePrevText(exercise, setIndex, completedHistorySessions) {
+        let prevText = '\u2014';
+        const sortedSessions = [...(completedHistorySessions || [])].sort((a, b) => new Date(b.started_at) - new Date(a.started_at));
+        const prevSession = sortedSessions.find(s =>
+            s.id !== this.currentSession?.id &&
+            (s.exercises || []).some(e => e.name.trim().toLowerCase() === exercise.name.trim().toLowerCase())
+        );
+        if (prevSession) {
+            const pastEx = (prevSession.exercises || []).find(e => e.name.trim().toLowerCase() === exercise.name.trim().toLowerCase());
+            if (pastEx) {
+                const pastSets = [...(pastEx.sets || [])].sort((a, b) => a.set_number - b.set_number);
+                const pastSet = pastSets.find(s => s.set_number === setIndex + 1) || pastSets[setIndex];
+                if (pastSet && pastSet.weight_kg != null && pastSet.reps != null) {
+                    prevText = `${pastSet.weight_kg}\u00d7${pastSet.reps}`;
+                }
+            }
+        }
+        return prevText;
+    },
+
+    // Bind all events for a single set row (shared by initial render and dynamic insert):
+    // drum picker, weight/reps persistence, and set completion toggle.
+    bindSetRowEvents(row, session, exercise, app) {
+        if (!row) return;
+        const isLocal = session ? this.isLocalSession(session) : false;
+        const token = app?.state?.tokens?.access;
+        const DEBOUNCE_MS = 400;
+        const pendingTimers = new Map();
+
+        // Weight/reps inputs
+        const inputs = row.querySelectorAll('[data-field="weight"], [data-field="reps"]');
+
+        // --- Persistence handlers (input/change/blur) ---
+        const applyLocalValue = (input) => {
+            const r = input.closest('[data-set-id]');
+            if (!r) return null;
+            const setId = parseInt(r.dataset.setId);
+            const field = input.dataset.field;
+            const value = field === 'weight' ? parseFloat(input.value) : parseInt(input.value);
+            if (isNaN(value)) return null;
+
+            if (session) {
+                const sessionSet = this.findSetInSession(session, setId);
+                if (sessionSet) {
+                    sessionSet[field === 'weight' ? 'weight_kg' : 'reps'] = value;
+                    this.updateWorkoutMetricsUI(session);
+                }
+            }
+            return { row: r, setId, field, value };
+        };
+
+        const propagateWeightReps = (r, weightVal, repsVal) => {
+            const exerciseContainer = r.closest('[data-exercise-id]');
+            if (!exerciseContainer) return;
+            const rows = exerciseContainer.querySelectorAll('[data-set-id]');
+            let foundCurrent = false;
+            for (const otherRow of rows) {
+                if (foundCurrent) {
+                    const nextWeightInput = otherRow.querySelector('[data-field="weight"]');
+                    const nextRepsInput = otherRow.querySelector('[data-field="reps"]');
+                    const weightEmpty = !nextWeightInput || !nextWeightInput.value || parseFloat(nextWeightInput.value) === 0;
+                    const repsEmpty = !nextRepsInput || !nextRepsInput.value || parseInt(nextRepsInput.value) === 0;
+                    if (weightEmpty && repsEmpty) {
+                        if (nextWeightInput && weightVal != null) {
+                            nextWeightInput.value = weightVal;
+                        }
+                        if (nextRepsInput && repsVal != null) {
+                            nextRepsInput.value = repsVal;
+                        }
+                        const nextSetId = parseInt(otherRow.dataset.setId);
+                        const patch = {};
+                        if (weightVal != null) patch.weight_kg = weightVal;
+                        if (repsVal != null) patch.reps = repsVal;
+                        if (session) {
+                            const nextSessionSet = this.findSetInSession(session, nextSetId);
+                            if (nextSessionSet) {
+                                if (weightVal != null) nextSessionSet.weight_kg = weightVal;
+                                if (repsVal != null) nextSessionSet.reps = repsVal;
+                            }
+                        }
+                        if (isLocal && session) {
+                            this.persistLocalSession(session);
+                            this.recordLocalSetPatch(session.key, nextSetId, patch);
+                        } else if (token && this.isRealSetId(nextSetId)) {
+                            API.patch(`/workouts/sets/${nextSetId}`, patch, token).catch(() => {});
+                        }
+                    }
+                }
+                if (otherRow === r) foundCurrent = true;
+            }
+        };
+
+        // Detect the "first filled set" — the earliest set in this exercise where
+        // both weight AND reps are non-empty. Returns the row element or null.
+        const findFirstFilledSet = (exerciseContainer) => {
+            const rows = exerciseContainer.querySelectorAll('[data-set-id]');
+            for (const otherRow of rows) {
+                const w = otherRow.querySelector('[data-field="weight"]');
+                const rp = otherRow.querySelector('[data-field="reps"]');
+                if (w && w.value && rp && rp.value) return otherRow;
+            }
+            return null;
+        };
+
+        const persistSet = async (input) => {
+            const parsed = applyLocalValue(input);
+            if (!parsed) return;
+            const { row: r, setId, field, value } = parsed;
+
+            if (field === 'weight' || field === 'reps') {
+                const exerciseContainer = r.closest('[data-exercise-id]');
+                const firstFilled = exerciseContainer ? findFirstFilledSet(exerciseContainer) : null;
+                if (firstFilled && firstFilled === r) {
+                    const wInput = r.querySelector('[data-field="weight"]');
+                    const rpInput = r.querySelector('[data-field="reps"]');
+                    propagateWeightReps(r,
+                        wInput && wInput.value ? parseFloat(wInput.value) : null,
+                        rpInput && rpInput.value ? parseInt(rpInput.value) : null);
+                }
+            }
+
+            if (isLocal && session) {
+                this.persistLocalSession(session);
+                this.recordLocalSetPatch(session.key, setId, { [field]: value });
+                this.autoSaveSession(session);
+                return;
+            }
+
+            // Auto-save server sessions to localStorage so progress survives
+            // network drops mid-workout.
+            if (session) {
+                this.autoSaveSession(session);
+            }
+
+            if (app?.ensureFreshToken) await app.ensureFreshToken();
+            try {
+                await API.patch(`/workouts/sets/${setId}`, { [field]: value }, token);
+            } catch (err) {
+                if (!err?.offlineQueued) app?.showToast(err.message || 'Ошибка сохранения', 'error');
+            }
+        };
+
+        const scheduleSave = (input, immediate) => {
+            const r = input.closest('[data-set-id]');
+            if (!r) return;
+            const key = `${r.dataset.setId}:${input.dataset.field}`;
+
+            const run = () => {
+                pendingTimers.delete(key);
+                return persistSet(input);
+            };
+
+            const existing = pendingTimers.get(key);
+            if (existing) {
+                clearTimeout(existing);
+                pendingTimers.delete(key);
+            }
+
+            if (immediate) {
+                run();
+            } else {
+                pendingTimers.set(key, setTimeout(run, DEBOUNCE_MS));
+            }
+        };
+
+        inputs.forEach(input => {
+            input.addEventListener('input', () => applyLocalValue(input));
+            input.addEventListener('change', () => scheduleSave(input, false));
+            input.addEventListener('blur', () => scheduleSave(input, true));
+        });
+
+        // --- Drum picker handlers ---
+        inputs.forEach(input => {
+            const openPicker = (e) => {
+                e?.preventDefault();
+                const toggle = row.querySelector('[data-action="toggle-set"]');
+                if (toggle?.dataset.completed === 'true') {
+                    app?.showToast(SET_LOCKED_MESSAGE, 'info');
+                    return;
+                }
+                input.blur();
+                this.openDrumPicker(input, { app });
+            };
+            input.addEventListener('click', openPicker);
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') openPicker(e);
+            });
+        });
+
+        // --- Toggle set completion handler ---
+        const toggleBtn = row.querySelector('[data-action="toggle-set"]');
+        if (toggleBtn) {
+            toggleBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const button = e.currentTarget;
+                const setId = parseInt(row.dataset.setId);
+                if (isNaN(setId)) {
+                    console.error('Invalid setId found:', row.dataset.setId);
+                    return;
+                }
+
+                const weightInput = row.querySelector('[data-field="weight"]');
+                const repsInput = row.querySelector('[data-field="reps"]');
+                const weight_kg = weightInput ? parseFloat(weightInput.value) : null;
+                const reps = repsInput ? parseInt(repsInput.value) : null;
+
+                const wasCompleted = button.dataset.completed === 'true';
+                const isCompleted = !wasCompleted;
+
+                const applyToggleState = (completed) => {
+                    if (session) {
+                        const sessionSet = this.findSetInSession(session, setId);
+                        if (sessionSet) {
+                            sessionSet.is_completed = completed;
+                            sessionSet.weight_kg = isNaN(weight_kg) ? null : weight_kg;
+                            sessionSet.reps = isNaN(reps) ? null : reps;
+                        }
+                        this.updateWorkoutMetricsUI(session);
+                    }
+                    if (completed) {
+                        button.dataset.completed = 'true';
+                        button.className = TOGGLE_BASE + ' ' + TOGGLE_COMPLETED;
+                        button.textContent = '\u2713';
+
+                        row.querySelector('[data-set-number]').classList.add(...SET_DIM);
+                        row.querySelectorAll('input').forEach(inp => inp.classList.add(...SET_DIM));
+                        row.querySelectorAll('label').forEach(lbl => lbl.classList.add(...SET_DIM));
+
+                        button.disabled = false;
+                    } else {
+                        button.dataset.completed = 'false';
+                        button.className = TOGGLE_BASE + ' ' + TOGGLE_UNCOMPLETED;
+
+                        const setNumberSpan = row.querySelector('[data-set-number]');
+                        setNumberSpan.classList.remove(...SET_DIM);
+                        setNumberSpan.classList.add(SET_NUMBER_IDLE);
+                        row.querySelectorAll('input').forEach(inp => inp.classList.remove(...SET_DIM));
+                        row.querySelectorAll('label').forEach(lbl => lbl.classList.remove(...SET_DIM));
+
+                        button.textContent = '\u2713';
+                        button.disabled = false;
+                    }
+                };
+
+                button.disabled = true;
+                button.textContent = '...';
+                applyToggleState(isCompleted);
+                if (isCompleted) {
+                    this.flashSetSaved(row);
+                    this.scheduleCarouselAdvance(session, row);
+                    if (this.activeRestForSetId) {
+                        this.restSavedBySetId = setId;
+                        await this.stopAndSaveRestTimer(session);
+                        const savedSet = this.lastSavedRestSetId
+                            ? this.findSetInSession(session, this.lastSavedRestSetId) : null;
+                        if (savedSet && savedSet.rest_time_seconds != null) {
+                            this.applyRestTimeInline(this.lastSavedRestSetId, savedSet.rest_time_seconds);
+                        }
+                    }
+                    if (session) {
+                        const { exercise: ex, set: sessionSet } = this.findExerciseOfSet(session, setId);
+                        if (ex && sessionSet && sessionSet.set_number < (ex.sets || []).length) {
+                            if (!(this.restAutoStart && this.restAutoStart.get(ex.id) === false)) {
+                                this.startRestTimer(sessionSet, ex, session);
+                            }
+                        }
+                    }
+                } else {
+                    if (session) {
+                        this.undoRestTimeSave(session, setId, isLocal, token);
+                    }
+                    if (this.activeRestForSetId === setId) {
+                        this.dismissRestTimer();
+                    }
+                }
+                const payload = {
+                    is_completed: isCompleted,
+                    weight_kg: isNaN(weight_kg) ? null : weight_kg,
+                    reps: isNaN(reps) ? null : reps
+                };
+                if (isLocal && session) {
+                    this.persistLocalSession(session);
+                    this.recordLocalSetPatch(session.key, setId, payload);
+                    this.autoSaveSession(session);
+                    button.disabled = false;
+                    button.textContent = '\u2713';
+                    return;
+                }
+
+                // Auto-save server sessions to localStorage so progress survives
+                // network drops mid-workout.
+                if (session) {
+                    this.autoSaveSession(session);
+                }
+
+                try {
+                    app?._pendingToggleSetIds?.add(setId);
+                    if (this.isRealSetId(setId)) {
+                        await API.patch(`/workouts/sets/${setId}`, payload, token);
+                    }
+                } catch (err) {
+                    if (err?.offlineQueued) {
+                        // Silent: the global network banner reflects offline/syncing status
+                    } else {
+                        applyToggleState(wasCompleted);
+                        if (session) this.undoRestTimeSave(session, setId, isLocal, token);
+                        if (this.activeRestForSetId === setId) {
+                            this.dismissRestTimer();
+                        }
+                        app?.showToast(err.message || 'Ошибка', 'error');
+                    }
+                    button.disabled = false;
+                    button.textContent = '\u2713';
+                } finally {
+                    app?._pendingToggleSetIds?.delete(setId);
+                }
+            });
         }
     },
 
@@ -1461,7 +2605,7 @@ export const Workouts = {
         if (isLocal && session) {
             this.persistLocalSession(session);
             this.recordLocalSetPatch(session.key, savedSetId, { rest_time_seconds: null });
-        } else if (token) {
+        } else if (token && this.isRealSetId(savedSetId)) {
             API.patch(`/workouts/sets/${savedSetId}`, { rest_time_seconds: null }, token).catch(() => {});
         }
         this.applyRestTimeInline(savedSetId, null);
@@ -1506,7 +2650,7 @@ export const Workouts = {
             return null;
         }
         try {
-            const payload = await API.postImmediate('/ai/workout-preview', body, app.state.tokens.access);
+            const payload = await API.postImmediate('/ai/workout-preview', body, app.state.tokens.access, AI_PREVIEW_TIMEOUT_MS);
             if (payload?.available) {
                 this.persistAiPlan(payload.session_id || body?.session_id, payload);
                 return payload;
@@ -1517,6 +2661,32 @@ export const Workouts = {
             // Never surfaced as an error toast: the workout is what the user came
             // for, and a plan that did not arrive is not a failure.
             console.warn('[Workouts] AI plan failed:', err);
+            return null;
+        }
+    },
+
+    /**
+     * Ensure AI plan is loaded for the given session. Idempotent — if the plan
+     * is already in memory for this session, returns immediately. Otherwise
+     * fetches from the backend and caches it.
+     */
+    async ensureAiPlanLoaded(app, sessionId) {
+        // Force reload if aiPlan is not loaded, or if it's for a different session,
+        // or if it was previously marked as unavailable (available === false)
+        const shouldFetch = !this.aiPlan
+            || this.aiPlan.sessionId !== sessionId
+            || this.aiPlan.available === false;
+        if (!shouldFetch) return this.aiPlan;
+        if (!navigator.onLine || app.state?.isOnline === false) return null;
+        try {
+            const plan = await this.loadAiPlan(app, { session_id: sessionId });
+            if (plan) {
+                this.aiPlan = { ...plan, sessionId };
+                this.persistAiPlan(sessionId, this.aiPlan);
+            }
+            return this.aiPlan;
+        } catch (err) {
+            console.warn('[Workouts] AI plan fetch on tab switch failed:', err);
             return null;
         }
     },
@@ -1562,6 +2732,7 @@ export const Workouts = {
                 if (planApplied) return;
                 planApplied = true;
                 this.aiPlan = plan ? { ...plan, sessionId } : null;
+                if (this.aiPlan) this.persistAiPlan(sessionId, this.aiPlan);
                 this.updateAiPlanBadges(container);
             };
             // Listen for the plan over WebSocket; the polling below is the fallback
@@ -1570,9 +2741,7 @@ export const Workouts = {
             const wsHandler = (payload) => {
                 if (payload?.session_id === sessionId) {
                     if (wsCleanup) wsCleanup();
-                    this.aiPlan = { ...payload.plan, sessionId };
-                    this.persistAiPlan(sessionId, this.aiPlan);
-                    this.updateAiPlanBadges(container);
+                    applyPlan(payload.plan);
                     planApplied = true;
                 }
             };
@@ -1601,79 +2770,6 @@ export const Workouts = {
         }
     },
 
-    /** The quick-start variants are chosen by goal, so the goal travels with the plan. */
-    async startQuickWorkoutWithAi(app, goal, btn) {
-        if (navigator.onLine === false) {
-            app.showToast(AI_OFFLINE_MESSAGE, 'info');
-            return;
-        }
-        if (!app.state.user?.is_premium) {
-            app.showToast(AI_PREMIUM_REQUIRED_MESSAGE, 'info');
-            return;
-        }
-        if (this.isGeneratingPreview) return;
-        this.isGeneratingPreview = true;
-        if (btn) btn.disabled = true;
-        const goalLabel = (QUICK_GOALS.find(g => g.value === goal) || {}).title;
-
-        const overlayState = Camera.showLoadingOverlay(document.body, Camera.workoutHints);
-
-        try {
-            await app.ensureFreshToken();
-            const { session_id: sessionId } = await API.post(
-                '/workouts/sessions/quick-start',
-                { goal, with_ai_plan: true, reduce: true },
-                app.state.tokens.access,
-            );
-            Camera.markLoadingComplete(overlayState.overlay);
-            await new Promise(r => setTimeout(r, 500));
-            Camera.hideLoadingOverlay(overlayState);
-            // Render workout screen immediately without waiting for AI plan
-            await this.renderWorkoutScreen(app.elements.pageContent, app, sessionId);
-            let planApplied = false;
-            const applyPlan = (plan) => {
-                if (planApplied) return;
-                planApplied = true;
-                this.aiPlan = plan ? { ...plan, sessionId } : null;
-                this.updateAiPlanBadges(app.elements.pageContent);
-            };
-            // Listen for the plan over WebSocket; the polling below is the fallback
-            // when the socket is not connected or the message is missed.
-            let wsCleanup = null;
-            const wsHandler = (payload) => {
-                if (payload?.session_id === sessionId) {
-                    if (wsCleanup) wsCleanup();
-                    this.aiPlan = { ...payload.plan, sessionId };
-                    this.persistAiPlan(sessionId, this.aiPlan);
-                    this.updateAiPlanBadges(app.elements.pageContent);
-                    planApplied = true;
-                }
-            };
-            await app.waitForRealtimeConnected(3000);
-            if (app.realtime) {
-                wsCleanup = app.realtime.on('workout_plan_ready', wsHandler);
-            }
-            // Load AI plan in background and update badges reactively (polling fallback)
-            this.loadAiPlan(app, { goal, name: `Быстрый старт: ${goalLabel}`, session_id: sessionId, reduce: true })
-                .then(plan => {
-                    if (wsCleanup) wsCleanup();
-                    applyPlan(plan);
-                })
-                .catch(err => {
-                    if (wsCleanup) wsCleanup();
-                    console.warn('[Workouts] AI plan background load failed:', err);
-                });
-        } catch (err) {
-            console.error('[Workouts] Quick start with AI error:', err);
-            Camera.hideLoadingOverlay(overlayState);
-            app.showToast(err?.message || 'Ошибка быстрого старта', 'error');
-            await this.render(app.elements.pageContent, app);
-        } finally {
-            this.isGeneratingPreview = false;
-            if (btn) btn.disabled = false;
-        }
-    },
-
     /**
      * The coach's plan for one exercise card, matched by name the way the server matched
      * it: session exercises are free-text names, so the comparison trims and folds
@@ -1688,33 +2784,62 @@ export const Workouts = {
 
     /**
      * Inject AI plan badges into the currently rendered workout screen once
-     * they arrive. Looks for exercise cards and updates their badges.
+     * they arrive. Looks for exercise cards and updates their badges inside
+     * the collapsible .ai-analysis-content block.
      */
-    updateAiPlanBadges(container) {
-        if (!container || !this.aiPlan) return;
+    updateAiPlanBadges(container, session = null) {
+        if (!container) return;
+        const collapsed = this.isAiAnalysisCollapsed();
+        const sessionStatus = session?.ai_plan_status;
+        const planLoading = sessionStatus === 'pending' || (!this.aiPlan && sessionStatus !== 'failed' && sessionStatus !== 'no_exercises');
         container.querySelectorAll('.workout-card[data-exercise-id]').forEach(card => {
             const nameEl = card.querySelector('h3');
             const name = nameEl?.textContent || '';
             const rec = this.findAiPlanFor(name);
-            if (!rec) return;
-            const badgeHtml = Components.aiWorkoutPlanBadge(rec);
-            if (!badgeHtml) return;
-            const existing = card.querySelector('.ai-plan');
-            if (existing) {
-                existing.outerHTML = badgeHtml;
-            } else {
-                // Insert after sparkline or before sets
-                const sparkline = card.querySelector('.min-h-\\[140px\\]');
-                if (sparkline) {
-                    sparkline.insertAdjacentHTML('afterend', badgeHtml);
-                } else {
-                    const sets = card.querySelector('.space-y-2');
-                    if (sets) {
-                        sets.insertAdjacentHTML('beforebegin', badgeHtml);
-                    }
+            const badgeEl = card.querySelector('[data-ai-badge]');
+
+            // Update compact badge in the toggle button
+            if (rec && (rec.weight_kg || rec.reps)) {
+                const badgeText = `${rec.weight_kg || '—'}кг × ${rec.reps || '—'}`;
+                if (badgeEl) {
+                    badgeEl.textContent = badgeText;
+                    badgeEl.classList.remove('hidden');
                 }
+            } else if (badgeEl) {
+                badgeEl.classList.add('hidden');
+            }
+
+            const contentEl = card.querySelector('[data-ai-analysis] .ai-analysis-content');
+            const toggleBtn = card.querySelector('[data-action="toggle-ai-analysis"]');
+            if (!contentEl) return;
+
+            if (rec) {
+                const badgeHtml = Components.aiWorkoutPlanBadge(rec);
+                contentEl.innerHTML = badgeHtml;
+                if (toggleBtn) {
+                    toggleBtn.setAttribute('aria-expanded', String(!collapsed));
+                }
+            } else if (planLoading) {
+                contentEl.innerHTML = `<div class="ai-analysis_placeholder text-xs text-surface-500 dark:text-surface-400">${AI_PLAN_LOADING_MESSAGE}</div>`;
+                if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'false');
+            } else {
+                contentEl.innerHTML = '';
+                if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'false');
             }
         });
+    },
+
+    // Read/write collapse state for the AI analysis block from localStorage.
+    isAiAnalysisCollapsed() {
+        try {
+            return localStorage.getItem('aiAnalysisCollapsed') === 'true';
+        } catch (e) { return false; }
+    },
+
+    setAiAnalysisCollapsed(value) {
+        try {
+            localStorage.setItem('aiAnalysisCollapsed', String(value));
+        } catch (e) {}
     },
 
     /** The stored verdict of a session, or null when there is none to read. */
@@ -1801,33 +2926,122 @@ export const Workouts = {
     },
 
     /**
-     * Poll the summary endpoint until the background analysis lands.
-     *
-     * The complete endpoint returns 202 immediately when `with_ai_analysis=true`;
-     * the verdict is produced by a background task. This caller polls the read
-     * endpoint with exponential backoff, up to a few minutes, so the user sees the
-     * coach's verdict as soon as it is ready rather than on the next page load.
+     * Poll for AI plan when status is pending (fallback when WS not available)
      */
-    async pollForAiAnalysis(app, sessionId, { timeoutMs = 180000, intervalMs = 3000 } = {}) {
-        const id = parseInt(sessionId);
-        if (isNaN(id)) return null;
-
-        const start = Date.now();
-        let delay = intervalMs;
-
-        while (Date.now() - start < timeoutMs) {
-            const payload = await this.loadAiAnalysis(app, id, { quiet: true });
-            if (payload) return payload;
-
-            await new Promise(resolve => setTimeout(resolve, delay));
-            delay = Math.min(delay * 2, 15000);
+    async pollForAiPlan(app, sessionId, container = null, { maxAttempts = 15, intervalMs = 3000 } = {}) {
+        if (window.App?.state?.isOnline === false || navigator.onLine === false) {
+            return null;
         }
-
-        app.showToast('ИИ-разбор ещё готовится, проверьте историю позже', 'info');
+        if (this.isLocalSession && this.isLocalSession({ isLocal: String(sessionId).startsWith('local-') })) {
+            return null;
+        }
+        
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            try {
+                const plan = await this.loadAiPlan(app, { session_id: sessionId });
+                if (plan) {
+                    this.aiPlan = { ...plan, sessionId };
+                    this.persistAiPlan(sessionId, this.aiPlan);
+                    if (container) {
+                        this.updateAiPlanBadges(container);
+                    }
+                    return plan;
+                }
+            } catch (err) {
+                console.warn(`[Workouts] AI plan poll attempt ${attempt + 1} failed:`, err);
+            }
+            
+            if (attempt < maxAttempts - 1) {
+                await new Promise(resolve => setTimeout(resolve, intervalMs));
+            }
+        }
         return null;
     },
 
     /**
+     * If the workout came from a template and the user added, removed or
+     * reordered sets, give them a chance to save the structure back to the
+     * template before the session is closed.
+     * For free-form workouts (no template_id), offer to save as a NEW template.
+     * Returns true when the user chose to update/create template (or there was nothing to update), so the
+     * caller can proceed with normal completion.
+     */
+    async promptTemplateUpdateIfNeeded(app, session) {
+        if (!session) {
+            console.warn('[Workouts] promptTemplateUpdateIfNeeded called with null session');
+            return true;
+        }
+        if (!this.exercisesModified) {
+            return true;
+        }
+
+        // Ensure we have latest exercises from DOM for server sessions
+        if (!session.isLocal) {
+            const workoutContainer = document.getElementById('carousel') || document.querySelector('.workout-carousel');
+            this.syncSessionFromDOM(workoutContainer);
+        }
+
+        // Validate session has exercises
+        if (!session.exercises || session.exercises.length === 0) {
+            app.showToast('Нет упражнений для сохранения в шаблон', 'error');
+            return true;
+        }
+
+        const hasTemplateId = !!session.template_id;
+        const title = hasTemplateId ? 'Состав подходов изменен' : 'Сохранить тренировку как шаблон?';
+        const message = hasTemplateId
+            ? 'Вы изменяли структуру подходов. Сохранить новую схему в шаблон?'
+            : 'Эта тренировка не привязана к шаблону. Сохранить её как новый шаблон для повторного использования?';
+        const confirmText = hasTemplateId ? 'Обновить шаблон' : 'Сохранить как шаблон';
+
+        const updated = await Components.confirmModal({
+            title,
+            message,
+            confirmText,
+            confirmClass: 'bg-primary-600 hover:bg-primary-700 text-white dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200 font-semibold shadow-md',
+            cancelText: hasTemplateId ? 'Только для этой тренировки' : 'Не сохранять',
+        });
+
+        if (!updated) return true;
+
+        // Build exercises payload from current session
+        const exercises = session.exercises.map(ex => {
+            const firstSet = ex.sets?.[0];
+            const completedSet = ex.sets?.find(s => s.is_completed && s.reps !== null && s.reps !== undefined);
+            const useSet = completedSet || firstSet;
+            return {
+                name: ex.name,
+                order: ex.order ?? 0,
+                target_sets: ex.sets?.length ?? 3,
+                target_reps: useSet?.reps ?? useSet?.target_reps ?? 10,
+                target_weight_kg: useSet?.weight_kg ?? firstSet?.target_weight_kg ?? null,
+                rest_seconds: useSet?.rest_seconds ?? firstSet?.rest_seconds ?? 90,
+                notes: ex.notes ?? null,
+            };
+        });
+
+        try {
+            if (hasTemplateId) {
+                // Update existing template
+                await API.patch(
+                    `/workouts/templates/${session.template_id}`,
+                    { exercises },
+                    app.state.tokens.access,
+                );
+                app.showToast('Шаблон обновлён', 'success');
+            } else {
+                // Create NEW template from free-form workout
+                const templateName = session.name || 'Моя тренировка';
+                const resp = await API.post('/workouts/templates', { name: templateName, exercises }, app.state.tokens.access);
+                app.showToast(`Шаблон "${templateName}" сохранён`, 'success');
+            }
+        } catch (e) {
+            app.showToast(e?.offlineQueued ? 'Сохранится при появлении связи' : (e.message || 'Ошибка сохранения'), e?.offlineQueued ? 'info' : 'error');
+        }
+        return true;
+    },
+
+/**
      * Finish a session and have the coach read it, in one press.
      *
      * The workout is completed first and on its own terms: if the completion
@@ -1838,6 +3052,7 @@ export const Workouts = {
      * second screen.
      */
     async completeWorkoutWithAi(app, event) {
+        app.state.completingWorkout = true;
         const sessionKey = event.target.closest('[data-session-id]')?.dataset.sessionId;
         const sessionId = parseInt(sessionKey, 10);
 
@@ -1845,16 +3060,19 @@ export const Workouts = {
         // has no id the coach could read. Say so instead of completing silently.
         if (isNaN(sessionId)) {
             app.showToast('ИИ-разбор недоступен: тренировка ещё не синхронизирована', 'info');
+            app.state.completingWorkout = false;
             await app.handleCompleteWorkout(event);
             return;
         }
         if (window.App?.state?.isOnline === false || navigator.onLine === false) {
             app.showToast(AI_OFFLINE_MESSAGE, 'info');
+            app.state.completingWorkout = false;
             await app.handleCompleteWorkout(event);
             return;
         }
         if (!app.state.user?.is_premium) {
             app.showToast(AI_PREMIUM_REQUIRED_MESSAGE, 'info');
+            app.state.completingWorkout = false;
             await app.handleCompleteWorkout(event);
             return;
         }
@@ -1865,24 +3083,59 @@ export const Workouts = {
             confirmText: 'Завершить и разобрать',
             confirmClass: 'bg-primary-600 hover:bg-primary-700 text-white dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200 font-semibold shadow-md',
             cancelText: 'Назад'
-        })) return;
+         })) {
+            app.state.completingWorkout = false;
+            return;
+        }
+
+        // Save session reference BEFORE clearing state
+        const sessionToComplete = this.currentSession;
+
+        // Мгновенный сброс активной сессии — плашка «Активная тренировка»
+        // должна исчезнуть сразу после клика, не дожидаясь ответа сервера.
+        Workouts.markSessionClosedLocally(sessionId);
+
+        // Sync DOM to session BEFORE clearing state
+        const workoutContainer = document.getElementById('carousel') || document.querySelector('.workout-carousel');
+        this.syncSessionFromDOM(workoutContainer);
+
+        // Prompt for template update BEFORE clearing session state
+        await this.promptTemplateUpdateIfNeeded(app, sessionToComplete);
+
+        Workouts.clearActiveSessionState(app);
 
         // Persist any in-flight rest timer so its elapsed seconds are recorded
         // on the previous set before the session closes for analysis.
         await this.stopAndSaveRestTimer();
 
         // The coach reads the completed sets, so every typed value goes out
-        // before the session closes.
+        // before the session closes. Sync the DOM first so both the PATCH
+        // requests and the completion request carry the same data, and so a
+        // network failure still leaves the local cache populated.
+        // (Already synced above before clearing state)
         await app.flushPendingSetEdits();
 
         const durationSeconds = this.sessionStartTimestamp
             ? Math.max(0, Math.floor((Date.now() - this.sessionStartTimestamp) / 1000))
             : null;
 
-        // The verdict takes tens of seconds, so the button says what is actually
+// The verdict takes tens of seconds, so the button says what is actually
         // happening instead of looking already finished. Every path below
         // re-renders the screen, which is what puts the button back.
         const button = event.target.closest('[data-action="complete-workout-ai"]');
+        const resetButton = () => {
+            if (button) {
+                button.disabled = false;
+                button.classList.remove('opacity-70', 'cursor-wait');
+                button.innerHTML = `
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    <span>Завершить и разобрать с ИИ</span>
+                `;
+            }
+        };
+
         if (button) {
             button.disabled = true;
             button.classList.add('opacity-70', 'cursor-wait');
@@ -1892,7 +3145,9 @@ export const Workouts = {
             `;
         }
 
-         try {
+        try {
+            // Ensure fresh token before the completion call
+            await app.ensureFreshToken();
             const resp = await API.post(
                 `/workouts/sessions/${sessionId}/complete`,
                 { with_ai_analysis: true, duration_seconds: durationSeconds },
@@ -1901,12 +3156,56 @@ export const Workouts = {
             console.log('[completeWorkoutWithAi] Complete endpoint response:', resp);
         } catch (err) {
             console.error('[Workouts] Complete with AI failed:', err);
-            app.showToast(err?.offlineQueued ? OFFLINE_COMPLETE_MESSAGE : (err?.message || 'Ошибка завершения тренировки'), 'error');
-            await app.renderPage('workouts');
+            // Use saved session reference since currentSession is now null
+            if (err?.offlineQueued) {
+                // Мгновенно сбрасываем активную сессию — не ждём сохранения.
+                Workouts.clearActiveSessionState(app);
+                await Workouts.persistCompletedSessionLocally(sessionId, sessionToComplete);
+                app.showToast(OFFLINE_COMPLETE_MESSAGE, 'info');
+                await app.renderPage('workouts');
+                app.state.completingWorkout = false;
+                resetButton();
+                return;
+            }
+            if (err?.isNetworkError) {
+                // Мгновенно сбрасываем активную сессию — пользователь должен сразу увидеть чистый экран.
+                Workouts.clearActiveSessionState(app);
+                await Workouts.persistCompletedSessionLocally(sessionId, sessionToComplete);
+                // Enqueue the completion request so it is retried when the connection returns
+                const token = app.state.tokens.access;
+                API.enqueueRequest(
+                    'POST',
+                    `/workouts/sessions/${sessionId}/complete`,
+                    { with_ai_analysis: true, duration_seconds: durationSeconds },
+                    token,
+                    { offlineSessionKey: null }
+                );
+                app.showToast(OFFLINE_COMPLETE_MESSAGE, 'info');
+                await app.renderPage('workouts');
+                app.state.completingWorkout = false;
+                resetButton();
+                return;
+            }
+            const msg = err?.status === 401
+                ? 'Сессия истекла. Проверьте подключение и войдите снова.'
+                : err?.status === 404
+                ? 'Тренировка не найдена на сервере.'
+                : (err?.message || 'Ошибка завершения тренировки');
+            app.showToast(msg, 'error');
+            Workouts.clearActiveSessionState(app);
+            app.state.completingWorkout = false;
+            resetButton();
             return;
+        } finally {
+            // Button is reset in finally to ensure it happens even if
+            // renderHistoryDetail throws or navigation occurs
+            resetButton();
         }
 
         app.showToast('Тренировка завершена! ИИ-тренер формирует разбор в истории.', 'success');
+
+        Workouts.clearActiveSessionState(app);
+        app.state.completingWorkout = false;
         app.state.currentPage = 'history';
         app.elements.navItems.forEach(item => item.classList.toggle('active', item.dataset.page === 'history'));
         await this.renderHistoryDetail(app.elements.pageContent, app, sessionId);
@@ -2023,10 +3322,159 @@ export const Workouts = {
         });
     },
 
+    // Render a single set row's HTML (set row div + optional inline rest time)
+    // so it can be reused both in full screen renders and in DOM insertions.
+     renderSetRowHtml(set, setIndex, setsArr, prevText) {
+        return `
+            <div class="flex items-center gap-2 glass p-1.5 rounded-2xl relative" data-set-id="${set.id}">
+                <button type="button"
+                        data-action="delete-set"
+                        data-set-id="${set.id}"
+                        class="delete-set-btn-start w-7 h-7 rounded-xl glass text-surface-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 flex-shrink-0 flex items-center justify-center transition-colors"
+                        aria-label="Удалить подход">
+                    <span class="text-xs font-bold leading-none">✕</span>
+                </button>
+                <span class="font-bold w-6 text-center text-xs ${set.is_completed ? SET_DIM.join(' ') : SET_NUMBER_IDLE}" data-set-number="${set.set_number}">${set.set_number}</span>
+                <div class="w-14 flex flex-col items-center justify-center flex-shrink-0" title="Прошлый подход">
+                    <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Пред.</label>
+                    <span class="text-[11px] font-semibold text-surface-600 dark:text-surface-300 h-8 flex items-center justify-center truncate leading-tight">${prevText}</span>
+                </div>
+
+                <div class="flex-1 min-w-[60px] flex flex-col">
+                    <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Вес</label>
+                    <input type="number" min="0" step="0.1" placeholder="—" inputmode="none" readonly
+                           value="${set.weight_kg != null && set.weight_kg > 0 ? set.weight_kg : ''}"
+                           class="w-full h-10 text-center text-lg font-bold rounded-xl glass-input focus:border-primary-500 focus:outline-none cursor-pointer ${set.is_completed ? SET_DIM.join(' ') : ''}"
+                           data-field="weight">
+                </div>
+
+                <div class="flex-1 min-w-[60px] flex flex-col">
+                    <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Повт</label>
+                    <input type="number" min="1" placeholder="—" inputmode="none" readonly
+                           value="${set.reps != null && set.reps > 0 ? set.reps : ''}"
+                           class="w-full h-10 text-center text-lg font-bold rounded-xl glass-input focus:border-primary-500 focus:outline-none cursor-pointer ${set.is_completed ? SET_DIM.join(' ') : ''}"
+                           data-field="reps">
+                </div>
+
+                <button data-action="toggle-set" data-completed="${set.is_completed ? 'true' : 'false'}"
+                        class="${TOGGLE_BASE} ${set.is_completed ? TOGGLE_COMPLETED : TOGGLE_UNCOMPLETED}">
+                    ✓
+                </button>
+            </div>
+            ${set.rest_time_seconds != null && setIndex < setsArr.length - 1 ? this.renderRestTimeInline(set) : ''}
+        `;
+    },
+
+    // Insert a single set row into an exercise card with a slide-down animation
+    // and keep rest-time lines in sync (the prior last set may now show one).
+    insertSetRow(container, exId, set, exercise) {
+        const card = container.querySelector(`[data-exercise-id="${exId}"]`);
+        if (!card) {
+            console.warn('[insertSetRow] Exercise card not found for exId:', exId);
+            return false;
+        }
+        const setsContainer = card.querySelector('[data-set-container]') || card.querySelector('.space-y-1\\.5') || card.querySelector('[class*="space-y-"]');
+        if (!setsContainer) {
+            console.warn('[insertSetRow] Sets container not found for exId:', exId);
+            return false;
+        }
+        const buttons = setsContainer.querySelector('[data-add-set-buttons]');
+        if (!buttons) {
+            console.warn('[insertSetRow] Add-set button container not found for exId:', exId);
+            return false;
+        }
+        const idx = exercise.sets.length - 1;
+        // Compute prevText using the shared helper so it matches the full render
+        const prevText = this.computePrevText(exercise, idx, this.completedHistorySessions);
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = this.renderSetRowHtml(set, idx, exercise.sets, prevText);
+        const rowEl = wrapper.firstElementChild;
+        rowEl.classList.add('set-row-enter');
+        buttons.parentNode.insertBefore(rowEl, buttons);
+        const prevSet = exercise.sets[exercise.sets.length - 2];
+        if (prevSet) {
+            this.applyRestTimeInline(prevSet.id, prevSet.rest_time_seconds != null ? prevSet.rest_time_seconds : null);
+        }
+        // Force reflow before adding 'active'
+        rowEl.offsetHeight;
+        requestAnimationFrame(() => {
+            rowEl.classList.add('active');
+        });
+        // bindSetRowEvents attaches drum picker, persistence, and toggle handlers
+        this.bindSetRowEvents(rowEl, this.currentSession, exercise, this.app);
+        return true;
+    },
+
+    // Renumber the visible set numbers within one exercise card after a removal.
+    renumberSetRows(card) {
+        if (!card) return;
+        card.querySelectorAll('[data-set-id]').forEach((row, i) => {
+            const span = row.querySelector('[data-set-number]');
+            if (span) span.textContent = String(i + 1);
+        });
+    },
+
+    // Remove a single set row with a slide-up animation, then renumber and
+    // clear any rest-time line that now sits after the new last set.
+    async removeSetRow(card, row, removedSet, exercise) {
+        const session = this.currentSession;
+        if (!row) {
+            this.updateWorkoutMetricsUI(session);
+            return;
+        }
+        row.classList.add('set-row-exit');
+        requestAnimationFrame(() => row.classList.add('active'));
+        await new Promise(resolve => {
+            const handler = () => {
+                row.removeEventListener('transitionend', handler);
+                resolve();
+            };
+            row.addEventListener('transitionend', handler);
+            setTimeout(handler, 300);
+        });
+        row.remove();
+        const newLast = exercise.sets[exercise.sets.length - 1];
+        if (newLast && card) {
+            const newLastRow = card.querySelector(`[data-set-id="${newLast.id}"]`);
+            if (newLastRow) this.applyRestTimeInline(newLast.id, null);
+        }
+        this.renumberSetRows(card);
+        this.updateWorkoutMetricsUI(session);
+    },
+
     async renderWorkoutScreen(container, app, sessionId) {
+        if (!container) {
+            console.error('[Workouts] renderWorkoutScreen: container is null/undefined');
+            return;
+        }
         this.app = app;
         try {
+        const incomingKey = sessionId === undefined || sessionId === null
+            ? 'active'
+            : String(sessionId);
+        const currentKey = this.currentSession
+            ? (this.currentSession.isLocal ? this.currentSession.key : String(this.currentSession.id))
+            : null;
+        const wasSameSession = incomingKey === currentKey;
+        const savedRestState = wasSameSession && this.restTimerStartTime != null ? {
+            restTimerStartTime: this.restTimerStartTime,
+            restTimerTargetTimestamp: this.restTimerTargetTimestamp,
+            restTimerPlannedDuration: this.restTimerPlannedDuration,
+            restTimerMode: this.restTimerMode,
+            restTimerPresetSeconds: this.restTimerPresetSeconds,
+            restTimerOvertime: this.restTimerOvertime,
+            activeRestForSetId: this.activeRestForSetId,
+            activeRestExerciseId: this.activeRestExerciseId,
+            lastSavedRestSetId: this.lastSavedRestSetId,
+            restSavedBySetId: this.restSavedBySetId,
+        } : null;
+
         this.stopWorkoutTimer();
+        // Reset the modified flag when loading a different session (new workout),
+        // so the template-update prompt only fires for changes made this run.
+        if (!wasSameSession) {
+            this.exercisesModified = false;
+        }
         let session;
         let historyData = { sessions: [] };
         const localSession = this.getActiveLocalSession();
@@ -2055,6 +3503,80 @@ export const Workouts = {
             app.showToast('Нет активной тренировки', 'info');
             return;
         }
+        // Extract ai_plan from session if backend includes it (cold start / resume)
+        if (session.ai_plan_json && (!this.aiPlan || this.aiPlan.sessionId !== session.id)) {
+            try {
+                const parsedPlan = JSON.parse(session.ai_plan_json);
+                this.aiPlan = { ...parsedPlan, sessionId: session.id };
+                this.persistAiPlan(session.id, this.aiPlan);
+            } catch (e) {
+                console.warn('[Workouts] Failed to parse ai_plan_json:', e);
+            }
+        } else if (session.ai_plan && (!this.aiPlan || this.aiPlan.sessionId !== session.id)) {
+            // Fallback for backward compatibility
+            this.aiPlan = { ...session.ai_plan, sessionId: session.id };
+            this.persistAiPlan(session.id, this.aiPlan);
+        }
+        // CRITICAL FIX: Ensure session has exercises — recover from template or
+        // local session when the server returns an active session without them.
+        // BUT: Allow empty exercises for LOCAL free-form sessions (no template_id)
+        // where user adds exercises on the fly.
+        const isFreeFormLocal = this.isLocalSession(session) && !session.template_id;
+        if ((!session.exercises || session.exercises.length === 0) && !isFreeFormLocal) {
+            console.warn('[Workouts] Session has no exercises, attempting recovery...');
+
+            // Try to get exercises from local session if this is a local session
+            if (this.isLocalSession(session)) {
+                const localSession = this.getActiveLocalSession();
+                if (localSession && localSession.exercises && localSession.exercises.length > 0) {
+                    session.exercises = localSession.exercises;
+                }
+            }
+
+            // If still no exercises and session has template_id, load from template
+            if ((!session.exercises || session.exercises.length === 0) && session.template_id) {
+                try {
+                    const template = await API.get(`/workouts/templates/${session.template_id}`, app.state.tokens.access);
+                    if (template && template.exercises && template.exercises.length > 0) {
+                        session.exercises = template.exercises.map((ex, index) => {
+                            const targetSets = Math.max(1, ex.target_sets || 1);
+                            return {
+                                id: ex.id || `temp-${index}`,
+                                name: ex.name,
+                                order: ex.order ?? index,
+                                target_sets: ex.target_sets || targetSets,
+                                target_reps: ex.target_reps || 10,
+                                target_weight_kg: ex.target_weight_kg || 0,
+                                rest_seconds: ex.rest_seconds || 90,
+                                notes: ex.notes ?? null,
+                                sets: Array.from({ length: targetSets }, (_, i) => ({
+                                    id: `temp-set-${index}-${i}`,
+                                    exercise_id: ex.id || `temp-${index}`,
+                                    set_number: i + 1,
+                                    weight_kg: i === 0 ? (ex.target_weight_kg || 0) : 0,
+                                    reps: ex.target_reps || 10,
+                                    rest_seconds: ex.rest_seconds || 90,
+                                    is_completed: false,
+                                })),
+                            };
+                        });
+                    }
+                } catch (e) {
+                    console.warn('[Workouts] Failed to load template exercises:', e);
+                }
+            }
+
+            // Final fallback — if still empty (and not free-form), show error
+            if (!session.exercises || session.exercises.length === 0) {
+                app.showToast('Ошибка: в тренировке нет упражнений', 'error');
+                return;
+            }
+        }
+
+        // For free-form local sessions, ensure exercises array exists (empty is OK)
+        if (isFreeFormLocal && !session.exercises) {
+            session.exercises = [];
+        }
         // The plan belongs to the session it was made for: resuming that one keeps
         // the badges, and starting any other workout drops them.
         if (this.aiPlan && String(this.aiPlan.sessionId) !== String(session.id)) {
@@ -2068,15 +3590,24 @@ export const Workouts = {
             if (cachedPlan) this.aiPlan = { ...cachedPlan, sessionId: session.id || session.key };
         }
 
-        // Apply cached plan badges/tips to the newly rendered DOM
-        if (this.aiPlan) {
-            this.updateAiPlanBadges(container);
+        // Handle pending AI plan status - start polling if needed
+        const sessionIdForPolling = session.isLocal ? session.key : session.id;
+        if (session.ai_plan_status === 'pending' && sessionIdForPolling && !this.isLocalSession(session)) {
+            if (window.App?.state?.isOnline !== false && navigator.onLine !== false) {
+                // Start polling in background regardless of this.aiPlan state
+                // (plan may have become available between session load and now)
+                this.pollForAiPlan(app, sessionIdForPolling, container).catch(err => {
+                    console.warn('[Workouts] AI plan polling failed:', err);
+                });
+            }
         }
+
         app.state.currentSessionId = session.isLocal ? session.key : session.id;
         // The tracking screen is on top again, so the user is inside the
         // workout once more.
         this.currentSession = session;
         if (app.state) app.state.workoutScreenDismissed = false;
+        this.restAutoStart = this.restAutoStart || new Map();
 
         try {
             if (app.saveState) {
@@ -2096,6 +3627,9 @@ export const Workouts = {
         const completedHistorySessions = [...(historyData?.sessions || [])]
             .filter(s => s.status === 'completed')
             .sort((a, b) => new Date(a.started_at) - new Date(b.started_at));
+        this.completedHistorySessions = completedHistorySessions;
+
+        const isLocal = this.isLocalSession(session);
 
 const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             const historyPoints = completedHistorySessions
@@ -2108,110 +3642,105 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                 .filter(v => v != null && v > 0)
                 .slice(-10);
 
-            return `
-             <div class="workout-card snap-center glass rounded-3xl p-4 flex flex-col space-y-4" data-exercise-id="${ex.id}">
-                <div class="flex justify-between items-start mb-4 gap-2">
-                    <h3 class="font-bold text-lg text-surface-900 dark:text-surface-50 leading-tight flex-1 min-w-0 break-words" title="${ex.name}">${ex.name}</h3>
+            const isCollapsibleCollapsed = this.isAiAnalysisCollapsed();
+            const activeTab = this.getStoredTabState(ex.id);
+            const isDynamics = activeTab === 'dynamics';
+            const isAi = activeTab === 'ai-analysis' || activeTab === 'ai_advice';
+            const isTimer = activeTab === 'timer';
+
+             return `
+              <div class="workout-card snap-center glass rounded-3xl p-3 flex flex-col space-y-3" data-exercise-id="${ex.id}" data-has-history="${historyPoints.length > 0 ? 'true' : 'false'}">
+                <div class="flex justify-between items-start mb-3 gap-1.5">
+                    <h3 class="font-bold text-base text-surface-900 dark:text-surface-50 leading-tight flex-1 min-w-0 break-words" title="${ex.name}">${ex.name}</h3>
                     <div class="flex items-center gap-1 flex-shrink-0">
-                        <button type="button" data-action="move-ex-up" data-ex-id="${ex.id}" class="w-8 h-8 glass rounded-xl text-xs font-bold hover:bg-surface-200 transition-colors ${index === 0 ? 'opacity-30 cursor-not-allowed' : ''}">▲</button>
-                        <button type="button" data-action="move-ex-down" data-ex-id="${ex.id}" class="w-8 h-8 glass rounded-xl text-xs font-bold hover:bg-surface-200 transition-colors ${index === arr.length - 1 ? 'opacity-30 cursor-not-allowed' : ''}">▼</button>
+                         <button type="button" data-action="open-reorder-menu" data-ex-id="${ex.id}"
+                                 class="reorder-handle w-7 h-7 glass rounded-xl text-xs flex items-center justify-center text-surface-400 hover:text-surface-900 dark:hover:text-surface-100 transition-colors"
+                                 aria-label="Изменить порядок упражнений">
+                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"/></svg>
+                         </button>
+                         <button type="button"
+                                 data-action="toggle-rest-auto"
+                                 data-ex-id="${ex.id}"
+                                 class="rest-auto-toggle w-6 h-6 rounded-lg glass hover:text-surface-900 dark:hover:text-surface-100 flex items-center justify-center text-xs transition-colors"
+                                 aria-label="Автозапуск таймера отдыха"
+                                 aria-pressed="true">
+                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                             </svg>
+                         </button>
+                     </div>
+                </div>
+
+                    <div class="exercise-tabs">
+                        <div class="exercise-tab-bar flex gap-1 p-1 rounded-xl mb-2">
+                            <button type="button" data-tab="dynamics" data-active="${isDynamics}"
+                                    class="exercise-tab-btn flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold">Динамика</button>
+                            <button type="button" data-tab="ai-analysis" data-active="${isAi}"
+                                    class="exercise-tab-btn flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold">ИИ-совет</button>
+                            <button type="button" data-tab="timer" data-active="${isTimer}"
+                                    class="exercise-tab-btn flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold">Таймер</button>
+                        </div>
+                        <div class="exercise-tab-panels">
+                            <div data-tab-panel="dynamics" data-panel="dynamics" class="exercise-tab-panel ${isDynamics ? '' : 'hidden'}">
+                                <div class="min-h-[120px]" data-sparkline>
+                                    ${Components.sparkline(historyPoints, 60)}
+                                </div>
+                            </div>
+                            <div data-tab-panel="ai-analysis" data-panel="ai-analysis" class="exercise-tab-panel ${isAi ? '' : 'hidden'}">
+                                <div class="ai-analysis-block" data-ai-analysis>
+                                    <button type="button"
+                                            data-action="toggle-ai-analysis"
+                                            class="ai-analysis-toggle w-full flex items-center justify-between gap-2 text-xs font-semibold text-surface-600 dark:text-surface-300 hover:text-surface-900 dark:hover:text-surface-100 py-1.5 px-2 rounded-xl glass transition-colors"
+                                            aria-expanded="${!isCollapsibleCollapsed}">
+                                        <span>ИИ-анализ</span>
+                                        <span class="ai-analysis-badge hidden" data-ai-badge></span>
+                                        <svg class="chevron w-4 h-4 transition-transform duration-150" viewBox="0 0 24 24" aria-hidden="true">
+                                            <path fill="currentColor" d="M7 10l5 5 5-5z"/>
+                                        </svg>
+                                    </button>
+                                    <div class="ai-analysis-content overflow-hidden transition-all duration-200 ease"
+                                         style="display: ${isCollapsibleCollapsed ? 'none' : 'block'};">
+                                    </div>
+                                </div>
+                            </div>
+                            <div data-tab-panel="timer" data-panel="timer" class="exercise-tab-panel ${isTimer ? '' : 'hidden'}" data-timer-panel-ex-id="${ex.id}">
+                                <div class="timer-panel-content py-2" data-timer-panel-content>
+                                    ${this.renderTimerPanel(ex)}
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                </div>
 
-                  <div class="min-h-[140px]">
-                      ${Components.sparkline(historyPoints, 72)}
-                  </div>
-
-                 ${Components.aiWorkoutPlanBadge(this.findAiPlanFor(ex.name))}
-
-                 <div class="space-y-2">
-                     ${(ex.sets || []).map((set, setIndex, setsArr) => {
-                         let prevText = '—';
-                         
-                         // Сортируем завершенные сессии по дате (новейшие первые)
-                         const sortedSessions = [...completedHistorySessions].sort((a, b) => new Date(b.started_at) - new Date(a.started_at));
-                         
-                         // Ищем последнюю завершенную сессию, где есть это упражнение (исключая текущую)
-                         const prevSession = sortedSessions.find(s => 
-                             s.id !== session.id && 
-                             (s.exercises || []).some(e => e.name.trim().toLowerCase() === ex.name.trim().toLowerCase())
-                         );
-                         
-                         if (prevSession) {
-                             const pastEx = (prevSession.exercises || []).find(e => e.name.trim().toLowerCase() === ex.name.trim().toLowerCase());
-                             if (pastEx) {
-                                 const pastSets = [...(pastEx.sets || [])].sort((a, b) => a.set_number - b.set_number);
-                                 const pastSet = pastSets.find(s => s.set_number === set.set_number) || pastSets[set.set_number - 1];
-                                 if (pastSet && pastSet.weight_kg != null && pastSet.reps != null) {
-                                     prevText = `${pastSet.weight_kg}×${pastSet.reps}`;
-                                 }
-                             }
-                         }
-
-                         let setRow = `
-                              <div class="flex items-center gap-2 glass p-2 rounded-2xl" data-set-id="${set.id}">
-                                  <span class="font-bold w-6 text-center text-xs ${set.is_completed ? SET_DIM.join(' ') : SET_NUMBER_IDLE}">${set.set_number}</span>
-                                  
-                                  <div class="w-14 flex flex-col items-center justify-center flex-shrink-0" title="Прошлый подход">
-                                      <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Пред.</label>
-                                      <span class="text-[11px] font-semibold text-surface-600 dark:text-surface-300 h-10 flex items-center justify-center truncate leading-tight">${prevText}</span>
-                                  </div>
-
-                                  <div class="flex-1 min-w-[60px] flex flex-col">
-                                      <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Вес</label>
-                                      <input type="number" min="0" step="0.1" placeholder="—" inputmode="none" readonly
-                                             value="${set.weight_kg != null && set.weight_kg > 0 ? set.weight_kg : ''}"
-                                             class="w-full h-12 text-center text-xl font-bold rounded-xl glass-input focus:border-primary-500 focus:outline-none cursor-pointer ${set.is_completed ? SET_DIM.join(' ') : ''}"
-                                             data-field="weight">
-                                  </div>
-
-                                  <div class="flex-1 min-w-[60px] flex flex-col">
-                                      <label class="text-[9px] text-surface-500 uppercase font-semibold text-center">Повт</label>
-                                      <input type="number" min="1" placeholder="—" inputmode="none" readonly
-                                             value="${set.reps != null && set.reps > 0 ? set.reps : ''}"
-                                             class="w-full h-12 text-center text-xl font-bold rounded-xl glass-input focus:border-primary-500 focus:outline-none cursor-pointer ${set.is_completed ? SET_DIM.join(' ') : ''}"
-                                             data-field="reps">
-                                  </div>
-
-                                   <button data-action="toggle-set" data-completed="${set.is_completed ? 'true' : 'false'}"
-                                           class="${TOGGLE_BASE} ${set.is_completed ? TOGGLE_COMPLETED : TOGGLE_UNCOMPLETED}">
-                                       ✓
-                                   </button>
-                              </div>
-                         `;
-                         // Показ времени отдыха между подходами (кроме последнего)
-                         if (set.rest_time_seconds != null && setIndex < setsArr.length - 1) {
-                             setRow += this.renderRestTimeInline(set);
-                         }
-                         return setRow;
-                     }).join('')}
-                </div>
-            </div>
-        `}).join('');
+                   <div class="space-y-1.5" data-set-container>
+                      ${(ex.sets || []).map((set, setIndex, setsArr) => {
+                          const prevText = this.computePrevText(ex, setIndex, completedHistorySessions);
+                          return this.renderSetRowHtml(set, setIndex, setsArr, prevText);
+                      }).join('')}
+                    <div class="flex items-center justify-between gap-2 pt-1.5" data-add-set-buttons>
+                        <button type="button" data-action="add-set" data-ex-id="${ex.id}"
+                                class="flex items-center gap-1 text-xs font-semibold text-lime-600 dark:text-lime-400 hover:text-lime-700 dark:hover:text-lime-300 py-1 px-2 rounded-xl glass transition-colors">
+                            <span>+</span><span>Добавить подход</span>
+                        </button>
+                    </div>
+                 </div>
+             </div>
+         `}).join('');
 
         // Cards
         const sessionKey = session.isLocal ? session.key : session.id;
-        const cancelCard = `
-            <div class="workout-card snap-center glass rounded-2xl p-6 flex flex-col items-center justify-center min-h-[520px]">
-                <button data-action="cancel-workout" data-session-id="${sessionKey}"
-                        class="w-full py-5 border-2 border-dashed border-red-300 dark:border-red-700 rounded-2xl text-red-600 font-bold text-base">
-                    Отменить тренировку
-                </button>
-            </div>
-        `;
-        const completeCard = `
+         const completeCard = `
             <div class="workout-card snap-center glass rounded-2xl p-6 flex flex-col items-center justify-center gap-3 min-h-[520px]">
                 <button data-action="complete-workout-ai" data-session-id="${sessionKey}"
-                        class="w-full py-5 border-2 border-dashed border-primary-500/60 dark:border-primary-400/40 rounded-2xl text-primary-600 dark:text-primary-400 font-bold text-base btn-press">
+                        class="w-full py-4 border-2 border-dashed border-primary-500/60 dark:border-primary-400/40 rounded-2xl text-primary-600 dark:text-primary-400 font-bold text-base btn-press">
                     Завершить и разобрать с ИИ
                 </button>
                 <button data-action="complete-workout" data-session-id="${sessionKey}"
-                        class="w-full py-5 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-2xl font-bold text-base">
+                        class="w-full py-4 bg-primary-600 text-white dark:bg-white dark:text-zinc-950 rounded-2xl font-bold text-base">
                     Завершить тренировку
                 </button>
             </div>
         `;
-        const allCards = [cancelCard, ...exerciseCards, completeCard];
+        const allCards = [...exerciseCards, completeCard];
 
         const initialMetrics = this.getWorkoutMetrics(session);
         const initialPercent = initialMetrics.total > 0
@@ -2219,63 +3748,64 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             : 0;
 
         let html = `
-            <div class="p-4 pt-12" id="workout-container">
-                <div class="flex items-center justify-between mb-3">
-                    <button data-action="back-to-workouts" class="text-surface-500 hover:text-surface-900 dark:text-surface-400 text-lg">←</button>
-                    <h2 class="text-xl font-bold text-center flex-1 ${!session.name ? 'truncate' : ''}">${session.name || 'Тренировка'}</h2>
+            <div class="p-3 pt-6" id="workout-container">
+                <div class="flex items-center justify-between mb-2">
+                    <button data-action="back-to-workouts" class="text-surface-500 hover:text-surface-900 dark:text-surface-400 text-base">←</button>
+                    <h2 class="text-lg font-bold text-center flex-1 ${!session.name ? 'truncate' : ''}">${session.name || 'Тренировка'}</h2>
                      <span id="workout-timer" class="text-sm text-lime-600 dark:text-lime-400 font-mono tabular-nums">00:00</span>
                 </div>
 
-                <div class="mb-6">
-                    <div class="flex items-center justify-between gap-2 mb-1">
+                <div class="mb-2">
+                    <div class="flex items-center justify-between gap-2 mb-2">
                         <span id="workout-progress-text" class="text-xs font-semibold text-surface-600 dark:text-surface-300">Сделано ${initialMetrics.completed} из ${initialMetrics.total} подходов (${initialPercent}%)</span>
-                        <span id="workout-total-tonnage" class="text-xs font-semibold text-surface-600 dark:text-surface-300">Суммарный тоннаж: ${Math.round(initialMetrics.tonnage)} кг</span>
                     </div>
-                    <div class="h-2 w-full rounded-full bg-surface-200 dark:bg-white/10 overflow-hidden">
-                        <div id="workout-progress-bar" class="h-full rounded-full bg-surface-800 dark:bg-zinc-100 transition-all duration-300" style="width: ${initialPercent}%"></div>
-                    </div>
+                    ${this.buildExerciseTrackHtml(session)}
                 </div>
 
-                 <div class="flex overflow-x-auto gap-4 pb-6 px-4 -mx-4 workout-carousel" id="carousel">
-                     ${allCards.join('')}
-                 </div>
-
-                  <div id="rest-timer-bar" class="hidden fixed bottom-16 left-0 right-0 z-50 rest-timer-bar"
-                       role="timer" aria-live="polite" aria-label="Таймер отдыха">
-                      <div class="flex items-center gap-3 px-4 py-3 rest-timer-bar__inner glass rounded-2xl">
-                          <span class="animate-pulse-lime text-lime-600 dark:text-lime-400" aria-hidden="true">⏱</span>
-                          <span id="rest-timer-remaining"
-                                class="font-mono text-2xl font-bold text-lime-600 dark:text-lime-400 tabular-nums min-w-[3.5rem] text-center">
-                              00:00
-                          </span>
-                          <span id="rest-timer-state"
-                                class="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase">
-                              Отдых
-                          </span>
-                          <button id="rest-timer-dismiss" data-action="dismiss-rest-timer" type="button"
-                                  class="ml-auto glass rounded-xl px-3 py-1.5 text-xs font-semibold text-surface-700 dark:text-surface-300 hover:bg-surface-200 dark:hover:bg-white/10 transition-colors flex-shrink-0"
-                                  aria-label="Готов">
-                              Готов
-                          </button>
-                      </div>
-                  </div>
-
+                 <div class="flex overflow-x-auto gap-3 pb-4 px-4 workout-carousel" id="carousel">
+${allCards.join('')}
               </div>
         `;
+        console.log('[Workouts] renderWorkoutScreen inserting HTML, container:', container?.tagName, container?.id);
         container.innerHTML = html;
-        if (this.aiPlan) this.updateAiPlanBadges(container);
+        console.log('[Workouts] HTML inserted, calling bindWorkoutScreenEvents');
 
-        // Scroll to first exercise (index 1 in allCards)
-        setTimeout(() => {
+        // Scroll to first exercise card (exercises are the first cards now)
+        requestAnimationFrame(() => {
             const carousel = document.getElementById('carousel');
             if (carousel) {
-                const cardWidth = carousel.querySelector('.snap-center').offsetWidth + CAROUSEL_GAP_PX;
-                carousel.scrollLeft = cardWidth; 
+                const firstExerciseCard = carousel.querySelector('.workout-card[data-exercise-id]');
+                if (firstExerciseCard) {
+                    // Scroll so first exercise card is centered in the carousel
+                    carousel.scrollLeft = firstExerciseCard.offsetLeft - (carousel.clientWidth - firstExerciseCard.offsetWidth) / 2;
+                }
             }
-        }, 100);
+        });
 
         // Event listeners for workout screen
         this.bindWorkoutScreenEvents(container, app, session);
+
+        // Apply cached plan badges/tips to the newly rendered DOM (after binding)
+        if (this.aiPlan) {
+            this.updateAiPlanBadges(container);
+        }
+
+        // Restore rest timer state if re-rendering the same session —
+        // stopWorkoutTimer() at the top dismissed it, but the stopwatch
+        // anchor and owning set are still valid for this session.
+        if (savedRestState && savedRestState.restTimerStartTime != null) {
+            this.restTimerStartTime = savedRestState.restTimerStartTime;
+            this.restTimerMode = savedRestState.restTimerMode || this.getStoredRestTimerMode();
+            this.restTimerPresetSeconds = savedRestState.restTimerPresetSeconds || this.getStoredRestTimerPreset();
+            this.restTimerOvertime = savedRestState.restTimerOvertime || false;
+            this.activeRestForSetId = savedRestState.activeRestForSetId;
+            this.activeRestExerciseId = savedRestState.activeRestExerciseId;
+            this.lastSavedRestSetId = savedRestState.lastSavedRestSetId;
+            this.restSavedBySetId = savedRestState.restSavedBySetId;
+            this.restTimerTargetTimestamp = savedRestState.restTimerTargetTimestamp;
+            this.restTimerPlannedDuration = savedRestState.restTimerPlannedDuration;
+            this.rearmRestTimer();
+        }
 
         // Start live timer
         this.startWorkoutTimer(session);
@@ -2317,8 +3847,491 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         return { exercise: null, set: null };
     },
 
+    // ===== Exercise Track Indicator (circles) =====
+
+    // Returns the index of the first exercise that still has incomplete sets,
+    // i.e. the exercise the user is currently working on. Falls back to the
+    // last exercise when everything is done.
+    findActiveExerciseIndex(session) {
+        const exercises = session.exercises || [];
+        for (let i = 0; i < exercises.length; i++) {
+            const sets = exercises[i].sets || [];
+            if (sets.length > 0 && sets.some(s => !s.is_completed)) {
+                return i;
+            }
+        }
+        return exercises.length - 1;
+    },
+
+    // Compute the circle state for a single exercise.
+    // Returns one of: 'complete', 'active', 'partial', 'empty'
+    getExerciseTrackState(exercise) {
+        const sets = exercise.sets || [];
+        const total = sets.length;
+        if (total === 0) return 'empty';
+        const completed = sets.filter(s => s.is_completed).length;
+        if (completed === total) return 'complete';
+        if (completed > 0) return 'partial';
+        return 'empty';
+    },
+
+    // Build the HTML for the horizontal circle track that replaces the
+    // linear progress bar. One circle per exercise, horizontally scrollable
+    // with scroll-snap.
+     buildExerciseTrackHtml(session) {
+        const exercises = session.exercises || [];
+        const circles = this.buildExerciseTrackCircles(session);
+        // circles always includes the trailing "+" add-exercise circle, so the
+        // track renders even when the session has no exercises yet.
+        if (!circles) return '';
+
+        return `
+            <div class="exercise-track-indicator overflow-x-auto flex items-center gap-2 pb-2 px-1" role="tablist" aria-label="Прогресс упражнений">
+                <div class="flex items-center gap-2" id="exercise-track-circles">
+                    ${circles}
+                </div>
+            </div>
+        `;
+    },
+
+    // Just the circle buttons for a session — used both during initial render
+    // and by updateExerciseTrack to rebuild the circles in place.
+     buildExerciseTrackCircles(session) {
+        const exercises = this.currentSession?.exercises || session.exercises || [];
+        const activeIdx = this.findActiveExerciseIndex(session);
+        const sessionKey = session.isLocal ? session.key : session.id;
+
+        const circles = [];
+
+        // 1. Cancel button (always first)
+        circles.push(this.renderCancelCircle(sessionKey));
+
+        // 2. Exercise circles (liquid fill)
+        exercises.forEach((ex, i) => {
+            circles.push(this.renderExerciseCircle(ex, i, activeIdx));
+        });
+
+        // 3. Add exercise button (always last)
+        circles.push(this.renderAddCircle());
+
+        return circles.join('');
+    },
+
+    // Render the cancel (×) circle at the start of the track.
+    renderCancelCircle(sessionKey) {
+        return `
+            <button type="button"
+                    data-action="cancel-workout"
+                    data-session-id="${sessionKey}"
+                    role="tab"
+                    aria-label="Отменить тренировку"
+                    class="exercise-track-circle cancel">
+                <div class="circle-content">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </div>
+            </button>
+        `;
+    },
+
+    // Render a single exercise circle with liquid-fill progress.
+    renderExerciseCircle(ex, i, activeIdx) {
+        const state = this.getExerciseTrackState(ex);
+        const sets = ex.sets || [];
+        const completed = sets.filter(s => s.is_completed).length;
+        const total = sets.length;
+        const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+        const isActive = i === activeIdx;
+        const fillPercent = state === 'complete' ? 100 : percent;
+
+        return `
+            <button type="button"
+                    data-exercise-index="${i}"
+                    data-exercise-id="${ex.id}"
+                    role="tab"
+                    aria-label="Упражнение ${i + 1}: ${ex.name}"
+                    class="exercise-track-circle ${state} ${isActive ? 'active' : ''}"
+                    style="--fill-percent: ${fillPercent}%; --fill-color: ${this.getFillColor(state)}; --border-color: ${this.getBorderColor(state, isActive)};"
+                    data-track-state="${state}"
+                    data-track-percent="${percent}">
+                <div class="circle-content">
+                    ${state === 'complete'
+                        ? '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>'
+                        : `<span class="exercise-number">${i + 1}</span>`}
+                </div>
+            </button>
+        `;
+    },
+
+    // Render the add (+) circle at the end of the track.
+    renderAddCircle() {
+        return `
+            <button type="button"
+                    data-action="add-exercise-from-track"
+                    role="tab"
+                    aria-label="Добавить упражнение"
+                    class="exercise-track-circle add">
+                <div class="circle-content">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                    </svg>
+                </div>
+            </button>
+        `;
+    },
+
+    // Resolve the liquid-fill color for a given state.
+    getFillColor(state) {
+        const colors = {
+            empty: 'transparent',
+            partial: '#1a2e05',
+            active: '#1a2e05',
+            complete: '#4d7c0c',
+        };
+        return colors[state] || 'transparent';
+    },
+
+    // Resolve the border color for a given state (active gets the accent).
+    getBorderColor(state, isActive) {
+        const colors = {
+            empty: '#3f3f46',
+            partial: '#4d7c0c',
+            active: '#84cc16',
+            complete: '#4d7c0c',
+        };
+        return (isActive && state !== 'complete') ? '#84cc16' : (colors[state] || '#3f3f46');
+    },
+
+    // Re-render the exercise track circles after a set toggle or exercise add/remove.
+    updateExerciseTrack(session) {
+        const container = document.getElementById('exercise-track-circles');
+        if (!container) return;
+        container.innerHTML = this.buildExerciseTrackCircles(session);
+
+        // Bind click handlers
+        container.querySelectorAll('[data-exercise-index]').forEach(circle => {
+            circle.addEventListener('click', () => {
+                const index = parseInt(circle.dataset.exerciseIndex);
+                this.scrollToExerciseCard(index);
+            });
+        });
+
+        // "+" circle opens the add-exercise modal
+        const addCircle = container.querySelector('[data-action="add-exercise-from-track"]');
+        if (addCircle) {
+            addCircle.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                await this.showAddExerciseModal(this.app, session, session.isLocal ? session.key : session.id);
+            });
+        }
+
+        // Auto-center the active exercise circle in the scroll port
+        const track = container.parentElement;
+        if (!track || !track.parentElement) return;
+        const activeCircle = container.querySelector('.exercise-track-circle.active');
+        if (activeCircle) {
+            const trackRect = track.parentElement.getBoundingClientRect();
+            const circleRect = activeCircle.getBoundingClientRect();
+            const offset = circleRect.left - trackRect.left - (trackRect.width / 2 - circleRect.width / 2);
+            track.scrollBy({ left: offset, behavior: 'smooth' });
+        }
+    },
+
+    // Smooth-scroll the carousel so the card for the given exercise index is centered.
+    scrollToExerciseCard(exerciseIndex) {
+        const carousel = document.getElementById('carousel');
+        if (!carousel) return;
+        const cards = carousel.querySelectorAll('.workout-card[data-exercise-id]');
+        // Cards array: [...exerciseCards, completeCard]
+        // Exercise at index `exerciseIndex` is at position exerciseIndex in the carousel
+        const targetCard = cards[exerciseIndex];
+        if (!targetCard) return;
+        const cardLeft = targetCard.offsetLeft;
+        const cardWidth = targetCard.offsetWidth;
+        const scrollLeft = cardLeft - (carousel.clientWidth - cardWidth) / 2;
+        carousel.scrollTo({ left: scrollLeft, behavior: 'smooth' });
+    },
+
+    // ===== Exercise Track Indicator ends =====
+
+    // Full interactive reordering modal: lists every exercise in the current
+    // workout as a draggable row with up/down move controls. Smooth position
+    // adjustments with live renumbering; the list is committed on save.
+    showReorderExercisesModal(app, session, sessionId) {
+        const exercises = session.exercises || [];
+        if (exercises.length === 0) return;
+
+        // Close any existing reorder sheet
+        if (this._reorderSheet) {
+            this._reorderSheet.remove();
+            this._reorderSheet = null;
+        }
+
+        const sheet = document.createElement('div');
+        sheet.id = 'exerciseReorderSheet';
+        sheet.className = 'drum-sheet fixed inset-0 z-[70] pointer-events-auto';
+        sheet.innerHTML = `
+            <div class="drum-sheet-backdrop absolute inset-0 bg-black/40 dark:bg-black/60" data-action="reorder-close"></div>
+            <div class="drum-sheet-panel absolute bottom-0 left-0 right-0 bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 rounded-t-2xl border-t border-zinc-200 dark:border-white/10 flex flex-col drum-sheet-safe" role="dialog" aria-modal="true" aria-labelledby="reorder-title">
+                <div class="w-10 h-1 rounded-full bg-zinc-300 dark:bg-white/20 mx-auto drum-sheet-handle flex-shrink-0"></div>
+                <div class="flex items-center justify-between gap-3 px-4 pt-1 pb-2 flex-shrink-0">
+                    <div class="min-w-0">
+                        <div class="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold">Порядок упражнений</div>
+                        <div id="reorder-title" class="text-base font-bold">Перетащите или используйте кнопки</div>
+                    </div>
+                    <button type="button" data-action="reorder-close" class="w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0">✕</button>
+                </div>
+
+                <div class="px-4 pb-4 overflow-y-auto" id="reorder-list">
+                    <div class="space-y-1.5" id="reorder-items">
+                        ${exercises.map((ex, i) => this.renderReorderItem(ex, i, exercises.length)).join('')}
+                    </div>
+                </div>
+
+                <div class="px-4 pb-4 pt-2 flex gap-2 border-t border-zinc-200 dark:border-white/10 flex-shrink-0">
+                    <button type="button" data-action="reorder-reset"
+                            class="flex-1 py-3 rounded-2xl glass text-sm font-semibold">Сбросить</button>
+                    <button type="button" data-action="reorder-save"
+                            class="flex-1 py-3 rounded-2xl bg-lime-500 text-zinc-950 font-bold text-sm shadow-md">Готово</button>
+                </div>
+            </div>
+        `;
+
+        const onKeydown = (e) => {
+            if (e.key === 'Escape') close();
+        };
+        const bodyWasLocked = document.body.classList.contains('overflow-hidden');
+        let closed = false;
+        const close = () => {
+            if (closed) return;
+            closed = true;
+            document.removeEventListener('keydown', onKeydown);
+            if (this._drumKeydown) {
+                document.removeEventListener('keydown', this._drumKeydown);
+                this._drumKeydown = null;
+            }
+            if (!bodyWasLocked) document.body.classList.remove('overflow-hidden');
+            sheet.remove();
+            this._reorderSheet = null;
+        };
+
+        // Escape to close
+        sheet.addEventListener('click', (e) => {
+            const action = e.target.closest('[data-action]')?.dataset.action;
+            if (action === 'reorder-close') {
+                close();
+                return;
+            }
+        });
+
+        // Move up/down buttons (per-item)
+        const listContainer = sheet.querySelector('#reorder-items');
+
+        const updateMoveButtonStates = () => {
+            const allItems = listContainer.querySelectorAll('[data-ex-id]');
+            allItems.forEach((it, i) => {
+                const isFirst = i === 0;
+                const isLast = i === allItems.length - 1;
+                it.querySelectorAll('[data-action="reorder-item-move"]').forEach(b => {
+                    const dir = b.dataset.direction;
+                    const disabled = (dir === 'up' && isFirst) || (dir === 'down' && isLast);
+                    b.disabled = disabled;
+                    if (disabled) {
+                        b.classList.add('text-surface-300', 'dark:text-surface-600', 'cursor-not-allowed');
+                        b.classList.remove('text-surface-600', 'dark:text-surface-300', 'hover:text-surface-900', 'dark:hover:text-surface-100');
+                    } else {
+                        b.classList.remove('text-surface-300', 'dark:text-surface-600', 'cursor-not-allowed');
+                        b.classList.add('text-surface-600', 'dark:text-surface-300', 'hover:text-surface-900', 'dark:hover:text-surface-100');
+                    }
+                });
+            });
+        };
+
+        listContainer.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-action="reorder-item-move"]');
+            if (!btn) return;
+            const direction = btn.dataset.direction;
+            const item = btn.closest('[data-ex-id]');
+            const items = Array.from(listContainer.querySelectorAll('[data-ex-id]'));
+            const idx = items.indexOf(item);
+            const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+            if (targetIdx < 0 || targetIdx >= items.length) return;
+
+            item.classList.add('scale-[1.02]', 'bg-primary-50/50', 'dark:bg-primary-900/20', 'transition-all', 'duration-300');
+            const targetItem = items[targetIdx];
+            targetItem.classList.add('transition-all', 'duration-300');
+
+            if (direction === 'up') {
+                targetItem.before(item);
+            } else {
+                targetItem.after(item);
+            }
+
+            requestAnimationFrame(() => {
+                renumberItems();
+                updateMoveButtonStates();
+                setTimeout(() => {
+                    item.classList.remove('scale-[1.02]', 'bg-primary-50/50', 'dark:bg-primary-900/20');
+                    targetItem.classList.remove('transition-all', 'duration-300');
+                }, 400);
+            });
+        });
+
+        // Drag-and-drop reordering — disabled on touch devices where it is
+        // unreliable on mobile WebKit; button controls remain available.
+        const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        let dragSrcEl = null;
+        if (!isTouch) {
+            listContainer.addEventListener('dragstart', (e) => {
+                const item = e.target.closest('[data-ex-id]');
+                if (!item) return;
+                dragSrcEl = item;
+                item.classList.add('opacity-40');
+                e.dataTransfer.effectAllowed = 'move';
+            });
+            listContainer.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                const afterElement = getDragAfter(listContainer, e.clientY);
+                const draggable = document.querySelector('.drag-over');
+                if (draggable) draggable.classList.remove('drag-over');
+                if (afterElement) {
+                    afterElement.before(dragSrcEl);
+                } else {
+                    listContainer.appendChild(dragSrcEl);
+                }
+            });
+            listContainer.addEventListener('dragend', (e) => {
+                if (dragSrcEl) dragSrcEl.classList.remove('opacity-40');
+                dragSrcEl = null;
+                const overItems = listContainer.querySelectorAll('.drag-over');
+                overItems.forEach(i => i.classList.remove('drag-over'));
+                renumberItems();
+                updateMoveButtonStates();
+            });
+        }
+
+        const getDragAfter = (container, y) => {
+            const draggableElements = container.querySelectorAll('[data-ex-id]:not(.drag-over)');
+            let closest = null;
+            let closestOffset = null;
+            const after = [...draggableElements].find(el => {
+                const box = el.getBoundingClientRect();
+                const offset = y - box.top - box.height / 2;
+                if (offset < 0 && (closestOffset === null || offset > closestOffset)) {
+                    closestOffset = offset;
+                    closest = el;
+                }
+                return closest !== null;
+            });
+            return after || null;
+        };
+
+        const renumberItems = () => {
+            listContainer.querySelectorAll('[data-ex-id]').forEach((item, i) => {
+                const numEl = item.querySelector('.reorder-item-num');
+                if (numEl) numEl.textContent = i + 1;
+            });
+        };
+
+        // Save button — persist new order and re-render
+        sheet.querySelector('[data-action="reorder-save"]')?.addEventListener('click', async () => {
+            const orderedIds = [...listContainer.querySelectorAll('[data-ex-id]')].map(el => parseInt(el.dataset.exId));
+            const orderedExercises = orderedIds.map((id, i) => {
+                const ex = exercises.find(e => e.id === id);
+                return { ...ex, order: i };
+            });
+
+            // Optimistically update the session and re-render immediately
+            session.exercises = orderedExercises;
+            this.exercisesModified = true;
+
+            const isLocal = this.isLocalSession(session);
+            const token = app?.state?.tokens?.access;
+
+            if (isLocal) {
+                this.persistLocalSession(session);
+                close();
+                await this.renderWorkoutScreen(app.elements.pageContent, app, sessionId);
+                return;
+            }
+
+            close();
+
+            try {
+                await app.ensureFreshToken();
+                await API.patch(`/workouts/sessions/${sessionId}`, {
+                    exercises: orderedExercises.map((ex, i) => ({ id: ex.id, order: i }))
+                }, token);
+                await this.renderWorkoutScreen(app.elements.pageContent, app, sessionId);
+            } catch (err) {
+                app.showToast(err.message || 'Ошибка изменения порядка', 'error');
+                // Revert on error
+                session.exercises = exercises;
+                await this.renderWorkoutScreen(app.elements.pageContent, app, sessionId);
+            }
+        });
+
+        // Reset button — restore original order
+        sheet.querySelector('[data-action="reorder-reset"]')?.addEventListener('click', () => {
+            listContainer.innerHTML = exercises.map((ex, i) => this.renderReorderItem(ex, i, exercises.length)).join('');
+            renumberItems();
+            updateMoveButtonStates();
+        });
+
+        document.addEventListener('keydown', onKeydown);
+        (document.getElementById('modals') || document.body).appendChild(sheet);
+        document.body.classList.add('overflow-hidden');
+        this._reorderSheet = sheet;
+    },
+
+    // Render a single draggable exercise item row in the reorder modal.
+    renderReorderItem(ex, index, total) {
+        const isFirst = index === 0;
+        const isLast = index === total - 1;
+        const sets = ex.sets || [];
+        const completed = sets.filter(s => s.is_completed).length;
+        const isComplete = sets.length > 0 && completed === sets.length;
+        const statusColor = isComplete ? 'text-lime-600 dark:text-lime-400'
+            : sets.length > 0 ? 'text-amber-500 dark:text-amber-400'
+            : 'text-surface-400 dark:text-surface-500';
+        const statusDot = isComplete ? '●' : sets.some(s => s.is_completed) ? '●' : '○';
+
+        return `
+            <div class="reorder-item flex items-center gap-2 p-2.5 glass rounded-xl" data-ex-id="${ex.id}">
+                <div class="reorder-drag-handle flex-shrink-0" title="Перетащить">
+                    <svg class="w-3.5 h-3.5 text-surface-400 dark:text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 3v2m0 4v2m0 4v2m0 4v2M13 3v2m0 4v2m0 4v2m0 4v2"/>
+                    </svg>
+                </div>
+                <span class="reorder-item-num w-6 text-center text-xs font-bold text-surface-500 dark:text-surface-400 flex-shrink-0">${index + 1}</span>
+                <div class="flex-1 min-w-0 mr-3">
+                    <span class="font-medium text-sm text-surface-900 dark:text-surface-100 truncate">${ex.name}</span>
+                    <span class="ml-1 text-xs ${statusColor}">${statusDot} ${completed}/${sets.length} подх.</span>
+                </div>
+                <div class="reorder-move-btns flex flex-col gap-1 flex-shrink-0">
+                    <button type="button" data-action="reorder-item-move" data-direction="up"
+                            class="w-10 h-10 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl ${isFirst ? 'text-surface-300 dark:text-surface-600 cursor-not-allowed' : 'text-surface-600 dark:text-surface-300 hover:text-surface-900 dark:hover:text-surface-100'}"
+                            ${isFirst ? 'disabled' : ''}>
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/>
+                        </svg>
+                    </button>
+                    <button type="button" data-action="reorder-item-move" data-direction="down"
+                            class="w-10 h-10 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl ${isLast ? 'text-surface-300 dark:text-surface-600 cursor-not-allowed' : 'text-surface-600 dark:text-surface-300 hover:text-surface-900 dark:hover:text-surface-100'}"
+                            ${isLast ? 'disabled' : ''}>
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        `;
+    },
+
     updateWorkoutMetricsUI(session) {
-        const { total, completed, tonnage } = this.getWorkoutMetrics(session);
+        const { total, completed } = this.getWorkoutMetrics(session);
         const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
 
         const bar = document.getElementById('workout-progress-bar');
@@ -2327,8 +4340,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         const text = document.getElementById('workout-progress-text');
         if (text) text.textContent = `Сделано ${completed} из ${total} подходов (${percent}%)`;
 
-        const tonnageEl = document.getElementById('workout-total-tonnage');
-        if (tonnageEl) tonnageEl.textContent = `Суммарный тоннаж: ${Math.round(tonnage)} кг`;
+        // Refresh exercise track circles after a set toggle
+        this.updateExerciseTrack(session);
     },
 
     // Lime pulse on a set row confirming the save. The class is dropped after
@@ -2378,258 +4391,106 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
     },
 
     bindWorkoutScreenEvents(container, app, session) {
+        if (!container) {
+            console.warn('[Workouts] bindWorkoutScreenEvents: container is null/undefined');
+            return;
+        }
+        // Remove any existing delegated listeners to prevent duplicates on re-render
+        container.removeEventListener('click', this._boundWorkoutClickHandler);
+        container.removeEventListener('input', this._boundWorkoutInputHandler);
+        container.removeEventListener('change', this._boundWorkoutChangeHandler);
+        // Remove previous set delete handler to prevent duplicate modals on click
+        container.removeEventListener('click', this._boundSetDeleteHandler);
+
+        // Store bound handlers for cleanup
+        this._boundWorkoutClickHandler = this._handleWorkoutClick.bind(this);
+        this._boundWorkoutInputHandler = this._handleWorkoutInput.bind(this);
+        this._boundWorkoutChangeHandler = this._handleWorkoutChange.bind(this);
+
+        container.addEventListener('click', this._boundWorkoutClickHandler);
+        container.addEventListener('input', this._boundWorkoutInputHandler);
+        container.addEventListener('change', this._boundWorkoutChangeHandler);
+
+        console.log('[Workouts] bindWorkoutScreenEvents called, container:', container.tagName, container.id);
         const isLocal = this.isLocalSession(session);
         const sessionId = isLocal ? session.key : session.id;
         const token = app.state.tokens.access;
 
-        // Toggle set completion
-        container.querySelectorAll('[data-action="toggle-set"]').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
+        // Exercise track circle click handlers
+        container.querySelectorAll('[data-exercise-index]').forEach(circle => {
+            circle.addEventListener('click', () => {
+                console.log('[Workouts] Exercise track circle clicked:', circle.dataset.exerciseIndex);
+                const index = parseInt(circle.dataset.exerciseIndex);
+                this.scrollToExerciseCard(index);
+            });
+        });
+
+        // "+" circle (add exercise from track)
+        container.querySelector('[data-action="add-exercise-from-track"]')?.addEventListener('click', async (e) => {
+            console.log('[Workouts] Add exercise from track clicked');
+            e.stopPropagation();
+            e.preventDefault();
+            await this.showAddExerciseModal(app, session, sessionId);
+        });
+
+        // Re-hydrate AI analysis badges on carousel scroll so they persist
+        // reliably across scroll events and any deferred DOM mutations.
+        const carouselEl = container.querySelector('#carousel');
+        if (carouselEl && !carouselEl._aiBadgeScrollBound) {
+            let aiScrollT = null;
+            carouselEl._aiBadgeScrollBound = true;
+            carouselEl.addEventListener('scroll', () => {
+                if (this.aiPlan) {
+                    if (aiScrollT) clearTimeout(aiScrollT);
+                    aiScrollT = setTimeout(() => {
+                        this.updateAiPlanBadges(container);
+                        aiScrollT = null;
+                    }, 150);
+                }
+            }, { passive: true });
+        }
+
+        // AI analysis block toggle
+        container.querySelectorAll('[data-action="toggle-ai-analysis"]').forEach(toggle => {
+            toggle.addEventListener('click', (e) => {
                 e.stopPropagation();
-                const button = e.currentTarget;
-                const row = button.closest('[data-set-id]');
-                if (!row) {
-                    console.error('Row not found for set');
-                    return;
+                const card = e.currentTarget.closest('[data-exercise-id]');
+                if (!card) return;
+                const content = card.querySelector('.ai-analysis-content');
+                const isExpanded = e.currentTarget.getAttribute('aria-expanded') === 'true';
+                const newState = !isExpanded;
+                e.currentTarget.setAttribute('aria-expanded', String(newState));
+                if (content) {
+                    content.style.display = newState ? 'block' : 'none';
                 }
-                const setId = parseInt(row.dataset.setId);
-                if (isNaN(setId)) {
-                    console.error('Invalid setId found:', row.dataset.setId);
-                    return;
-                }
+                this.setAiAnalysisCollapsed(!newState);
+            });
+        });
+
+        // Exercise card tab switching (Dynamics / AI Advice / Timer)
+        const workoutContainerEl = document.getElementById('workout-container') || container;
+        if (workoutContainerEl && !workoutContainerEl._tabDelegationBound) {
+            workoutContainerEl._tabDelegationBound = true;
+            workoutContainerEl.addEventListener('click', (e) => {
+                const tabBtn = e.target.closest('[data-tab]');
+                if (!tabBtn) return;
                 
-                const weightInput = row.querySelector('[data-field="weight"]');
-                const repsInput = row.querySelector('[data-field="reps"]');
-                const weight_kg = weightInput ? parseFloat(weightInput.value) : null;
-                const reps = repsInput ? parseInt(repsInput.value) : null;
+                const exerciseCard = tabBtn.closest('[data-exercise-id]');
+                if (!exerciseCard) return;
 
-                const wasCompleted = button.dataset.completed === 'true';
-                const isCompleted = !wasCompleted;
+                const exerciseId = exerciseCard.getAttribute('data-exercise-id');
+                const targetTab = tabBtn.getAttribute('data-tab');
 
-                const applyToggleState = (completed) => {
-                    const sessionSet = this.findSetInSession(session, setId);
-                    if (sessionSet) {
-                        sessionSet.is_completed = completed;
-                        sessionSet.weight_kg = isNaN(weight_kg) ? null : weight_kg;
-                        sessionSet.reps = isNaN(reps) ? null : reps;
-                    }
-                    this.updateWorkoutMetricsUI(session);
-                    if (completed) {
-                        button.dataset.completed = 'true';
-                        button.className = TOGGLE_BASE + ' ' + TOGGLE_COMPLETED;
-                        button.textContent = '✓';
-
-
-                        row.querySelector('span.font-bold').classList.add(...SET_DIM);
-                        row.querySelectorAll('input').forEach(inp => inp.classList.add(...SET_DIM));
-                        row.querySelectorAll('label').forEach(lbl => lbl.classList.add(...SET_DIM));
-
-                        // Completing a set locks its weight/reps until the
-                        // check is cleared; the carousel moves on only through
-                        // scheduleCarouselAdvance below.
-                        button.disabled = false;
-                    }
-                    else {
-                        button.dataset.completed = 'false';
-                        button.className = TOGGLE_BASE + ' ' + TOGGLE_UNCOMPLETED;
-
-                        row.querySelector('span.font-bold').classList.remove(...SET_DIM);
-                        row.querySelector('span.font-bold').classList.add(SET_NUMBER_IDLE);
-                        row.querySelectorAll('input').forEach(inp => inp.classList.remove(...SET_DIM));
-                        row.querySelectorAll('label').forEach(lbl => lbl.classList.remove(...SET_DIM));
-
-                        button.textContent = '✓';
-                        button.disabled = false;
-                    }
-                };
-
-                button.disabled = true;
-                button.textContent = '...';
-                // Optimistic local update so the UI reacts instantly, even offline
-                applyToggleState(isCompleted);
-                if (isCompleted) {
-                    this.flashSetSaved(row);
-                    this.scheduleCarouselAdvance(session, row);
-                    // If a rest timer is running for the previous set, stop and
-                    // save its elapsed seconds onto that set before starting a
-                    // new rest period for this one.
-                    if (this.activeRestForSetId) {
-                        this.restSavedBySetId = setId;
-                        await this.stopAndSaveRestTimer(session);
-                        const savedSet = this.lastSavedRestSetId
-                            ? this.findSetInSession(session, this.lastSavedRestSetId) : null;
-                        if (savedSet && savedSet.rest_time_seconds != null) {
-                            this.applyRestTimeInline(this.lastSavedRestSetId, savedSet.rest_time_seconds);
-                        }
-                    }
-                    const { exercise: ex, set: sessionSet } = this.findExerciseOfSet(session, setId);
-                    if (ex && sessionSet && sessionSet.set_number < (ex.sets || []).length) {
-                        this.startRestTimer(sessionSet, ex, session);
-                    }
-                } else {
-                    // Unchecking: undo the rest-time save if this set's completion
-                    // was what triggered it, and stop the timer if this set owns it.
-                    this.undoRestTimeSave(session, setId, isLocal, token);
-                    if (this.activeRestForSetId === setId) {
-                        this.dismissRestTimer();
-                    }
-                }
-                const payload = {
-                    is_completed: isCompleted,
-                    weight_kg: isNaN(weight_kg) ? null : weight_kg,
-                    reps: isNaN(reps) ? null : reps
-                };
-                if (isLocal) {
-                    this.persistLocalSession(session);
-                    this.recordLocalSetPatch(session.key, setId, payload);
-                    button.disabled = false;
-                    button.textContent = '✓';
-                    return;
-                }
-                try {
-                    app?._pendingToggleSetIds?.add(setId);
-                    await API.patch(`/workouts/sets/${setId}`, payload, token);
-                } catch (err) {
-                    if (err?.offlineQueued) {
-                        // Silent: the global network banner reflects offline/syncing status
-                    } else {
-                        applyToggleState(wasCompleted);
-                        this.undoRestTimeSave(session, setId, isLocal, token);
-                        if (this.activeRestForSetId === setId) {
-                            this.dismissRestTimer();
-                        }
-                        app.showToast(err.message || 'Ошибка', 'error');
-                    }
-                    button.disabled = false;
-                    button.textContent = '✓';
-                } finally {
-                    app?._pendingToggleSetIds?.delete(setId);
-                }
+                e.stopPropagation();
+                this.switchExerciseTab(exerciseId, targetTab, exerciseCard);
             });
-        });
+        }
 
-        // Save weight/reps: instant local update while typing, debounced network sync, flush on blur
-        const DEBOUNCE_MS = 400;
-        const pendingTimers = new Map();
-
-        const applyLocalValue = (input) => {
-            const row = input.closest('[data-set-id]');
-            if (!row) return null;
-            const setId = parseInt(row.dataset.setId);
-            const field = input.dataset.field;
-            const value = field === 'weight' ? parseFloat(input.value) : parseInt(input.value);
-            if (isNaN(value)) return null;
-
-            const sessionSet = this.findSetInSession(session, setId);
-            if (sessionSet) {
-                sessionSet[field === 'weight' ? 'weight_kg' : 'reps'] = value;
-                this.updateWorkoutMetricsUI(session);
-            }
-            return { row, setId, field, value };
-        };
-
-        const propagateWeightToNextSet = (row, value) => {
-            const exerciseContainer = row.closest('.bg-white, .dark\\:bg-surface-800');
-            if (!exerciseContainer) return;
-            const rows = exerciseContainer.querySelectorAll('[data-set-id]');
-            let foundCurrent = false;
-            for (const r of rows) {
-                if (foundCurrent) {
-                    const nextWeightInput = r.querySelector('[data-field="weight"]');
-                    if (nextWeightInput && !nextWeightInput.value) {
-                        nextWeightInput.value = value;
-                        const nextSetId = parseInt(r.dataset.setId);
-                        const nextSessionSet = this.findSetInSession(session, nextSetId);
-                        if (nextSessionSet) nextSessionSet.weight_kg = value;
-                        if (isLocal) {
-                            this.persistLocalSession(session);
-                            this.recordLocalSetPatch(session.key, nextSetId, { weight_kg: value });
-                        } else {
-                            API.patch(`/workouts/sets/${nextSetId}`, { weight_kg: value }, token).catch(() => {});
-                        }
-                    }
-                    break;
-                }
-                if (r === row) foundCurrent = true;
-            }
-        };
-
-        const persistSet = async (input) => {
-            const parsed = applyLocalValue(input);
-            if (!parsed) return;
-            const { row, setId, field, value } = parsed;
-
-            if (field === 'weight') {
-                propagateWeightToNextSet(row, value);
-            }
-
-            if (isLocal) {
-                this.persistLocalSession(session);
-                this.recordLocalSetPatch(session.key, setId, { [field]: value });
-                return;
-            }
-
-            await app.ensureFreshToken();
-            try {
-                await API.patch(`/workouts/sets/${setId}`, { [field]: value }, app.state.tokens.access);
-            } catch (err) {
-                if (err?.offlineQueued) {
-                    // Silent: the global network banner reflects offline/syncing status
-                } else {
-                    app.showToast(err.message || 'Ошибка сохранения', 'error');
-                }
-            }
-        };
-
-        const scheduleSave = (input, immediate) => {
-            const row = input.closest('[data-set-id]');
-            if (!row) return;
-            const key = `${row.dataset.setId}:${input.dataset.field}`;
-
-            const run = () => {
-                pendingTimers.delete(key);
-                return persistSet(input);
-            };
-
-            const existing = pendingTimers.get(key);
-            if (existing) {
-                clearTimeout(existing);
-                pendingTimers.delete(key);
-            }
-
-            if (immediate) {
-                run();
-            } else {
-                pendingTimers.set(key, setTimeout(run, DEBOUNCE_MS));
-            }
-        };
-
-        container.querySelectorAll('[data-field="weight"], [data-field="reps"]').forEach(input => {
-            input.addEventListener('input', () => applyLocalValue(input));
-            input.addEventListener('change', () => scheduleSave(input, false));
-            input.addEventListener('blur', () => scheduleSave(input, true));
-        });
-
-        // Weight/reps are entered through the drum picker bottom sheet, never the
-        // native keyboard (inputs stay readOnly and inputmode="none"). A completed
-        // set is locked: the guard runs synchronously before the sheet opens, so a
-        // finished set cannot be rewritten until the checkmark is cleared.
-        container.querySelectorAll('[data-field="weight"], [data-field="reps"]').forEach(input => {
-            const openPicker = (e) => {
-                e?.preventDefault();
-                const row = input.closest('[data-set-id]');
-                const toggle = row?.querySelector('[data-action="toggle-set"]');
-                if (toggle?.dataset.completed === 'true') {
-                    app?.showToast(SET_LOCKED_MESSAGE, 'info');
-                    return;
-                }
-                input.blur();
-                this.openDrumPicker(input, { app });
-            };
-            input.addEventListener('click', openPicker);
-            input.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter' || e.key === ' ') openPicker(e);
-            });
+        // Bind per-row event handlers (toggle completion, drum picker, persistence)
+        container.querySelectorAll('[data-set-id]').forEach(rowEl => {
+            const exId = rowEl.closest('[data-exercise-id]')?.dataset.exerciseId;
+            const exercise = (session.exercises || []).find(ex => String(ex.id) === String(exId));
+            this.bindSetRowEvents(rowEl, session, exercise, app);
         });
 
         // Complete workout
@@ -2638,41 +4499,186 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         // Cancel workout
         // Handled by App.js
 
-        // Move exercise up/down in active session
-        container.querySelectorAll('[data-action="move-ex-up"], [data-action="move-ex-down"]').forEach(btn => {
+        // Open reorder menu for an exercise card — opens the full reordering modal
+        container.querySelectorAll('[data-action="open-reorder-menu"]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.showReorderExercisesModal(app, session, sessionId);
+            });
+        });
+
+        // Timer auto-start toggle in exercise card header
+        container.querySelectorAll('[data-action="toggle-rest-auto"]').forEach(btn => {
+            const exId = parseInt(btn.dataset.exId);
+            const isOff = this.restAutoStart && this.restAutoStart.get(exId) === false;
+            // Sync ARIA state: CSS [aria-pressed] selectors drive the visual
+            // states — lime glow when active (true), muted gray when inactive (false).
+            btn.setAttribute('aria-pressed', String(!isOff));
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const exIdNum = parseInt(e.currentTarget.dataset.exId);
+                const isOn = e.currentTarget.getAttribute('aria-pressed') === 'true';
+                e.currentTarget.setAttribute('aria-pressed', String(!isOn));
+                if (this.restAutoStart) this.restAutoStart.set(exIdNum, !isOn);
+            });
+        });
+
+        // Add/Remove Set buttons
+        container.querySelectorAll('[data-action="add-set"]').forEach(btn => {
             btn.addEventListener('click', async (e) => {
-                const card = e.currentTarget.closest('[data-exercise-id]');
+                e.stopPropagation();
                 const exId = parseInt(e.currentTarget.dataset.exId);
-                const isUp = e.currentTarget.dataset.action === 'move-ex-up';
-                const exercises = [...session.exercises];
-                const idx = exercises.findIndex(ex => ex.id === exId);
-                if (idx === -1) return;
-                const targetIdx = isUp ? idx - 1 : idx + 1;
-                if (targetIdx < 0 || targetIdx >= exercises.length) return;
-
-                card.classList.add('scale-[1.02]', 'bg-primary-50/50', 'dark:bg-primary-900/20', 'transition-all', 'duration-300');
-
-                const temp = exercises[idx];
-                exercises[idx] = exercises[targetIdx];
-                exercises[targetIdx] = temp;
+                const exercise = (session.exercises || []).find(ex => ex.id === exId);
+                if (!exercise) return;
+                this.exercisesModified = true;
+                const lastSet = (exercise.sets || [])[(exercise.sets || []).length - 1] || { set_number: 0, weight_kg: null, reps: 10, rest_seconds: 90 };
+                const newSet = {
+                    id: isLocal ? TEMP_SET_ID_BASE - Math.floor(Math.random() * 999999) : null,
+                    exercise_id: exercise.id,
+                    set_number: (lastSet.set_number || 0) + 1,
+                    // Copy weight if previous set had weight > 0, otherwise null
+                    weight_kg: (lastSet.weight_kg !== null && lastSet.weight_kg > 0) ? lastSet.weight_kg : null,
+                    // Copy reps if previous set had reps > 0, otherwise default to 10
+                    reps: (lastSet.reps !== null && lastSet.reps > 0) ? lastSet.reps : 10,
+                    rest_seconds: lastSet.rest_seconds || 90,
+                    is_completed: false,
+                };
+                exercise.sets = [...(exercise.sets || []), newSet];
 
                 if (isLocal) {
-                    session.exercises = exercises;
-                    exercises.forEach((ex, i) => { ex.order = i; });
                     this.persistLocalSession(session);
-                    await this.renderWorkoutScreen(container, app, sessionId);
+                    const inserted = this.insertSetRow(container, exId, newSet, exercise);
+                    if (!inserted) {
+                        await this.renderWorkoutScreen(container, app, sessionId);
+                    }
+                    this.updateAiPlanBadges(container);
+                    this.updateWorkoutMetricsUI(session);
                     return;
                 }
 
                 try {
-                    await API.patch(`/workouts/sessions/${sessionId}`, {
-                        exercises: exercises.map((ex, i) => ({ id: ex.id, order: i }))
+                    await app.ensureFreshToken();
+                    const created = await API.post('/workouts/sets', {
+                        exercise_id: exercise.id,
+                        set_number: newSet.set_number,
+                        weight_kg: newSet.weight_kg,
+                        reps: newSet.reps,
+                        rest_seconds: newSet.rest_seconds,
                     }, token);
-                    await this.renderWorkoutScreen(container, app, sessionId);
+                    newSet.id = created.id;
+                    const inserted = this.insertSetRow(container, exId, newSet, exercise);
+                    if (!inserted) {
+                        await this.renderWorkoutScreen(container, app, sessionId);
+                    }
                 } catch (err) {
-                    app.showToast(err.message || 'Ошибка изменения порядка', 'error');
+                    if (!err?.offlineQueued) {
+                        exercise.sets.pop();
+                        app.showToast(err.message || 'Ошибка добавления подхода', 'error');
+                        return;
+                    }
+                    const inserted = this.insertSetRow(container, exId, newSet, exercise);
+                    if (!inserted) {
+                        await this.renderWorkoutScreen(container, app, sessionId);
+                    }
                 }
+                this.updateAiPlanBadges(container);
+                this.updateWorkoutMetricsUI(session);
             });
+        });
+
+        // Set row delete handler (event delegation for dynamically inserted rows)
+        const handleSetDelete = async (e) => {
+            const btn = e.target.closest('[data-action="delete-set"]');
+            if (!btn) return;
+            e.stopPropagation();
+            const setId = parseInt(btn.dataset.setId);
+            if (isNaN(setId)) return;
+            const card = btn.closest('[data-exercise-id]');
+            const exId = parseInt(card?.dataset.exerciseId);
+            const exercise = (session.exercises || []).find(ex => ex.id === exId);
+            if (!exercise || !exercise.sets || exercise.sets.length === 0) return;
+
+            const removedSet = exercise.sets.find(s => s.id === setId);
+            if (!removedSet) return;
+            const setIndex = exercise.sets.indexOf(removedSet);
+
+            if (isLocal && exercise.sets.length <= 1) {
+                app.showToast('Нужен минимум один подход', 'info');
+                return;
+            }
+
+             const confirmed = await Components.confirmModal({
+                title: 'Удалить подход?',
+                message: 'Это действие необратимо. Вы уверены, что хотите удалить подход?',
+                confirmText: 'Удалить',
+                confirmClass: 'bg-red-600 hover:bg-red-700 text-white font-semibold shadow-md',
+                cancelText: 'Отмена',
+                instantClose: true
+            });
+            if (!confirmed) return;
+
+            // Immediately remove the modal if Components.confirmModal didn't do it automatically
+            const modal = document.querySelector('.modal-container');
+            if (modal) modal.remove();
+
+
+            // Remove from state immediately
+            exercise.sets = exercise.sets.filter((s, i) => i !== setIndex);
+            exercise.sets.forEach((s, i) => { s.set_number = i + 1; });
+            this.exercisesModified = true;
+
+            // Remove DOM row immediately (with CSS transition fallback)
+            const row = card.querySelector(`[data-set-id="${removedSet.id}"]`);
+            const prevSet = setIndex > 0 ? exercise.sets[setIndex - 1] : null;
+            // Clear rest time on the preceding set if the removed one was completed
+            if (removedSet.is_completed && prevSet && prevSet.rest_time_seconds != null) {
+                prevSet.rest_time_seconds = null;
+                this.applyRestTimeInline(prevSet.id, null);
+            }
+            if (row) {
+                row.classList.add('set-row-exit');
+                requestAnimationFrame(() => row.classList.add('active'));
+                row.addEventListener('transitionend', () => row.remove(), { once: true });
+                setTimeout(() => row.remove(), 300);
+            }
+
+            // Renumber and update metrics
+            this.renumberSetRows(card);
+            this.updateWorkoutMetricsUI(session);
+            // Re-hydrate AI analysis badges after the DOM mutation
+            this.updateAiPlanBadges(container);
+
+            // Persist/deletion via API — fire and forget, ignore "not found"
+            if (isLocal) {
+                this.persistLocalSession(session);
+                this.recordLocalSetPatch(session.key, removedSet.id, { _deleted: true });
+            } else if (token && this.isRealSetId(removedSet.id)) {
+                API.delete(`/workouts/sets/${removedSet.id}`, token)
+                    .catch(err => {
+                        const msg = err?.message || '';
+                        const isNotFound = err?.status === 404
+                            || msg.toLowerCase().includes('not found')
+                            || msg.includes('не найден');
+                        if (isNotFound) {
+                            return;
+                        }
+                        app.showToast(err.message || 'Ошибка удаления подхода', 'error');
+                        // Restore state on error
+                        exercise.sets.splice(setIndex, 0, removedSet);
+                        exercise.sets.forEach((s, i) => { s.set_number = i + 1; });
+                        this.renderWorkoutScreen(container, app, sessionId);
+                    });
+            }
+        };
+
+        // Store bound handler for cleanup on re-render
+        this._boundSetDeleteHandler = handleSetDelete;
+        container.addEventListener('click', this._boundSetDeleteHandler);
+
+        // Add Exercise button (before completion card)
+        container.querySelector('[data-action="add-exercise"]')?.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            await this.showAddExerciseModal(app, session, sessionId);
         });
 
         // Back button
@@ -2685,11 +4691,68 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             app.showPage('workouts');
         });
 
-        // Dismiss rest timer
-        container.querySelector('[data-action="dismiss-rest-timer"]')?.addEventListener('click', (e) => {
+        // Rest timer action delegation handled by _handleWorkoutClick (bound at top of bindWorkoutScreenEvents)
+
+    },
+
+    _handleWorkoutClick(e) {
+        const modeBtn = e.target.closest('[data-action="rest-timer-mode"]');
+        if (modeBtn) {
             e.stopPropagation();
-            this.dismissRestTimer();
-        });
+            const mode = modeBtn.dataset.mode;
+            this.saveRestTimerMode(mode);
+            this.updateAllTimerControlsUI();
+            return;
+        }
+
+        const presetBtn = e.target.closest('[data-action="rest-timer-preset"]');
+        if (presetBtn) {
+            e.stopPropagation();
+            const seconds = parseInt(presetBtn.dataset.preset);
+            if (!isNaN(seconds)) {
+                this.updateTimerDuration(seconds);
+                this.updateAllTimerControlsUI();
+            }
+            return;
+        }
+
+        const dismissBtn = e.target.closest('[data-action="dismiss-rest-timer"]');
+        if (dismissBtn) {
+            e.stopPropagation();
+            this.stopAndSaveRestTimer(null);
+            return;
+        }
+    },
+
+    _handleWorkoutInput(e) {
+        const customInput = e.target.closest('[data-action="rest-timer-custom"]');
+        if (customInput) {
+            const value = parseInt(customInput.value);
+            const panel = customInput.closest('[data-tab-panel="timer"]') || customInput.closest('.space-y-1');
+            if (panel) {
+                panel.querySelectorAll('[data-action="rest-timer-preset"]').forEach(btn => {
+                    const presetSec = parseInt(btn.dataset.preset);
+                    const isActive = !isNaN(value) && presetSec === value;
+                    if (isActive) {
+                        btn.className = 'flex-shrink-0 px-2.5 py-1 rounded-md text-[10px] font-semibold transition-colors bg-primary-600 text-white dark:bg-primary-500 dark:text-zinc-950 shadow-[0_0_0_1px_rgba(132,204,22,0.5)] shadow-sm';
+                        btn.setAttribute('aria-pressed', 'true');
+                    } else {
+                        btn.className = 'flex-shrink-0 px-2.5 py-1 rounded-md text-[10px] font-semibold transition-colors bg-white/5 dark:bg-white/10 text-surface-600 dark:text-surface-300 hover:bg-white/10 dark:hover:bg-white/20';
+                        btn.setAttribute('aria-pressed', 'false');
+                    }
+                });
+            }
+        }
+    },
+
+    _handleWorkoutChange(e) {
+        const customInput = e.target.closest('[data-action="rest-timer-custom"]');
+        if (customInput) {
+            const seconds = parseInt(customInput.value);
+            if (isNaN(seconds) || seconds < 1) return;
+            this.updateTimerDuration(seconds);
+            this.updateAllTimerControlsUI();
+        }
     },
 
     // Writes a value into a set input and replays the native input/change events
@@ -2724,7 +4787,7 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         const repsInput = row?.querySelector('[data-field="reps"]') || null;
 
         const exerciseName = (card?.querySelector('h3')?.textContent || '').trim();
-        const setNumber = (row?.querySelector('span.font-bold')?.textContent || '').trim();
+        const setNumber = (row?.querySelector('[data-set-number]')?.textContent || '').trim();
 
         const startWeight = Math.max(0, parseFloat(weightInput?.value) || 0);
         const startReps = Math.min(DRUM_REPS_MAX, Math.max(1, parseInt(repsInput?.value, 10) || 1));
@@ -2875,11 +4938,20 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             syncFromDrums();
         };
 
-        const save = () => {
+        const save = async () => {
             syncFromDrums();
             const weight = drumTenthsToWeight(weightTenths);
+            const setId = row?.dataset.setId ? parseInt(row.dataset.setId, 10) : null;
             if (field === 'weight' && weightInput) this.setInputValue(weightInput, this.formatDrumWeight(weight));
             if (repsInput) this.setInputValue(repsInput, reps);
+            // Persist immediately so a completion that races the 400ms debounced
+            // save never loses the just-picked weight or reps.
+            if (setId && app?.state?.tokens?.access && this.isRealSetId(setId)) {
+                const patch = {};
+                if (field === 'weight') patch.weight_kg = weight;
+                else if (field === 'reps') patch.reps = reps;
+                await API.patch(`/workouts/sets/${setId}`, patch, app.state.tokens.access).catch(() => {});
+            }
             // No toast and no focus/scroll jump: the sheet closes in place, the
             // row keeps its completed state and the pulse confirms the write.
             this.flashSetSaved(row);
@@ -2911,14 +4983,97 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         }));
     },
 
+    // Render summary statistics panel for history
+    async renderHistorySummary(container, app, period = 'all') {
+        let stats = null;
+        try {
+            const response = await API.get(`/workouts/history/stats?period=${period}`, app.state.tokens.access);
+            stats = response;
+        } catch (error) {
+            console.error('[Workouts] History stats load error:', error);
+        }
+
+        const formatDuration = (seconds) => {
+            if (!seconds) return '0 мин';
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            return h > 0 ? `${h} ч ${m} мин` : `${m} мин`;
+        };
+
+        const formatTonnage = (kg) => {
+            if (kg >= 1000) return `${(kg / 1000).toFixed(1)} т`;
+            return `${Math.round(kg)} кг`;
+        };
+
+        const periodLabels = { week: 'Неделя', month: 'Месяц', all: 'Всё время' };
+
+        return `
+            <div class="history-summary-panel mb-4" data-period="${period}">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="text-sm font-semibold text-surface-700 dark:text-surface-300">Сводка за ${periodLabels[period] || periodLabels.all}</h3>
+                    <div class="flex items-center gap-1" role="tablist" aria-label="Период">
+                        ${Object.entries(periodLabels).map(([key, label]) => `
+                            <button
+                                type="button"
+                                role="tab"
+                                aria-selected="${key === period}"
+                                data-period="${key}"
+                                class="history-period-tab px-3 py-1.5 text-xs font-semibold rounded-xl transition-colors ${key === period
+                                    ? 'bg-primary-600 text-white shadow-sm'
+                                    : 'text-surface-500 hover:text-surface-700 dark:text-surface-400 dark:hover:text-surface-200 bg-surface-100 dark:bg-white/5'}"
+                            >${label}</button>
+                        `).join('')}
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="glass rounded-2xl p-3">
+                        <div class="text-[10px] font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider mb-1">Тренировок</div>
+                        <div class="text-2xl font-bold text-primary-600 dark:text-primary-400 tabular-nums">${stats?.total_workouts ?? 0}</div>
+                    </div>
+                    <div class="glass rounded-2xl p-3">
+                        <div class="text-[10px] font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider mb-1">Тоннаж</div>
+                        <div class="text-2xl font-bold text-lime-600 dark:text-lime-400 tabular-nums">${formatTonnage(stats?.total_tonnage_kg ?? 0)}</div>
+                    </div>
+                    <div class="glass rounded-2xl p-3">
+                        <div class="text-[10px] font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider mb-1">Общее время</div>
+                        <div class="text-2xl font-bold text-surface-700 dark:text-surface-300 tabular-nums">${formatDuration(stats?.total_duration_seconds ?? 0)}</div>
+                    </div>
+                    <div class="glass rounded-2xl p-3">
+                        <div class="text-[10px] font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider mb-1">Ср. длительность</div>
+                        <div class="text-2xl font-bold text-surface-700 dark:text-surface-300 tabular-nums">${formatDuration(stats?.avg_duration_seconds ?? 0)}</div>
+                    </div>
+                    <div class="glass rounded-2xl p-3 col-span-2">
+                        <div class="text-[10px] font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider mb-1">Подходы</div>
+                        <div class="flex items-baseline gap-2">
+                            <span class="text-2xl font-bold text-surface-700 dark:text-surface-300 tabular-nums">${stats?.completed_sets ?? 0}</span>
+                            <span class="text-surface-400">/</span>
+                            <span class="text-2xl font-bold text-surface-500 dark:text-surface-400 tabular-nums">${stats?.total_sets ?? 0}</span>
+                            <span class="text-xs text-surface-400 ml-auto">завершено / всего</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
     // Chronological history: newest first, grouped by month, with a
     // "load more" page that keeps the sessions already on screen.
     async renderHistory(container, app, { limit = 20, append = false } = {}) {
         this.app = app;
         this.stopWorkoutTimer();
 
-        const historyState = this.historyState || { limit: limit, total: 0, sessions: [] };
-        if (!append) historyState.limit = limit;
+        const historyState = this.historyState || { 
+            limit: limit, 
+            total: 0, 
+            sessions: [], 
+            period: 'all',
+            searchQuery: '',
+        };
+        if (!append) {
+            historyState.limit = limit;
+            historyState.period = historyState.period || 'all';
+            historyState.searchQuery = historyState.searchQuery || '';
+        }
         this.historyState = historyState;
 
         let data;
@@ -2936,77 +5091,222 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             return;
         }
 
-        historyState.sessions = (data?.sessions || [])
-            .slice()
-            .sort((a, b) => new Date(b.completed_at || b.started_at) - new Date(a.completed_at || a.started_at));
-        historyState.total = data?.total || 0;
+        // Get local completed sessions that haven't synced yet
+        const localSessions = this.getLocalCompletedSessions();
 
-        this.renderHistoryList(container, app, historyState, false);
-    },
+        // Merge server sessions with local sessions (local first, newest first)
+        const serverSessions = (data?.sessions || []).slice();
 
-    renderHistoryList(container, app, historyState, failed) {
-        const sessions = historyState.sessions || [];
-        const hasMore = sessions.length < (historyState.total || 0);
-        this.recentSessions = sessions.filter(s => s.status === 'completed');
+        // DEDUPLICATION: Create a Set of server session IDs for O(1) lookup
+        const serverSessionIds = new Set(serverSessions.map(s => String(s.id)));
 
-        const groups = new Map();
-        sessions.forEach(session => {
-            const stamp = new Date(session.completed_at || session.started_at);
-            const label = isNaN(stamp.getTime())
-                ? 'Без даты'
-                : stamp.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
-            if (!groups.has(label)) groups.set(label, []);
-            groups.get(label).push(session);
+        // Filter out local sessions that already exist on the server (by ID)
+        const uniqueLocalSessions = localSessions.filter(local => {
+            const localId = String(local.id || local.key || '');
+            return localId && !serverSessionIds.has(localId);
         });
 
-        const statusLabel = (status) =>
-            status === 'completed' ? 'Завершена' : status === 'cancelled' ? 'Отменена' : 'Активна';
+        // Combine: unique local sessions first, then all server sessions
+        const allSessions = [...uniqueLocalSessions, ...serverSessions]
+            .sort((a, b) => new Date(b.completed_at || b.started_at) - new Date(a.completed_at || a.started_at));
 
-        const groupBlocks = [...groups.entries()].map(([label, items]) => `
-            <div class="mb-5">
-                <h3 class="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">${this.escapeHtml(label)}</h3>
-                <div class="space-y-2">
-                    ${items.map(session => {
-                        const metrics = this.getWorkoutMetrics(session);
-                        const stamp = new Date(session.completed_at || session.started_at);
-                        // The coach only reads a session that was actually done, so
-                        // an active or cancelled row never offers the analysis.
-                        const analyzable = (session.status === 'completed' || !session.status)
-                            && metrics.completed > 0
-                            && !isNaN(parseInt(session.id));
-                        return `
-                            <div class="glass rounded-2xl p-4 cursor-pointer btn-press" data-action="open-history-session" data-session-id="${session.id}">
-                                <div class="flex items-start justify-between gap-3">
-                                    <div class="min-w-0 flex-1">
-                                        <h4 class="font-semibold text-sm truncate" title="${this.escapeHtml(session.name || 'Тренировка')}">${this.escapeHtml(session.name || 'Тренировка')}</h4>
-                                        <p class="text-xs text-surface-500 dark:text-surface-400 mt-1">
-                                            ${isNaN(stamp.getTime()) ? '—' : `${Utils.formatDate(stamp.toISOString())} · ${Utils.formatTime(stamp.toISOString())}`}
-                                        </p>
+        historyState.sessions = allSessions;
+        historyState.total = (data?.total || 0) + uniqueLocalSessions.length;
+        historyState.hasLocalSessions = uniqueLocalSessions.length > 0;
+
+        // Fetch stats for the current period
+        const summaryHtml = await this.renderHistorySummary(container, app, historyState.period);
+
+        // Render full history with summary, search/filter, and list
+        this.renderHistoryList(container, app, historyState, false, summaryHtml);
+    },
+
+    // New helper: Get locally completed sessions from localStorage
+    getLocalCompletedSessions() {
+        const sessions = [];
+        try {
+            // Check completed_session_* keys
+            const keys = Object.keys(localStorage).filter(k => k.startsWith('completed_session_'));
+            keys.forEach(key => {
+                const session = JSON.parse(localStorage.getItem(key));
+                if (session && session.status === 'completed') {
+                    session._localOnly = true;
+                    sessions.push(session);
+                }
+            });
+
+            // Check offline_local_session
+            const localSessionRaw = localStorage.getItem(LOCAL_SESSION_KEY);
+            if (localSessionRaw) {
+                const localSession = JSON.parse(localSessionRaw);
+                if (localSession && localSession.status === 'completed') {
+                    localSession._localOnly = true;
+                    sessions.push(localSession);
+                }
+            }
+        } catch (err) {
+            console.warn('[Workouts] Failed to read local completed sessions:', err);
+        }
+        return sessions;
+    },
+
+renderHistoryList(container, app, historyState, failed, summaryHtml = '') {
+        const allSessions = historyState.sessions || [];
+        const period = historyState.period || 'all';
+        const searchQuery = (historyState.searchQuery || '').toLowerCase().trim();
+
+        // Filter sessions by period
+        const now = new Date();
+        let periodStart = null;
+        if (period === 'week') {
+            periodStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        } else if (period === 'month') {
+            periodStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        }
+
+        const filteredSessions = allSessions.filter(session => {
+            const stamp = new Date(session.completed_at || session.started_at);
+            if (periodStart && stamp < periodStart) return false;
+            if (searchQuery) {
+                const nameMatch = (session.name || '').toLowerCase().includes(searchQuery);
+                const exerciseMatch = (session.exercises || []).some(ex => 
+                    (ex.name || '').toLowerCase().includes(searchQuery)
+                );
+                if (!nameMatch && !exerciseMatch) return false;
+            }
+            return true;
+        });
+
+        const hasMore = filteredSessions.length < (historyState.total || 0);
+        this.recentSessions = filteredSessions.filter(s => s.status === 'completed');
+
+        // Group by month, then by week within month
+        const monthGroups = new Map();
+        filteredSessions.forEach(session => {
+            const stamp = new Date(session.completed_at || session.started_at);
+            if (isNaN(stamp.getTime())) {
+                if (!monthGroups.has('Без даты')) monthGroups.set('Без даты', []);
+                monthGroups.get('Без даты').push(session);
+                return;
+            }
+            const monthLabel = stamp.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+            if (!monthGroups.has(monthLabel)) monthGroups.set(monthLabel, []);
+            monthGroups.get(monthLabel).push(session);
+        });
+
+        const statusLabel = (status, isLocalOnly) => {
+            if (isLocalOnly) return 'Ожидает синхронизации';
+            return status === 'completed' ? 'Завершена' : status === 'cancelled' ? 'Отменена' : 'Активна';
+        };
+
+        // Build exercise preview for a session
+        const buildExercisePreview = (session) => {
+            const exercises = session.exercises || [];
+            if (exercises.length === 0) return '';
+            const topExercises = exercises.slice(0, 3);
+            const previewLines = topExercises.map(ex => {
+                const completedSets = (ex.sets || []).filter(s => s.is_completed);
+                if (completedSets.length === 0) return null;
+                const setStrs = completedSets.map(s => `${s.weight_kg ?? '?'}×${s.reps ?? '?'}`).join(', ');
+                return `${this.escapeHtml(ex.name)}: ${setStrs} (${completedSets.length} подх.)`;
+            }).filter(Boolean);
+            if (previewLines.length === 0) return '';
+            const more = exercises.length > 3 ? ` +${exercises.length - 3} упр.` : '';
+            return `<div class="mt-2 text-[11px] text-surface-500 dark:text-surface-400 line-clamp-2 whitespace-pre-line">${previewLines.join('\n')}${more}</div>`;
+        };
+
+        // Group sessions by week within each month
+        const getWeekLabel = (date) => {
+            const startOfWeek = new Date(date);
+            startOfWeek.setDate(date.getDate() - date.getDay() + 1); // Monday
+            const endOfWeek = new Date(startOfWeek);
+            endOfWeek.setDate(startOfWeek.getDate() + 6);
+            return `${startOfWeek.getDate()}.${String(startOfWeek.getMonth() + 1).padStart(2, '0')}–${endOfWeek.getDate()}.${String(endOfWeek.getMonth() + 1).padStart(2, '0')}`;
+        };
+
+        const monthBlocks = [...monthGroups.entries()].map(([monthLabel, items]) => {
+            // Sort items by date descending
+            items.sort((a, b) => new Date(b.completed_at || b.started_at) - new Date(a.completed_at || a.started_at));
+            
+            // Group by week
+            const weekGroups = new Map();
+            items.forEach(session => {
+                const stamp = new Date(session.completed_at || session.started_at);
+                if (isNaN(stamp.getTime())) {
+                    if (!weekGroups.has('Без даты')) weekGroups.set('Без даты', []);
+                    weekGroups.get('Без даты').push(session);
+                    return;
+                }
+                const weekLabel = getWeekLabel(stamp);
+                if (!weekGroups.has(weekLabel)) weekGroups.set(weekLabel, []);
+                weekGroups.get(weekLabel).push(session);
+            });
+
+            const weekBlocks = [...weekGroups.entries()].map(([weekLabel, weekItems]) => `
+                <div class="mb-3">
+                    ${weekLabel !== 'Без даты' && monthGroups.size > 1 ? `
+                        <h4 class="text-xs font-medium text-surface-500 dark:text-surface-400 mb-1 px-1">${this.escapeHtml(weekLabel)}</h4>
+                    ` : ''}
+                    <div class="space-y-2">
+                        ${weekItems.map(session => {
+                            const metrics = this.getWorkoutMetrics(session);
+                            const stamp = new Date(session.completed_at || session.started_at);
+                            const isLocalOnly = session._localOnly === true;
+                            const analyzable = (session.status === 'completed' || !session.status)
+                                && metrics.completed > 0
+                                && !isNaN(parseInt(session.id))
+                                && !isLocalOnly;
+                            const exercisePreview = buildExercisePreview(session);
+                            return `
+                                <div class="glass rounded-2xl p-4 cursor-pointer btn-press" data-action="open-history-session" data-session-id="${session.id}">
+                                    <div class="flex items-start justify-between gap-3">
+                                        <div class="min-w-0 flex-1">
+                                            <div class="flex items-center gap-2">
+                                                <h4 class="font-semibold text-sm truncate" title="${this.escapeHtml(session.name || 'Тренировка')}">${this.escapeHtml(session.name || 'Тренировка')}</h4>
+                                                ${isLocalOnly ? `
+                                                    <span class="flex-shrink-0 px-2 py-0.5 text-[10px] font-medium bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 rounded-full border border-amber-300 dark:border-amber-700">
+                                                        Ожидает синхронизации
+                                                    </span>
+                                                ` : ''}
+                                            </div>
+                                            <p class="text-xs text-surface-500 dark:text-surface-400 mt-1">
+                                                ${isNaN(stamp.getTime()) ? '—' : `${Utils.formatDate(stamp.toISOString())} · ${Utils.formatTime(stamp.toISOString())}`}
+                                            </p>
+                                            ${exercisePreview}
+                                        </div>
+                                        <div class="text-right flex-shrink-0">
+                                            <p class="text-sm font-bold text-primary-600 dark:text-primary-400">${Math.round(metrics.tonnage)} кг</p>
+                                            <p class="text-[11px] text-surface-400">${metrics.completed}/${metrics.total} подх.</p>
+                                        </div>
                                     </div>
-                                    <div class="text-right flex-shrink-0">
-                                        <p class="text-sm font-bold text-primary-600 dark:text-primary-400">${Math.round(metrics.tonnage)} кг</p>
-                                        <p class="text-[11px] text-surface-400">${metrics.completed}/${metrics.total} подх.</p>
-                                    </div>
-                                </div>
-                                <div class="flex items-center gap-2 mt-2 text-[11px] text-surface-400">
-                                    <span>${Utils.formatDuration(session.duration_seconds || 0)}</span>
-                                    <span>·</span>
-                                    <span>${(session.exercises || []).length} упр.</span>
-                                    <span>·</span>
-                                    <span>${statusLabel(session.status)}</span>
-                                    ${analyzable ? `<button type="button" data-action="history-analyze-ai" data-session-id="${session.id}"
-                                            class="ml-auto flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold ${session.has_ai_analysis ? 'bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300' : 'bg-surface-100 dark:bg-white/5 text-surface-500 dark:text-surface-400'}">
+                                    <div class="flex items-center gap-2 mt-2 text-[11px] text-surface-400">
+                                        <span>${Utils.formatDuration(session.duration_seconds || 0)}</span>
+                                        <span>·</span>
+                                        <span>${(session.exercises || []).length} упр.</span>
+                                        <span>·</span>
+                                        <span>${statusLabel(session.status, isLocalOnly)}</span>
+                                        ${analyzable ? `<button type="button" data-action="history-analyze-ai" data-session-id="${session.id}"
+                                                class="ml-auto flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold ${session.has_ai_analysis ? 'bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300' : 'bg-surface-100 dark:bg-white/5 text-surface-500 dark:text-surface-400'}">
                                             <span class="badge">✦ ИИ</span>
                                             <span>${session.has_ai_analysis ? 'Пересчитать' : 'Разобрать'}</span>
                                         </button>` : ''}
+                                    </div>
                                 </div>
-                            </div>
-                        `;
-                    }).join('')}
+                            `;
+                        }).join('')}
+                    </div>
                 </div>
-            </div>
-        `).join('');
+            `).join('');
 
+            return `
+                <div class="mb-5">
+                    <h3 class="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">${this.escapeHtml(monthLabel)}</h3>
+                    ${weekBlocks}
+                </div>
+            `;
+        }).join('');
+
+        const searchInputId = 'history-search-input';
         const html = `
             <div class="p-4">
                 <div class="flex items-center mb-4">
@@ -3014,23 +5314,85 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
                     <h2 class="text-xl font-bold">История тренировок</h2>
                 </div>
 
+                ${summaryHtml}
+
+                <!-- Search & Filter Bar -->
+                <div class="mb-4 space-y-3">
+                    <div class="relative">
+                        <input
+                            type="search"
+                            id="${searchInputId}"
+                            placeholder="Поиск по названию или упражнению…"
+                            value="${this.escapeHtml(historyState.searchQuery || '')}"
+                            class="w-full px-4 py-2.5 pl-10 glass rounded-xl text-sm bg-surface-50 dark:bg-white/5 placeholder:text-surface-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20"
+                            aria-label="Поиск тренировок"
+                        >
+                        <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                        </svg>
+                    </div>
+                    <div class="flex items-center gap-2 overflow-x-auto pb-2" role="tablist" aria-label="Период">
+                        ${['all', 'month', 'week'].map(key => `
+                            <button
+                                type="button"
+                                role="tab"
+                                aria-selected="${key === period}"
+                                data-period="${key}"
+                                class="history-period-tab-filter px-3 py-1.5 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap flex-shrink-0 ${key === period
+                                    ? 'bg-primary-600 text-white shadow-sm'
+                                    : 'text-surface-500 hover:text-surface-700 dark:text-surface-400 dark:hover:text-surface-200 bg-surface-100 dark:bg-white/5'}"
+                            >${key === 'all' ? 'Всё время' : key === 'month' ? 'Месяц' : 'Неделя'}</button>
+                        `).join('')}
+                    </div>
+                </div>
+
                 ${failed
                     ? '<div class="text-xs text-amber-600 dark:text-amber-400 mb-3">Не удалось обновить список, показаны ранее загруженные данные</div>'
                     : ''}
 
-                ${sessions.length === 0
-                    ? `<div class="text-center py-8 text-surface-400">Ещё нет тренировок. Начните первую!</div>`
-                    : `${groupBlocks}
-                        ${hasMore ? '<button type="button" data-action="history-load-more" class="w-full py-2.5 glass rounded-xl text-sm font-semibold">Показать ещё</button>' : ''}`}
+                ${historyState.hasLocalSessions ? `
+                    <div class="text-xs text-amber-600 dark:text-amber-400 mb-3 flex items-center gap-1">
+                        <span>⏳</span>
+                        <span>Некоторые тренировки ожидают синхронизации с сервером</span>
+                    </div>
+                ` : ''}
+
+                ${filteredSessions.length === 0
+                    ? `<div class="text-center py-8 text-surface-400">${searchQuery ? 'Ничего не найдено. Попробуйте другой запрос.' : 'Ещё нет тренировок. Начните первую!'}</div>`
+                    : `${monthBlocks}
+                        ${hasMore ? '<button type="button" data-action="history-load-more" class="w-full py-2.5 glass rounded-xl text-sm font-semibold mt-4">Показать ещё</button>' : ''}`}
             </div>
         `;
 
         container.innerHTML = html;
 
+        // Attach search input listener with debounce
+        const searchInput = container.querySelector(`#${searchInputId}`);
+        if (searchInput) {
+            let debounceTimer = null;
+            searchInput.addEventListener('input', (e) => {
+                clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(() => {
+                    historyState.searchQuery = e.target.value;
+                    this.renderHistoryList(container, app, historyState, false, summaryHtml);
+                }, 300);
+            });
+        }
+
+        // Attach period filter listeners
+        container.querySelectorAll('[data-period]').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const newPeriod = e.currentTarget.dataset.period;
+                if (newPeriod === historyState.period) return;
+                historyState.period = newPeriod;
+                // Refetch stats for new period
+                const newSummaryHtml = await this.renderHistorySummary(container, app, newPeriod);
+                this.renderHistoryList(container, app, historyState, false, newSummaryHtml);
+            });
+        });
+
         container.querySelectorAll('[data-action="history-analyze-ai"]').forEach(btn => {
             btn.addEventListener('click', (e) => {
-                // The row itself opens the session detail; the coach button is a
-                // sibling action, so the click must not travel up to it.
                 e.stopPropagation();
                 const sessionId = parseInt(e.currentTarget.dataset.sessionId);
                 if (!isNaN(sessionId)) {
@@ -3061,6 +5423,10 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
     // Detailed history for one session: summary metrics, delta vs the previous
     // session, generated summary and per-exercise tonnage / e1RM trend lines.
     async renderHistoryDetail(container, app, sessionId) {
+        if (!container) {
+            console.error('[Workouts] renderHistoryDetail: container is null/undefined');
+            return;
+        }
         this.app = app;
         this.stopWorkoutTimer();
         container.innerHTML = Components.loadingSpinner();
@@ -3235,8 +5601,8 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
         await this.mountAiDetailCard(container, app, detail.id);
     },
 
-    /**
-     * Puts the coach's verdict of a session into the history detail screen.
+/**
+     * Mount the AI analysis card in the history detail view.
      *
      * Opening the screen only reads: the card renders immediately, and a
      * session without a verdict shows a manual trigger ("Сформировать
@@ -3247,18 +5613,42 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
      * card is swapped in place when the answer arrives, so the session's
      * metrics, trends and set list underneath are not re-rendered under
      * the user's thumb.
+     *
+     * If the background AI analysis (started on completion) is still running,
+     * the endpoint returns `available: false` with a reason. In that case we
+     * show a loading state and poll until the analysis is ready.
      */
     async mountAiDetailCard(container, app, sessionId) {
         const host = container.querySelector('#ai-workout-detail');
         if (!host) return null;
 
-        const payload = await this.loadAiAnalysis(app, sessionId);
+        let payload = await this.loadAiAnalysis(app, sessionId);
         if (!payload) {
             host.remove();
             return null;
         }
 
-        const draw = (current, busy = false) => {
+        const draw = (current, busy = false, isLoading = false) => {
+            if (isLoading) {
+                host.innerHTML = `
+                    <section class="ai-workout glass rounded-3xl" aria-label="Разбор от ИИ-тренера">
+                        <div class="ai-workout__head">
+                            <span class="ai-workout__title">
+                                <svg class="ai-workout__icon" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>
+                                Разбор от ИИ-тренера
+                            </span>
+                        </div>
+                        <div class="ai-workout__loading flex items-center justify-center py-8">
+                            <svg class="animate-spin w-8 h-8 text-primary-600" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            <span class="ml-3 text-surface-500 dark:text-surface-400">ИИ анализирует тренировку...</span>
+                        </div>
+                    </section>
+                `;
+                return;
+            }
             host.innerHTML = Components.aiWorkoutCard(current, {
                 allowAnalyze: true,
                 analyzeLabel: 'Сформировать ИИ-разбор',
@@ -3268,9 +5658,6 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             const trigger = host.querySelector('[data-action="analyze-workout-ai"]');
             trigger?.addEventListener('click', async (e) => {
                 e.stopPropagation();
-                // Locked and spun right away, so the press is answered by
-                // the button itself; analyzeWorkout holds the cooldown
-                // that refuses the next ask for half a minute.
                 if (current?.available === true) {
                     app.showToast('Анализ тренировки уже сохранён.', 'info');
                     return;
@@ -3284,110 +5671,62 @@ const exerciseCards = (session.exercises || []).map((ex, index, arr) => {
             });
         };
 
+        // If analysis is not available yet but a background task is in progress,
+        // show loading state and poll for completion.
+        const isAnalysisInProgress = payload.available === false &&
+            payload.reason &&
+            (payload.reason.includes('in progress') ||
+             payload.reason.includes('pending') ||
+             payload.reason.includes('ожид') ||
+             payload.reason.includes('формир') ||
+             payload.reason.includes('выполня'));
+
+        if (isAnalysisInProgress) {
+            draw(payload, false, true);
+            payload = await this.pollForAiAnalysis(app, sessionId, { timeout: 60000, intervalMs: 3000 });
+            if (!payload) {
+                // Polling timed out, show the empty state with the trigger button
+                payload = await this.loadAiAnalysis(app, sessionId) || { available: false, reason: 'ИИ-разбор не готов. Попробуйте позже.' };
+            }
+        }
+
         draw(payload);
         return payload;
     },
 
-showQuickStartModal(app) {
-        this.app = app;
-        const modal = document.createElement('div');
-        modal.id = 'quick-start-modal';
-        modal.className = 'fixed inset-0 z-50 flex items-center justify-center modal-backdrop pointer-events-auto';
-        modal.innerHTML = `
-            <div class="glass-strong rounded-2xl p-6 mx-4 max-w-sm w-full">
-                <div class="flex justify-between items-center mb-1">
-                    <h3 class="text-lg font-bold">Быстрый старт</h3>
-                    <button type="button" data-action="close-quick-start" class="text-surface-500 hover:text-surface-900 dark:text-surface-400 p-1">✕</button>
-                </div>
-                <p class="text-xs text-surface-500 dark:text-surface-400 mb-4">
-                    Выберите цель — упражнения и подходы подставятся автоматически, веса берутся из прошлых тренировок.
-                </p>
-                <div class="space-y-3">
-                    ${QUICK_GOALS.map(goal => `
-                        <div class="glass rounded-2xl p-3">
-                            <div class="mb-2">
-                                <span class="block font-semibold text-sm">${goal.title}</span>
-                                <span class="block text-[11px] text-surface-500 dark:text-surface-400">${goal.subtitle}</span>
-                            </div>
-                            <div class="flex items-center gap-2">
-                                <button type="button" data-goal="${goal.value}"
-                                        class="flex-1 px-3.5 py-2 text-xs font-semibold whitespace-nowrap rounded-xl bg-primary-600 text-white hover:bg-primary-700 btn-press">
-                                    Старт
-                                </button>
-                                <button type="button" data-goal-ai="${goal.value}"
-                                         title="Старт + ИИ" aria-label="Начать ${goal.title} с ИИ-тренером"
-                                         class="flex-1 px-3.5 py-2 text-xs font-semibold whitespace-nowrap rounded-xl bg-purple-500/10 dark:bg-purple-500/20 border border-purple-500/30 text-purple-600 dark:text-purple-300 hover:bg-purple-500/20 dark:hover:bg-purple-500/30 btn-press">
-                                    ✦ Старт + ИИ
-                                </button>
-                            </div>
-                        </div>
-                    `).join('')}
-                </div>
-                <p class="text-[11px] text-surface-500 dark:text-surface-400 mt-3">
-                    Кнопка с роботом запускает ту же тренировку и просит ИИ-тренер подобрать вес, повторы и отдых под вашу историю.
-                </p>
-            </div>
-        `;
-
-        const onKeydown = (e) => {
-            if (e.key === 'Escape') close();
-        };
-        const close = () => {
-            document.removeEventListener('keydown', onKeydown);
-            modal.remove();
-        };
-
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) close();
-        });
-        modal.querySelector('[data-action="close-quick-start"]').addEventListener('click', close);
-        modal.querySelectorAll('[data-goal]').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                const goal = btn.dataset.goal;
-                close();
-                await this.startQuickWorkout(app, goal);
-            });
-        });
-        modal.querySelectorAll('[data-goal-ai]').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                if (this.isGeneratingPreview) return;
-                const goal = btn.dataset.goalAi;
-                btn.disabled = true;
-                close();
-                try {
-                    await this.startQuickWorkoutWithAi(app, goal, btn);
-                } finally {
-                    if (btn) btn.disabled = false;
+    /**
+     * Poll for AI analysis completion when a background task is running.
+     * Returns the analysis payload when available, or null on timeout.
+     */
+    async pollForAiAnalysis(app, sessionId, { timeout = 60000, intervalMs = 3000 } = {}) {
+        const startTime = Date.now();
+        while (Date.now() - startTime < timeout) {
+            await new Promise(resolve => setTimeout(resolve, intervalMs));
+            if (window.App?.state?.isOnline === false || navigator.onLine === false) {
+                return null;
+            }
+            try {
+                const payload = await this.loadAiAnalysis(app, sessionId, { quiet: true });
+                if (payload?.available === true) {
+                    return payload;
                 }
-            });
-        });
-        document.addEventListener('keydown', onKeydown);
-
-        (document.getElementById('modals') || document.body).appendChild(modal);
+            } catch (err) {
+                console.warn('[Workouts] AI analysis poll failed:', err);
+            }
+        }
+        return null;
     },
 
-    async startQuickWorkout(app, goal) {
+    async startEmptyWorkout(app) {
         this.app = app;
         this.stopWorkoutTimer();
 
-        // Exercises for a quick start are picked by the server, so it requires a connection
-        if (navigator.onLine === false) {
-            app.showToast('Быстрый старт требует подключения к интернету. Выберите шаблон — он работает офлайн', 'info');
-            return;
-        }
+        // Create empty local session immediately (no network needed)
+        const session = this.buildEmptyLocalSession();
+        this.saveLocalSession(session);
 
-        // Запускаем API запрос СРАЗУ, параллельно с отсчетом
-        const sessionPromise = API.post('/workouts/sessions/quick-start', { goal }, app.state.tokens.access);
-        this.renderCountdown(app.elements.pageContent, () => {});
-
-        try {
-            const { session_id } = await sessionPromise;
-            await this.renderWorkoutScreen(app.elements.pageContent, app, session_id);
-        } catch (err) {
-            console.error('Quick start error:', err);
-            app.showToast(err?.offlineQueued ? 'Быстрый старт требует подключения к интернету. Выберите шаблон — он работает офлайн' : (err.message || 'Ошибка быстрого старта'), 'error');
-            await this.render(app.elements.pageContent, app);
-        }
+        // Open workout screen directly
+        await this.renderWorkoutScreen(app.elements.pageContent, app, session.key);
     },
 
     renderPersonalRecords(container, app, records = null) {
@@ -4418,6 +6757,280 @@ showQuickStartModal(app) {
                 // ignore
             }
             app.showToast(err.message || 'Ошибка загрузки каталога', 'error');
+        }
+    },
+
+    async showAddExerciseModal(app, session, sessionId) {
+        // Force cleanup of any existing modal
+        const existing = document.getElementById('add-exercise-modal');
+        if (existing) existing.remove();
+        this.addExerciseModalOpen = false;
+        if (this.addExerciseModalOpen) return;
+        this.addExerciseModalOpen = true;
+        this.app = app;
+        const token = app.state.tokens.access;
+        const isLocal = this.isLocalSession(session);
+        const sessionKey = session.isLocal ? session.key : session.id;
+
+        let meta = { muscle_groups: {}, equipment: {} };
+        let exercises = [];
+        let search = '';
+        let filterGroup = '';
+        let searchTimer = null;
+
+        const listExercies = () => {
+            const listEl = document.getElementById('ae-list');
+            if (!listEl) return;
+            const rows = exercises.filter(ex => {
+                const g = !filterGroup || ex.muscle_group === filterGroup;
+                const s = !search || ex.name.toLowerCase().includes(search.toLowerCase());
+                return g && s;
+            });
+            listEl.innerHTML = rows.length === 0
+                ? '<div class="text-sm text-surface-400 dark:text-surface-500 text-center py-8">Ничего не найдено</div>'
+                : rows.map(ex => `
+                    <div class="glass rounded-xl p-3 flex items-center justify-between btn-press cursor-pointer transition-all hover:scale-[1.01]" data-ex-id="${ex.id}">
+                        <div class="flex-1 min-w-0">
+                            <div class="font-semibold text-sm text-surface-900 dark:text-surface-50 truncate">${this.escapeHtml(ex.name)}</div>
+                            <div class="mt-1 flex flex-wrap items-center gap-1">
+                                <span class="text-[9px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded bg-zinc-500/10 dark:bg-white/5 text-zinc-500 dark:text-zinc-400">${this.escapeHtml(meta.muscle_groups?.[ex.muscle_group] || ex.muscle_group)}</span>
+                                <span class="text-[9px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded bg-lime-500/15 text-lime-600 dark:text-lime-300">${this.escapeHtml(meta.equipment?.[ex.equipment] || ex.equipment)}</span>
+                            </div>
+                        </div>
+                        <span class="text-surface-400 dark:text-surface-500 flex-shrink-0 ml-2">⇢</span>
+                    </div>
+                `).join('');
+
+            listEl.querySelectorAll('[data-ex-id]').forEach(item => {
+                item.addEventListener('click', () => {
+                    const ex = exercises.find(e => String(e.id) === String(item.dataset.exId));
+                    if (ex) selectExercise(ex);
+                });
+            });
+        };
+
+        const closeModal = () => {
+            if (!this.addExerciseModalOpen) return;
+            this.addExerciseModalOpen = false;
+            clearTimeout(searchTimer);
+            searchTimer = null;
+            document.removeEventListener('keydown', onKeydown);
+            const m = document.getElementById('add-exercise-modal');
+            if (m) m.remove();
+            document.body.style.overflow = '';
+            document.body.style.pointerEvents = '';
+        };
+
+        const onKeydown = (e) => {
+            if (e.key === 'Escape') closeModal();
+        };
+
+        const selectExercise = async (ex) => {
+            closeModal();
+            if (isLocal) {
+                const newExerciseId = TEMP_EXERCISE_ID_BASE - Math.floor(Math.random() * 10000);
+                const maxOrder = Math.max(0, ...session.exercises.map(e => e.order || 0));
+                // FORCE 1 set for free-form additions, ignore catalog default
+                const targetSets = 1;
+                let setCounter = 0;
+                const newLocalEx = {
+                    id: newExerciseId,
+                    name: ex.name,
+                    order: maxOrder + 1,
+                    notes: ex.muscle_group ? `${ex.muscle_group} / ${ex.equipment}` : null,
+                    sets: Array.from({ length: targetSets }, (_, i) => {
+                        setCounter += 1;
+                        return {
+                            id: TEMP_SET_ID_BASE - setCounter,
+                            exercise_id: newExerciseId,
+                            set_number: i + 1,
+                            weight_kg: 0,
+                            reps: 10,
+                            rest_seconds: 90,
+                            is_completed: false,
+                        };
+                    }),
+                };
+                session.exercises = [...(session.exercises || []), newLocalEx];
+                this.exercisesModified = true;
+                this.persistLocalSession(session);
+                await this.renderWorkoutScreen(app.elements.pageContent, app, sessionKey);
+                return;
+            }
+
+            // For server sessions: optimistically add to currentSession
+            const optimisticEx = {
+                id: `temp-${Date.now()}`,
+                name: ex.name,
+                order: Math.max(0, ...(session.exercises?.map(e => e.order || 0) || [0])) + 1,
+                sets: Array.from({ length: 1 }, (_, i) => ({
+                    id: `temp-set-${Date.now()}-${i}`,
+                    exercise_id: `temp-${Date.now()}`,
+                    set_number: i + 1,
+                    weight_kg: 0,
+                    reps: 10,
+                    rest_seconds: 90,
+                    is_completed: false,
+                })),
+                exercise_type: ex.exercise_type || 'weight_reps',
+            };
+
+            session.exercises = [...(session.exercises || []), optimisticEx];
+            this.exercisesModified = true;
+            this.persistLocalSession(session); // Save optimistically
+
+            const panel = document.querySelector('#add-exercise-modal > div');
+            if (panel) {
+                panel.classList.add('opacity-70', 'cursor-wait');
+            }
+            try {
+                await app.ensureFreshToken();
+                const resp = await API.post(`/workouts/sessions/${sessionId}/exercises`, {
+                    exercise_id: ex.id,
+                }, token);
+                app.showToast('Упражнение добавлено!', 'success');
+                // Re-render will fetch fresh session from server
+                await this.renderWorkoutScreen(app.elements.pageContent, app, sessionId);
+            } catch (err) {
+                if (!err?.offlineQueued) {
+                    app.showToast(err.message || 'Ошибка добавления упражнения', 'error');
+                    // Rollback optimistic add on non-network error
+                    session.exercises = session.exercises.filter(e => e.id !== optimisticEx.id);
+                    this.persistLocalSession(session);
+                } else {
+                    // Offline: keep optimistic add, will sync when online
+                    await this.renderWorkoutScreen(app.elements.pageContent, app, sessionId);
+                }
+            } finally {
+                if (panel) {
+                    panel.classList.remove('opacity-70', 'cursor-wait');
+                }
+            }
+        };
+
+        const groupOptions = Object.entries(meta.muscle_groups || {}).map(([v, l]) =>
+            `<button type="button" data-group="${v}" class="px-3 py-1.5 text-xs rounded-xl glass transition-all ${filterGroup === v ? 'bg-primary-600 text-white' : ''}">${this.escapeHtml(l)}</button>`
+        ).join('');
+
+        const modalHtml = `
+            <div id="add-exercise-modal" class="fixed inset-0 z-50 flex items-end sm:items-center justify-center min-h-screen p-0 sm:p-4 modal-backdrop pointer-events-auto opacity-0 transition-opacity duration-200">
+                <div class="w-full sm:max-w-md bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden transform transition-all duration-200 scale-95 opacity-0 drum-sheet-safe">
+                    <div class="w-12 h-1 rounded-full bg-zinc-300 dark:bg-zinc-700 mx-auto mt-2 mb-1 flex-shrink-0"></div>
+                     <div class="px-4 pb-3 flex-shrink-0 flex items-center justify-between gap-3">
+                         <div class="min-w-0">
+                             <h3 class="text-lg font-bold truncate">Добавить упражнение</h3>
+                         </div>
+                         <button type="button" data-action="close-add-exercise"
+                                 class="w-8 h-8 rounded-xl bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400 text-sm flex-shrink-0 hover:bg-zinc-200 dark:hover:bg-white/10 transition-colors">✕</button>
+                     </div>
+                    <input id="ae-search" type="text" placeholder="Поиск упражнения..."
+                           class="w-full mt-0 px-3 py-2.5 text-sm glass-input rounded-xl mx-4 mb-2" autocomplete="off" style="width: calc(100% - 2rem);">
+                    <div class="px-4 pb-2 flex-shrink-0 overflow-x-auto">
+                        <div class="flex gap-1.5 items-center whitespace-nowrap">
+                            <button type="button" data-group="" class="px-3 py-1.5 text-xs rounded-xl glass transition-all ${filterGroup === '' ? 'bg-primary-600 text-white' : ''}">Все</button>
+                            ${groupOptions}
+                        </div>
+                    </div>
+                    <div id="ae-list" class="flex-1 min-h-0 overflow-y-auto px-4 pb-4 space-y-2">
+                        <div class="text-sm text-surface-400 dark:text-surface-500 text-center py-8">Загрузка...</div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        const modal = document.createElement('div');
+        modal.innerHTML = modalHtml;
+        const root = modal.firstElementChild;
+        (document.getElementById('modals') || document.body).appendChild(root);
+        const panel = root.querySelector(':scope > div');
+        document.body.style.overflow = 'hidden';
+
+        document.addEventListener('keydown', onKeydown);
+        root.addEventListener('click', (e) => {
+            if (e.target === root) closeModal();
+        });
+
+        root.querySelector('[data-action="close-add-exercise"]')?.addEventListener('click', closeModal);
+
+        // Wire up search input with debounce
+        const searchEl = root.querySelector('#ae-search');
+        if (searchEl) {
+            searchEl.addEventListener('input', () => {
+                clearTimeout(searchTimer);
+                searchTimer = setTimeout(() => {
+                    search = searchEl.value.trim();
+                    listExercies();
+                }, 300);
+            });
+        }
+
+        // Wire up filter chips
+        root.querySelectorAll('button[data-group]').forEach(chip => {
+            chip.addEventListener('click', () => {
+                filterGroup = chip.dataset.group;
+                root.querySelectorAll('button[data-group]').forEach(c => {
+                    c.classList.toggle('bg-primary-600', c === chip);
+                    c.classList.toggle('text-white', c === chip);
+                });
+                listExercies();
+            });
+        });
+
+        // Entrance animation
+        requestAnimationFrame(() => {
+            root.classList.add('opacity-100');
+            if (panel) {
+                panel.classList.remove('scale-95', 'opacity-0');
+                panel.classList.add('scale-100', 'opacity-100');
+            }
+            if (searchEl) searchEl.focus();
+        });
+
+        // Fetch exercises
+        try {
+            const { meta: resMeta, exercises: resExercises } = await this.fetchExerciseCatalog(token);
+            meta = resMeta || { muscle_groups: {}, equipment: {} };
+            exercises = resExercises;
+            // Re-render filter chips with the updated meta
+            const chipsContainer = root.querySelector('.px-4.pb-2.overflow-x-auto');
+            if (chipsContainer) {
+                chipsContainer.innerHTML = `
+                    <div class="flex gap-1.5 items-center whitespace-nowrap">
+                        <button type="button" data-group="" class="px-3 py-1.5 text-xs rounded-xl glass transition-all ${filterGroup === '' ? 'bg-primary-600 text-white' : ''}">Все</button>
+                        ${Object.entries(meta.muscle_groups || {}).map(([v, l]) =>
+                            `<button type="button" data-group="${v}" class="px-3 py-1.5 text-xs rounded-xl glass transition-all ${filterGroup === v ? 'bg-primary-600 text-white' : ''}">${this.escapeHtml(l)}</button>`
+                        ).join('')}
+                    </div>
+                `;
+                root.querySelectorAll('button[data-group]').forEach(chip => {
+                    chip.addEventListener('click', () => {
+                        filterGroup = chip.dataset.group;
+                        root.querySelectorAll('button[data-group]').forEach(c => {
+                            c.classList.toggle('bg-primary-600', c === chip);
+                            c.classList.toggle('text-white', c === chip);
+                        });
+                        listExercies();
+                    });
+                });
+            }
+            listExercies();
+        } catch (err) {
+            try {
+                const [cachedExercises, cachedMeta] = await Promise.all([
+                    DB.getExerciseCatalog(),
+                    DB.getExerciseCatalogMeta(),
+                ]);
+                if (cachedExercises && cachedExercises.length > 0) {
+                    meta = cachedMeta || { muscle_groups: {}, equipment: {} };
+                    exercises = cachedExercises;
+                    listExercies();
+                    app.showToast('Каталог загружен из кэша (оффлайн)', 'info');
+                } else {
+                    app.showToast(err.message || 'Ошибка загрузки каталога', 'error');
+                }
+            } catch (cacheError) {
+                app.showToast(err.message || 'Ошибка загрузки каталога', 'error');
+            }
         }
     }
 };

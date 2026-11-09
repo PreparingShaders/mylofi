@@ -2,8 +2,16 @@ console.log("[DEBUG] Loaded sync.js");
 import { DB } from './db.js';
 
 const SYNC_TAG = 'mylofi-sync';
-const MAX_RETRIES = 5;
-const SYNC_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_RETRIES = 3;
+const SYNC_TTL_MS = 6 * 60 * 60 * 1000;
+const PERIODIC_CLEANUP_INTERVAL_MS = 30 * 60 * 1000;
+
+async function generatePhotoHash(blob) {
+    const buffer = await blob.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
 
 function isTransientError(error) {
     if (error?.isNetworkError) return true;
@@ -75,10 +83,12 @@ export const SyncEngine = {
     itemResolver: null,
     onItemSynced: null,
     onOnline: null,
-    processing: false,
     initialized: false,
     authFailed: false,
     authFailedPromise: null,
+    _processingMutex: Promise.resolve(),
+    _periodicCleanupTimer: null,
+    _visibilityCleanupBound: null,
 
     /**
      * Reject a pending auth-failed promise so any caller awaiting queue
@@ -119,6 +129,86 @@ export const SyncEngine = {
         this.authFailedPromise = null;
     },
 
+    isPhotoUpload(item) {
+        return item && item.endpoint === '/nutrition/photos' && item.method === 'POST' && item.isFormData;
+    },
+
+    async _waitForPhotoAnalysisAndComplete(item, response) {
+        const mealId = response?.id ?? response?.meal_id;
+        if (!mealId) {
+            console.error('[SyncEngine] No mealId in photo upload response, marking failed');
+            await DB.updateSyncQueue(item.id, {
+                status: DB.SYNC_STATUS.FAILED,
+                error: 'no meal_id in response',
+                updatedAt: Date.now(),
+            });
+            if (typeof this.onItemSynced === 'function') {
+                await this.onItemSynced(item, null, { failed: true });
+            }
+            return;
+        }
+
+        try {
+            // Wait for analysis completion using Camera's poll mechanism
+            const Camera = window.Camera || (await import('./camera.js')).Camera;
+            const accessToken = item.accessToken || window.App?.state?.tokens?.access;
+            
+            if (!accessToken) {
+                throw new Error('No access token for analysis polling');
+            }
+
+            const outcome = await Camera.pollMealAnalysisStatus(mealId, accessToken);
+            
+            if (outcome === 'completed') {
+                // Analysis succeeded - now delete queue item and fire onItemSynced
+                await DB.deleteSyncQueue(item.id);
+                
+                // Temp ID resolution
+                if (this.isMutableCreate(item) && item.tempId && item.store) {
+                    try {
+                        await DB.resolveTempId(item.store, item.tempId, mealId);
+                    } catch (mappingError) {
+                        console.error('[SyncEngine] Temp ID resolution failed:', mappingError);
+                    }
+                }
+
+                if (typeof this.onItemSynced === 'function') {
+                    await this.onItemSynced(item, response, { failed: false });
+                }
+                
+                console.log('[SyncEngine] Photo analysis completed, sync finalized:', item.id);
+                
+                // Trigger UI refresh
+                window.dispatchEvent(new CustomEvent('mylofi:offline-sync', { detail: { synced: 1 } }));
+                window.dispatchEvent(new CustomEvent('mylofi:sync-completed', { detail: { syncedCount: 1 } }));
+                
+                const app = window.App;
+                if (app?.state?.currentScreen === 'main' && app?.state?.currentPage === 'nutrition') {
+                    if (typeof app.renderPage === 'function') {
+                        await app.renderPage('nutrition');
+                    }
+                }
+            } else {
+                // Analysis failed/timed out - keep item in queue for retry
+                await DB.updateSyncQueue(item.id, {
+                    status: DB.SYNC_STATUS.PENDING,  // Back to pending for retry
+                    retryCount: (item.retryCount || 0) + 1,
+                    error: `analysis ${outcome}`,
+                    updatedAt: Date.now(),
+                });
+                console.warn('[SyncEngine] Photo analysis failed, re-queuing:', item.id, outcome);
+            }
+        } catch (error) {
+            console.error('[SyncEngine] Error waiting for photo analysis:', error);
+            // On error, mark as failed but keep for manual retry
+            await DB.updateSyncQueue(item.id, {
+                status: DB.SYNC_STATUS.FAILED,
+                error: error?.message || 'analysis wait error',
+                updatedAt: Date.now(),
+            });
+        }
+    },
+
     init(opts = {}) {
         if (this.initialized) return;
         this.initialized = true;
@@ -126,12 +216,6 @@ export const SyncEngine = {
         this.itemResolver = opts.itemResolver || null;
         this.onItemSynced = opts.onItemSynced || null;
         this.onOnline = opts.onOnline || null;
-
-        window.addEventListener('online', () => {
-            console.log('[SyncEngine] Online event — scheduling queue flush');
-            this.processQueue().catch((error) => console.error('[SyncEngine] processQueue error:', error));
-            if (typeof this.onOnline === 'function') this.onOnline();
-        });
 
         if ('serviceWorker' in navigator && 'SyncManager' in window) {
             navigator.serviceWorker.ready.then((registration) => {
@@ -145,6 +229,9 @@ export const SyncEngine = {
 
         this.purgeStaleItems().catch((e) => console.warn('[SyncEngine] purgeStaleItems failed:', e));
 
+        this._startPeriodicCleanup();
+        this._setupVisibilityCleanup();
+
         // A successful login or token refresh clears the auth-failed flag
         // so the queue can resume on the next online/resume event.
         window.addEventListener('auth:logged-in', () => {
@@ -155,6 +242,36 @@ export const SyncEngine = {
         });
 
         console.log('[SyncEngine] Initialized');
+    },
+
+    isReady() {
+        return this.initialized && typeof this.replayFn === 'function';
+    },
+
+    _startPeriodicCleanup() {
+        if (this._periodicCleanupTimer) return;
+        this._periodicCleanupTimer = setInterval(() => {
+            if (navigator.onLine) {
+                this.purgeStaleItems().catch((e) => console.warn('[SyncEngine] periodic purgeStaleItems failed:', e));
+            }
+        }, PERIODIC_CLEANUP_INTERVAL_MS);
+    },
+
+    _stopPeriodicCleanup() {
+        if (this._periodicCleanupTimer) {
+            clearInterval(this._periodicCleanupTimer);
+            this._periodicCleanupTimer = null;
+        }
+    },
+
+    _setupVisibilityCleanup() {
+        if (this._visibilityCleanupBound) return;
+        this._visibilityCleanupBound = () => {
+            if (!document.hidden && navigator.onLine) {
+                this.purgeStaleItems().catch((e) => console.warn('[SyncEngine] visibility purgeStaleItems failed:', e));
+            }
+        };
+        document.addEventListener('visibilitychange', this._visibilityCleanupBound);
     },
 
     async migrateLocalStorageQueue() {
@@ -233,11 +350,13 @@ export const SyncEngine = {
             store: entry.store ?? null,
             accessToken: entry.accessToken ?? null,
             offlineSessionKey: entry.offlineSessionKey ?? null,
+            isSessionCreation: entry.isSessionCreation || false,
             status: DB.SYNC_STATUS.PENDING,
             retryCount: 0,
             error: null,
             createdAt: entry.createdAt ?? Date.now(),
             updatedAt: entry.updatedAt ?? Date.now(),
+            photoHash: entry.photoHash ?? null,
         };
 
         if (entry.prepend) {
@@ -248,6 +367,8 @@ export const SyncEngine = {
 
         if (item.tempId) {
             console.log(`[SyncEngine] Enqueued ${entry.method} ${entry.endpoint} (tempId=${item.tempId})`);
+        } else if (item.isSessionCreation) {
+            console.log(`[SyncEngine] Enqueued ${entry.method} ${entry.endpoint} (isSessionCreation=true)`);
         } else {
             console.log(`[SyncEngine] Enqueued ${entry.method} ${entry.endpoint}`);
         }
@@ -256,6 +377,33 @@ export const SyncEngine = {
     },
 
     async enqueuePhotoUpload(endpoint, fileBlob, filename, meta, accessToken, options = {}) {
+        if (!(fileBlob instanceof Blob) || fileBlob.size === 0) {
+            console.error('[SyncEngine] Invalid blob for photo upload:', { blob: fileBlob, type: fileBlob?.constructor?.name, size: fileBlob?.size });
+            throw new Error('Invalid blob: cannot enqueue empty or non-Blob data');
+        }
+
+        console.log('[SyncEngine] Enqueueing photo upload:', { blobSize: fileBlob.size, blobType: fileBlob.type, endpoint, filename });
+        const photoHash = await generatePhotoHash(fileBlob);
+        const existing = await DB.getSyncQueueByPhotoHash(photoHash, endpoint);
+        if (existing && existing.length > 0) {
+            const pendingItem = existing.find(item => item.status === DB.SYNC_STATUS.PENDING);
+            if (pendingItem) {
+                console.log(`[SyncEngine] Duplicate photo detected (hash=${photoHash.slice(0, 16)}...), updating existing queue item ${pendingItem.id}`);
+                await DB.updateSyncQueue(pendingItem.id, {
+                    formData: {
+                        blob: fileBlob,
+                        filename: filename || 'photo.webp',
+                        fields: meta || {},
+                    },
+                    accessToken,
+                    tempId: options.tempId ?? null,
+                    store: options.store ?? null,
+                    updatedAt: Date.now(),
+                });
+                return pendingItem;
+            }
+        }
+
         return this.enqueue({
             endpoint,
             method: 'POST',
@@ -269,6 +417,7 @@ export const SyncEngine = {
             tempId: options.tempId ?? null,
             store: options.store ?? null,
             prepend: options.prepend || false,
+            photoHash,
         });
     },
 
@@ -316,10 +465,6 @@ export const SyncEngine = {
             console.log('[SyncEngine] No access token, skipping queue processing');
             return false;
         }
-        if (this.processing) {
-            console.log('[SyncEngine] Already processing, skipping');
-            return false;
-        }
         if (!navigator.onLine) {
             console.log('[SyncEngine] Still offline, skipping queue processing');
             return false;
@@ -329,146 +474,181 @@ export const SyncEngine = {
             return false;
         }
 
-        this.processing = true;
-        let synced = 0;
+        // Promise-based mutex to serialize concurrent processQueue calls
+        const currentRun = this._processingMutex.then(async () => {
+            let synced = 0;
 
-        try {
-            await this.purgeStaleItems().catch(() => {});
-            for (;;) {
-                const items = await DB.getSyncQueuePending(1);
-                if (!items.length) {
-                    break;
-                }
-
-                let item = items[0];
-
-                // Allow callers to rewrite items that depend on not-yet-synced
-                // state (e.g. a local session whose real server id is unknown).
-                if (typeof this.itemResolver === 'function') {
-                    try {
-                        const resolved = this.itemResolver(item);
-                        if (resolved === false) {
-                            console.warn('[SyncEngine] Queued item not ready for replay, keeping queue intact');
-                            break;
-                        }
-                        if (resolved && resolved !== item) {
-                            item = resolved;
-                            await DB.updateSyncQueue(item.id, {
-                                endpoint: item.endpoint,
-                                method: item.method,
-                                payload: item.payload,
-                                formData: item.formData,
-                                isFormData: item.isFormData,
-                                tempId: item.tempId,
-                                store: item.store,
-                                accessToken: item.accessToken,
-                                offlineSessionKey: item.offlineSessionKey,
-                            });
-                        }
-                    } catch (resolveError) {
-                        console.error('[SyncEngine] itemResolver error:', resolveError);
-                    }
-                }
-
-                let response = null;
-                let failed = false;
-
-                try {
-                    response = await this.replayFn(item);
-                } catch (error) {
-                    // Auth errors (401/403 after refresh attempt) are terminal:
-                    // every remaining item will fail the same way. Halt the
-                    // loop immediately and signal the app to sign out.
-                    if (isAuthError(error)) {
-                        console.error('[SyncEngine] Auth failure during queue replay, halting:', error);
-                        await DB.updateSyncQueue(item.id, {
-                            status: DB.SYNC_STATUS.FAILED,
-                            error: error?.message || 'auth failure',
-                            updatedAt: Date.now(),
-                        });
-                        this.signalAuthFailure(error);
+            try {
+                await this.purgeStaleItems().catch(() => {});
+                for (;;) {
+                    const items = await DB.getSyncQueuePending(1);
+                    if (!items.length) {
                         break;
                     }
 
-                    if (isTransientError(error)) {
-                        const newRetryCount = item.retryCount + 1;
-                        if (newRetryCount >= MAX_RETRIES) {
+                    let item = items[0];
+
+                    // Allow callers to rewrite items that depend on not-yet-synced
+                    // state (e.g. a local session whose real server id is unknown).
+                    if (typeof this.itemResolver === 'function') {
+                        try {
+                            const resolved = this.itemResolver(item);
+                            if (resolved === false) {
+                                console.warn('[SyncEngine] Queued item not ready for replay, keeping queue intact');
+                                break;
+                            }
+                            if (resolved && resolved !== item) {
+                                item = resolved;
+                                await DB.updateSyncQueue(item.id, {
+                                    endpoint: item.endpoint,
+                                    method: item.method,
+                                    payload: item.payload,
+                                    formData: item.formData,
+                                    isFormData: item.isFormData,
+                                    tempId: item.tempId,
+                                    store: item.store,
+                                    accessToken: item.accessToken,
+                                    offlineSessionKey: item.offlineSessionKey,
+                                });
+                            }
+                        } catch (resolveError) {
+                            console.error('[SyncEngine] itemResolver error:', resolveError);
+                        }
+                    }
+
+                    let response = null;
+                    let failed = false;
+
+                    try {
+                        response = await this.replayFn(item);
+                    } catch (error) {
+                        // Auth errors (401/403 after refresh attempt) are terminal:
+                        // every remaining item will fail the same way. Halt the
+                        // loop immediately and signal the app to sign out.
+                        if (isAuthError(error)) {
+                            console.error('[SyncEngine] Auth failure during queue replay, halting:', error);
+                            await DB.updateSyncQueue(item.id, {
+                                status: DB.SYNC_STATUS.FAILED,
+                                error: error?.message || 'auth failure',
+                                updatedAt: Date.now(),
+                            });
+                            this.signalAuthFailure(error);
+                            break;
+                        }
+
+                        if (isTransientError(error)) {
+                            const newRetryCount = item.retryCount + 1;
+                            if (newRetryCount >= MAX_RETRIES) {
+                                failed = true;
+                                await DB.updateSyncQueue(item.id, {
+                                    status: DB.SYNC_STATUS.FAILED,
+                                    retryCount: newRetryCount,
+                                    error: error?.message || 'max retries exceeded',
+                                    updatedAt: Date.now(),
+                                });
+                                console.error('[SyncEngine] Max retries exceeded, marking failed:', item, error);
+                            } else {
+                                await DB.updateSyncQueue(item.id, {
+                                    retryCount: newRetryCount,
+                                    error: error?.message || 'transient error',
+                                    updatedAt: Date.now(),
+                                });
+                                console.warn('[SyncEngine] Replay deferred (transient):', error?.message || error);
+                                break;
+                            }
+                        } else {
                             failed = true;
                             await DB.updateSyncQueue(item.id, {
                                 status: DB.SYNC_STATUS.FAILED,
-                                retryCount: newRetryCount,
-                                error: error?.message || 'max retries exceeded',
+                                error: error?.message || 'permanent failure',
                                 updatedAt: Date.now(),
                             });
-                            console.error('[SyncEngine] Max retries exceeded, marking failed:', item, error);
-                        } else {
+                            console.error('[SyncEngine] Permanently failed queued request:', item, error);
+                        }
+                    }
+
+                    // Delete on success; retain FAILED items for inspection/retry.
+                    // EXCEPTION: Photo uploads must wait for analysis completion before deletion.
+                    if (!failed) {
+                        if (this.isPhotoUpload(item)) {
+                            // Mark as uploaded, awaiting analysis completion
                             await DB.updateSyncQueue(item.id, {
-                                retryCount: newRetryCount,
-                                error: error?.message || 'transient error',
+                                status: DB.SYNC_STATUS.UPLOADED_AWAITING_ANALYSIS,
+                                mealId: response?.id ?? response?.meal_id ?? null,
                                 updatedAt: Date.now(),
                             });
-                            console.warn('[SyncEngine] Replay deferred (transient):', error?.message || error);
-                            break;
+                            console.log('[SyncEngine] Photo uploaded, awaiting analysis completion:', item.id);
+                            // Do NOT call onItemSynced yet - will be called after analysis completes
+                            // Do NOT increment synced counter yet
+                        } else {
+                            await DB.deleteSyncQueue(item.id);
+                            // Verify deletion
+                            const deleted = await DB.get('sync_queue', item.id);
+                            if (deleted) {
+                                console.warn('[SyncEngine] Item still exists after sync deletion:', item.id);
+                            }
+                            
+                            // General temp-id → real-id translation for POST/PUT responses
+                            if (this.isMutableCreate(item) && response && response.id && item.tempId && item.store) {
+                                try {
+                                    await DB.resolveTempId(item.store, item.tempId, response.id);
+                                } catch (mappingError) {
+                                    console.error('[SyncEngine] Temp ID resolution failed:', mappingError);
+                                }
+                            }
+
+                            if (typeof this.onItemSynced === 'function') {
+                                try {
+                                    await this.onItemSynced(item, response, { failed: false });
+                                } catch (hookError) {
+                                    console.error('[SyncEngine] Post-sync hook failed:', hookError);
+                                }
+                            }
+                            
+                            synced += 1;
                         }
-                    } else {
-                        failed = true;
-                        await DB.updateSyncQueue(item.id, {
-                            status: DB.SYNC_STATUS.FAILED,
-                            error: error?.message || 'permanent failure',
-                            updatedAt: Date.now(),
+                    }
+
+                    // For photo uploads, wait for analysis completion before finalizing
+                    if (!failed && this.isPhotoUpload(item)) {
+                        // Don't increment synced yet, don't call onItemSynced yet
+                        // Fire and forget the analysis wait
+                        this._waitForPhotoAnalysisAndComplete(item, response).catch(e => {
+                            console.error('[SyncEngine] Analysis wait crashed:', e);
                         });
-                        console.error('[SyncEngine] Permanently failed queued request:', item, error);
+                        // Continue to next item - this one is "in progress"
+                        continue;
                     }
                 }
 
-                // Delete on success; retain FAILED items for inspection/retry.
-                if (!failed) {
-                    await DB.deleteSyncQueue(item.id);
-                }
-
-                // General temp-id → real-id translation for POST/PUT responses
-                if (!failed && this.isMutableCreate(item) && response && response.id && item.tempId && item.store) {
+                if (synced > 0) {
+                    console.log(`[SyncEngine] Queue synced: ${synced} item(s)`);
+                    const app = window.App;
+                    if (typeof app?.showToast === 'function') {
+                        app.showToast(`Синхронизировано изменений: ${synced}`, 'success');
+                    }
+                    window.dispatchEvent(new CustomEvent('mylofi:offline-sync', { detail: { synced } }));
+                    window.dispatchEvent(new CustomEvent('mylofi:sync-completed', { detail: { syncedCount: synced } }));
                     try {
-                        await DB.resolveTempId(item.store, item.tempId, response.id);
-                    } catch (mappingError) {
-                        console.error('[SyncEngine] Temp ID resolution failed:', mappingError);
-                    }
-                }
-
-                if (typeof this.onItemSynced === 'function') {
-                    try {
-                        await this.onItemSynced(item, failed ? null : response, { failed });
-                    } catch (hookError) {
-                        console.error('[SyncEngine] Post-sync hook failed:', hookError);
-                    }
-                }
-
-                synced += 1;
-            }
-
-            if (synced > 0) {
-                console.log(`[SyncEngine] Queue synced: ${synced} item(s)`);
-                const app = window.App;
-                if (typeof app?.showToast === 'function') {
-                    app.showToast(`Синхронизировано изменений: ${synced}`, 'success');
-                }
-                window.dispatchEvent(new CustomEvent('mylofi:offline-sync', { detail: { synced } }));
-                window.dispatchEvent(new CustomEvent('mylofi:sync-completed', { detail: { syncedCount: synced } }));
-                try {
-                    if (app?.state?.currentScreen === 'main' && app?.state?.currentPage === 'nutrition') {
-                        if (typeof app.renderPage === 'function') {
-                            await app.renderPage('nutrition');
+                        if (app?.state?.currentScreen === 'main' && app?.state?.currentPage === 'nutrition') {
+                            if (typeof app.renderPage === 'function') {
+                                await app.renderPage('nutrition');
+                            }
                         }
+                    } catch (e) {
+                        console.error('[SyncEngine] Direct nutrition refresh failed:', e);
                     }
-                } catch (e) {
-                    console.error('[SyncEngine] Direct nutrition refresh failed:', e);
                 }
-            }
 
-            return synced > 0;
-        } finally {
-            this.processing = false;
-        }
+                return synced > 0;
+            } finally {
+                // Mutex is released when this promise resolves
+            }
+        });
+
+        // Chain the mutex so the next call waits for this one to complete
+        this._processingMutex = currentRun.catch(() => {}); // catch to avoid unhandled rejection
+        return currentRun;
     },
 
     isMutableCreate(item) {
@@ -480,6 +660,10 @@ export const SyncEngine = {
         const items = await DB.getAll('sync_queue');
         const now = Date.now();
         for (const item of items || []) {
+            // Skip items awaiting photo analysis - they have a longer expected lifetime
+            if (item.status === DB.SYNC_STATUS.UPLOADED_AWAITING_ANALYSIS) {
+                continue;
+            }
             const stale = !item.createdAt || (now - item.createdAt > SYNC_TTL_MS);
             const stuck = (item.retryCount ?? 0) >= MAX_RETRIES;
             if (stale || stuck) {

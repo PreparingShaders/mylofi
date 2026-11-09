@@ -57,7 +57,7 @@ export const Utils = {
         // canvas round-trip: re-encoding it can only cost quality, so it
         // travels as the browser captured it. The server-side fallback
         // still normalizes whatever arrives to WebP.
-        if (file.size && file.size < 150 * 1024) {
+        if (file.size && file.size < 50 * 1024) {
             return Promise.resolve(file);
         }
 

@@ -7,6 +7,7 @@ from app.core.config import get_settings
 from app.db.session import get_db
 from app.models import Feedback, User, VerificationCode
 from app.schemas import (
+    AddExerciseToSessionRequest,
     AiPersona,
     AIWorkoutPreviewRequest,
     AIWorkoutPreviewResponse,
@@ -15,6 +16,7 @@ from app.schemas import (
     AnthropometricsResponse,
     AnthropometricsUpdate,
     BuildWorkoutSessionRequest,
+    CreateSetRequest,
     DailySummaryResponse,
     ExerciseCatalogCreate,
     ExerciseCatalogResponse,
@@ -26,11 +28,11 @@ from app.schemas import (
     MealListResponse,
     MealResponse,
     MealUpdate,
+    OfflineSessionSyncRequest,
     PasswordResetConfirm,
     PhotoUploadResponse,
     QuickStartWorkoutRequest,
     QuickStartWorkoutResponse,
-    RefreshTokenRequest,
     ResendCodeRequest,
     TemplateStartRequest,
     Token,
@@ -44,9 +46,11 @@ from app.schemas import (
     WorkoutCompletionRequest,
     WorkoutCompletionResponse,
     WorkoutHistoryResponse,
+    WorkoutHistoryStatsResponse,
     WorkoutSessionCreate,
     WorkoutSessionResponse,
     WorkoutSessionUpdate,
+    WorkoutSetResponse,
     WorkoutSetUpdate,
     WorkoutTemplateCreate,
     WorkoutTemplateResponse,
@@ -110,26 +114,31 @@ from app.services.nutrition_targets import (
     normalize_goal,
 )
 from app.services.workout import (
+    add_exercise_to_session,
     build_session_exercises_from_template,
     build_workout_session,
     cancel_workout_session,
     complete_workout_session,
     create_exercise,
+    create_session_set,
     create_workout_session,
     create_workout_template,
     delete_exercise,
     delete_workout_session,
+    delete_workout_set,
     delete_workout_template,
     get_active_workout_session,
     get_exercises,
     get_filtered_tonnage,
     get_workout_history,
+    get_workout_history_stats,
     get_workout_session,
     get_workout_session_detail,
     get_workout_statistics,
     get_workout_template,
     get_workout_templates,
     quick_start_workout,
+    sync_offline_session,
     update_exercise,
     update_set_completion,
     update_workout_session,
@@ -142,7 +151,6 @@ from fastapi import (
     Depends,
     File,
     Form,
-    Header,
     HTTPException,
     Query,
     UploadFile,
@@ -896,7 +904,7 @@ async def upload_meal_photo(
             detail=meal_ai_limit.message,
         )
 
-    # Check file size
+    # Read file content (validates size at same time)
     file_content = await file.read()
     max_size = settings.MAX_FILE_SIZE_MB * 1024 * 1024
     if len(file_content) > max_size:
@@ -915,7 +923,7 @@ async def upload_meal_photo(
             f"stored at {parsed_eaten_at.isoformat()}Z"
         )
 
-    # Save photo
+    # Save photo using reliable byte-based method
     photo_path, thumbnail_path = await save_uploaded_photo(
         file_content, file.filename or "photo.jpg"
     )
@@ -1418,6 +1426,21 @@ async def create_workout_session_endpoint(
     return session
 
 
+@router.post(
+    "/workouts/sessions/sync-offline",
+    response_model=WorkoutSessionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def sync_offline_session_endpoint(
+    session_data: OfflineSessionSyncRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Sync a workout session completed offline."""
+    session = await sync_offline_session(db, current_user.id, session_data)
+    return session
+
+
 @router.get(
     "/workouts/sessions/active", response_model=Optional[WorkoutSessionResponse]
 )
@@ -1618,6 +1641,17 @@ async def get_workout_history_endpoint(
     return WorkoutHistoryResponse(sessions=sessions, total=total)
 
 
+@router.get("/workouts/history/stats", response_model=WorkoutHistoryStatsResponse)
+async def get_workout_history_stats_endpoint(
+    period: str = Query("all", pattern="^(week|month|all)$"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get aggregate statistics for workout history period"""
+    stats = await get_workout_history_stats(db, current_user.id, period)
+    return WorkoutHistoryStatsResponse(**stats)
+
+
 @router.get("/workouts/statistics")
 async def get_workout_statistics_endpoint(
     db: AsyncSession = Depends(get_db),
@@ -1703,6 +1737,73 @@ async def update_set_endpoint(
         "is_completed": workout_set.is_completed,
         "rest_time_seconds": workout_set.rest_time_seconds,
     }
+
+
+@router.post("/workouts/sets", response_model=WorkoutSetResponse, status_code=status.HTTP_201_CREATED)
+async def create_set_endpoint(
+    set_data: CreateSetRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Add a set to an existing session exercise."""
+    workout_set = await create_session_set(
+        db,
+        current_user.id,
+        set_data.exercise_id,
+        set_data.set_number,
+        set_data.weight_kg,
+        set_data.reps,
+        set_data.rest_seconds,
+    )
+    if not workout_set:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Exercise not found or not in your session",
+        )
+    return workout_set
+
+
+@router.delete("/workouts/sets/{set_id}")
+async def delete_set_endpoint(
+    set_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete a workout set."""
+    success = await delete_workout_set(db, set_id, current_user.id)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Set not found"
+        )
+    return {"message": "Set deleted"}
+
+
+@router.post(
+    "/workouts/sessions/{session_id}/exercises",
+    response_model=WorkoutSessionResponse,
+)
+async def add_exercise_to_session_endpoint(
+    session_id: int,
+    exercise_data: AddExerciseToSessionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Add an exercise from the catalog to an in-progress session."""
+    session = await add_exercise_to_session(
+        db,
+        current_user.id,
+        session_id,
+        exercise_data.exercise_id,
+        exercise_data.target_sets,
+        exercise_data.default_reps,
+        exercise_data.default_rest_seconds,
+    )
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found, not active, or exercise not accessible",
+        )
+    return session
 
 
 # ===== AI Workout Coach Routes =====

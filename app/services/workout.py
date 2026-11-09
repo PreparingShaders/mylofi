@@ -25,6 +25,7 @@ from app.schemas import (
     ExerciseCatalogCreate,
     ExerciseCatalogUpdate,
     BuildWorkoutSessionRequest,
+    OfflineSessionSyncRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -179,6 +180,57 @@ async def create_workout_session(
     return await get_workout_session(db, session.id, user_id)
 
 
+async def sync_offline_session(
+    db: AsyncSession,
+    user_id: int,
+    session_data: "OfflineSessionSyncRequest",
+) -> WorkoutSession:
+    """Create a server session from offline-completed workout data."""
+    from app.schemas import OfflineSessionSyncRequest
+    from app.models import WorkoutSession, WorkoutSessionExercise, WorkoutSet, WorkoutSessionStatus
+    from datetime import datetime, timezone
+
+    session = WorkoutSession(
+        user_id=user_id,
+        template_id=session_data.template_id,
+        name=session_data.name,
+        notes=session_data.notes,
+        started_at=session_data.started_at,
+        completed_at=session_data.completed_at,
+        status=WorkoutSessionStatus.COMPLETED,
+        duration_seconds=session_data.duration_seconds,
+    )
+    db.add(session)
+    await db.flush()
+
+    for ex_data in session_data.exercises:
+        exercise = WorkoutSessionExercise(
+            session_id=session.id,
+            name=ex_data.name,
+            order=ex_data.order,
+            notes=ex_data.notes,
+        )
+        db.add(exercise)
+        await db.flush()
+
+        for set_data in ex_data.sets:
+            workout_set = WorkoutSet(
+                exercise_id=exercise.id,
+                set_number=set_data.set_number,
+                weight_kg=set_data.weight_kg,
+                reps=set_data.reps,
+                rpe=set_data.rpe,
+                is_completed=set_data.is_completed,
+                rest_seconds=set_data.rest_seconds,
+                rest_time_seconds=set_data.rest_time_seconds,
+                completed_at=session_data.completed_at if set_data.is_completed else None,
+            )
+            db.add(workout_set)
+
+    await db.commit()
+    return await get_workout_session(db, session.id, user_id)
+
+
 async def get_workout_session(
     db: AsyncSession,
     session_id: int,
@@ -209,7 +261,12 @@ async def get_active_workout_session(db: AsyncSession, user_id: int) -> Optional
         )
         .order_by(WorkoutSession.started_at.desc())
     )
-    return result.scalar_one_or_none()
+    session = result.scalar_one_or_none()
+    logger.info(
+        "[get_active_workout_session] user_id=%s found=%s session_id=%s status=%s",
+        user_id, session is not None, session.id if session else None, session.status if session else None,
+    )
+    return session
 
 
 async def update_workout_session(
@@ -357,6 +414,10 @@ async def complete_workout_session(
     session.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
+    logger.info(
+        "[complete_workout_session] session_id=%s user_id=%s status changed to COMPLETED, committed",
+        session_id, user_id,
+    )
     return await get_workout_session(db, session.id, user_id)
 
 
@@ -423,6 +484,81 @@ async def get_workout_history(
     return sessions, total
 
 
+async def get_workout_history_stats(
+    db: AsyncSession,
+    user_id: int,
+    period: str = "all",
+) -> dict:
+    """Get aggregate statistics for history period.
+    
+    Args:
+        db: Database session
+        user_id: User ID
+        period: Time period filter - 'week', 'month', or 'all'
+    
+    Returns:
+        Dictionary with total_workouts, total_tonnage_kg, total_duration_seconds,
+        avg_duration_seconds, total_sets, completed_sets
+    """
+    from datetime import datetime, timedelta, timezone
+    
+    # Determine date filter based on period
+    now = datetime.now(timezone.utc)
+    if period == "week":
+        start_date = now - timedelta(days=7)
+    elif period == "month":
+        start_date = now - timedelta(days=30)
+    else:  # 'all'
+        start_date = None
+    
+    # Base query for completed sessions
+    base_query = (
+        select(WorkoutSession)
+        .where(
+            WorkoutSession.user_id == user_id,
+            WorkoutSession.status == WorkoutSessionStatus.COMPLETED,
+        )
+        .options(
+            selectinload(WorkoutSession.exercises).selectinload(WorkoutSessionExercise.sets)
+        )
+    )
+    
+    if start_date:
+        base_query = base_query.where(WorkoutSession.completed_at >= start_date)
+    
+    result = await db.execute(base_query.order_by(WorkoutSession.started_at.desc()))
+    sessions = result.scalars().all()
+    
+    # Aggregate statistics
+    total_workouts = len(sessions)
+    total_tonnage_kg = 0
+    total_duration_seconds = 0
+    total_sets = 0
+    completed_sets = 0
+    
+    for session in sessions:
+        total_duration_seconds += session.duration_seconds or 0
+        for exercise in session.exercises or []:
+            for set_ in exercise.sets or []:
+                total_sets += 1
+                if set_.is_completed:
+                    completed_sets += 1
+                    total_tonnage_kg += (set_.weight_kg or 0) * (set_.reps or 0)
+    
+    avg_duration_seconds = (
+        total_duration_seconds // total_workouts if total_workouts > 0 else 0
+    )
+    
+    return {
+        "total_workouts": total_workouts,
+        "total_tonnage_kg": int(total_tonnage_kg),
+        "total_duration_seconds": total_duration_seconds,
+        "avg_duration_seconds": avg_duration_seconds,
+        "total_sets": total_sets,
+        "completed_sets": completed_sets,
+    }
+
+
 async def update_set_completion(
     db: AsyncSession,
     set_id: int,
@@ -470,6 +606,193 @@ async def update_set_completion(
     await db.commit()
     await db.refresh(workout_set)
     return workout_set
+
+
+async def delete_workout_set(
+    db: AsyncSession,
+    set_id: int,
+    user_id: int,
+) -> bool:
+    """Delete a workout set, renumbering subsequent sets in the same exercise."""
+    result = await db.execute(
+        select(WorkoutSet)
+        .join(WorkoutSessionExercise)
+        .join(WorkoutSession)
+        .where(
+            WorkoutSet.id == set_id,
+            WorkoutSession.user_id == user_id,
+        )
+    )
+    workout_set = result.scalar_one_or_none()
+    if not workout_set:
+        return False
+
+    exercise_id = workout_set.exercise_id
+    set_number = workout_set.set_number
+
+    await db.delete(workout_set)
+    await db.flush()
+
+    # Renumber any sets that came after the deleted one so set_number
+    # stays a contiguous 1..N sequence.
+    remaining = await db.execute(
+        select(WorkoutSet)
+        .where(
+            WorkoutSet.exercise_id == exercise_id,
+            WorkoutSet.set_number > set_number,
+        )
+        .order_by(WorkoutSet.set_number)
+    )
+    higher_sets = remaining.scalars().all()
+    for i, ws in enumerate(higher_sets, start=set_number):
+        ws.set_number = i
+
+    await db.commit()
+    return True
+
+
+async def create_session_set(
+    db: AsyncSession,
+    user_id: int,
+    exercise_id: int,
+    set_number: Optional[int] = None,
+    weight_kg: Optional[float] = None,
+    reps: Optional[int] = None,
+    rest_seconds: Optional[int] = None,
+) -> Optional[WorkoutSet]:
+    """Add a single set to an existing session exercise.
+
+    Ownership is verified through the exercise → session → user join chain.
+    Set number is always computed server-side to avoid race conditions.
+    """
+    result = await db.execute(
+        select(WorkoutSessionExercise)
+        .join(WorkoutSession)
+        .where(
+            WorkoutSessionExercise.id == exercise_id,
+            WorkoutSession.user_id == user_id,
+        )
+        .options(
+            selectinload(WorkoutSessionExercise.sets),
+            selectinload(WorkoutSessionExercise.session).selectinload(
+                WorkoutSession.template
+            ),
+        )
+    )
+    exercise = result.scalar_one_or_none()
+    if not exercise:
+        return None
+
+    # Always compute set_number server-side, ignoring frontend value
+    existing_numbers = [s.set_number for s in (exercise.sets or [])]
+    set_number = (max(existing_numbers) + 1) if existing_numbers else 1
+
+    if reps is None:
+        existing_sets = exercise.sets or []
+        if existing_sets:
+            reps = existing_sets[-1].reps
+        else:
+            session = exercise.session
+            if session and session.template_id and session.template:
+                template_exercise = next(
+                    (te for te in (session.template.exercises or []) if te.name == exercise.name),
+                    None,
+                )
+                if template_exercise:
+                    reps = template_exercise.target_reps
+        if reps is None:
+            reps = 10
+
+    workout_set = WorkoutSet(
+        exercise_id=exercise.id,
+        set_number=set_number,
+        weight_kg=weight_kg,
+        reps=reps,
+        rest_seconds=rest_seconds,
+    )
+    db.add(workout_set)
+    await db.commit()
+    await db.refresh(workout_set)
+    return workout_set
+
+
+async def add_exercise_to_session(
+    db: AsyncSession,
+    user_id: int,
+    session_id: int,
+    exercise_id: int,
+    target_sets: Optional[int] = None,
+    default_reps: Optional[int] = None,
+    default_rest_seconds: Optional[int] = None,
+) -> Optional[WorkoutSession]:
+    """Add a catalog exercise to an in-progress workout session.
+
+    Sets are seeded the same way ``build_workout_session`` does: past
+    completed sets for the exercise are reused as starting weights/reps, and
+    any remaining sets are filled with the requested defaults.
+    """
+    session = await get_workout_session(db, session_id, user_id)
+    if not session or session.status != WorkoutSessionStatus.ACTIVE:
+        return None
+
+    result = await db.execute(
+        select(ExerciseCatalog).where(
+            ExerciseCatalog.id == exercise_id,
+            or_(
+                ExerciseCatalog.user_id.is_(None),
+                ExerciseCatalog.user_id == user_id,
+            ),
+        )
+    )
+    catalog_ex = result.scalar_one_or_none()
+    if not catalog_ex:
+        return None
+
+    sets_count = target_sets or 3
+    reps = default_reps or 10
+    rest = default_rest_seconds if default_rest_seconds is not None else 90
+
+    max_order = max(
+        (ex.order for ex in (session.exercises or []) if ex.order is not None),
+        default=-1,
+    )
+
+    exercise = WorkoutSessionExercise(
+        session_id=session.id,
+        name=catalog_ex.name,
+        order=max_order + 1,
+        notes=f"{catalog_ex.muscle_group} / {catalog_ex.equipment}{' | ' + (catalog_ex.description or '') if catalog_ex.description else ''}",
+    )
+    db.add(exercise)
+    await db.flush()
+
+    past_sets = await get_last_exercise_sets(db, user_id, catalog_ex.name) or []
+    if past_sets:
+        for ps in past_sets[:sets_count]:
+            db.add(
+                WorkoutSet(
+                    exercise_id=exercise.id,
+                    set_number=ps.set_number,
+                    reps=ps.reps,
+                    weight_kg=ps.weight_kg,
+                    rest_seconds=rest,
+                )
+            )
+    start_num = (past_sets[-1].set_number + 1) if past_sets else 1
+    remaining = sets_count - len(past_sets) if past_sets else sets_count
+    for set_num in range(start_num, start_num + remaining):
+        db.add(
+            WorkoutSet(
+                exercise_id=exercise.id,
+                set_number=set_num,
+                reps=reps,
+                weight_kg=0.0,
+                rest_seconds=rest,
+            )
+        )
+
+    await db.commit()
+    return await get_workout_session(db, session.id, user_id)
 
 
 # ===== Exercise Catalog =====

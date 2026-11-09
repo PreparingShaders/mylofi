@@ -64,6 +64,13 @@ export const Nutrition = {
     _mealSubmitInFlight: false,
 
     /**
+     * Check if a meal ID is a temporary local ID (temp_...)
+     */
+    isTempMealId(mealId) {
+        return typeof mealId === 'string' && mealId.startsWith('temp_');
+    },
+
+    /**
      * Whether a sheet or a modal currently covers the page.
      *
      * A render tears those down, so a live update that arrives while one is
@@ -1364,13 +1371,8 @@ try {
                                     <h3 class="text-xs font-semibold text-red-400 uppercase tracking-wider">Ошибка синхронизации</h3>
                                     <button id="clear-failed" class="text-xs text-red-500 hover:text-red-400">Очистить все</button>
                                 </div>
-                                ${failedItems.map((item) => `
-                                    <div class="glass rounded-lg p-2 mb-1">
-                                        <p class="text-sm text-surface-600 dark:text-surface-300">${getFriendlyEndpointLabel(item.endpoint) || 'Запрос'}</p>
-                                        <p class="text-xs text-surface-500 truncate">${item.error || 'Неизвестная ошибка'}</p>
-                                    </div>
-                                `).join('')}
-                                <button id="retry-failed" class="w-full py-2 mt-1 bg-sky-500 hover:bg-sky-600 text-white text-sm font-medium rounded-xl">Повторить сейчас</button>
+                                ${failedItems.map((item) => Components.failedSyncItem(item)).join('')}
+                                <button id="retry-failed" class="w-full py-2 mt-1 bg-sky-500 hover:bg-sky-600 text-white text-sm font-medium rounded-xl">Повторить всё</button>
                             </div>
                         </div>
                         `
@@ -1641,134 +1643,119 @@ try {
     },
 
     async handleNewMealSubmit(modalEl, state) {
-        // A render closes this sheet, so the live "analysis landed" updates
-        // are held back until the submission is through - it re-renders the
-        // page itself when it finishes.
+        // Prevent double-submit
+        if (this._mealSubmitInFlight) return;
         this._mealSubmitInFlight = true;
-        try {
-        if (!state.selectedFile || !state.selectedMealType) {
-            return;
-        }
 
-        const isOffline = !window.App?.state?.isOnline || !navigator.onLine;
-        if (isOffline) {
+        try {
+            if (!state.selectedFile || !state.selectedMealType) return;
+
+            // Disable submit button immediately - before any async work
+            const submitBtn = modalEl.querySelector('#new-meal-submit');
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = `
+                <svg class="animate-spin w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                <span class="text-sm font-semibold">Подготовка...</span>
+            `;
+
+            const isOffline = !window.App?.state?.isOnline || !navigator.onLine;
+            if (isOffline) {
+                const notesInput = modalEl.querySelector('#new-meal-notes');
+                const notes = notesInput ? notesInput.value.trim() || null : null;
+                await Camera.queueOfflineMeal(state.selectedFile, notes, state.selectedMealType);
+                this.app.showToast('Сохранено локально. Отправим при появлении связи', 'info');
+                this.closeNewMealModal();
+                this._scrollTargetMealId = null;
+                await this.render(this.app.elements.pageContent, this.app, this.selectedDate);
+                return;
+            }
+
+            // Validate file before sending
+            if (!state.selectedFile.type.startsWith('image/')) {
+                this.app.showToast('Выберите изображение', 'error');
+                return;
+            }
+
+            // Show the blurred loading overlay synchronously to
+            // eliminate UI jumping and lock the modal during the upload.
+            const overlayState = Camera.showLoadingOverlay(modalEl);
+
             const notesInput = modalEl.querySelector('#new-meal-notes');
             const notes = notesInput ? notesInput.value.trim() || null : null;
-            let compressedBlob = state.selectedFile;
+            const token = this.app.state.tokens.access;
+
+            const formData = new FormData();
+            formData.append('file', state.selectedFile, state.selectedFile.name || 'photo.webp');
+            formData.append('meal_type', state.selectedMealType);
+            if (notes) formData.append('notes', notes);
+            // The instant of the shot plus the device's offset: the server buckets
+            // meals into the user's local days, and it can only do that if it is
+            // told where local midnight is.
+            for (const [key, value] of Object.entries(Camera.mealTimeFields())) {
+                formData.append(key, value);
+            }
+
+            // The analysis takes tens of seconds, so the carousel gets its slot
+            // before the request leaves; the id it scrolls to is only known once
+            // the server (or the local queue) has answered.
+            let newMealId = null;
+            let uploadedOnline = false;
+            this.showAnalyzingSkeleton();
+
             try {
-                const compressed = await Utils.compressImage(state.selectedFile);
-                if (compressed) {
-                    compressedBlob = compressed;
+                const response = await API.post('/nutrition/photos', formData, token, true);
+                newMealId = response?.meal_id ?? null;
+                uploadedOnline = Boolean(newMealId);
+                this.app.showToast('Фото загружено, идёт анализ', 'success');
+                // The sheet and its overlay stay up: the 201 only means the
+                // background analysis started, not that it finished.
+            } catch (error) {
+                if (error?.isNetworkError || error?.offlineQueued) {
+                    try {
+                        newMealId = await Camera.queueOfflineMeal(state.selectedFile, notes, state.selectedMealType);
+                        this.app.showToast('Нет связи. Фото сохранено локально и будет загружено при появлении связи', 'info');
+                    } catch (qerr) {
+                        console.error('[Nutrition] Offline queue failed:', qerr);
+                        this.app.showToast(qerr?.message || 'Не удалось сохранить оффлайн', 'error');
+                        newMealId = null;
+                        uploadedOnline = false;
+                    }
+                } else {
+                    console.error('[Nutrition] Upload error:', error);
+                    this.app.showToast(error.data?.detail || error.message || 'Ошибка загрузки', 'error');
                 }
-            } catch (compressError) {
-                console.warn('[Nutrition] Compression failed, using original:', compressError);
+            } finally {
+                this.removeAnalyzingSkeleton();
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = `
+                    <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+                    <span class="text-sm font-semibold">Отправить / Анализировать</span>
+                `;
             }
-            await Camera.queueOfflineMeal(compressedBlob, notes, state.selectedMealType);
-            this.app.showToast('Сохранено локально. Отправим при появлении связи', 'info');
+
+            // The overlay stays up through the whole analysis: the meal status
+            // is polled until the background task lands a terminal status, and
+            // only then does the checkmark appear. An offline-queued meal has
+            // nothing to poll yet - it syncs later - and a failed upload leaves
+            // nothing to wait for.
+            if (uploadedOnline) {
+                const outcome = await Camera.pollMealAnalysisStatus(newMealId, token);
+                if (outcome === 'completed') {
+                    Camera.markLoadingComplete(overlayState.overlay);
+                    await new Promise((resolve) => setTimeout(resolve, 500));
+                } else {
+                    Camera.reportAnalysisOutcome(outcome, this.app);
+                }
+            }
+
+            Camera.hideLoadingOverlay(overlayState);
             this.closeNewMealModal();
-            this._scrollTargetMealId = null;
+
+            // The reload brings the real card (pending, then analysed); the carousel only
+            // knows its id once the render that produced it is done, so the target
+            // is handed over instead of scrolled to here.
+            this._scrollTargetMealId = newMealId;
             await this.render(this.app.elements.pageContent, this.app, this.selectedDate);
-            return;
-        }
-
-        // Show the blurred loading overlay synchronously before compression to
-        // eliminate UI jumping and lock the modal during the upload.
-        const overlayState = Camera.showLoadingOverlay(modalEl);
-
-        const notesInput = modalEl.querySelector('#new-meal-notes');
-        const notes = notesInput ? notesInput.value.trim() || null : null;
-        const token = this.app.state.tokens.access;
-
-        const submitBtn = modalEl.querySelector('#new-meal-submit');
-        submitBtn.disabled = true;
-        submitBtn.innerHTML = `
-            <svg class="animate-spin w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-            <span class="text-sm font-semibold">Загрузка...</span>
-        `;
-
-        let compressedBlob = state.selectedFile;
-
-        try {
-            const compressed = await Utils.compressImage(state.selectedFile);
-            if (compressed) {
-                compressedBlob = compressed;
-            }
-        } catch (compressError) {
-            console.warn('[Nutrition] Compression failed, using original:', compressError);
-        }
-
-        const formData = new FormData();
-        formData.append('file', compressedBlob, 'photo.webp');
-        formData.append('meal_type', state.selectedMealType);
-        if (notes) formData.append('notes', notes);
-        // The instant of the shot plus the device's offset: the server buckets
-        // meals into the user's local days, and it can only do that if it is
-        // told where local midnight is.
-        for (const [key, value] of Object.entries(Camera.mealTimeFields())) {
-            formData.append(key, value);
-        }
-
-        // The analysis takes tens of seconds, so the carousel gets its slot
-        // before the request leaves; the id it scrolls to is only known once
-        // the server (or the local queue) has answered.
-        let newMealId = null;
-        let uploadedOnline = false;
-        this.showAnalyzingSkeleton();
-
-        try {
-            const response = await API.post('/nutrition/photos', formData, token, true);
-            newMealId = response?.meal_id ?? null;
-            uploadedOnline = Boolean(newMealId);
-            this.app.showToast('Фото загружено, идёт анализ', 'success');
-            // The sheet and its overlay stay up: the 201 only means the
-            // background analysis started, not that it finished.
-        } catch (error) {
-            if (error?.isNetworkError || error?.offlineQueued) {
-                try {
-                    newMealId = await Camera.queueOfflineMeal(compressedBlob, notes, state.selectedMealType);
-                    this.app.showToast('Нет связи. Фото сохранено локально и будет загружено при появлении связи', 'info');
-                } catch (qerr) {
-                    console.error('[Nutrition] Offline queue failed:', qerr);
-                    this.app.showToast(qerr?.message || 'Не удалось сохранить оффлайн', 'error');
-                    newMealId = null;
-                    uploadedOnline = false;
-                }
-            } else {
-                console.error('[Nutrition] Upload error:', error);
-                this.app.showToast(error.data?.detail || error.message || 'Ошибка загрузки', 'error');
-            }
-        } finally {
-            this.removeAnalyzingSkeleton();
-            submitBtn.disabled = false;
-            submitBtn.innerHTML = `
-                <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
-                <span class="text-sm font-semibold">Отправить / Анализировать</span>
-            `;
-        }
-
-        // The overlay stays up through the whole analysis: the meal status
-        // is polled until the background task lands a terminal status, and
-        // only then does the checkmark appear. An offline-queued meal has
-        // nothing to poll yet - it syncs later - and a failed upload leaves
-        // nothing to wait for.
-        if (uploadedOnline) {
-            const outcome = await Camera.pollMealAnalysisStatus(newMealId, token);
-            if (outcome === 'completed') {
-                Camera.markLoadingComplete(overlayState.overlay);
-                await new Promise((resolve) => setTimeout(resolve, 500));
-            } else {
-                Camera.reportAnalysisOutcome(outcome, this.app);
-            }
-        }
-
-        Camera.hideLoadingOverlay(overlayState);
-        this.closeNewMealModal();
-
-        // The reload brings the real card (pending, then analysed); the carousel only
-        // knows its id once the render that produced it is done, so the target
-        // is handed over instead of scrolled to here.
-        this._scrollTargetMealId = newMealId;
-        await this.render(this.app.elements.pageContent, this.app, this.selectedDate);
         } catch (err) {
             console.error('[Nutrition] handleNewMealSubmit error:', err);
             try { this.removeAnalyzingSkeleton(); } catch (_) {}
@@ -1876,6 +1863,48 @@ try {
     bindFailedItems() {
         const container = this.app.elements.pageContent;
 
+        // Individual retry buttons for each failed sync item
+        container.querySelectorAll('[data-action="retry-failed-sync-item"]').forEach((btn) => {
+            btn.onclick = async () => {
+                const itemId = btn.dataset.syncItemId;
+                if (!itemId) return;
+                btn.disabled = true;
+                btn.innerHTML = `<svg class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>`;
+                try {
+                    // Reset the item status to PENDING so it gets picked up by processQueue
+                    await DB.updateSyncQueue(Number(itemId), {
+                        status: DB.SYNC_STATUS.PENDING,
+                        retryCount: 0,
+                        error: null,
+                        updatedAt: Date.now(),
+                    });
+                    await SyncEngine.processQueue();
+                } catch (e) {
+                    console.error('[Nutrition] Retry failed sync item:', e);
+                }
+                this.app.renderPage('nutrition');
+            };
+        });
+
+        // Individual delete buttons for each failed sync item
+        container.querySelectorAll('[data-action="delete-failed-sync-item"]').forEach((btn) => {
+            btn.onclick = async () => {
+                const itemId = btn.dataset.syncItemId;
+                if (!itemId) return;
+                try {
+                    await DB.deleteSyncQueue(Number(itemId));
+                    // Also delete the local meal if it exists
+                    const item = await DB.get('sync_queue', Number(itemId));
+                    if (item?.tempId) {
+                        await DB.deleteMeal(item.tempId);
+                    }
+                } catch (e) {
+                    console.error('[Nutrition] Delete failed sync item:', e);
+                }
+                this.app.renderPage('nutrition');
+            };
+        });
+
         const retryBtn = container.querySelector('#retry-failed');
         if (retryBtn) {
             retryBtn.onclick = async () => {
@@ -1974,6 +2003,26 @@ try {
                 if (confirmed) {
                     try {
                         const token = this.app.state.tokens.access;
+
+                        // NEW: Handle temp IDs locally - no network request
+                        if (this.isTempMealId(mealId)) {
+                            console.log('[Nutrition] Deleting local temp meal:', mealId);
+                            // Delete from meals store
+                            await DB.deleteMeal(mealId);
+                            // Delete any pending sync queue items for this temp ID
+                            const queueItems = await DB.getAll('sync_queue');
+                            for (const item of queueItems) {
+                                if (item.tempId === mealId && item.status === DB.SYNC_STATUS.PENDING) {
+                                    await DB.deleteSyncQueue(item.id);
+                                    console.log('[Nutrition] Deleted pending sync queue item for temp meal:', item.id);
+                                }
+                            }
+                            this.app.showToast('Блюдо удалено', 'success');
+                            await this.render(this.app.elements.pageContent, this.app, this.selectedDate);
+                            return;
+                        }
+
+                        // Real ID - send to backend
                         await API.deleteMeal(mealId, token);
                         await this.loadData();
                         this.render(this.app.elements.pageContent, this.app);
@@ -1982,7 +2031,7 @@ try {
                         this.app.showToast('Ошибка удаления', 'error');
                     }
                 }
-             };
+            };
         });
 
         container.querySelectorAll('[data-action="retry-analysis"]').forEach((btn) => {
@@ -1996,6 +2045,12 @@ try {
     },
 
     async retryMealAnalysis(mealId, btnEl) {
+        // NEW: Temp IDs can't retry analysis - not synced yet
+        if (this.isTempMealId(mealId)) {
+            this.app.showToast('Блюдо еще не синхронизировано. Дождитесь загрузки.', 'info');
+            return;
+        }
+
         const token = this.app.state.tokens.access;
         const disabled = (v) => {
             if (btnEl) {
@@ -2109,6 +2164,56 @@ try {
         const mealId = state.mealId;
         const token = this.app.state.tokens.access;
 
+        // NEW: Handle temp IDs - update locally only
+        if (this.isTempMealId(mealId)) {
+            console.log('[Nutrition] Updating local temp meal:', mealId);
+            const meal = await DB.getMeal(mealId);
+            if (!meal) {
+                this.app.showToast('Блюдо не найдено', 'error');
+                return;
+            }
+
+            const dishNameInput = modalEl.querySelector('#edit-meal-dish-name');
+            const caloriesInput = modalEl.querySelector('#edit-meal-calories');
+            const proteinInput = modalEl.querySelector('#edit-meal-protein');
+            const fatInput = modalEl.querySelector('#edit-meal-fat');
+            const carbsInput = modalEl.querySelector('#edit-meal-carbs');
+            const tagsInput = modalEl.querySelector('#edit-meal-tags');
+            const notesInput = modalEl.querySelector('#edit-meal-notes');
+
+            const toNumOrNull = (input) => {
+                const val = input?.value?.trim();
+                return val !== '' ? Number(val) : null;
+            };
+            const toTextOrNull = (input) => {
+                const val = input?.value?.trim();
+                return val !== '' ? val : null;
+            };
+
+            const tagsRaw = tagsInput?.value?.trim() ?? '';
+            const tags = tagsRaw ? tagsRaw.split(',').map((t) => t.trim()).filter(Boolean) : [];
+
+            const updatedMeal = {
+                ...meal,
+                dish_name: toTextOrNull(dishNameInput),
+                calories: toNumOrNull(caloriesInput),
+                protein_g: toNumOrNull(proteinInput),
+                fat_g: toNumOrNull(fatInput),
+                carbs_g: toNumOrNull(carbsInput),
+                tags: tags.length > 0 ? tags : null,
+                notes: toTextOrNull(notesInput),
+                updated_at: Date.now(),
+            };
+
+            await DB.saveMeal(updatedMeal);
+            this._mealsCache.set(String(mealId), updatedMeal);
+            this.closeEditMealModal();
+            this.app.showToast('Блюдо обновлено локально', 'success');
+            await this.render(this.app.elements.pageContent, this.app, this.selectedDate);
+            return;
+        }
+
+        // Real ID - send to backend (existing code)
         const dishNameInput = modalEl.querySelector('#edit-meal-dish-name');
         const caloriesInput = modalEl.querySelector('#edit-meal-calories');
         const proteinInput = modalEl.querySelector('#edit-meal-protein');

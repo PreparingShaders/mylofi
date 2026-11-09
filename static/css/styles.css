@@ -1272,6 +1272,21 @@ input, select, textarea:focus {
     transform: scale(0.98);
 }
 
+/* ============ Neon & Depth Button Shadows ============ */
+/* Rich, soft neon shadows on glass surfaces and primary/lime accents to give
+   a premium depth. The glass shadow is an ambient lift; the accent shadow
+   carries the lime brand glow so pressed buttons read as lit from within. */
+.glass,
+.glass-strong {
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.bg-primary-600,
+.bg-lime-500,
+.drum-save-btn {
+    box-shadow: 0 4px 20px rgba(132, 204, 22, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
 /* Modal backdrop */
 .modal-backdrop {
     backdrop-filter: blur(4px);
@@ -2426,6 +2441,7 @@ input, select, textarea:focus {
     line-height: 1.35;
     background: rgba(168, 85, 247, 0.08);
     border: 1px solid rgba(168, 85, 247, 0.22);
+    flex-shrink: 0;
 }
 .dark .ai-plan {
     background: rgba(192, 132, 252, 0.1);
@@ -2463,7 +2479,33 @@ input, select, textarea:focus {
     color: #71717a;
     font-size: 0.75rem;
     line-height: 1.5rem;
-    font-family: ui-serif, system-ui, sans-serif;
+     font-family: ui-serif, system-ui, sans-serif;
+}
+
+/* ===== Collapsible AI Analysis Block (workout screen) ===== */
+.ai-analysis-block {
+    margin: 8px 0;
+}
+.ai-analysis-toggle {
+    font-size: 11px;
+}
+.ai-analysis-toggle .chevron {
+    transition: transform 150ms ease;
+}
+.ai-analysis-toggle[aria-expanded="false"] .chevron {
+    transform: rotate(-90deg);
+}
+.ai-analysis-content {
+    transition: max-height 200ms ease, opacity 150ms ease;
+}
+.ai-analysis-content[style*="display: none"] {
+    max-height: 0;
+    opacity: 0;
+    padding: 0;
+}
+.ai-analysis-content[style*="display: block"] {
+    max-height: 500px;
+    opacity: 1;
 }
 
 /* ============ AI Synergy widget (Nutrition tab) ============ */
@@ -3498,17 +3540,327 @@ input[data-field="reps"] {
 .workout-card {
     width: min(92vw, 500px);
     flex-shrink: 0;
+    margin-left: auto;
+    margin-right: auto;
 }
 @media (min-width: 560px) {
     .workout-card {
         width: 500px;
     }
 }
+/* ===== Exercise Track Indicator (horizontal circles) ===== */
+.exercise-track-indicator {
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-top: 8px;
+    padding-bottom: 4px;
+}
+.exercise-track-indicator::-webkit-scrollbar {
+    display: none;
+}
+.exercise-track-circle {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    scroll-snap-align: center;
+    position: relative;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+    transition: all 150ms ease;
+    border: 2px solid var(--border-color, #3f3f46);
+    background: transparent;
+    color: #71717a;
+    cursor: pointer;
+    overflow: hidden;
+    --fill-percent: 0%;
+    --fill-color: transparent;
+    /* Crisp inner shadow and border for a sculpted liquid vessel appearance */
+    box-shadow:
+        inset 0 2px 8px rgba(0, 0, 0, 0.5),
+        inset 0 -3px 6px rgba(255, 255, 255, 0.1),
+        0 0 0 2px var(--border-color, #3f3f46),  /* thicker border */
+        0 6px 16px rgba(0, 0, 0, 0.25);
+    will-change: clip-path;
+}
+.exercise-track-circle::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--fill-color, transparent);
+    clip-path: inset(calc(100% - var(--fill-percent, 0%)) 0 0 0);
+    transition: clip-path 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 0;
+}
+.exercise-track-circle::after {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.2);  /* was 1px solid rgba(255,255,255,0.1) */
+    pointer-events: none;
+    z-index: 2;
+}
+
+/* Sinusoidal wave at the fill boundary — positioned via bottom offset
+   that tracks --fill-percent, filled with --fill-color, animated
+   horizontally with translateX for a continuous scroll. */
+.wave-fill-svg {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: calc(var(--fill-percent, 0%) - 10px);  /* was -8px */
+    width: 100%;
+    height: 20px;  /* was 16px */
+    z-index: 1;
+    animation: liquid-wave 3s linear infinite;
+    pointer-events: none;
+    overflow: visible;
+}
+.wave-path {
+    fill: var(--fill-color, transparent);
+}
+
+/* Stop wave animation for completed circles */
+.exercise-track-circle.complete .wave-fill-svg {
+    animation: none;
+    transform: translateX(0);
+}
+
+@keyframes liquid-wave {
+    0%, 100% { transform: translateX(0); }
+    50% { transform: translateX(-50%); }
+}
+.exercise-track-circle .circle-content {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+}
+.exercise-track-circle .exercise-number {
+    font-size: 13px;
+    font-weight: 700;
+}
+.exercise-track-circle svg {
+    display: block;
+}
+
+/* ===== Rest timer auto-start toggle (exercise card header) ===== */
+.rest-auto-toggle {
+    transition: all 150ms ease;
+}
+/* Active state: glowing neon lime with subtle shadow */
+.rest-auto-toggle[aria-pressed="true"] {
+    color: #84cc16;
+    box-shadow: 0 0 8px rgba(132, 204, 22, 0.4);
+}
+.dark .rest-auto-toggle[aria-pressed="true"] {
+    color: #84cc16;
+    box-shadow: 0 0 12px rgba(132, 204, 22, 0.5);
+}
+/* Inactive state: muted surface gray */
+.rest-auto-toggle[aria-pressed="false"] {
+    color: #71717a;
+}
+.dark .rest-auto-toggle[aria-pressed="false"] {
+    color: #52525b;
+}
+
+/* Cancel circle (×) — solid red border */
+.exercise-track-circle.cancel {
+    --border-color: #ef4444;
+    color: #ef4444;
+}
+
+/* Empty exercise circle — transparent fill, zinc border */
+.exercise-track-circle.empty {
+    --border-color: #3f3f46;
+    color: #71717a;
+}
+.dark .exercise-track-circle.empty {
+    --border-color: #52525b;
+}
+
+/* Partial exercise circle — lime fill rises to % */
+.exercise-track-circle.partial {
+    --border-color: #4d7c0c;
+    color: #84cc16;
+}
+.dark .exercise-track-circle.partial {
+    box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.2);
+}
+
+/* Active exercise circle — lime border + pulse */
+.exercise-track-circle.active {
+    --border-color: #84cc16;
+    color: #84cc16;
+    box-shadow: 0 0 0 3px rgba(132, 204, 22, 0.3);
+    animation: track-pulse 1.5s ease-in-out infinite;
+}
+@keyframes track-pulse {
+    0%, 100% { box-shadow: 0 0 0 3px rgba(132, 204, 22, 0.3); }
+    50% { box-shadow: 0 0 0 6px rgba(132, 204, 22, 0.15); }
+}
+
+/* Complete exercise circle — full lime fill, white checkmark */
+.exercise-track-circle.complete {
+    --border-color: #4d7c0c;
+    color: white;
+}
+.exercise-track-circle.complete::before,
+.exercise-track-circle.complete::after,
+.exercise-track-circle.complete .wave-fill-svg {
+    animation: none !important;
+    transform: translateX(0);
+}
+
+/* Add circle (+) — dashed border */
+.exercise-track-circle.add {
+    --border-color: #3f3f46;
+    border-style: dashed;
+    color: #71717a;
+}
+.dark .exercise-track-circle.add {
+    --border-color: #52525b;
+}
+.exercise-track-circle.add:hover {
+    --border-color: #84cc16;
+    color: #84cc16;
+}
+
+/* ========== Workout card & exercise header ========== */
+.reorder-handle {
+    transition: all 150ms ease;
+}
+.reorder-handle:hover {
+    background: rgba(132, 204, 22, 0.08) !important;
+}
+
+/* Per-set row delete button (start of row) — compact red cross */
+.delete-set-btn-start {
+    opacity: 0.5;
+    color: #ef4444;
+    transition: all 150ms ease;
+}
+.delete-set-btn-start:hover {
+    opacity: 1;
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.08) !important;
+}
+.delete-set-btn-start:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 1px;
+}
+
+/* ========== Exercise card 3-in-1 segmented tabs ========== */
+.exercise-tab-bar {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.exercise-tab-btn {
+    opacity: 0.5;
+    color: #71717a;
+    border: none;
+    background: transparent;
+    transition: all 150ms ease;
+}
+
+.exercise-tab-btn:hover {
+    opacity: 0.8;
+    color: #3f3f46;
+}
+
+.dark .exercise-tab-btn:hover {
+    color: #a1a1aa;
+}
+
+.exercise-tab-btn[data-active="true"] {
+    opacity: 1;
+    background: rgba(132, 204, 22, 0.12);
+    color: #4d7c0c;
+    box-shadow: inset 0 1px 2px rgba(132, 204, 22, 0.2);
+}
+
+.dark .exercise-tab-btn[data-active="true"] {
+    background: rgba(132, 204, 22, 0.15);
+    color: #84cc16;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+/* ===== Unified mode buttons (rest timer mode toggle) ===== */
+/* Matches .exercise-tab-btn styling exactly — relies on data-active attribute
+   set by JS instead of inline Tailwind utility classes for active state. */
+.mode-btn {
+    opacity: 0.5;
+    color: #71717a;
+    border: none;
+    background: transparent;
+    transition: all 150ms ease;
+    flex: 1;
+}
+
+.mode-btn:hover {
+    opacity: 0.8;
+    color: #3f3f46;
+}
+
+.dark .mode-btn:hover {
+    color: #a1a1aa;
+}
+
+.mode-btn[data-active="true"] {
+    opacity: 1;
+    background: rgba(132, 204, 22, 0.12);
+    color: #4d7c0c;
+    box-shadow: inset 0 1px 2px rgba(132, 204, 22, 0.2);
+}
+
+.dark .mode-btn[data-active="true"] {
+    background: rgba(132, 204, 22, 0.15);
+    color: #84cc16;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.exercise-tab-panel {
+    animation: fadeIn 0.2s ease-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
 /* The row of cards scrolls; the header above it must not inherit that scroll. */
 .workout-carousel {
     scroll-snap-type: x mandatory;
     overscroll-behavior-x: contain;
     -webkit-overflow-scrolling: touch;
+    overflow-x: auto;
+    overflow-y: hidden;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    /* Center the active card in the scroll port via scroll-padding so cards
+       snap into the middle instead of the start. justify-content is omitted:
+       it only centers when content fits, and conflicts with scroll-snap when
+       the row overflows. */
+    scroll-padding-left: calc(50% - min(46vw, 250px));
+    scroll-padding-right: calc(50% - min(46vw, 250px));
+}
+
+/* Each card snaps to the centre of the carousel scroll port. */
+.workout-card.snap-center {
+    scroll-snap-align: center;
+    scroll-snap-stop: normal;
 }
 
 /* Spinner inside the "Finish & Analyze" button while the verdict is generated */
@@ -3657,18 +4009,118 @@ body.has-network-banner main {
    scrolls. The bottom offset accounts for the 4rem (64px) nav clearance plus
    the iOS home-indicator safe area so the bar never overlaps the nav on either
    platform. z-50 (from the HTML) keeps it below the toast layer (z-[130]) and
-   the modal host (z-[120]) but above the carousel content. */
+   the modal host (z-[120]) but above the carousel content.
+
+   Dual-mode: the bar now hosts a mode toggle (Timer / Stopwatch) and preset
+   chips for the Timer mode. The display + dismiss button are shared by both
+   modes. */
 #rest-timer-bar.rest-timer-bar {
     bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+    left: 0;
+    right: 0;
+    pointer-events: none;
 }
+
 .rest-timer-bar__inner {
-    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+    pointer-events: auto;
+    width: 100%;
+    max-width: 92vw;
+    margin: 0 auto;
+    box-sizing: border-box;
+    padding: 0.875rem 0.875rem calc(0.75rem + env(safe-area-inset-bottom, 0px));
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 0.625rem !important;
 }
-#rest-timer-dismiss {
-    border: 1px solid rgba(24, 24, 27, 0.08);
+
+/* Row 1: Mode toggle */
+.rest-timer-mode-toggle {
+    display: flex !important;
+    gap: 2px !important;
 }
-.dark #rest-timer-dismiss {
-    border-color: rgba(255, 255, 255, 0.08);
+
+/* Row 2: Time display — horizontal, single line */
+.rest-timer-time {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 0.25rem !important;
+    text-align: center !important;
+    min-width: 120px;
+    margin: 0 auto;
+}
+
+#rest-timer-remaining {
+    font-size: 2rem;
+}
+
+#rest-timer-ms {
+    font-size: 0.875rem;
+    opacity: 0.8;
+    animation: ms-tick 1s infinite;
+}
+
+#rest-timer-state {
+    opacity: 0.7;
+    font-size: 0.625rem;
+    text-transform: uppercase;
+}
+
+/* Row 3: Presets / custom input */
+.rest-timer-controls {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 0.625rem !important;
+}
+
+/* Presets — scrollable and compact */
+.rest-timer-presets {
+    display: flex !important;
+    gap: 6px !important;
+    overflow-x: auto !important;
+    scroll-snap-type: x mandatory !important;
+    -webkit-overflow-scrolling: touch !important;
+    padding-bottom: 4px !important;
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+}
+.rest-timer-presets::-webkit-scrollbar {
+    display: none !important;
+}
+
+.preset-btn {
+    flex-shrink: 0 !important;
+    height: 32px !important;
+    padding: 0 10px !important;
+    scroll-snap-align: start !important;
+}
+
+/* Custom input — neat row alignment */
+.rest-timer-custom {
+    display: flex !important;
+    align-items: center !important;
+    gap: 4px !important;
+}
+
+/* Stopwatch mode content */
+[data-stopwatch-mode] {
+    display: none !important;
+}
+[data-stopwatch-mode].hidden {
+    display: none !important;
+}
+
+/* Row 4: Full-width dismiss button at the bottom */
+.rest-timer-dismiss {
+    width: 100% !important;
+    height: 40px !important;
+}
+
+/* Milliseconds animation */
+@keyframes ms-tick {
+    from { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.6; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
 }
 
 /* Muted inline rest-time line shown between completed set rows on the
@@ -3683,4 +4135,123 @@ body.has-network-banner main {
 }
 .rest-time-inline {
     animation: rest-time-fade-in 0.2s ease-out;
+}
+
+/* Set row add/remove animations used by the live workout screen so a single
+   set can be inserted or removed without re-rendering the whole screen. */
+.set-row-enter,
+.set-row-exit {
+    will-change: opacity, transform;
+    overflow: hidden;
+}
+
+.set-row-enter {
+    opacity: 0;
+    transform: translateY(-10px);
+    transition: opacity 200ms ease, transform 200ms ease;
+}
+.set-row-enter.active {
+    opacity: 1;
+    transform: translateY(0);
+}
+.set-row-exit {
+    opacity: 1;
+    transform: translateY(0);
+    transition: opacity 200ms ease, transform 200ms ease;
+}
+.set-row-exit.active {
+    opacity: 0;
+    transform: translateY(-10px);
+}
+
+/* AI analysis badge in the collapsed toggle header */
+.ai-analysis-badge {
+    white-space: nowrap;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.625rem;
+    font-weight: 700;
+    background: #dcfce8;
+    color: #14532d;
+}
+.dark .ai-analysis-badge {
+    background: rgba(20, 83, 45, 0.4);
+    color: #bbf7d0;
+}
+
+.scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+    display: none;
+}
+
+.ai-analysis-badge.hidden {
+    display: none;
+}
+
+/* ============ History Tab Redesign ============ */
+
+/* Summary panel card hover effects */
+.history-summary-panel .glass {
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.history-summary-panel .glass:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+.dark .history-summary-panel .glass:hover {
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* Period tab active state */
+.history-period-tab[aria-selected="true"],
+.history-period-tab-filter[aria-selected="true"] {
+    background: #18181b;
+    color: #fafafa;
+}
+.dark .history-period-tab[aria-selected="true"],
+.dark .history-period-tab-filter[aria-selected="true"] {
+    background: #fafafa;
+    color: #09090b;
+}
+
+/* Search input focus states */
+#history-search-input:focus {
+    outline: none;
+    ring: 2px;
+    ring-color: #84cc16;
+    box-shadow: 0 0 0 3px rgba(132, 204, 22, 0.2);
+}
+.dark #history-search-input:focus {
+    box-shadow: 0 0 0 3px rgba(132, 204, 22, 0.3);
+}
+
+/* Exercise preview truncation with tooltip */
+.history-summary-panel .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* Week separator styling */
+.history-week-separator {
+    border-top: 1px dashed rgba(24, 24, 27, 0.1);
+    margin: 0.5rem 0;
+}
+.dark .history-week-separator {
+    border-top-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Card press animation for history cards */
+.history-summary-panel .btn-press:active,
+.glass.rounded-2xl.p-4.btn-press:active {
+    transform: scale(0.98);
+    transition: transform 0.05s ease;
 }

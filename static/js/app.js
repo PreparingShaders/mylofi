@@ -84,10 +84,14 @@ const App = {
         // (the back arrow). The resume handler honours it and does not pull
         // the user back into the workout they just closed.
         workoutScreenDismissed: false,
+        // Set during workout completion to prevent saveState from
+        // overwriting cleared active_session_id/active_workout.
+        completingWorkout: false,
         landingCarouselState: {},
         _showcaseImages: null,
         landingThemeState: { mode: 'system', dark: false },
         _pendingToggleSetIds: new Set(),
+        _flushLock: false,
     },
     
     elements: {},
@@ -180,6 +184,20 @@ const App = {
     },
 
     /**
+     * Check for any persisted auth data suggesting a previous session
+     * exists but tokens may have been evicted (e.g. iOS PWA).
+     */
+    hasSessionHint() {
+        // Check for any persisted auth data suggesting a previous session
+        return !!(
+            localStorage.getItem('user') ||
+            localStorage.getItem('refresh_token') ||
+            localStorage.getItem('access_token') ||
+            sessionStorage.getItem('auth_initiated')
+        );
+    },
+
+    /**
      * Attempt to recover the session via the HttpOnly refresh_token cookie.
      *
      * iOS standalone PWAs evict localStorage on process kill, so on cold start
@@ -198,7 +216,12 @@ const App = {
             this.saveTokens();
             this.showMainAndValidate();
         } catch (e) {
-            console.log('[App] Cookie refresh failed, falling back to landing:', e);
+            // Silent failure: no console.error for 401/403, just log at warn level
+            if (e?.status === 401 || e?.status === 403) {
+                console.warn('[App] Cookie refresh failed (no session):', e.message);
+            } else {
+                console.log('[App] Cookie refresh failed, falling back to landing:', e);
+            }
             this.showLanding();
         }
     },
@@ -263,8 +286,15 @@ const App = {
                 hasUser: !!this.state.user
             });
 
-            // Initialize DB/Sync in background (non-blocking).
-            this.initDBAndSync().catch(e => console.warn('[App] DB init failed:', e));
+            // Initialize DB and SyncEngine - BLOCKING
+            try {
+                await this.initDBAndSync();  // NOW AWAITED
+                console.log('[App] DB and SyncEngine initialized');
+            } catch (e) {
+                console.warn('[App] DB/Sync init failed:', e);
+                // Still try to init SyncEngine for online case
+                await this.initSyncEngine();
+            }
 
             const hasLocalAccess = !!this.state.tokens.access;
             const hasLocalRefresh = !!this.state.tokens.refresh;
@@ -297,7 +327,8 @@ const App = {
                     console.log('[App] Online, validating token...');
                     this.showMainAndValidate();
                 }
-            } else if (hasLocalRefresh || navigator.onLine) {
+            } else if ((hasLocalRefresh || this.hasSessionHint()) && navigator.onLine) {
+                // Only attempt cookie refresh if there's a hint of a previous session
                 // No access token in localStorage (iOS PWA eviction), but either
                 // a refresh token is cached OR we are online — attempt to recover
                 // the session via the HttpOnly refresh_token cookie.
@@ -308,12 +339,6 @@ const App = {
                 this.showScreen('landing');
                 this.renderLanding();
             }
-
-            // Host reachability check on warm init: navigator.onLine is
-            // unreliable under L3 blocks and captive portals, so probe the
-            // backend /health endpoint and flush any queued mutations if the
-            // host is actually reachable.
-            await this.checkHostConnectivity();
         } finally {
             // Hide splash screen after auth determination — always, even if
             // rendering or auth check threw an error. Otherwise a UI exception
@@ -332,14 +357,6 @@ const App = {
         const onOnline = () => {
             this.state.isOnline = true;
             this.updateNetworkBanner(true);
-            // Event-driven refresh: when network returns, flush the sync queue
-            // and re-render the active page so pending meals show real results.
-            this.checkHostConnectivity().then((reachable) => {
-                if (reachable && this.state.tokens.access && !SyncEngine.authFailed) {
-                    this.flushOfflineQueue().catch(() => {});
-                    this.refreshCurrentView();
-                }
-            });
         };
         SyncEngine.setReplayFn((item) => API.replayQueuedItem(item));
         SyncEngine.setHooks({
@@ -356,22 +373,8 @@ const App = {
     },
 
     setupOfflineSync() {
-        window.addEventListener('offline', () => {
-            this.state.isOnline = false;
-            this.updateNetworkBanner();
-            console.log('[App] Network lost, requests will be queued locally');
-        });
-
-        window.addEventListener('online', async () => {
-            console.log('[App] Network regained, revalidating session');
-            // The socket was waiting for exactly this moment.
-            this.connectRealtime();
-            // Coming back online is a resume in every way that matters: the
-            // session has to be alive again and the workout has to be found
-            // again, but the view the user is on stays as it is.
-            await this.handleAppResume('online');
-            this.refreshCurrentView();
-        });
+        // Network state is managed by WebSocket status events
+        // NetworkBanner handles UI display only
 
         // The app comes back from the background in two different ways:
         // `visibilitychange` on mobile browsers and `focus` on desktop and
@@ -386,6 +389,14 @@ const App = {
         window.addEventListener('focus', () => {
             if (document.visibilityState !== 'visible') return;
             this.handleAppResume('focus');
+        });
+
+        // bfcache restore: the DOM is intact but timers were suspended.
+        // Only fire on persisted (cached) restores, not on normal loads.
+        window.addEventListener('pageshow', (event) => {
+            if (event.persisted) {
+                this.handleAppResume('pageshow');
+            }
         });
 
         // Lists rendered from the read cache are stale right after a sync
@@ -416,9 +427,13 @@ const App = {
             this.showToast('Сессия истекла. Пожалуйста, войдите снова.', 'info');
         });
 
-        // Background sync completion from the service worker
+        // Background sync from service worker
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.addEventListener('message', (event) => {
+                if (event.data?.type === 'FLUSH_OFFLINE_QUEUE') {
+                    console.log('[App] SW requested queue flush');
+                    this.flushOfflineQueue().catch(() => {});
+                }
                 if (event.data?.type === 'SYNC_COMPLETE') {
                     this.updateNetworkBanner(true);
                     if (this.state.currentScreen === 'main' && ['nutrition', 'workouts', 'history'].includes(this.state.currentPage)) {
@@ -430,18 +445,40 @@ const App = {
     },
 
     async flushOfflineQueue() {
-        // Don't flush if the session is already known to be invalid: the
-        // queue items will all get 401/403 and trigger repeated refresh
-        // attempts that can never succeed.
+        // Guard: no tokens = nothing to sync
         if (!this.state.tokens.access) return;
+        
+        // Guard: auth failed = session invalid, don't retry
         if (SyncEngine.authFailed) {
             console.log('[App] Auth session invalid, skipping offline queue flush');
             return;
         }
+        
+        // Guard: SyncEngine not initialized yet
+        if (!SyncEngine.isReady()) {
+            console.log('[App] SyncEngine not ready, deferring queue flush');
+            // Schedule ONE retry after init (not a loop)
+            setTimeout(() => this.flushOfflineQueue(), 100);
+            return;
+        }
+        
+        // Mutex: prevent concurrent flushes with guaranteed release
+        if (this.state._flushLock) {
+            console.log('[App] Queue flush already in progress, skipping duplicate');
+            return;
+        }
+        
+        this.state._flushLock = true;
+        console.log('[App] Starting offline queue flush');
+        
         try {
             await SyncEngine.processQueue();
+            console.log('[App] Offline queue flush completed');
         } catch (e) {
             console.error('[App] Offline queue processing failed:', e);
+        } finally {
+            this.state._flushLock = false;
+            console.log('[App] Flush lock released');
         }
     },
 
@@ -459,22 +496,58 @@ const App = {
     },
 
     /**
-     * The workout that is in progress, as the server and the local storage
-     * see it.
+     * Resolve the active workout with retry logic to handle DB replication lag.
      *
-     * A workout started offline only exists in the local storage until the
-     * queue syncs it, so both sources are consulted. Returns null when
-     * nothing is running.
+     * The server may return a session that was just completed but hasn't been
+     * marked as COMPLETED in the read replica yet. Retry a few times with
+     * exponential backoff to wait for the status to propagate.
      */
     async resolveActiveWorkout() {
         const token = this.state.tokens?.access || null;
+
+        // Приоритетная блокировка воскрешения сессии: если last_closed_session_id
+        // совпадает с текущим ID сессии (или текущий ID отсутствует), сессия
+        // была только что завершена/отменена офлайн и физически не может быть
+        // восстановлена из любого локального кеша.
+        const currentSessionId = this.state.currentSessionId;
+        const lastClosedId = localStorage.getItem('last_closed_session_id');
+        if (lastClosedId && (String(currentSessionId) === String(lastClosedId) || !currentSessionId)) {
+            localStorage.removeItem('active_session_id');
+            localStorage.removeItem('active_workout');
+            if (currentSessionId) localStorage.removeItem(`session_${currentSessionId}`);
+            console.log('[App] resolveActiveWorkout blocked: session closed locally, returning null');
+            return null;
+        }
+
         let serverSession = null;
-        try {
-            // Read fresh: the read cache may still hold a session that was
-            // completed minutes ago.
-            serverSession = await API.getFresh('/workouts/sessions/active', token);
-        } catch (error) {
-            console.warn('[App] Active workout lookup failed:', error);
+
+        // Retry logic for DB replication lag
+        let retries = 5;
+        let delay = 300;
+        while (retries > 0) {
+            try {
+                serverSession = await API.getFresh('/workouts/sessions/active', token);
+                break;
+            } catch (error) {
+                console.warn('[App] Active workout lookup failed:', error);
+                break;
+            }
+
+            // If we got a session but it's not ACTIVE, wait and retry
+            if (serverSession && serverSession.status !== 'active') {
+                console.log(`[App] Server session status is "${serverSession.status}", retrying after ${delay}ms... (${retries} retries left)`);
+                await new Promise(r => setTimeout(r, delay));
+                retries--;
+                delay = Math.min(delay * 1.5, 2000);
+                continue;
+            }
+            break;
+        }
+
+        // If server returns a session that is not ACTIVE after retries, treat as null.
+        if (serverSession && serverSession.status !== 'active') {
+            console.log(`[App] Server session status is "${serverSession.status}" after retries, ignoring`);
+            serverSession = null;
         }
 
         // A workout started offline lives only in the local storage until
@@ -489,6 +562,24 @@ const App = {
             // Completed or cancelled offline and not yet replayed on the
             // server: the local decision wins.
             active = null;
+        }
+
+        // Fallback: restore a server session previously auto-saved to
+        // localStorage when the server is unreachable (network drop mid-workout).
+        // Do NOT restore a session the user just completed/cancelled offline —
+        // it is recorded in last_closed_session_id.
+        if (!active && this.state.currentSessionId) {
+            const lastClosedId = localStorage.getItem('last_closed_session_id');
+            if (lastClosedId && lastClosedId === String(this.state.currentSessionId)) {
+                console.log('[App] Skipping localStorage restore: session was just closed locally');
+            } else {
+                const restored = Workouts.restoreSessionFromLocalStorage(this.state.currentSessionId);
+                if (restored) {
+                    console.log('[App] Restored session from localStorage due to server unreachable:', restored.id);
+                    active = restored;
+                    isLocal = false;
+                }
+            }
         }
 
         if (!active) return null;
@@ -589,14 +680,12 @@ const App = {
         // mobile browser; reconnecting is cheap and the channel heals itself.
         this.connectRealtime();
 
-        const reachable = await this.checkHostConnectivity();
-        if (!reachable) {
-            // Offline: the view, the local session and the typed values stay
-            // as they are, and the timer only has to be woken up.
+        // WebSocket 'open' event will trigger flush when connected
+        // Just rearm workout timer if on workout screen
+        if (this.isWorkoutScreenOpen()) {
             this.rearmWorkoutTimer();
-            return;
         }
-
+        
         if (!await this.ensureSessionAlive()) return;
 
         // The active workout is looked up before anything is rendered: the
@@ -703,11 +792,29 @@ const App = {
      * any more. The tick itself is computed from the start of the session,
      * so restarting the interval is enough to get the right value back.
      */
-    rearmWorkoutTimer(session = null) {
+     rearmWorkoutTimer(session = null) {
         if (!this.isWorkoutScreenOpen()) return;
         const active = session || Workouts.currentSession;
         if (!active) return;
+        // startWorkoutTimer → stopWorkoutTimer → dismissRestTimer clears the
+        // rest timer state, so snapshot it here and restore after so the
+        // count-down target survives the resume.
+        const savedRestTimer = {
+            restTimerStartTime: Workouts.restTimerStartTime,
+            restTimerTargetTimestamp: Workouts.restTimerTargetTimestamp,
+            restTimerPlannedDuration: Workouts.restTimerPlannedDuration,
+            activeRestForSetId: Workouts.activeRestForSetId,
+            lastSavedRestSetId: Workouts.lastSavedRestSetId,
+            restSavedBySetId: Workouts.restSavedBySetId,
+        };
         Workouts.startWorkoutTimer(active);
+        // Restore the snapshot dismissed by stopWorkoutTimer
+        Workouts.restTimerStartTime = savedRestTimer.restTimerStartTime;
+        Workouts.restTimerTargetTimestamp = savedRestTimer.restTimerTargetTimestamp;
+        Workouts.restTimerPlannedDuration = savedRestTimer.restTimerPlannedDuration;
+        Workouts.activeRestForSetId = savedRestTimer.activeRestForSetId;
+        Workouts.lastSavedRestSetId = savedRestTimer.lastSavedRestSetId;
+        Workouts.restSavedBySetId = savedRestTimer.restSavedBySetId;
         Workouts.rearmRestTimer();
     },
 
@@ -772,56 +879,6 @@ const App = {
         NetworkBanner.refresh(skipHostCheck);
     },
 
-    /**
-     * Explicit backend host reachability check using a short AbortController
-     * timeout. navigator.onLine is unreliable under L3 blocks and captive
-     * portals (the interface reports online while HTTP requests time out), so
-     * a lightweight GET /health probe is the source of truth.
-     *
-     * When the host is reachable and the offline banner was visible, this
-     * flushes the IndexedDB sync queue and transitions to the clean hidden
-     * state. When unreachable, it shows the offline banner immediately.
-     */
-    async checkHostConnectivity() {
-        if (!navigator.onLine) {
-            this.state.isOnline = false;
-            if (this.state.currentScreen !== 'landing') {
-                NetworkBanner.showOffline();
-            }
-            return false;
-        }
-
-        let reachable = false;
-        try {
-            reachable = await API.checkHostReachable();
-        } catch (error) {
-            console.warn('[App] Host reachability check failed:', error);
-            reachable = false;
-        }
-
-        if (reachable) {
-            this.state.isOnline = true;
-            await NetworkBanner.refresh(true);
-            // Only flush the offline queue when the session is still valid.
-            // A reachable host with an expired token would make every queued
-            // item return 401, so probe /users/me first and bail out (clearing
-            // tokens) when the session is gone.
-            if (this.state.tokens.access && !SyncEngine.authFailed) {
-                const live = await this.ensureSessionAlive();
-                if (live) {
-                    await this.flushOfflineQueue();
-                }
-            }
-        } else {
-            this.state.isOnline = false;
-            if (this.state.currentScreen !== 'landing') {
-                NetworkBanner.showOffline();
-            }
-        }
-
-        return reachable;
-    },
-
     isAIOnline() {
         return this.state.isOnline;
     },
@@ -840,6 +897,14 @@ const App = {
     },
     
     saveState() {
+        // Skip persisting active session/workout during completion flow to avoid
+        // overwriting the cleared state from clearActiveSessionState().
+        if (this.state.completingWorkout) {
+            if (this.state.currentPage) {
+                localStorage.setItem('last_active_page', this.state.currentPage);
+            }
+            return;
+        }
         if (this.state.currentPage) {
             localStorage.setItem('last_active_page', this.state.currentPage);
         }
@@ -1612,27 +1677,15 @@ const App = {
 
         if (!this.realtime) {
             this.realtime = API.createWebSocket(token);
-            this.realtime.on('status', (status) => {
-                // A channel that came up has proved its token, so a later
-                // refusal is allowed to start the retry budget over.
+            window.addEventListener('mylofi:realtime-status', (e) => {
+                const status = e?.detail?.status;
                 if (status === 'open') {
                     this._realtimeAuthRetries = 0;
                     this.state.isOnline = true;
                     NetworkBanner.hide();
-                } else if (status === 'closed') {
-                    this.state.isOnline = false;
-                    NetworkBanner.showOffline();
-                }
-            });
-            window.addEventListener('mylofi:realtime-status', (e) => {
-                const status = e?.detail?.status;
-                if (status === 'open') {
-                    this.state.isOnline = true;
-                    NetworkBanner.hide();
+                    // ONLY place that triggers queue flush on network restore
                     if (this.state.tokens?.access && this.state.currentScreen === 'main') {
                         this.flushOfflineQueue().catch(() => {});
-                        // The workout screen is skipped: a re-render there
-                        // would throw away what the user typed.
                         this.refreshCurrentView();
                     }
                 } else if (status === 'closed') {
@@ -1711,11 +1764,6 @@ const App = {
     showPage(pageName) {
         console.log(`[App] Showing page: ${pageName}`);
         this.markPageActive(pageName);
-        // navigator.onLine is unreliable under L3 blocks and captive portals
-        // (the interface reports online while HTTP requests time out), so
-        // every page navigation re-probes the backend host and shows the
-        // offline banner immediately when the host is unreachable.
-        this.checkHostConnectivity().catch(() => {});
         this.saveState();
         this.renderPage(pageName);
     },
@@ -1751,10 +1799,14 @@ const App = {
 
         document.addEventListener('click', (e) => {
             const action = e.target.closest('[data-action]')?.dataset.action;
-            if (action) this.handleAction(action, e);
+            if (action) {
+                console.log('[App] Global click handler: action=', action, 'target:', e.target);
+                this.handleAction(action, e);
+            }
 
             const navItem = e.target.closest('.nav-item');
             if (navItem && navItem.dataset.page) {
+                console.log('[App] Nav click:', navItem.dataset.page);
                 this.showPage(navItem.dataset.page);
             }
         });
@@ -2135,14 +2187,56 @@ const App = {
     },
 
     async handleCompleteWorkout(event) {
+        this.state.completingWorkout = true;
         const sessionId = event.target.closest('[data-session-id]')?.dataset.sessionId;
+        if (!sessionId) return;
+
+        // Validate workout has exercises with completed sets before confirmation
+        const session = Workouts.currentSession;
+        if (session) {
+            const hasValidExercises = session.exercises?.some(ex =>
+                ex.sets?.some(s => s.is_completed && (s.weight_kg > 0 || s.reps > 0 || s.duration > 0 || s.distance > 0))
+            );
+
+            if (!hasValidExercises) {
+                if (!await Components.confirmModal({
+                    title: 'Пустая тренировка',
+                    message: 'В тренировке нет выполненных подходов. Завершить всё равно?',
+                    confirmText: 'Да, завершить',
+                    confirmClass: 'bg-primary-600 hover:bg-primary-700 text-white dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200 font-semibold shadow-md',
+                    cancelText: 'Добавить подходы',
+                })) {
+                    this.state.completingWorkout = false;
+                    return;
+                }
+            }
+        }
+
         if (!await Components.confirmModal({
             title: 'Завершить тренировку?',
             message: 'Все невыполненные подходы не будут сохранены.',
             confirmText: 'Завершить',
             confirmClass: 'bg-primary-600 hover:bg-primary-700 text-white dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200 font-semibold shadow-md',
             cancelText: 'Назад'
-        })) return;
+         })) {
+            this.state.completingWorkout = false;
+            return;
+        }
+
+        // Save session reference BEFORE clearing state
+        const sessionToComplete = Workouts.currentSession;
+
+        // Мгновенный сброс активной сессии — плашка «Активная тренировка»
+        // должна исчезнуть сразу после клика, не дожидаясь ответа сервера.
+        Workouts.markSessionClosedLocally(sessionId);
+
+        // Sync DOM to session BEFORE template prompt so local sessions
+        // have latest exercises when completeLocalSession reads from localStorage
+        const workoutContainer = document.getElementById('carousel') || document.querySelector('.workout-carousel');
+        Workouts.syncSessionFromDOM(workoutContainer);
+
+        // Prompt for template update BEFORE clearing session state
+        await Workouts.promptTemplateUpdateIfNeeded(this, sessionToComplete);
 
         // Persist any in-flight rest timer so its elapsed seconds are recorded
         // on the previous set before the session is closed.
@@ -2150,12 +2244,26 @@ const App = {
 
         // A session created offline has no server id yet: close it locally and queue the request
         if (Workouts.completeLocalSession(this)) {
+            Workouts.clearActiveSessionState(this);
+            this.state.completingWorkout = false;
             await this.renderPage('workouts');
             return;
         }
 
-        // Flush all active weight and rep inputs before completing
+        // Sync the DOM into the in-memory session synchronously before anything
+        // else, so a network failure still preserves the real tonnage in
+        // localStorage and flushPendingSetEdits sends exactly what was synced.
+        const workoutContainer2 = document.getElementById('carousel') || document.querySelector('.workout-carousel');
+        Workouts.syncSessionFromDOM(workoutContainer2);
+
+        // Wait for any pending drum picker saves to complete
+        await new Promise(r => setTimeout(r, 500));
+
+        // Flush all active weight and rep inputs into session state before completing
         await this.flushPendingSetEdits();
+
+        // Ensure we have a valid token before the completion call
+        await this.ensureFreshToken();
 
         const durationSeconds = Workouts.sessionStartTimestamp
             ? Math.max(0, Math.floor((Date.now() - Workouts.sessionStartTimestamp) / 1000))
@@ -2169,18 +2277,56 @@ const App = {
             );
             console.log('[handleCompleteWorkout] Complete endpoint response:', resp);
             Workouts.forgetAiPlan(sessionId);
+            Workouts.clearActiveSessionState(this);
             this.showToast('Тренировка завершена!', 'success');
         } catch (e) {
             if (e?.offlineQueued) {
                 // Session is closed locally, the request goes out as soon as the network is back
-                await Workouts.markSessionCompletedLocally(sessionId);
+                Workouts.clearActiveSessionState(this);
+                // Use saved session reference since currentSession is now null
+                await Workouts.persistCompletedSessionLocally(sessionId, sessionToComplete);
                 this.showToast('Тренировка завершена! Сеть недоступна, данные будут синхронизированы при появлении связи', 'info');
                 await this.renderPage('workouts');
+                this.state.completingWorkout = false;
                 return;
             }
-            this.showToast(e.message || 'Ошибка завершения тренировки', 'error');
+            // Network failure: preserve local state, queue completion for retry, clear active session
+            if (e?.isNetworkError) {
+                Workouts.clearActiveSessionState(this);
+                // Use saved session reference since currentSession is now null
+                await Workouts.persistCompletedSessionLocally(sessionId, sessionToComplete);
+                // Enqueue the completion request so it is retried when the connection returns
+                const token = this.state.tokens.access;
+                API.enqueueRequest(
+                    'POST',
+                    `/workouts/sessions/${sessionId}/complete`,
+                    durationSeconds !== null ? { duration_seconds: durationSeconds } : null,
+                    token,
+                    { offlineSessionKey: null }
+                );
+                this.showToast('Тренировка завершена локально! Сеть недоступна, данные будут синхронизированы при появлении связи', 'info');
+                await this.renderPage('workouts');
+                this.state.completingWorkout = false;
+                return;
+            }
+            // 401/404 or other HTTP error: persist locally so data survives a
+            // token refresh or a missing session, then show a clear toast and
+            // keep the workout screen intact for retry.
+            console.error('[handleCompleteWorkout] Failed:', { status: e?.status, message: e?.message });
+            const workoutContainer = document.getElementById('carousel') || document.querySelector('.workout-carousel');
+            Workouts.syncSessionFromDOM(workoutContainer);
+            await Workouts.persistCompletedSessionLocally(sessionId, sessionToComplete);
+            Workouts.clearActiveSessionState(this);
+            const msg = e?.status === 401
+                ? 'Сессия истекла. Проверьте подключение и войдите снова.'
+                : e?.status === 404
+                ? 'Тренировка не найдена на сервере.'
+                : (e?.message || 'Ошибка завершения тренировки');
+            this.showToast(msg, 'error');
+            this.state.completingWorkout = false;
             return;
         }
+        this.state.completingWorkout = false;
         await this.renderPage('workouts');
     },
 
@@ -2191,39 +2337,50 @@ const App = {
      * reads the completed sets, so a value still sitting in an input or a toggle
      * whose PATCH is still in flight would be analysed as the previous one.
      *
-     * Sets whose toggle PATCH is already in flight are skipped: that request
-     * already carries weight, reps and is_completed, so re-sending here would
-     * only risk a race where the later weight/reps overwrite the completed flag.
+     * Always reads current DOM values and PATCHes every set that has meaningful
+     * data, so values still sitting in drum-picker inputs (not yet flushed via
+     * change/blur) are persisted before the coach reads the completed sets.
      */
     async flushPendingSetEdits() {
-        const rows = document.querySelectorAll('[data-set-id]');
-        const promises = Array.from(rows).map(async row => {
-            const setId = parseInt(row.dataset.setId);
-            if (isNaN(setId)) return;
+        const session = Workouts.currentSession;
+        if (!session) return;
+        const failed = [];
+        // Refresh the token once before the batch so token expiry mid-flush
+        // doesn't cause every PATCH to fail silently.
+        await this.ensureFreshToken();
+        const promises = [];
+        for (const ex of (session.exercises || [])) {
+            for (const set of (ex.sets || [])) {
+                const setId = set.id;
+                if (setId == null) continue;
 
-            // Skip sets whose toggle PATCH is already in flight — it already
-            // contains weight, reps and is_completed.
-            if (this._pendingToggleSetIds?.has(setId)) return;
+                // Skip temporary/local set IDs (negative numbers, temp-* strings)
+                // to avoid 404 errors that trigger false offline detection
+                if (!Workouts.isRealSetId(setId)) {
+                    console.log('[flushPendingSetEdits] Skipping temp set ID:', setId);
+                    continue;
+                }
 
-            const weightInput = row.querySelector('[data-field="weight"]');
-            const repsInput = row.querySelector('[data-field="reps"]');
-            const toggleBtn = row.querySelector('[data-action="toggle-set"]');
+                const payload = {};
+                if (set.weight_kg != null && !isNaN(set.weight_kg)) payload.weight_kg = set.weight_kg;
+                if (set.reps != null && !isNaN(set.reps)) payload.reps = set.reps;
+                if (set.is_completed) payload.is_completed = true;
 
-            const weight_kg = weightInput ? parseFloat(weightInput.value) : null;
-            const reps = repsInput ? parseInt(repsInput.value) : null;
-            const is_completed = toggleBtn?.dataset.completed === 'true';
+                if (Object.keys(payload).length <= 1 && !payload.is_completed) continue;
 
-            const payload = {};
-            if (!isNaN(weight_kg)) payload.weight_kg = weight_kg;
-            if (!isNaN(reps)) payload.reps = reps;
-            payload.is_completed = is_completed;
-
-            if (Object.keys(payload).length > 0) {
                 console.log('[flushPendingSetEdits] Flushing set', setId, payload);
-                await API.patch(`/workouts/sets/${setId}`, payload, this.state.tokens.access).catch(() => {});
+                promises.push(
+                    API.patch(`/workouts/sets/${setId}`, payload, this.state.tokens.access).catch(err => {
+                        console.error(`[flushPendingSetEdits] Failed to flush set ${setId}:`, err?.message || err);
+                        failed.push(setId);
+                    })
+                );
             }
-        });
+        }
         await Promise.all(promises);
+        if (failed.length) {
+            console.warn('[flushPendingSetEdits] Sets that failed to persist:', failed);
+        }
     },
 
     async handleCancelWorkout(event) {
@@ -2241,16 +2398,29 @@ const App = {
         Workouts.dismissRestTimer();
 
         if (Workouts.cancelLocalSession(this)) {
+            Workouts.clearActiveSessionState(this);
+            await this.renderPage('workouts');
+            return;
+        }
+        // Defensive: local session key is not an integer — never send it to
+        // the backend. Handle cancellation locally instead.
+        const LOCAL_SESSION_PLACEHOLDER = '__local_session__';
+        if (sessionId === LOCAL_SESSION_PLACEHOLDER || !/^\d+$/.test(String(sessionId))) {
+            Workouts.markSessionCancelledLocally(sessionId);
+            Workouts.clearActiveSessionState(this);
+            this.showToast('Тренировка отменена', 'info');
             await this.renderPage('workouts');
             return;
         }
         try {
             await API.post(`/workouts/sessions/${sessionId}/cancel`, null, this.state.tokens.access);
             Workouts.forgetAiPlan(sessionId);
+            Workouts.clearActiveSessionState(this);
             this.showToast('Тренировка отменена', 'info');
         } catch (e) {
             if (e?.offlineQueued) {
                 await Workouts.markSessionCancelledLocally(sessionId);
+                Workouts.clearActiveSessionState(this);
                 this.showToast('Тренировка отменена', 'info');
                 await this.renderPage('workouts');
                 return;

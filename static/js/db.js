@@ -1,6 +1,6 @@
 console.log("[DEBUG] Loaded db.js");
 const DB_NAME = 'mylofi-offline';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 let _db = null;
 
@@ -59,6 +59,16 @@ function openDB() {
                     db.createObjectStore('auth', { keyPath: 'key' });
                 }
             }
+
+            // v4 store — add photoHash index on sync_queue for deduplication
+            if (oldVersion < 4) {
+                const syncQueueStore = db.objectStoreNames.contains('sync_queue')
+                    ? event.target.transaction.objectStore('sync_queue')
+                    : null;
+                if (syncQueueStore && !syncQueueStore.indexNames.contains('photoHash')) {
+                    syncQueueStore.createIndex('photoHash', 'photoHash', { unique: false });
+                }
+            }
         };
 
         request.onsuccess = () => {
@@ -79,7 +89,7 @@ function promisify(request) {
     });
 }
 
-const SYNC_STATUS = { PENDING: 'pending', SYNCED: 'synced', FAILED: 'failed' };
+const SYNC_STATUS = { PENDING: 'pending', SYNCED: 'synced', FAILED: 'failed', UPLOADED_AWAITING_ANALYSIS: 'uploaded_awaiting_analysis' };
 const SYNC_METHODS = { POST: 'POST', PUT: 'PUT', DELETE: 'DELETE', PATCH: 'PATCH' };
 
 export const DB = {
@@ -333,6 +343,16 @@ export const DB = {
         const tx = db.transaction('sync_queue', 'readonly');
         const index = tx.objectStore('sync_queue').index('status');
         return promisify(index.getAll(IDBKeyRange.only(SYNC_STATUS.FAILED)));
+    },
+
+    async getSyncQueueByPhotoHash(photoHash, endpoint) {
+        const db = await openDB();
+        const tx = db.transaction('sync_queue', 'readonly');
+        const store = tx.objectStore('sync_queue');
+        const index = store.index('photoHash');
+        const items = await promisify(index.getAll(IDBKeyRange.only(photoHash)));
+        if (!endpoint) return items;
+        return items.filter(item => item.endpoint === endpoint && item.status === SYNC_STATUS.PENDING);
     },
 
     async clearSyncQueue() {

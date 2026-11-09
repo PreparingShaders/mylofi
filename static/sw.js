@@ -82,7 +82,7 @@ self.addEventListener('message', (event) => {
         self.skipWaiting();
     }
     if (event.data?.type === 'TRIGGER_SYNC') {
-        event.waitUntil(syncPendingPhotos().then(() => syncQueueItems()));
+        event.waitUntil(syncPendingPhotos());
     }
 });
 
@@ -219,7 +219,14 @@ const SYNC_TAG = 'mylofi-sync';
 
 self.addEventListener('sync', (event) => {
     if (event.tag === 'sync-photos' || event.tag === SYNC_TAG) {
-        event.waitUntil(syncPendingPhotos().then(() => syncQueueItems()));
+        // Notify all clients to flush queue on main thread
+        event.waitUntil(
+            self.clients.matchAll({ includeUncontrolled: true }).then((clients) => {
+                clients.forEach((client) => {
+                    client.postMessage({ type: 'FLUSH_OFFLINE_QUEUE' });
+                });
+            })
+        );
     }
 });
 
@@ -253,92 +260,6 @@ async function syncPendingPhotos() {
     } catch (error) {
         console.error('[SW] Sync photos error:', error);
     }
-}
-
-async function syncQueueItems() {
-    try {
-        const db = await openIndexedDB();
-        const store = db.transaction('sync_queue', 'readwrite').objectStore('sync_queue');
-        const index = store.index('status');
-        const items = await getAll(index, 'pending');
-
-        for (const item of items) {
-            try {
-                const response = await replayQueueItem(item);
-                if (response.ok) {
-                    const data = await response.json().catch(() => null);
-                    if (item.tempId && item.store && data && data.id) {
-                        await resolveTempIdInDB(db, item.store, item.tempId, data.id);
-                    }
-                    await deleteFromStore(store, item.id);
-                    notifyClientsSynced();
-                } else if (response.status >= 400 && response.status < 500) {
-                    // Permanent failure — remove from queue
-                    await deleteFromStore(store, item.id);
-                }
-                // Transient (5xx/network) — leave in queue for next sync cycle
-            } catch (error) {
-                console.warn('[SW] Queue item replay failed (will retry):', error);
-            }
-        }
-    } catch (error) {
-        console.error('[SW] Sync queue error:', error);
-    }
-}
-
-async function replayQueueItem(item) {
-    const url = `${self.location.origin}/api/v1${item.endpoint}`;
-    const accessToken = item.accessToken;
-    const headers = { 'Authorization': `Bearer ${accessToken}` };
-
-    const options = { method: item.method, headers, credentials: 'include' };
-
-    if (item.isFormData && item.formData) {
-        const fd = new FormData();
-        if (item.formData.blob instanceof Blob) {
-            fd.append('file', item.formData.blob, item.formData.filename || 'photo.webp');
-        }
-        const fields = item.formData.fields || {};
-        for (const [key, value] of Object.entries(fields)) {
-            if (value !== undefined && value !== null) fd.append(key, value);
-        }
-        options.body = fd;
-    } else if (item.payload) {
-        options.headers['Content-Type'] = 'application/json';
-        options.body = JSON.stringify(item.payload);
-    }
-
-    return fetch(url, options);
-}
-
-async function resolveTempIdInDB(db, storeName, tempId, realId) {
-    try {
-        const tx = db.transaction([storeName, 'sync_queue'], 'readwrite');
-        const recordStore = tx.objectStore(storeName);
-        const record = await getOne(recordStore, tempId);
-        if (record) {
-            record.id = realId;
-            record.sync_status = 'synced';
-            record.updated_at = Date.now();
-            recordStore.put(record);
-        }
-        const queueStore = tx.objectStore('sync_queue');
-        queueStore.index('status').openCursor().onsuccess = function (event) {
-            const cursor = event.target.result;
-            if (!cursor) return;
-            if (cursor.value.tempId === tempId) cursor.delete();
-            cursor.continue();
-        };
-        await txDone(tx);
-    } catch (error) {
-        console.error('[SW] Temp ID resolution failed:', error);
-    }
-}
-
-function notifyClientsSynced() {
-    self.clients && self.clients.matchAll({ includeUncontrolled: true }).then((clients) => {
-        clients.forEach((client) => client.postMessage({ type: 'SYNC_COMPLETE' }));
-    });
 }
 
 function openIndexedDB() {
