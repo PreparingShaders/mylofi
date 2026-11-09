@@ -1,6 +1,4 @@
 console.log("[DEBUG] Loaded network.js");
-import { API } from './api.js';
-import { SyncEngine } from './sync.js';
 
 const OFFLINE_MESSAGE = 'Офлайн-режим: данные сохранятся локально';
 const RESTORED_MESSAGE = 'Связь восстановлена. Синхронизируем...';
@@ -29,17 +27,11 @@ export const NetworkBanner = {
     initialized: false,
     hideTimer: null,
     state: 'hidden',
-    offlineDebounceTimer: null,
-    onlineDebounceTimer: null,
-    OFFLINE_DEBOUNCE_MS: 3000,
-    ONLINE_DEBOUNCE_MS: 1000,
 
     init() {
         if (this.initialized) return;
         this.initialized = true;
         this.mount();
-
-        window.addEventListener('offline', () => this.showOffline());
         // The safe-area inset follows the orientation, so the banner's own
         // height has to be re-measured when the viewport changes.
         window.addEventListener('resize', () => this.syncHeight());
@@ -115,14 +107,6 @@ export const NetworkBanner = {
             clearTimeout(this.hideTimer);
             this.hideTimer = null;
         }
-        if (this.offlineDebounceTimer) {
-            clearTimeout(this.offlineDebounceTimer);
-            this.offlineDebounceTimer = null;
-        }
-        if (this.onlineDebounceTimer) {
-            clearTimeout(this.onlineDebounceTimer);
-            this.onlineDebounceTimer = null;
-        }
     },
 
     render(state) {
@@ -143,14 +127,9 @@ export const NetworkBanner = {
         this.clearTimers();
         this.state = 'offline';
         this.mount();
-        // Debounce: wait before showing to avoid flashing on brief disconnects
-        this.offlineDebounceTimer = setTimeout(() => {
-            if (this.state === 'offline') {
-                this.render('offline');
-                this.el.classList.add('is-visible');
-                document.body.classList.add('has-network-banner');
-            }
-        }, this.OFFLINE_DEBOUNCE_MS);
+        this.render('offline');
+        this.el.classList.add('is-visible');
+        document.body.classList.add('has-network-banner');
     },
 
     showRestored() {
@@ -160,26 +139,9 @@ export const NetworkBanner = {
         this.render('restored');
         this.el.classList.add('is-visible');
         document.body.classList.add('has-network-banner');
-
-        // Debounce online event to avoid rapid online/offline cycles
-        this.onlineDebounceTimer = setTimeout(async () => {
-            // Only trigger sync if there are pending items
-            try {
-                const pendingCount = await SyncEngine.getPendingCount();
-                if (pendingCount > 0) {
-                    console.log('[NetworkBanner] Pending items found, triggering sync');
-                    SyncEngine.processQueue().catch((error) => {
-                        if (SyncEngine.authFailed) return;
-                        console.warn('[NetworkBanner] processQueue failed:', error);
-                    });
-                } else {
-                    console.log('[NetworkBanner] No pending items, skipping sync');
-                }
-            } catch (e) {
-                console.warn('[NetworkBanner] Failed to check pending count:', e);
-            }
-        }, this.ONLINE_DEBOUNCE_MS);
-
+        
+        // App.flushOfflineQueue() triggered by WebSocket open event
+        
         this.hideTimer = setTimeout(() => this.hide(), HIDE_DELAY_MS);
     },
 
@@ -191,29 +153,20 @@ export const NetworkBanner = {
     },
 
     // Re-evaluate state without interrupting a freshly shown "restored" message.
-    // When online, performs an explicit host reachability check to detect L3
-    // blocks and captive portals where navigator.onLine is unreliable.
+    // Authoritative state comes from App (set by WebSocket).
     async refresh(skipHostCheck = false) {
-        if (navigator.onLine === false) {
+        // Read authoritative state from App (set by WebSocket)
+        const isOnline = window.App?.state?.isOnline ?? navigator.onLine;
+        
+        if (!isOnline) {
             if (this.state !== 'offline') {
                 this.showOffline();
             }
             return this.state;
         }
 
-        if (skipHostCheck) {
-            if (this.state !== 'hidden') {
-                this.showRestored();
-            }
-            return this.state;
-        }
-
-        const reachable = await API.checkHostReachable();
-        if (!reachable) {
-            if (this.state !== 'offline') {
-                this.showOffline();
-            }
-        } else if (this.state !== 'hidden') {
+        // Online - show restored briefly then hide
+        if (this.state !== 'hidden') {
             this.showRestored();
         }
         return this.state;

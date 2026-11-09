@@ -474,16 +474,6 @@ export const Camera = {
             const overlayState = this.showLoadingOverlay(container);
             const token = this.app?.state?.tokens?.access || window.App?.state?.tokens?.access || null;
             try {
-                // Proactive host reachability probe. navigator.onLine stays
-                // true under L3 blocks and silent DNS/SNI drops, so a
-                // lightweight GET /health with a short timeout is the only
-                // reliable pre-flight check before we commit to an 8s
-                // upload that would otherwise hang on mobile Safari.
-                const hostReachable = await API.checkHostReachable(token);
-                if (!hostReachable) {
-                    throw Object.assign(new Error('Сеть недоступна'), { isNetworkError: true, status: 0 });
-                }
-
                 const formData = new FormData();
                 formData.append('file', compressedBlob, 'photo.webp');
                 if (notes) formData.append('notes', notes);

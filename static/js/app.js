@@ -91,6 +91,7 @@ const App = {
         _showcaseImages: null,
         landingThemeState: { mode: 'system', dark: false },
         _pendingToggleSetIds: new Set(),
+        _flushLock: false,
     },
     
     elements: {},
@@ -285,8 +286,15 @@ const App = {
                 hasUser: !!this.state.user
             });
 
-            // Initialize DB/Sync in background (non-blocking).
-            this.initDBAndSync().catch(e => console.warn('[App] DB init failed:', e));
+            // Initialize DB and SyncEngine - BLOCKING
+            try {
+                await this.initDBAndSync();  // NOW AWAITED
+                console.log('[App] DB and SyncEngine initialized');
+            } catch (e) {
+                console.warn('[App] DB/Sync init failed:', e);
+                // Still try to init SyncEngine for online case
+                await this.initSyncEngine();
+            }
 
             const hasLocalAccess = !!this.state.tokens.access;
             const hasLocalRefresh = !!this.state.tokens.refresh;
@@ -331,12 +339,6 @@ const App = {
                 this.showScreen('landing');
                 this.renderLanding();
             }
-
-            // Host reachability check on warm init: navigator.onLine is
-            // unreliable under L3 blocks and captive portals, so probe the
-            // backend /health endpoint and flush any queued mutations if the
-            // host is actually reachable.
-            await this.checkHostConnectivity();
         } finally {
             // Hide splash screen after auth determination — always, even if
             // rendering or auth check threw an error. Otherwise a UI exception
@@ -355,14 +357,6 @@ const App = {
         const onOnline = () => {
             this.state.isOnline = true;
             this.updateNetworkBanner(true);
-            // Event-driven refresh: when network returns, flush the sync queue
-            // and re-render the active page so pending meals show real results.
-            this.checkHostConnectivity().then((reachable) => {
-                if (reachable && this.state.tokens.access && !SyncEngine.authFailed) {
-                    this.flushOfflineQueue().catch(() => {});
-                    this.refreshCurrentView();
-                }
-            });
         };
         SyncEngine.setReplayFn((item) => API.replayQueuedItem(item));
         SyncEngine.setHooks({
@@ -379,22 +373,8 @@ const App = {
     },
 
     setupOfflineSync() {
-        window.addEventListener('offline', () => {
-            this.state.isOnline = false;
-            this.updateNetworkBanner();
-            console.log('[App] Network lost, requests will be queued locally');
-        });
-
-        window.addEventListener('online', async () => {
-            console.log('[App] Network regained, revalidating session');
-            // The socket was waiting for exactly this moment.
-            this.connectRealtime();
-            // Coming back online is a resume in every way that matters: the
-            // session has to be alive again and the workout has to be found
-            // again, but the view the user is on stays as it is.
-            await this.handleAppResume('online');
-            this.refreshCurrentView();
-        });
+        // Network state is managed by WebSocket status events
+        // NetworkBanner handles UI display only
 
         // The app comes back from the background in two different ways:
         // `visibilitychange` on mobile browsers and `focus` on desktop and
@@ -447,9 +427,13 @@ const App = {
             this.showToast('Сессия истекла. Пожалуйста, войдите снова.', 'info');
         });
 
-        // Background sync completion from the service worker
+        // Background sync from service worker
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.addEventListener('message', (event) => {
+                if (event.data?.type === 'FLUSH_OFFLINE_QUEUE') {
+                    console.log('[App] SW requested queue flush');
+                    this.flushOfflineQueue().catch(() => {});
+                }
                 if (event.data?.type === 'SYNC_COMPLETE') {
                     this.updateNetworkBanner(true);
                     if (this.state.currentScreen === 'main' && ['nutrition', 'workouts', 'history'].includes(this.state.currentPage)) {
@@ -461,18 +445,40 @@ const App = {
     },
 
     async flushOfflineQueue() {
-        // Don't flush if the session is already known to be invalid: the
-        // queue items will all get 401/403 and trigger repeated refresh
-        // attempts that can never succeed.
+        // Guard: no tokens = nothing to sync
         if (!this.state.tokens.access) return;
+        
+        // Guard: auth failed = session invalid, don't retry
         if (SyncEngine.authFailed) {
             console.log('[App] Auth session invalid, skipping offline queue flush');
             return;
         }
+        
+        // Guard: SyncEngine not initialized yet
+        if (!SyncEngine.isReady()) {
+            console.log('[App] SyncEngine not ready, deferring queue flush');
+            // Schedule ONE retry after init (not a loop)
+            setTimeout(() => this.flushOfflineQueue(), 100);
+            return;
+        }
+        
+        // Mutex: prevent concurrent flushes with guaranteed release
+        if (this.state._flushLock) {
+            console.log('[App] Queue flush already in progress, skipping duplicate');
+            return;
+        }
+        
+        this.state._flushLock = true;
+        console.log('[App] Starting offline queue flush');
+        
         try {
             await SyncEngine.processQueue();
+            console.log('[App] Offline queue flush completed');
         } catch (e) {
             console.error('[App] Offline queue processing failed:', e);
+        } finally {
+            this.state._flushLock = false;
+            console.log('[App] Flush lock released');
         }
     },
 
@@ -674,14 +680,12 @@ const App = {
         // mobile browser; reconnecting is cheap and the channel heals itself.
         this.connectRealtime();
 
-        const reachable = await this.checkHostConnectivity();
-        if (!reachable) {
-            // Offline: the view, the local session and the typed values stay
-            // as they are, and the timer only has to be woken up.
+        // WebSocket 'open' event will trigger flush when connected
+        // Just rearm workout timer if on workout screen
+        if (this.isWorkoutScreenOpen()) {
             this.rearmWorkoutTimer();
-            return;
         }
-
+        
         if (!await this.ensureSessionAlive()) return;
 
         // The active workout is looked up before anything is rendered: the
@@ -873,56 +877,6 @@ const App = {
 
     updateNetworkBanner(skipHostCheck = false) {
         NetworkBanner.refresh(skipHostCheck);
-    },
-
-    /**
-     * Explicit backend host reachability check using a short AbortController
-     * timeout. navigator.onLine is unreliable under L3 blocks and captive
-     * portals (the interface reports online while HTTP requests time out), so
-     * a lightweight GET /health probe is the source of truth.
-     *
-     * When the host is reachable and the offline banner was visible, this
-     * flushes the IndexedDB sync queue and transitions to the clean hidden
-     * state. When unreachable, it shows the offline banner immediately.
-     */
-    async checkHostConnectivity() {
-        if (!navigator.onLine) {
-            this.state.isOnline = false;
-            if (this.state.currentScreen !== 'landing') {
-                NetworkBanner.showOffline();
-            }
-            return false;
-        }
-
-        let reachable = false;
-        try {
-            reachable = await API.checkHostReachable();
-        } catch (error) {
-            console.warn('[App] Host reachability check failed:', error);
-            reachable = false;
-        }
-
-        if (reachable) {
-            this.state.isOnline = true;
-            await NetworkBanner.refresh(true);
-            // Only flush the offline queue when the session is still valid.
-            // A reachable host with an expired token would make every queued
-            // item return 401, so probe /users/me first and bail out (clearing
-            // tokens) when the session is gone.
-            if (this.state.tokens.access && !SyncEngine.authFailed) {
-                const live = await this.ensureSessionAlive();
-                if (live) {
-                    await this.flushOfflineQueue();
-                }
-            }
-        } else {
-            this.state.isOnline = false;
-            if (this.state.currentScreen !== 'landing') {
-                NetworkBanner.showOffline();
-            }
-        }
-
-        return reachable;
     },
 
     isAIOnline() {
@@ -1723,27 +1677,15 @@ const App = {
 
         if (!this.realtime) {
             this.realtime = API.createWebSocket(token);
-            this.realtime.on('status', (status) => {
-                // A channel that came up has proved its token, so a later
-                // refusal is allowed to start the retry budget over.
+            window.addEventListener('mylofi:realtime-status', (e) => {
+                const status = e?.detail?.status;
                 if (status === 'open') {
                     this._realtimeAuthRetries = 0;
                     this.state.isOnline = true;
                     NetworkBanner.hide();
-                } else if (status === 'closed') {
-                    this.state.isOnline = false;
-                    NetworkBanner.showOffline();
-                }
-            });
-            window.addEventListener('mylofi:realtime-status', (e) => {
-                const status = e?.detail?.status;
-                if (status === 'open') {
-                    this.state.isOnline = true;
-                    NetworkBanner.hide();
+                    // ONLY place that triggers queue flush on network restore
                     if (this.state.tokens?.access && this.state.currentScreen === 'main') {
                         this.flushOfflineQueue().catch(() => {});
-                        // The workout screen is skipped: a re-render there
-                        // would throw away what the user typed.
                         this.refreshCurrentView();
                     }
                 } else if (status === 'closed') {
@@ -1822,11 +1764,6 @@ const App = {
     showPage(pageName) {
         console.log(`[App] Showing page: ${pageName}`);
         this.markPageActive(pageName);
-        // navigator.onLine is unreliable under L3 blocks and captive portals
-        // (the interface reports online while HTTP requests time out), so
-        // every page navigation re-probes the backend host and shows the
-        // offline banner immediately when the host is unreachable.
-        this.checkHostConnectivity().catch(() => {});
         this.saveState();
         this.renderPage(pageName);
     },

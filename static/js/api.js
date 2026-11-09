@@ -99,6 +99,18 @@ class RealtimeSocket {
         this.closedByUser = false;
         this.waitingForOnline = false;
 
+        // Debounce timers for status stability
+        this._statusDebounceTimer = null;
+        this._pendingStatus = null;
+        this._stableStatus = 'idle';
+
+        // Debounce delays (ms)
+        this._debounceDelays = {
+            open: 1500,    // Wait 1.5s stable before confirming online
+            closed: 3000,  // Wait 3s stable before confirming offline
+            connecting: 0  // No debounce for connecting
+        };
+
         // An outage stops the reconnect loop until the browser says the
         // network is back; without this the socket would hammer a link that
         // is known to be down.
@@ -136,8 +148,43 @@ class RealtimeSocket {
     }
 
     setStatus(status) {
+        // Clear any pending debounce
+        if (this._statusDebounceTimer) {
+            clearTimeout(this._statusDebounceTimer);
+            this._statusDebounceTimer = null;
+        }
+
+        // If status hasn't actually changed (stable), no need to debounce
+        if (this._stableStatus === status) {
+            this._pendingStatus = null;
+            return;
+        }
+
+        const delay = this._debounceDelays[status] ?? 0;
+        
+        if (delay === 0) {
+            // No debounce needed (e.g., 'connecting')
+            this._doSetStatus(status);
+            return;
+        }
+
+        // Debounce: wait for stable status
+        this._pendingStatus = status;
+        this._statusDebounceTimer = setTimeout(() => {
+            this._statusDebounceTimer = null;
+            // Only commit if status hasn't flipped again during wait
+            if (this._pendingStatus === status) {
+                this._doSetStatus(status);
+            }
+            this._pendingStatus = null;
+        }, delay);
+    }
+
+    // Internal method that actually emits the status
+    _doSetStatus(status) {
         if (this.status === status) return;
         this.status = status;
+        this._stableStatus = status;
         this.emit('status', status);
         window.dispatchEvent(new CustomEvent('mylofi:realtime-status', { detail: { status } }));
     }
@@ -424,24 +471,6 @@ class APIClient {
 
     isTimeoutError(error) {
         return error?.name === 'AbortError' || error?.isNetworkError === true && error?.status === 0 && error?.cause?.name === 'AbortError';
-    }
-
-    async checkHostReachable(accessToken = null) {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), HOST_CHECK_TIMEOUT_MS);
-        try {
-            const response = await fetch(`${window.location.origin}/health`, {
-                method: 'GET',
-                headers: this.getHeaders(accessToken, false),
-                credentials: 'include',
-                signal: controller.signal,
-            });
-            return response.ok;
-        } catch (error) {
-            return false;
-        } finally {
-            clearTimeout(timeoutId);
-        }
     }
     
     readQueue() {

@@ -89,7 +89,7 @@ function promisify(request) {
     });
 }
 
-const SYNC_STATUS = { PENDING: 'pending', SYNCED: 'synced', FAILED: 'failed' };
+const SYNC_STATUS = { PENDING: 'pending', SYNCED: 'synced', FAILED: 'failed', UPLOADED_AWAITING_ANALYSIS: 'uploaded_awaiting_analysis' };
 const SYNC_METHODS = { POST: 'POST', PUT: 'PUT', DELETE: 'DELETE', PATCH: 'PATCH' };
 
 export const DB = {
