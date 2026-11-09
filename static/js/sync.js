@@ -350,6 +350,7 @@ export const SyncEngine = {
             store: entry.store ?? null,
             accessToken: entry.accessToken ?? null,
             offlineSessionKey: entry.offlineSessionKey ?? null,
+            isSessionCreation: entry.isSessionCreation || false,
             status: DB.SYNC_STATUS.PENDING,
             retryCount: 0,
             error: null,
@@ -366,6 +367,8 @@ export const SyncEngine = {
 
         if (item.tempId) {
             console.log(`[SyncEngine] Enqueued ${entry.method} ${entry.endpoint} (tempId=${item.tempId})`);
+        } else if (item.isSessionCreation) {
+            console.log(`[SyncEngine] Enqueued ${entry.method} ${entry.endpoint} (isSessionCreation=true)`);
         } else {
             console.log(`[SyncEngine] Enqueued ${entry.method} ${entry.endpoint}`);
         }
@@ -374,6 +377,12 @@ export const SyncEngine = {
     },
 
     async enqueuePhotoUpload(endpoint, fileBlob, filename, meta, accessToken, options = {}) {
+        if (!(fileBlob instanceof Blob) || fileBlob.size === 0) {
+            console.error('[SyncEngine] Invalid blob for photo upload:', { blob: fileBlob, type: fileBlob?.constructor?.name, size: fileBlob?.size });
+            throw new Error('Invalid blob: cannot enqueue empty or non-Blob data');
+        }
+
+        console.log('[SyncEngine] Enqueueing photo upload:', { blobSize: fileBlob.size, blobType: fileBlob.type, endpoint, filename });
         const photoHash = await generatePhotoHash(fileBlob);
         const existing = await DB.getSyncQueueByPhotoHash(photoHash, endpoint);
         if (existing && existing.length > 0) {

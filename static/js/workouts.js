@@ -1030,10 +1030,19 @@ export const Workouts = {
         if (!item.endpoint.includes(LOCAL_SESSION_PLACEHOLDER)) return item;
         const session = this.getLocalSession();
         const remoteSessionId = session?.remoteSessionId ?? null;
+        
+        // If this IS the session creation request, it doesn't need placeholder replacement
+        // The server will create the session and return the real ID
+        if (item.isSessionCreation) {
+            return item;  // Send as-is to create session on server
+        }
+        
         if (!remoteSessionId) {
-            // The session creation was dropped: let the request fail instead of blocking the queue
+            // Session creation failed or not processed yet
             return session?.createFailed ? item : false;
         }
+        
+        // Replace placeholder with real session ID for completion/patches
         return {
             ...item,
             endpoint: item.endpoint.replace(LOCAL_SESSION_PLACEHOLDER, String(remoteSessionId)),
@@ -1057,6 +1066,30 @@ export const Workouts = {
             this.saveLocalSession(session);
         }
 
+        // NEW: Handle session creation response
+        if (!failed && item.isSessionCreation && response?.id) {
+            const session = this.getLocalSession();
+            if (session && session.key === item.offlineSessionKey) {
+                session.remoteSessionId = response.id;
+                // Also capture exercise/set IDs from response for patch mapping
+                const remoteExercises = response.exercises || [];
+                const setIdMap = {};
+                (session.exercises || []).forEach((localEx, exIndex) => {
+                    const remoteEx = remoteExercises[exIndex]; // Template order matches
+                    if (remoteEx) {
+                        (localEx.sets || []).forEach((localSet, setIndex) => {
+                            const remoteSet = (remoteEx.sets || [])[setIndex];
+                            if (remoteSet) setIdMap[String(localSet.id)] = remoteSet.id;
+                        });
+                    }
+                });
+                session.setIdMap = setIdMap;
+                this.saveLocalSession(session);
+                console.log(`[Workouts] Session creation synced: local ${session.key} → server ${response.id}`);
+            }
+        }
+
+        // Existing completion response path (when completion is the first response)
         if (!failed && response?.id && !session.remoteSessionId) {
             const remoteExercises = response.exercises || [];
             const findRemoteExercise = (localEx, exIndex) =>
@@ -1121,7 +1154,20 @@ export const Workouts = {
     async startLocalSessionFromTemplate(app, template, createEndpoint) {
         const session = this.buildLocalSessionFromTemplate(template);
         this.saveLocalSession(session);
-        await API.markQueuedRequest('POST', createEndpoint, { offlineSessionKey: session.key });
+        
+        // CHANGE: Actually enqueue the session creation request instead of just marking
+        await API.enqueueRequest(
+            'POST',
+            createEndpoint,
+            {},  // Empty body - server creates from template
+            app?.state?.tokens?.access || null,
+            { 
+                offlineSessionKey: session.key,
+                isSessionCreation: true,  // NEW: Flag for resolver
+                prepend: false  // Normal ordering
+            }
+        );
+        
         app?.showToast(OFFLINE_START_MESSAGE, 'info');
         return session;
     },

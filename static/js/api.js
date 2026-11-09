@@ -496,6 +496,7 @@ class APIClient {
             store: options.store ?? null,
             formData: options.formData ?? null,
             prepend: options.prepend || false,
+            isSessionCreation: options.isSessionCreation ?? false,
         });
         this.invalidateReadCache(endpoint);
         console.log(`[API] Queued offline request: ${method} ${endpoint}`);
@@ -624,13 +625,45 @@ class APIClient {
 
         if (isFormData && item.formData) {
             const fd = new FormData();
-            if (item.formData.blob instanceof Blob) {
-                fd.append('file', item.formData.blob, item.formData.filename || 'photo.webp');
+            const storedBlob = item.formData.blob;
+            const filename = item.formData.filename || 'photo.webp';
+
+            console.log('[API] Replaying FormData item:', {
+                endpoint: item.endpoint,
+                hasBlob: !!storedBlob,
+                blobType: storedBlob?.constructor?.name,
+                blobSize: storedBlob?.size,
+                isBlobInstance: storedBlob instanceof Blob,
+                filename,
+                fieldsKeys: Object.keys(item.formData.fields || {}),
+            });
+
+            let blobToUse = null;
+            if (storedBlob instanceof Blob && storedBlob.size > 0) {
+                blobToUse = storedBlob;
+            } else if (storedBlob && typeof storedBlob === 'object' && storedBlob.size > 0) {
+                try {
+                    blobToUse = new Blob([storedBlob], { type: storedBlob.type || 'image/webp' });
+                    console.warn('[API] Reconstructed Blob from plain object:', { size: blobToUse.size, type: blobToUse.type });
+                } catch (reconstructError) {
+                    console.error('[API] Failed to reconstruct Blob:', reconstructError);
+                }
+            } else {
+                console.error('[API] Invalid or empty blob in queued item:', storedBlob);
             }
+
+            if (blobToUse) {
+                fd.append('file', blobToUse, filename);
+            } else {
+                console.error('[API] No valid blob to upload, request will likely fail');
+            }
+
             const fields = item.formData.fields || {};
             for (const [key, value] of Object.entries(fields)) {
                 if (value !== undefined && value !== null) fd.append(key, value);
             }
+
+            console.log('[API] FormData entries for replay:', Array.from(fd.entries()));
             data = fd;
         }
 

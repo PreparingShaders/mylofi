@@ -64,6 +64,13 @@ export const Nutrition = {
     _mealSubmitInFlight: false,
 
     /**
+     * Check if a meal ID is a temporary local ID (temp_...)
+     */
+    isTempMealId(mealId) {
+        return typeof mealId === 'string' && mealId.startsWith('temp_');
+    },
+
+    /**
      * Whether a sheet or a modal currently covers the page.
      *
      * A render tears those down, so a live update that arrives while one is
@@ -1996,6 +2003,26 @@ try {
                 if (confirmed) {
                     try {
                         const token = this.app.state.tokens.access;
+
+                        // NEW: Handle temp IDs locally - no network request
+                        if (this.isTempMealId(mealId)) {
+                            console.log('[Nutrition] Deleting local temp meal:', mealId);
+                            // Delete from meals store
+                            await DB.deleteMeal(mealId);
+                            // Delete any pending sync queue items for this temp ID
+                            const queueItems = await DB.getAll('sync_queue');
+                            for (const item of queueItems) {
+                                if (item.tempId === mealId && item.status === DB.SYNC_STATUS.PENDING) {
+                                    await DB.deleteSyncQueue(item.id);
+                                    console.log('[Nutrition] Deleted pending sync queue item for temp meal:', item.id);
+                                }
+                            }
+                            this.app.showToast('Блюдо удалено', 'success');
+                            await this.render(this.app.elements.pageContent, this.app, this.selectedDate);
+                            return;
+                        }
+
+                        // Real ID - send to backend
                         await API.deleteMeal(mealId, token);
                         await this.loadData();
                         this.render(this.app.elements.pageContent, this.app);
@@ -2004,7 +2031,7 @@ try {
                         this.app.showToast('Ошибка удаления', 'error');
                     }
                 }
-             };
+            };
         });
 
         container.querySelectorAll('[data-action="retry-analysis"]').forEach((btn) => {
@@ -2018,6 +2045,12 @@ try {
     },
 
     async retryMealAnalysis(mealId, btnEl) {
+        // NEW: Temp IDs can't retry analysis - not synced yet
+        if (this.isTempMealId(mealId)) {
+            this.app.showToast('Блюдо еще не синхронизировано. Дождитесь загрузки.', 'info');
+            return;
+        }
+
         const token = this.app.state.tokens.access;
         const disabled = (v) => {
             if (btnEl) {
@@ -2131,6 +2164,56 @@ try {
         const mealId = state.mealId;
         const token = this.app.state.tokens.access;
 
+        // NEW: Handle temp IDs - update locally only
+        if (this.isTempMealId(mealId)) {
+            console.log('[Nutrition] Updating local temp meal:', mealId);
+            const meal = await DB.getMeal(mealId);
+            if (!meal) {
+                this.app.showToast('Блюдо не найдено', 'error');
+                return;
+            }
+
+            const dishNameInput = modalEl.querySelector('#edit-meal-dish-name');
+            const caloriesInput = modalEl.querySelector('#edit-meal-calories');
+            const proteinInput = modalEl.querySelector('#edit-meal-protein');
+            const fatInput = modalEl.querySelector('#edit-meal-fat');
+            const carbsInput = modalEl.querySelector('#edit-meal-carbs');
+            const tagsInput = modalEl.querySelector('#edit-meal-tags');
+            const notesInput = modalEl.querySelector('#edit-meal-notes');
+
+            const toNumOrNull = (input) => {
+                const val = input?.value?.trim();
+                return val !== '' ? Number(val) : null;
+            };
+            const toTextOrNull = (input) => {
+                const val = input?.value?.trim();
+                return val !== '' ? val : null;
+            };
+
+            const tagsRaw = tagsInput?.value?.trim() ?? '';
+            const tags = tagsRaw ? tagsRaw.split(',').map((t) => t.trim()).filter(Boolean) : [];
+
+            const updatedMeal = {
+                ...meal,
+                dish_name: toTextOrNull(dishNameInput),
+                calories: toNumOrNull(caloriesInput),
+                protein_g: toNumOrNull(proteinInput),
+                fat_g: toNumOrNull(fatInput),
+                carbs_g: toNumOrNull(carbsInput),
+                tags: tags.length > 0 ? tags : null,
+                notes: toTextOrNull(notesInput),
+                updated_at: Date.now(),
+            };
+
+            await DB.saveMeal(updatedMeal);
+            this._mealsCache.set(String(mealId), updatedMeal);
+            this.closeEditMealModal();
+            this.app.showToast('Блюдо обновлено локально', 'success');
+            await this.render(this.app.elements.pageContent, this.app, this.selectedDate);
+            return;
+        }
+
+        // Real ID - send to backend (existing code)
         const dishNameInput = modalEl.querySelector('#edit-meal-dish-name');
         const caloriesInput = modalEl.querySelector('#edit-meal-calories');
         const proteinInput = modalEl.querySelector('#edit-meal-protein');

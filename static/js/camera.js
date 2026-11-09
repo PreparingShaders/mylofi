@@ -534,6 +534,13 @@ export const Camera = {
      */
     async queueOfflineMeal(blob, notes, mealType = null) {
         await DB.init();
+
+        if (!(blob instanceof Blob) || blob.size === 0) {
+            console.error('[Camera] Invalid blob for offline queue:', { blob, type: blob?.constructor?.name, size: blob?.size });
+            throw new Error('Invalid blob: cannot queue empty or non-Blob data');
+        }
+
+        console.log('[Camera] Queueing offline meal:', { blobSize: blob.size, blobType: blob.type, notes: !!notes, mealType });
         const tempId = DB.generateTempId();
         const timeFields = this.mealTimeFields();
         const meal = {
