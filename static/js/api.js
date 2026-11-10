@@ -403,6 +403,8 @@ class APIClient {
         this.processingQueue = false;
         this.itemResolver = null;
         this.onItemSynced = null;
+        // In-flight GET request deduplication
+        this._inflightGet = new Map();
     }
 
     getHeaders(accessToken, isFormData = false) {
@@ -617,6 +619,27 @@ class APIClient {
             }
             throw error;
         }
+    }
+
+    /**
+     * Deduplicated GET request: if the same endpoint is already being fetched,
+     * return the existing promise instead of making a duplicate request.
+     */
+    async dedupeGet(endpoint, accessToken = null) {
+        // Only deduplicate GET requests with the same endpoint and token
+        const cacheKey = `${endpoint}:${accessToken || 'no-token'}`;
+        
+        if (this._inflightGet.has(cacheKey)) {
+            console.log(`[API] Deduplicating GET request for "${endpoint}"`);
+            return this._inflightGet.get(cacheKey);
+        }
+
+        const promise = this.getWithReadCache(endpoint, accessToken).finally(() => {
+            this._inflightGet.delete(cacheKey);
+        });
+
+        this._inflightGet.set(cacheKey, promise);
+        return promise;
     }
 
     async replayQueuedItem(item) {

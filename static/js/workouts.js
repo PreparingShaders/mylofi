@@ -3102,7 +3102,7 @@ let html = `
         // Prompt for template update BEFORE clearing session state
         await this.promptTemplateUpdateIfNeeded(app, sessionToComplete);
 
-        Workouts.clearActiveSessionState(app);
+        await Workouts.clearActiveSessionState(app);
 
         // Persist any in-flight rest timer so its elapsed seconds are recorded
         // on the previous set before the session closes for analysis.

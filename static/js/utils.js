@@ -1,17 +1,9 @@
-console.log("[DEBUG] Loaded utils.js");
-
 /**
- * Where this device is, for the server.
- *
- * `eaten_at` is stored as an absolute instant, so it needs no timezone; the
- * offset travels with it because the day a meal belongs to does: the server
- * buckets meals into calendar days, and the only thing that knows where local
- * midnight is, is the device. `getTimezoneOffset()` counts minutes *behind* UTC
- * (UTC+3 is -180), which is the sign the server converts with.
- *
- * The IANA name travels too, purely as a fallback for a device that cannot
- * report an offset.
+ * Check if a meal ID is a temporary local ID (temp_...)
  */
+export function isTempMealId(mealId) {
+    return typeof mealId === 'string' && mealId.startsWith('temp_');
+}
 export function clientTimezone() {
     let offsetMinutes = null;
     try {

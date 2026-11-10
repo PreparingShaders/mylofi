@@ -2244,7 +2244,7 @@ const App = {
 
         // A session created offline has no server id yet: close it locally and queue the request
         if (Workouts.completeLocalSession(this)) {
-            Workouts.clearActiveSessionState(this);
+            await Workouts.clearActiveSessionState(this);
             this.state.completingWorkout = false;
             await this.renderPage('workouts');
             return;
@@ -2277,12 +2277,12 @@ const App = {
             );
             console.log('[handleCompleteWorkout] Complete endpoint response:', resp);
             Workouts.forgetAiPlan(sessionId);
-            Workouts.clearActiveSessionState(this);
+            await Workouts.clearActiveSessionState(this);
             this.showToast('Тренировка завершена!', 'success');
         } catch (e) {
             if (e?.offlineQueued) {
                 // Session is closed locally, the request goes out as soon as the network is back
-                Workouts.clearActiveSessionState(this);
+                await Workouts.clearActiveSessionState(this);
                 // Use saved session reference since currentSession is now null
                 await Workouts.persistCompletedSessionLocally(sessionId, sessionToComplete);
                 this.showToast('Тренировка завершена! Сеть недоступна, данные будут синхронизированы при появлении связи', 'info');
@@ -2292,7 +2292,7 @@ const App = {
             }
             // Network failure: preserve local state, queue completion for retry, clear active session
             if (e?.isNetworkError) {
-                Workouts.clearActiveSessionState(this);
+                await Workouts.clearActiveSessionState(this);
                 // Use saved session reference since currentSession is now null
                 await Workouts.persistCompletedSessionLocally(sessionId, sessionToComplete);
                 // Enqueue the completion request so it is retried when the connection returns
@@ -2316,7 +2316,7 @@ const App = {
             const workoutContainer = document.getElementById('carousel') || document.querySelector('.workout-carousel');
             Workouts.syncSessionFromDOM(workoutContainer);
             await Workouts.persistCompletedSessionLocally(sessionId, sessionToComplete);
-            Workouts.clearActiveSessionState(this);
+            await Workouts.clearActiveSessionState(this);
             const msg = e?.status === 401
                 ? 'Сессия истекла. Проверьте подключение и войдите снова.'
                 : e?.status === 404
