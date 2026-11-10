@@ -101,6 +101,34 @@ export const Utils = {
         });
     },
 
+    /**
+     * Convert Blob/File to Base64 DataURL string.
+     * Uses FileReader.readAsDataURL() which works reliably on iOS Safari.
+     */
+    async blobToBase64(blob) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(blob);
+        });
+    },
+
+    /**
+     * Convert Base64 DataURL back to Blob.
+     * Handles both "data:image/webp;base64,..." and raw base64 strings.
+     */
+    base64ToBlob(base64, mimeType = 'image/webp') {
+        const base64Data = base64.includes(',') ? base64.split(',')[1] : base64;
+        const byteChars = atob(base64Data);
+        const byteNumbers = new Array(byteChars.length);
+        for (let i = 0; i < byteChars.length; i++) {
+            byteNumbers[i] = byteChars.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        return new Blob([byteArray], { type: mimeType });
+    },
+
     fileSizeLabel(bytes) {
         if (!bytes || bytes <= 0) return '0 КБ';
         const units = ['Б', 'КБ', 'МБ', 'ГБ'];
