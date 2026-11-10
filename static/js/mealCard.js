@@ -9,9 +9,12 @@ export class MealCard {
     }
 
     /**
-     * Render a meal card photo tile.
+     * Compute meal status flags (pending, failed, stuck) in one place.
+     * Returns an object with the computed status flags.
      */
-    render(meal, { showDate = false } = {}) {
+    _getStatus(meal) {
+        if (!meal) return { isPending: false, isFailed: false, isStuck: false, isAlert: false };
+
         const serverStatus = meal.status;
         const isPending = serverStatus === 'pending' || serverStatus === 'processing' || meal.sync_status === DB.SYNC_STATUS.PENDING;
         const isFailed = serverStatus === 'failed' || meal.sync_status === DB.SYNC_STATUS.FAILED;
@@ -20,13 +23,26 @@ export class MealCard {
         const isStuck = (serverStatus === 'pending' || serverStatus === 'processing') &&
             (Date.now() - Math.max(createdAt, updatedAt) > MEAL_ANALYSIS.STUCK_THRESHOLD_MS);
         const isAlert = isFailed || isStuck;
+
+        return { isPending, isFailed, isStuck, isAlert };
+    }
+
+    /**
+     * Render a meal card photo tile.
+     */
+    render(meal, { showDate = false } = {}) {
+        if (!meal) return '';
+
+        const { isPending, isFailed, isStuck, isAlert } = this._getStatus(meal);
+        const createdAt = meal.created_at ? new Date(meal.created_at).getTime() : (meal.eaten_at ? new Date(meal.eaten_at).getTime() : Date.now());
+        const updatedAt = meal.updated_at ? new Date(meal.updated_at).getTime() : createdAt;
         const day = meal.eaten_at ? new Date(meal.eaten_at) : (meal.created_at ? new Date(meal.created_at) : null);
 
         const dishName = meal.dish_name || (isPending ? '' : 'Блюдо');
         const timeLabel = day ? Utils.formatTime(day) : '';
         const dateLabel = showDate && day ? Utils.formatDayMonth(day) : '';
         const chipLabel = [dateLabel, timeLabel]
-.filter(Boolean)
+            .filter(Boolean)
             .map(escapeHtml)
             .join(' · ');
 
@@ -49,7 +65,7 @@ export class MealCard {
 
         const photoSrc = Components.mealPhotoUrl(meal);
         const safeSrc = photoSrc ? String(photoSrc).replace(/'/g, '%27').replace(/"/g, '%22') : null;
-const mealId = meal.id ?? '';
+        const mealId = meal.id ?? '';
         const escName = escapeHtml(dishName);
 
         const breakdown = isPending ? null : Components.mealBreakdown(meal);
@@ -74,14 +90,14 @@ const mealId = meal.id ?? '';
                     <span class="text-xs font-semibold text-white bg-black/50 px-3 py-1 rounded-full backdrop-blur-sm">${isStuck ? 'Анализ застрел' : 'Ошибка анализа'}</span>
                 </div>
             `
-: `
+            : `
                 <h3 class="meal-card-hero__name">${escName}</h3>
                 ${breakdown?.portion
                     ? `<p class="meal-card-hero__note">${escapeHtml(String(breakdown.portion))} г</p>`
                     : ''}
             `;
 
-const macroPill = (label, value, pending) => `
+        const macroPill = (label, value, pending) => `
             <div class="meal-card-pill ${pending ? 'meal-card-pill--pending' : ''}">
                 ${pending
                     ? `<span class="meal-skeleton__line w-[60%]"></span>`
@@ -109,7 +125,7 @@ const macroPill = (label, value, pending) => `
             : '';
 
         const insight = typeof meal.ai_insight === 'string' ? meal.ai_insight.trim() : '';
-const verdictContent = isPending
+        const verdictContent = isPending
             ? `<div class="flex items-center gap-2"><div class="w-4 h-4 rounded-full border-2 border-white/20 border-t-lime-400 animate-spin"></div><span class="text-xs text-surface-500 dark:text-surface-400">Анализируем...</span></div>`
             : isAlert
             ? `<p class="meal-card-ai__text">${escapeHtml(meal.quality_reason || meal.error_message || 'Анализ не удался. Попробуйте повторить.')}</p>`
@@ -195,26 +211,20 @@ const verdictContent = isPending
      * Check if a meal is pending/analyzing.
      */
     isPending(meal) {
-        const serverStatus = meal.status;
-        return serverStatus === 'pending' || serverStatus === 'processing' || meal.sync_status === DB.SYNC_STATUS.PENDING;
+        return this._getStatus(meal).isPending;
     }
 
     /**
      * Check if a meal has failed.
      */
     isFailed(meal) {
-        const serverStatus = meal.status;
-        return serverStatus === 'failed' || meal.sync_status === DB.SYNC_STATUS.FAILED;
+        return this._getStatus(meal).isFailed;
     }
 
     /**
      * Check if a meal is stuck (pending for too long).
      */
     isStuck(meal) {
-        const serverStatus = meal.status;
-        if (serverStatus !== 'pending' && serverStatus !== 'processing') return false;
-        const createdAt = meal.created_at ? new Date(meal.created_at).getTime() : (meal.eaten_at ? new Date(meal.eaten_at).getTime() : Date.now());
-        const updatedAt = meal.updated_at ? new Date(meal.updated_at).getTime() : createdAt;
-        return Date.now() - Math.max(createdAt, updatedAt) > MEAL_ANALYSIS.STUCK_THRESHOLD_MS;
+        return this._getStatus(meal).isStuck;
     }
 }

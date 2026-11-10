@@ -381,55 +381,61 @@ const App = {
         // on iOS Safari PWAs, where the visibility event is unreliable.
         // Both funnel into the same handler, which is single flighted, so a
         // resume never re-renders the view that is already on top.
-        document.addEventListener('visibilitychange', () => {
+        this._visibilityChangeHandler = () => {
             if (document.visibilityState !== 'visible') return;
             this.handleAppResume('visibility');
-        });
+        };
+        document.addEventListener('visibilitychange', this._visibilityChangeHandler);
 
-        window.addEventListener('focus', () => {
+        this._focusHandler = () => {
             if (document.visibilityState !== 'visible') return;
             this.handleAppResume('focus');
-        });
+        };
+        window.addEventListener('focus', this._focusHandler);
 
         // bfcache restore: the DOM is intact but timers were suspended.
         // Only fire on persisted (cached) restores, not on normal loads.
-        window.addEventListener('pageshow', (event) => {
+        this._pageshowHandler = (event) => {
             if (event.persisted) {
                 this.handleAppResume('pageshow');
             }
-        });
+        };
+        window.addEventListener('pageshow', this._pageshowHandler);
 
         // Lists rendered from the read cache are stale right after a sync
-        window.addEventListener('mylofi:offline-sync', () => {
+        this._offlineSyncHandler = () => {
             this.updateNetworkBanner(true);
             if (this.state.currentScreen !== 'main') return;
             if (['nutrition', 'workouts', 'history', 'statistics', 'templates'].includes(this.state.currentPage)) {
                 this.refreshCurrentView();
             }
-        });
+        };
+        window.addEventListener('mylofi:offline-sync', this._offlineSyncHandler);
 
         // Re-render nutrition instantly when a queued meal finishes syncing
         // (pending → synced) so the carousel updates without a manual refresh.
-        window.addEventListener('mylofi:meal-synced', () => {
+        this._mealSyncedHandler = () => {
             if (this.state.currentScreen !== 'main') return;
             if (this.state.currentPage === 'nutrition') {
                 this.refreshCurrentView();
             }
-        });
+        };
+        window.addEventListener('mylofi:meal-synced', this._mealSyncedHandler);
 
         // Sync engine halts and dispatches this when a queued replay hits 401/403
         // after refresh failed. Sign out and go to the landing screen.
-        window.addEventListener('mylofi:auth-failed', () => {
+        this._authFailedHandler = () => {
             console.warn('[App] Received auth-failed from SyncEngine, signing out');
             this.clearTokens();
             this.showScreen('landing');
             this.renderLanding();
             this.showToast('Сессия истекла. Пожалуйста, войдите снова.', 'info');
-        });
+        };
+        window.addEventListener('mylofi:auth-failed', this._authFailedHandler);
 
         // Background sync from service worker
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.addEventListener('message', (event) => {
+            this._swMessageHandler = (event) => {
                 if (event.data?.type === 'FLUSH_OFFLINE_QUEUE') {
                     console.log('[App] SW requested queue flush');
                     this.flushOfflineQueue().catch(() => {});
@@ -440,7 +446,8 @@ const App = {
                         this.refreshCurrentView();
                     }
                 }
-            });
+            };
+            navigator.serviceWorker.addEventListener('message', this._swMessageHandler);
         }
     },
 
@@ -964,6 +971,50 @@ const App = {
         this.state.tokens = { access: null, refresh: null };
         this.state.user = null;
         this.disconnectRealtime();
+        
+        // Clean up module-level listeners
+        if (window.Nutrition?.destroy) Nutrition.destroy();
+        if (window.Workouts?.destroy) Workouts.destroy();
+    },
+
+    /**
+     * Full cleanup for the App module. Call on page unload or when completely
+     * tearing down the application.
+     */
+    destroy() {
+        // Remove global event listeners
+        document.removeEventListener('visibilitychange', this._visibilityChangeHandler);
+        window.removeEventListener('focus', this._focusHandler);
+        window.removeEventListener('pageshow', this._pageshowHandler);
+        
+        // Remove custom event listeners
+        window.removeEventListener('mylofi:offline-sync', this._offlineSyncHandler);
+        window.removeEventListener('mylofi:meal-synced', this._mealSyncedHandler);
+        window.removeEventListener('mylofi:auth-failed', this._authFailedHandler);
+        
+        // Remove service worker message listener
+        if (navigator.serviceWorker) {
+            navigator.serviceWorker.removeEventListener('message', this._swMessageHandler);
+        }
+        
+        // Remove theme change listener
+        document.removeEventListener('themechange', this._landingThemeListener);
+        
+        // Remove landing carousel listener
+        if (this._landingCarouselListener && this.elements.screens.landing) {
+            this.elements.screens.landing.removeEventListener('click', this._landingCarouselListener);
+        }
+        
+        // Disconnect realtime
+        this.disconnectRealtime();
+        
+        // Clean up modules
+        if (window.Nutrition?.destroy) Nutrition.destroy();
+        if (window.Workouts?.destroy) Workouts.destroy();
+        
+        // Clear state
+        this.state.tokens = { access: null, refresh: null };
+        this.state.user = null;
     },
 
     async refreshAccessToken() {
@@ -2246,6 +2297,7 @@ const App = {
         if (Workouts.completeLocalSession(this)) {
             await Workouts.clearActiveSessionState(this);
             this.state.completingWorkout = false;
+            this.state.workoutScreenDismissed = false;
             await this.renderPage('workouts');
             return;
         }
@@ -2277,7 +2329,7 @@ const App = {
             );
             console.log('[handleCompleteWorkout] Complete endpoint response:', resp);
             Workouts.forgetAiPlan(sessionId);
-            await Workouts.clearActiveSessionState(this);
+await Workouts.clearActiveSessionState(this);
             this.showToast('Тренировка завершена!', 'success');
         } catch (e) {
             if (e?.offlineQueued) {
@@ -2288,6 +2340,7 @@ const App = {
                 this.showToast('Тренировка завершена! Сеть недоступна, данные будут синхронизированы при появлении связи', 'info');
                 await this.renderPage('workouts');
                 this.state.completingWorkout = false;
+                this.state.workoutScreenDismissed = false;
                 return;
             }
             // Network failure: preserve local state, queue completion for retry, clear active session
@@ -2300,13 +2353,14 @@ const App = {
                 API.enqueueRequest(
                     'POST',
                     `/workouts/sessions/${sessionId}/complete`,
-                    durationSeconds !== null ? { duration_seconds: durationSeconds } : null,
+                    { with_ai_analysis: true, duration_seconds: durationSeconds },
                     token,
                     { offlineSessionKey: null }
                 );
                 this.showToast('Тренировка завершена локально! Сеть недоступна, данные будут синхронизированы при появлении связи', 'info');
                 await this.renderPage('workouts');
                 this.state.completingWorkout = false;
+                this.state.workoutScreenDismissed = false;
                 return;
             }
             // 401/404 or other HTTP error: persist locally so data survives a
@@ -2327,6 +2381,7 @@ const App = {
             return;
         }
         this.state.completingWorkout = false;
+        this.state.workoutScreenDismissed = false;
         await this.renderPage('workouts');
     },
 
@@ -2399,6 +2454,7 @@ const App = {
 
         if (Workouts.cancelLocalSession(this)) {
             Workouts.clearActiveSessionState(this);
+            this.state.workoutScreenDismissed = false;
             await this.renderPage('workouts');
             return;
         }
@@ -2410,6 +2466,7 @@ const App = {
             Workouts.clearActiveSessionState(this);
             this.showToast('Тренировка отменена', 'info');
             await this.renderPage('workouts');
+            this.state.workoutScreenDismissed = false;
             return;
         }
         try {
@@ -2423,11 +2480,13 @@ const App = {
                 Workouts.clearActiveSessionState(this);
                 this.showToast('Тренировка отменена', 'info');
                 await this.renderPage('workouts');
+                this.state.workoutScreenDismissed = false;
                 return;
             }
             this.showToast(e.message || 'Ошибка отмены тренировки', 'error');
             return;
         }
+        this.state.workoutScreenDismissed = false;
         await this.renderPage('workouts');
     },
 

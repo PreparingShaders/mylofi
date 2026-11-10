@@ -76,7 +76,8 @@ init(app) {
         this.app = app;
         this.Components = Components;
         this._mealCard = new MealCard(this);
-        window.addEventListener('mylofi:sync-completed', async (event) => {
+
+        this._syncCompletedHandler = async (event) => {
             try {
                 if (this.app?.state?.currentPage !== 'nutrition') return;
                 if (this._state.flags.mealSubmitInFlight) return;
@@ -87,12 +88,9 @@ init(app) {
             } catch (error) {
                 console.error('[Nutrition] sync-completed handler error:', error);
             }
-        });
+        };
 
-        // The server pushes the moment a background analysis lands. The card
-        // in the carousel is still the "analysing" one at that point, so the
-        // page is re-rendered to show the real result.
-        window.addEventListener('mylofi:meal-update', async (event) => {
+        this._mealUpdateHandler = async (event) => {
             try {
                 const status = event?.detail?.status;
                 if (status !== 'completed' && status !== 'failed') return;
@@ -105,7 +103,26 @@ init(app) {
             } catch (error) {
                 console.error('[Nutrition] meal-update handler error:', error);
             }
-        });
+        };
+
+        window.addEventListener('mylofi:sync-completed', this._syncCompletedHandler);
+        window.addEventListener('mylofi:meal-update', this._mealUpdateHandler);
+    },
+
+    destroy() {
+        if (this._syncCompletedHandler) {
+            window.removeEventListener('mylofi:sync-completed', this._syncCompletedHandler);
+            this._syncCompletedHandler = null;
+        }
+        if (this._mealUpdateHandler) {
+            window.removeEventListener('mylofi:meal-update', this._mealUpdateHandler);
+            this._mealUpdateHandler = null;
+        }
+        // Clean up any open modals
+        this.closeNewMealModal();
+        this.closePeriodSheet();
+        this.closeEditMealModal();
+        this.closeAiSynergyModal();
     },
 
     /**
@@ -703,7 +720,7 @@ const token = this.app.state.tokens.access;
         return periodDays >= 30 ? 'month' : 'week';
     },
 
-    /** Period chip handler: update the model and refresh the shell. */
+/** Period chip handler: update the model and refresh the shell. */
     async selectAiSynergyPeriod(period) {
         if (this._state.aiSynergy.running) return;
         if (period === 'custom' && this._state.aiSynergy.period !== 'custom') {
