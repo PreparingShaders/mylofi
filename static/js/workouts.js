@@ -1395,6 +1395,10 @@ export const Workouts = {
         // A workout started offline lives only in localStorage until it is synced
         if (!activeSession) {
             activeSession = this.getActiveLocalSession();
+            // Guard: a locally completed/cancelled session must not resurrect as active
+            if (activeSession && (activeSession.key || activeSession.id) && this.isSessionClosedLocally(activeSession.key || activeSession.id)) {
+                activeSession = null;
+            }
         } else if (activeSession.id && this.isSessionClosedLocally(activeSession.id)) {
             // Completed offline and not yet replayed on the server
             activeSession = null;
