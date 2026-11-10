@@ -124,7 +124,10 @@ export class BaseSheet {
      */
     export class PeriodSheet extends BaseSheet {
         constructor(nutrition, options = {}) {
-            super({ ...options, onClose: () => nutrition._periodSheetState = null });
+            super({ ...options, onClose: () => {
+                nutrition._state.modals.period = null;
+                nutrition._state.modals.periodClosing = null;
+            }});
             this.nutrition = nutrition;
             this.today = options.today || nutrition.todayISO();
             this.start = options.start;
@@ -257,7 +260,10 @@ export class BaseSheet {
      */
     export class NewMealSheet extends BaseSheet {
         constructor(nutrition, options = {}) {
-            super({ ...options, onClose: () => nutrition._newMealModalState = null });
+            super({ ...options, onClose: () => {
+                nutrition._state.modals.newMeal = null;
+                nutrition._state.modals.newMealClosing = null;
+            }});
             this.nutrition = nutrition;
             this.state = {
                 selectedFile: null,
@@ -438,7 +444,10 @@ export class BaseSheet {
      */
     export class EditMealSheet extends BaseSheet {
         constructor(nutrition, mealId, options = {}) {
-            super({ ...options, onClose: () => nutrition._editMealModalState = null });
+            super({ ...options, onClose: () => {
+                nutrition._state.modals.editMeal = null;
+                nutrition._state.modals.editMealClosing = null;
+            }});
             this.nutrition = nutrition;
             this.mealId = mealId;
             this._submitHandler = null;
@@ -476,7 +485,10 @@ export class BaseSheet {
      */
     export class AiSynergySleepSheet extends BaseSheet {
         constructor(nutrition, options = {}) {
-            super({ ...options, onClose: () => nutrition._aiSynergySleepSheet = null });
+            super({ ...options, onClose: () => {
+                // This sheet is not currently used in nutrition.js (handled in app.js)
+                // but we define the callback for completeness
+            }});
             this.nutrition = nutrition;
             this.value = options.value || '';
             this._confirmHandler = null;
