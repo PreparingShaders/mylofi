@@ -2,75 +2,61 @@ import { API } from './api.js';
 import { DB } from './db.js';
 import { SyncEngine, getFriendlyEndpointLabel } from './sync.js';
 import { Components } from './components.js';
-import { Utils, clientTimezone } from './utils.js';
+import { Utils, clientTimezone, isTempMealId } from './utils.js';
 import { Camera } from './camera.js';
-
-const PERIODS = ['day', 'week', 'month', 'custom'];
-
+import { MealCard } from './mealCard.js';
+import { PeriodSheet, NewMealSheet, EditMealSheet, AiSynergySleepSheet } from './baseSheet.js';
+import { DEFAULT_TARGETS, PERIODS, PERIOD_TABS } from './constants.js';
 
 
 // Day / 7 days / month are one-tap presets; the custom period is opened as a
 // range sheet by the icon tab.
-const PERIOD_TABS = [
-    { value: 'day', label: 'День' },
-    { value: 'week', label: '7 дней' },
-    { value: 'month', label: 'Месяц' },
-    { value: 'custom', label: null, icon: true, ariaLabel: 'Свой диапазон' },
-];
 
 export const Nutrition = {
     app: null,
-    selectedDate: null,
-    selectedPeriod: 'day',
-    customRange: { start: null, end: null },
-    _newMealModalState: null,
-    _newMealModalClosing: null,
-    _periodSheetState: null,
-    _periodSheetClosing: null,
-    _editMealModalState: null,
-    _editMealModalClosing: null,
-    // Recap generation in flight: the manual trigger on the daily-summary
-    // card disables itself while the day is being re-read.
-    _dailySummaryLoading: false,
-    // Meals indexed by id, refreshed every render so the edit modal can pull
-    // the current record without a dedicated single-meal endpoint.
-    _mealsCache: new Map(),
-    // Meal the carousel has to bring into view on the next render: the id is
-    // only known after the upload answered, while the card arrives with it.
-    _scrollTargetMealId: null,
-    // Meal ids whose composition the user opened. The cards are rebuilt on every
-    // render (the poll loop included), so the open state is remembered here
-    // instead of being lost each time the carousel is rebuilt.
-    _expandedCompositions: new Set(),
-    // Whether the daily recap prose is expanded. The recap card is rebuilt
-    // by every render (the poll loop included), so the choice is kept here
-    // and handed back to the card instead of snapping to the two-line
-    // preview each time.
-    _dailySummaryExpanded: false,
-    _currentDailySummary: null,
+    _mealCard: null,
 
-    // AI Synergy widget state (cross-analysis of nutrition + workouts). The
-    // widget lives on the Питание tab under the Daily Summary block; its
-    // period selector, running flag and last verdict are kept here because
-    // the widget is rebuilt by every full page render.
-    _aiSynergyPeriod: '14',          // '14' | '30' | 'custom'
-    _aiSynergyCustomRange: { start: '', end: '' },
-    _aiSynergyResult: null,          // last /ai/synergy payload
-    _aiSynergyRunning: false,        // analysis in flight
-
-    // True while the "new meal" sheet is being submitted. A full render
-    // closes that sheet, so the live updates are held back until the
-    // submission is done - it re-renders the page itself when it finishes.
-    _mealSubmitInFlight: false,
-
-    /**
-     * Check if a meal ID is a temporary local ID (temp_...)
-     */
-    isTempMealId(mealId) {
-        return typeof mealId === 'string' && mealId.startsWith('temp_');
+    // Structured state object replacing 20+ loose properties
+    _state: {
+        // UI state
+        ui: {
+            selectedDate: null,
+            selectedPeriod: 'day',
+            customRange: { start: null, end: null },
+        },
+        // Modal/sheet state
+        modals: {
+            newMeal: null,
+            newMealClosing: null,
+            period: null,
+            periodClosing: null,
+            editMeal: null,
+            editMealClosing: null,
+            aiSynergyModal: null,
+        },
+        // Cache
+        cache: {
+            meals: new Map(),
+            dailySummary: null,
+        },
+        // AI Synergy state
+        aiSynergy: {
+            period: '14',
+            customRange: { start: '', end: '' },
+            result: null,
+            running: false,
+        },
+        // Flags
+        flags: {
+            dailySummaryLoading: false,
+            dailySummaryExpanded: false,
+            mealSubmitInFlight: false,
+            scrollTargetMealId: null,
+            expandedCompositions: new Set(),
+        },
     },
 
-    /**
+/**
      * Whether a sheet or a modal currently covers the page.
      *
      * A render tears those down, so a live update that arrives while one is
@@ -79,45 +65,64 @@ export const Nutrition = {
      */
     hasOpenOverlay() {
         return Boolean(
-            this._newMealModalState || this._newMealModalClosing
-            || this._periodSheetState || this._periodSheetClosing
-            || this._editMealModalState || this._editMealModalClosing
-            || this._aiSynergyModalEl
+            this._state.modals.newMeal || this._state.modals.newMealClosing
+            || this._state.modals.period || this._state.modals.periodClosing
+            || this._state.modals.editMeal || this._state.modals.editMealClosing
+            || this._state.modals.aiSynergyModal
         );
     },
 
-    init(app) {
+init(app) {
         this.app = app;
-        window.addEventListener('mylofi:sync-completed', async (event) => {
+        this.Components = Components;
+        this._mealCard = new MealCard(this);
+
+        this._syncCompletedHandler = async (event) => {
             try {
                 if (this.app?.state?.currentPage !== 'nutrition') return;
-                if (this._mealSubmitInFlight) return;
+                if (this._state.flags.mealSubmitInFlight) return;
                 if (this.hasOpenOverlay()) return;
                 const container = this.app.elements?.pageContent;
                 if (!container) return;
-                await this.render(container, this.app, this.selectedDate);
+                await this.updateCarouselInPlace();
             } catch (error) {
                 console.error('[Nutrition] sync-completed handler error:', error);
             }
-        });
+        };
 
-        // The server pushes the moment a background analysis lands. The card
-        // in the carousel is still the "analysing" one at that point, so the
-        // page is re-rendered to show the real result.
-        window.addEventListener('mylofi:meal-update', async (event) => {
+        this._mealUpdateHandler = async (event) => {
             try {
                 const status = event?.detail?.status;
                 if (status !== 'completed' && status !== 'failed') return;
                 if (this.app?.state?.currentPage !== 'nutrition') return;
-                if (this._mealSubmitInFlight) return;
+                if (this._state.flags.mealSubmitInFlight) return;
                 if (this.hasOpenOverlay()) return;
                 const container = this.app.elements?.pageContent;
                 if (!container) return;
-                await this.render(container, this.app, this.selectedDate);
+                await this.updateCarouselInPlace();
             } catch (error) {
                 console.error('[Nutrition] meal-update handler error:', error);
             }
-        });
+        };
+
+        window.addEventListener('mylofi:sync-completed', this._syncCompletedHandler);
+        window.addEventListener('mylofi:meal-update', this._mealUpdateHandler);
+    },
+
+    destroy() {
+        if (this._syncCompletedHandler) {
+            window.removeEventListener('mylofi:sync-completed', this._syncCompletedHandler);
+            this._syncCompletedHandler = null;
+        }
+        if (this._mealUpdateHandler) {
+            window.removeEventListener('mylofi:meal-update', this._mealUpdateHandler);
+            this._mealUpdateHandler = null;
+        }
+        // Clean up any open modals
+        this.closeNewMealModal();
+        this.closePeriodSheet();
+        this.closeEditMealModal();
+        this.closeAiSynergyModal();
     },
 
     /**
@@ -125,21 +130,21 @@ export const Nutrition = {
      * Called on init and on every day-view render. Never throws:
      * the nutrition page must render even when the report cannot be fetched.
      */
-    async loadAiSynergyReport() {
-        if (this.selectedPeriod !== 'day') return null;
+async loadAiSynergyReport() {
+        if (this._state.ui.selectedPeriod !== 'day') return null;
         const token = this.app.state.tokens.access;
         const user = this.app.state.user || {};
         if (!user?.is_premium) {
-            this._aiSynergyResult = null;
+            this._state.aiSynergy.result = null;
             return null;
         }
 
         try {
             const periodType = this.getAiSynergyPeriodType();
             const endpoint = `/ai/synergy?period_type=${encodeURIComponent(periodType)}`;
-            const data = await API.get(endpoint, token);
+            const data = await API.dedupeGet(endpoint, token);
             if (data && data.available && data.verdict) {
-                this._aiSynergyResult = {
+                this._state.aiSynergy.result = {
                     success: true,
                     analyzed_at: data.analyzed_at,
                     period_days: data.period_days,
@@ -148,20 +153,20 @@ export const Nutrition = {
                     verdict: data.verdict,
                 };
             } else {
-                this._aiSynergyResult = null;
+                this._state.aiSynergy.result = null;
             }
-            return this._aiSynergyResult;
+            return this._state.aiSynergy.result;
         } catch (error) {
             console.warn('[Nutrition] Saved synergy report unavailable:', error?.message);
-            this._aiSynergyResult = null;
+            this._state.aiSynergy.result = null;
             return null;
         }
     },
 
     /** Populate the widget from a saved report without a model call. */
     setAiSynergyResultFromSaved(payload) {
-        this._aiSynergyResult = payload;
-        this._aiSynergyRunning = false;
+        this._state.aiSynergy.result = payload;
+        this._state.aiSynergy.running = false;
         this.renderAiSynergyWidget();
     },
 
@@ -239,22 +244,22 @@ export const Nutrition = {
      */
     periodRange() {
         const today = this.todayISO();
-        const anchor = this.selectedDate && this.selectedDate <= today ? this.selectedDate : today;
+        const anchor = this._state.ui.selectedDate && this._state.ui.selectedDate <= today ? this._state.ui.selectedDate : today;
 
-        if (this.selectedPeriod === 'week') {
+        if (this._state.ui.selectedPeriod === 'week') {
             const start = this.startOfWeek(anchor);
             const weekEnd = this.shiftDate(start, 6);
             return { start, end: weekEnd > today ? today : weekEnd };
         }
 
-        if (this.selectedPeriod === 'month') {
+        if (this._state.ui.selectedPeriod === 'month') {
             const { start, end } = this.monthBounds(anchor);
             return { start, end: end > today ? today : end };
         }
 
-        if (this.selectedPeriod === 'custom') {
-            let start = this.customRange?.start;
-            let end = this.customRange?.end;
+        if (this._state.ui.selectedPeriod === 'custom') {
+            let start = this._state.ui.customRange?.start;
+            let end = this._state.ui.customRange?.end;
             if (!start || !end) {
                 end = anchor;
                 start = this.shiftDate(end, -6);
@@ -270,12 +275,12 @@ export const Nutrition = {
     stepAnchor(delta) {
         const today = this.todayISO();
         let next = null;
-        if (this.selectedPeriod === 'day') {
-            next = this.shiftDate(this.selectedDate, delta);
-        } else if (this.selectedPeriod === 'week') {
-            next = this.shiftDate(this.selectedDate, delta * 7);
-        } else if (this.selectedPeriod === 'month') {
-            next = this.shiftMonth(this.selectedDate, delta);
+        if (this._state.ui.selectedPeriod === 'day') {
+            next = this.shiftDate(this._state.ui.selectedDate, delta);
+        } else if (this._state.ui.selectedPeriod === 'week') {
+            next = this.shiftDate(this._state.ui.selectedDate, delta * 7);
+        } else if (this._state.ui.selectedPeriod === 'month') {
+            next = this.shiftMonth(this._state.ui.selectedDate, delta);
         }
         if (!next || next > today) return null;
         return next;
@@ -293,7 +298,7 @@ export const Nutrition = {
     async loadData() {
         const token = this.app.state.tokens.access;
         const { start, end } = this.periodRange();
-        const endpoint = this.selectedPeriod === 'day'
+        const endpoint = this._state.ui.selectedPeriod === 'day'
             ? `/nutrition/logs?date=${start}`
             : `/nutrition/meals?start_date=${start}&end_date=${end}`;
 
@@ -326,45 +331,45 @@ export const Nutrition = {
               }
             : { target_calories: null, target_protein: null, target_fat: null, target_carbs: null };
 
-let pendingMeals = [];
-let failedItems = [];
-try {
-    const [pm, fi] = await Promise.all([
-        DB.getMealsByStatus(DB.SYNC_STATUS.PENDING).catch(() => []),
-        SyncEngine.getFailedItems().catch(() => []),
-    ]);
-    pendingMeals = pm || [];
-    failedItems = fi || [];
-    // Exclude locally-cached meals whose server status is already FAILED:
-    // a failed analysis is permanently done, not "awaiting sync", and would
-    // otherwise inflate the "Ожидают синхронизации" counter.
-    pendingMeals = pendingMeals.filter(
-        (m) => {
-            const s = typeof m.status === 'string' ? m.status.toLowerCase() : '';
-            return s !== 'failed' && s !== 'completed';
+        let pendingMeals = [];
+        let failedItems = [];
+        try {
+            const [pm, fi] = await Promise.all([
+                DB.getMealsByStatus(DB.SYNC_STATUS.PENDING).catch(() => []),
+                SyncEngine.getFailedItems().catch(() => []),
+            ]);
+            pendingMeals = pm || [];
+            failedItems = fi || [];
+            // Exclude locally-cached meals whose server status is already FAILED:
+            // a failed analysis is permanently done, not "awaiting sync", and would
+            // otherwise inflate the "Ожидают синхронизации" counter.
+            pendingMeals = pendingMeals.filter(
+                (m) => {
+                    const s = typeof m.status === 'string' ? m.status.toLowerCase() : '';
+                    return s !== 'failed' && s !== 'completed';
+                }
+            );
+            // Deduplicate: filter out pending meals that have already been
+            // resolved by the sync engine (i.e. their temp id was replaced
+            // with a real server id and a matching server meal exists).
+            // This prevents showing both the "Анализируем..." pending card
+            // and the final processed card side-by-side after a successful
+            // offline queue flush.
+            if (Array.isArray(serverMeals) && serverMeals.length > 0) {
+                const serverIds = new Set(
+                    serverMeals.map(m => String(m.id)).filter(Boolean)
+                );
+                pendingMeals = pendingMeals.filter(pm => {
+                    const mealId = String(pm.id ?? '');
+                    const tempId = pm.tempId ? String(pm.tempId) : null;
+                    if (tempId && serverIds.has(tempId)) return false;
+                    if (pm.resolved && serverIds.has(mealId)) return false;
+                    return true;
+                });
+            }
+        } catch (error) {
+            console.warn('[Nutrition] Failed to read pending/failed items:', error);
         }
-    );
-    // Deduplicate: filter out pending meals that have already been
-    // resolved by the sync engine (i.e. their temp id was replaced
-    // with a real server id and a matching server meal exists).
-    // This prevents showing both the "Анализируем..." pending card
-    // and the final processed card side-by-side after a successful
-    // offline queue flush.
-    if (Array.isArray(serverMeals) && serverMeals.length > 0) {
-        const serverIds = new Set(
-            serverMeals.map(m => String(m.id)).filter(Boolean)
-        );
-        pendingMeals = pendingMeals.filter(pm => {
-            const mealId = String(pm.id ?? '');
-            const tempId = pm.tempId ? String(pm.tempId) : null;
-            if (tempId && serverIds.has(tempId)) return false;
-            if (pm.resolved && serverIds.has(mealId)) return false;
-            return true;
-        });
-    }
-} catch (error) {
-    console.warn('[Nutrition] Failed to read pending/failed items:', error);
-}
 
         return { serverMeals, summary, targets, pendingMeals, failedItems, fromCache };
     },
@@ -375,23 +380,23 @@ try {
      * averages plus a dense daily series, so the payload is only normalised
      * into the summary shape the ring expects.
      */
-    async loadPeriodData() {
-        if (this.selectedPeriod === 'day') return null;
+async loadPeriodData() {
+        if (this._state.ui.selectedPeriod === 'day') return null;
 
         const token = this.app.state.tokens.access;
         const { start, end } = this.periodRange();
 
         let endpoint = null;
-        if (this.selectedPeriod === 'week') {
-            endpoint = `/nutrition/week?date=${this.selectedDate}`;
-        } else if (this.selectedPeriod === 'month') {
-            endpoint = `/nutrition/month?date=${this.selectedDate}`;
+        if (this._state.ui.selectedPeriod === 'week') {
+            endpoint = `/nutrition/week?date=${this._state.ui.selectedDate}`;
+        } else if (this._state.ui.selectedPeriod === 'month') {
+            endpoint = `/nutrition/month?date=${this._state.ui.selectedDate}`;
         } else {
             endpoint = `/nutrition/range?start_date=${start}&end_date=${end}`;
         }
 
         try {
-            const data = await API.get(this.withTimezone(endpoint), token);
+            const data = await API.dedupeGet(this.withTimezone(endpoint), token);
             if (data && typeof data === 'object') {
                 return {
                     calories: Number(data.avg_calories) || Number(data.total_calories) || 0,
@@ -425,13 +430,13 @@ try {
      */
     recapDate() {
         const today = this.todayISO();
-        if (this.selectedDate && this.selectedDate >= today) return this.shiftDate(today, -1);
-        return this.selectedDate;
+        if (this._state.ui.selectedDate && this._state.ui.selectedDate >= today) return this.shiftDate(today, -1);
+        return this._state.ui.selectedDate;
     },
 
     /** True while the card is standing in for yesterday behind a "Сегодня" header. */
     recapIsYesterday() {
-        return Boolean(this.selectedDate) && this.selectedDate >= this.todayISO();
+        return Boolean(this._state.ui.selectedDate) && this._state.ui.selectedDate >= this.todayISO();
     },
 
     /**
@@ -451,7 +456,7 @@ try {
                 : this.formatDayMonthISO(date),
             allowGenerate: Boolean(date) && date < this.todayISO(),
             generateLabel: isYesterday ? 'Сформировать итог за вчера' : 'Сформировать итог дня',
-            expanded: this._dailySummaryExpanded,
+            expanded: this._state.flags.dailySummaryExpanded,
         };
     },
 
@@ -468,19 +473,19 @@ try {
      * Never throws: the nutrition page must render even when the recap cannot be
      * fetched, and it is already reading two other endpoints here.
      */
-    async loadDailySummary() {
-        if (this.selectedPeriod !== 'day') return null;
+async loadDailySummary() {
+        if (this._state.ui.selectedPeriod !== 'day') return null;
 
         const token = this.app.state.tokens.access;
         const endpoint = `/nutrition/daily-summary?date=${encodeURIComponent(this.recapDate())}`;
         try {
-            const data = await API.get(this.withTimezone(endpoint), token);
+            const data = await API.dedupeGet(this.withTimezone(endpoint), token);
             const summary = (data && typeof data === 'object') ? data : null;
-            this._currentDailySummary = summary;
+            this._state.cache.dailySummary = summary;
             return summary;
         } catch (error) {
             console.warn('[Nutrition] Daily summary unavailable:', error?.message);
-            this._currentDailySummary = null;
+            this._state.cache.dailySummary = null;
             return null;
         }
     },
@@ -497,28 +502,27 @@ try {
      * was, exactly like the read path it rides on.
      */
     async generateDailySummary(isRegeneration = false) {
-        if (this._dailySummaryLoading) return;
+        if (this._state.flags.dailySummaryLoading) return;
         const container = this.app.elements.pageContent;
         const section = container.querySelector('.daily-summary');
         if (!section) return;
 
-        if (isRegeneration && this._currentDailySummary && this._currentDailySummary.available === true) {
+        if (isRegeneration && this._state.cache.dailySummary && this._state.cache.dailySummary.available === true) {
             this.app.showToast('Анализ за сегодня уже готов! Повторный перерасчет будет доступен завтра.', 'info');
             return;
         }
 
-        this._dailySummaryLoading = true;
+        this._state.flags.dailySummaryLoading = true;
         this.setDailySummaryBusy(section, true);
 
-        const token = this.app.state.tokens.access;
+const token = this.app.state.tokens.access;
         const endpoint = `/nutrition/daily-summary?date=${encodeURIComponent(this.recapDate())}&force=true`;
         try {
+            // Invalidate cache BEFORE re-fetching so no stale data can be served during the race window
+            API.invalidateReadCache('/nutrition/daily-summary');
             const data = await API.get(this.withTimezone(endpoint), token);
             const payload = (data && typeof data === 'object') ? data : null;
-            this._currentDailySummary = payload;
-            // A forced run rewrites the stored row, so the cached answer
-            // for this day - which may still say "no recap" - is stale.
-            API.invalidateReadCache('/nutrition/daily-summary');
+            this._state.cache.dailySummary = payload;
             if (payload) {
                 this.renderDailySummaryCard(payload);
                 if (payload.available) {
@@ -532,7 +536,7 @@ try {
             console.warn('[Nutrition] Daily summary generation failed:', error?.message);
             this.app.showToast('Не удалось сформировать итог дня', 'error');
         } finally {
-            this._dailySummaryLoading = false;
+            this._state.flags.dailySummaryLoading = false;
             const current = container.querySelector('.daily-summary');
             if (current) this.setDailySummaryBusy(current, false);
         }
@@ -593,7 +597,7 @@ try {
         });
         container.querySelectorAll('[data-action="regenerate-daily-summary"]').forEach((btn) => {
             btn.onclick = () => {
-                if (this._currentDailySummary && this._currentDailySummary.available === true) {
+                if (this._state.cache.dailySummary && this._state.cache.dailySummary.available === true) {
                     this.app.showToast('Анализ за сегодня уже готов! Повторный перерасчет будет доступен завтра.', 'info');
                     return;
                 }
@@ -617,7 +621,7 @@ try {
         if (!section || !text) return;
 
         const collapsed = text.classList.toggle('is-collapsed');
-        this._dailySummaryExpanded = !collapsed;
+        this._state.flags.dailySummaryExpanded = !collapsed;
         button.setAttribute('aria-expanded', String(!collapsed));
         button.textContent = collapsed ? 'Развернуть ▾' : 'Свернуть ▴';
     },
@@ -627,7 +631,7 @@ try {
      * expand, so its toggle stays hidden rather than opening to the same
      * text. Runs after every render of the card, regeneration included.
      */
-     syncDailySummaryToggles() {
+    syncDailySummaryToggles() {
         const container = this.app.elements.pageContent;
         container.querySelectorAll('.daily-summary').forEach((section) => {
             const text = section.querySelector('.daily-summary__text');
@@ -656,14 +660,14 @@ try {
         if (!existing) return;
 
         const html = Components.aiSynergyWidget({
-            period: this._aiSynergyPeriod,
-            customStart: this._aiSynergyCustomRange.start,
-            customEnd: this._aiSynergyCustomRange.end,
+            period: this._state.aiSynergy.period,
+            customStart: this._state.aiSynergy.customRange.start,
+            customEnd: this._state.aiSynergy.customRange.end,
             todayISO: this.todayISO(),
             isPremium: !!this.app.state.user?.is_premium,
-            isRunning: this._aiSynergyRunning,
-            hasResult: !!this._aiSynergyResult,
-            result: this._aiSynergyResult,
+            isRunning: this._state.aiSynergy.running,
+            hasResult: !!this._state.aiSynergy.result,
+            result: this._state.aiSynergy.result,
         });
 
         const host = document.createElement('div');
@@ -682,9 +686,9 @@ try {
      * user picked.
      */
     getAiSynergyRequestData() {
-        if (this._aiSynergyPeriod === 'custom') {
-            const start = this._aiSynergyCustomRange.start;
-            const end = this._aiSynergyCustomRange.end;
+        if (this._state.aiSynergy.period === 'custom') {
+            const start = this._state.aiSynergy.customRange.start;
+            const end = this._state.aiSynergy.customRange.end;
             // The date inputs enforce bounds; guard against an empty field
             // slipping through so the server never sees a half-range.
             if (start && end) return { start_date: start, end_date: end };
@@ -692,7 +696,7 @@ try {
             if (end) return { start_date: end, end_date: end };
             return null;
         }
-        return { period_days: Number(this._aiSynergyPeriod) };
+        return { period_days: Number(this._state.aiSynergy.period) };
     },
 
     /**
@@ -701,9 +705,9 @@ try {
      * returns the row for the period the widget is actually showing.
      */
     getAiSynergyPeriodType() {
-        if (this._aiSynergyPeriod === 'custom') {
-            const start = this._aiSynergyCustomRange.start;
-            const end = this._aiSynergyCustomRange.end;
+        if (this._state.aiSynergy.period === 'custom') {
+            const start = this._state.aiSynergy.customRange.start;
+            const end = this._state.aiSynergy.customRange.end;
             if (start && end) {
                 const spanDays = Math.max(1, (
                     new Date(end + 'T00:00:00Z').getTime() -
@@ -712,19 +716,19 @@ try {
                 return spanDays <= 31 ? 'month' : 'custom';
             }
         }
-        const periodDays = Number(this._aiSynergyPeriod);
+        const periodDays = Number(this._state.aiSynergy.period);
         return periodDays >= 30 ? 'month' : 'week';
     },
 
-    /** Period chip handler: update the model and refresh the shell. */
+/** Period chip handler: update the model and refresh the shell. */
     async selectAiSynergyPeriod(period) {
-        if (this._aiSynergyRunning) return;
-        if (period === 'custom' && this._aiSynergyPeriod !== 'custom') {
-            this._aiSynergyCustomRange = { start: this.todayISO(), end: this.todayISO() };
+        if (this._state.aiSynergy.running) return;
+        if (period === 'custom' && this._state.aiSynergy.period !== 'custom') {
+            this._state.aiSynergy.customRange = { start: this.todayISO(), end: this.todayISO() };
         }
-        this._aiSynergyPeriod = period;
+        this._state.aiSynergy.period = period;
         // A new period is a fresh context: drop any verdict from the previous run.
-        this._aiSynergyResult = null;
+        this._state.aiSynergy.result = null;
         this.renderAiSynergyWidget();
 
         // Pull the saved report for the new period so the widget shows a verdict
@@ -742,7 +746,7 @@ try {
         const endInput = widget.querySelector('[data-ai-synergy-date="end"]');
         const start = startInput?.value ?? '';
         const end = endInput?.value ?? '';
-        this._aiSynergyCustomRange = { start, end };
+        this._state.aiSynergy.customRange = { start, end };
 
         // Client-side validation: show error if custom range exceeds 90 days
         if (start && end) {
@@ -751,7 +755,7 @@ try {
             const diffDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
             const isInvalid = diffDays > 90;
             startInput?.classList.toggle('border-red-500', isInvalid);
-            endInput?.classList.toggle('border-red-500', isInvalid);
+            endInput?.classList.remove('border-red-500');
         } else {
             startInput?.classList.remove('border-red-500');
             endInput?.classList.remove('border-red-500');
@@ -760,32 +764,32 @@ try {
 
     /** Swaps the widget into the running (spinner) state. */
     setAiSynergyRunning(running) {
-        this._aiSynergyRunning = running;
+        this._state.aiSynergy.running = running;
         this.renderAiSynergyWidget();
     },
 
     /** Renders the analysis verdict inside the widget after the API answers. */
     setAiSynergyResult(payload) {
-        this._aiSynergyResult = payload;
-        this._aiSynergyRunning = false;
+        this._state.aiSynergy.result = payload;
+        this._state.aiSynergy.running = false;
         this.renderAiSynergyWidget();
     },
 
     /** Open the full-screen AI Synergy modal. */
     openAiSynergyModal() {
-        if (!this._aiSynergyResult) return;
+        if (!this._state.aiSynergy.result) return;
         const container = this.app.elements.pageContent;
 
         // Close any existing modal first
         this.closeAiSynergyModal();
 
-        const html = Components.aiSynergyModal(this._aiSynergyResult);
+        const html = Components.aiSynergyModal(this._state.aiSynergy.result);
         const host = document.createElement('div');
         host.innerHTML = html.trim();
         const modalEl = host.firstElementChild;
         document.body.appendChild(modalEl);
 
-        this._aiSynergyModalEl = modalEl;
+        this._state.modals.aiSynergyModal = modalEl;
 
         // Prevent background scroll while modal is open
         document.body.classList.add('overflow-hidden');
@@ -807,16 +811,16 @@ try {
 
     /** Close the full-screen AI Synergy modal. */
     closeAiSynergyModal() {
-        if (!this._aiSynergyModalEl) return;
+        if (!this._state.modals.aiSynergyModal) return;
 
-        const onKeydown = this._aiSynergyModalEl._onKeydown;
+        const onKeydown = this._state.modals.aiSynergyModal._onKeydown;
         if (onKeydown) {
             document.removeEventListener('keydown', onKeydown);
         }
 
         document.body.classList.remove('overflow-hidden');
-        this._aiSynergyModalEl.remove();
-        this._aiSynergyModalEl = null;
+        this._state.modals.aiSynergyModal.remove();
+        this._state.modals.aiSynergyModal = null;
     },
 
     /** Re-binds the widget's controls after an in-place re-render. */
@@ -834,7 +838,7 @@ try {
 
         // Reflect the live selection on the chips (aria-pressed + active look).
         widget.querySelectorAll('.ai-synergy__chip').forEach((chip) => {
-            const active = chip.dataset.period === this._aiSynergyPeriod;
+            const active = chip.dataset.period === this._state.aiSynergy.period;
             chip.setAttribute('aria-pressed', String(active));
             chip.classList.toggle('is-active', active);
         });
@@ -871,11 +875,11 @@ try {
 
     /** Human label for the date header: it names the whole selected period. */
     periodLabel() {
-        if (this.selectedPeriod === 'day') {
-            return this.formatDateLabel(this.selectedDate);
+        if (this._state.ui.selectedPeriod === 'day') {
+            return this.formatDateLabel(this._state.ui.selectedDate);
         }
-        if (this.selectedPeriod === 'month') {
-            return this.formatMonthYear(this.selectedDate);
+        if (this._state.ui.selectedPeriod === 'month') {
+            return this.formatMonthYear(this._state.ui.selectedDate);
         }
         // Week and custom both name the exact window they load, so the header
         // and the caption under the ring can never disagree.
@@ -887,14 +891,14 @@ try {
 
     /** One caption line under the ring: the covered range and how full it is. */
     periodCaption(periodData) {
-        if (this.selectedPeriod === 'day') return { range: 'День', coverage: '' };
+        if (this._state.ui.selectedPeriod === 'day') return { range: 'День', coverage: '' };
 
         const days = Number(periodData?.days) || 0;
         const activeDays = Number(periodData?.active_days) || 0;
         const coverage = days ? `${activeDays}/${days} дн.` : (activeDays ? `${activeDays} дн.` : '');
 
         if (!periodData) {
-            return this.selectedPeriod === 'custom'
+            return this._state.ui.selectedPeriod === 'custom'
                 ? { range: 'Диапазон: нет данных', coverage: '' }
                 : { range: 'Нет данных', coverage: '' };
         }
@@ -908,7 +912,7 @@ try {
     renderDateNav(fromCache = false) {
         // The custom period is defined by its own range, so there is no
         // neighbouring window to step into.
-        const showArrows = this.selectedPeriod !== 'custom';
+        const showArrows = this._state.ui.selectedPeriod !== 'custom';
         const canGoNext = this.canStepForward();
 
         const arrow = (direction) => {
@@ -944,7 +948,7 @@ try {
     renderPeriodTabs() {
         return Components.periodTabs(PERIOD_TABS.map((tab) => ({
             ...tab,
-            active: this.selectedPeriod === tab.value,
+            active: this._state.ui.selectedPeriod === tab.value,
         })));
     },
 
@@ -1014,8 +1018,8 @@ try {
             this.openPeriodSheet();
             return;
         }
-        if (period === this.selectedPeriod) return;
-        this.selectedPeriod = period;
+        if (period === this._state.ui.selectedPeriod) return;
+        this._state.ui.selectedPeriod = period;
         await this.render(this.app.elements.pageContent, this.app);
     },
 
@@ -1023,154 +1027,41 @@ try {
     async stepPeriod(delta) {
         const next = this.stepAnchor(delta);
         if (!next) return;
-        this.selectedDate = next;
+        this._state.ui.selectedDate = next;
         await this.render(this.app.elements.pageContent, this.app);
     },
 
-    /**
+/**
      * Period picker sheet. Only the single day needs one date input; every wider
      * period edits a range, so the sheet always exposes the start and the end.
      */
     openPeriodSheet() {
-        // Guard on the closing element too, so a tap during the slide-out
-        // animation cannot stack a second sheet on top of the first.
-        if (this._periodSheetState || this._periodSheetClosing) return;
+        if (this._state.modals.period || this._state.modals.periodClosing) return;
 
         const today = this.todayISO();
         const { start, end } = this.periodRange();
-        const isRange = this.selectedPeriod !== 'day';
+        const isRange = this._state.ui.selectedPeriod !== 'day';
 
-        const host = document.createElement('div');
-        host.innerHTML = Components.periodSheet({ today, start, end, isRange });
-        const modalEl = host.firstElementChild;
-        document.body.appendChild(modalEl);
-
-        this._periodSheetState = {
-            modalEl,
-            isRange,
-            today,
-            initialStart: start,
-            initialEnd: end,
-            bodyWasLocked: document.body.classList.contains('overflow-hidden'),
-            onKeydown: null,
-        };
-        document.body.classList.add('overflow-hidden');
-
-        this.bindPeriodSheetEvents(this._periodSheetState);
+        this._state.modals.period = new PeriodSheet(this, { today, start, end, isRange });
+        this._state.modals.period.open();
+        this._state.modals.periodClosing = this._state.modals.period.modalEl;
     },
 
-    closePeriodSheet() {
-        if (!this._periodSheetState) return;
-
-        const { modalEl, onKeydown, bodyWasLocked } = this._periodSheetState;
-        this._periodSheetState = null;
-        if (onKeydown) {
-            document.removeEventListener('keydown', onKeydown);
+closePeriodSheet() {
+        if (this._state.modals.period) {
+            this._state.modals.period.close();
+            this._state.modals.period = null;
         }
-        if (!bodyWasLocked) {
-            document.body.classList.remove('overflow-hidden');
+        if (this._state.modals.periodClosing) {
+            this._state.modals.periodClosing = null;
         }
-
-        modalEl.querySelector('.drum-sheet-panel')?.classList.add('is-closing');
-        modalEl.querySelector('.drum-sheet-backdrop')?.classList.add('is-closing');
-
-        this._periodSheetClosing = modalEl;
-        setTimeout(() => {
-            modalEl.remove();
-            if (this._periodSheetClosing === modalEl) {
-                this._periodSheetClosing = null;
-            }
-        }, 220);
     },
 
     bindPeriodSheetEvents(state) {
-        const { modalEl, today, isRange } = state;
-
-        // Event delegation on the sheet container: the close button sits above
-        // overlapping inputs/flex elements, so a single delegated listener
-        // catches taps that a direct handler would miss.
-        modalEl.addEventListener('click', (e) => {
-            const target = e.target;
-            if (target.closest('[data-action="close-period-sheet"]') || target.closest('.drum-sheet-backdrop')) {
-                e.preventDefault();
-                e.stopPropagation();
-                this.closePeriodSheet();
-            }
-        });
-
-        const onKeydown = (e) => {
-            if (e.key === 'Escape') this.closePeriodSheet();
-        };
-        state.onKeydown = onKeydown;
-        document.addEventListener('keydown', onKeydown);
-
-        const startInput = modalEl.querySelector('[data-period-field="start"]');
-        const endInput = modalEl.querySelector('[data-period-field="end"]');
-
-        // Keep the bounds ordered while typing: a start past the end pulls the
-        // end along, and an end before the start pulls the start back, so the
-        // range can never read backwards before it is applied.
-        if (isRange && startInput && endInput) {
-            startInput.addEventListener('change', () => {
-                if (!startInput.value) return;
-                if (endInput.value && endInput.value < startInput.value) {
-                    endInput.value = startInput.value;
-                }
-                endInput.min = startInput.value;
-            });
-            endInput.addEventListener('change', () => {
-                if (!endInput.value) return;
-                if (startInput.value && startInput.value > endInput.value) {
-                    startInput.value = endInput.value;
-                }
-                endInput.min = startInput.value;
-            });
-        }
-
-        modalEl.querySelectorAll('[data-action="period-preset"]').forEach((btn) => {
-            btn.addEventListener('click', () => {
-                const range = this.presetRange(btn.dataset.range, today);
-                if (!range) return;
-                if (startInput) startInput.value = range.start;
-                if (endInput) endInput.value = range.end;
-                if (endInput) endInput.min = range.start;
-            });
-        });
-
-        modalEl.querySelector('[data-action="reset-period-sheet"]')?.addEventListener('click', () => {
-            if (startInput) startInput.value = state.initialStart;
-            if (endInput) {
-                endInput.value = state.initialEnd;
-                endInput.min = state.initialStart;
-            }
-        });
-
-        modalEl.querySelector('[data-action="apply-period-sheet"]')?.addEventListener('click', async () => {
-            let start = startInput?.value || '';
-            let end = isRange ? (endInput?.value || '') : start;
-            if (!start) return;
-            if (!end) end = start;
-            // Swapped or future bounds are accepted but normalised, so the
-            // range always reads the way the API will resolve it.
-            if (start > end) [start, end] = [end, start];
-            if (end > today) end = today;
-            if (start > today) start = today;
-
-            this.closePeriodSheet();
-
-            if (isRange) {
-                this.selectedPeriod = 'custom';
-                this.customRange = { start, end };
-                this.selectedDate = end;
-            } else {
-                this.selectedDate = start;
-            }
-
-            await this.render(this.app.elements.pageContent, this.app);
-        });
+        // Now handled by PeriodSheet class
     },
 
-    /** Quick ranges offered by the custom period sheet. */
+/** Quick ranges offered by the custom period sheet. */
     presetRange(preset, today) {
         if (preset === 'today') return { start: today, end: today };
         if (preset === 'week') return { start: this.startOfWeek(today), end: today };
@@ -1178,16 +1069,222 @@ try {
         return null;
     },
 
+    /**
+     * Build the complete page HTML structure.
+     */
+    buildPageHtml({ fromCache, dashboard, pendingSorted, synergyStackSlot, sortedMeals, cardOptions, failedItems, totalMeals }) {
+        const carouselHtml = this.renderCarouselHtml({ pendingSorted, synergyStackSlot, sortedMeals, cardOptions, totalMeals });
+        const pendingBannerHtml = pendingSorted.length > 0
+            ? `
+            <div class="shrink-0 mb-1">
+                <span class="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-2.5 py-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+                    <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    Ожидают синхронизации: ${pendingSorted.length}
+                </span>
+            </div>
+            `
+            : '';
+
+        const failedItemsHtml = failedItems.length > 0
+            ? `
+            <div class="viewport-content px-4 pb-2 -mx-4" id="failed-items-section">
+                <div class="glass rounded-xl p-3 mb-2 border border-red-500/20">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-xs font-semibold text-red-400 uppercase tracking-wider">Ошибка синхронизации</h3>
+                        <button id="clear-failed" class="text-xs text-red-500 hover:text-red-400">Очистить все</button>
+                    </div>
+                    ${failedItems.map((item) => Components.failedSyncItem(item)).join('')}
+                    <button id="retry-failed" class="w-full py-2 mt-1 bg-sky-500 hover:bg-sky-600 text-white text-sm font-medium rounded-xl">Повторить всё</button>
+                </div>
+            </div>
+            `
+            : '';
+
+        return `
+            <div class="single-viewport px-4 pt-4 pb-20">
+                <!-- HEADER -->
+                <div class="viewport-header p-1 pt-0 pb-2">
+                    ${this.renderDateNav(fromCache)}
+
+                    <!-- Period dashboard: day, 7 days, month or custom range -->
+                    <div class="mt-2">${dashboard}</div>
+                </div>
+
+                <!-- PENDING SYNC BANNER -->
+                ${pendingBannerHtml}
+
+                ${carouselHtml}
+
+                ${failedItemsHtml}
+            </div>
+        `;
+    },
+
+    /**
+     * Render just the carousel HTML for targeted updates.
+     */
+    renderCarouselHtml({ pendingSorted, synergyStackSlot, sortedMeals, cardOptions, totalMeals }) {
+        return `
+            <div class="meal-carousel" id="meal-carousel">
+                ${synergyStackSlot}
+                ${Components.addMealActionCard()}
+                ${pendingSorted.map((meal) => this._mealCard.render(meal, cardOptions)).join('')}
+                ${sortedMeals.map((meal) => this._mealCard.render(meal, cardOptions)).join('')}
+                ${totalMeals === 0 ? Components.mealCarouselEmptyState() : ''}
+            </div>
+        `;
+    },
+
+    /**
+     * Update the carousel in place without a full page re-render.
+     * Used by poll updates (meal-analysis completion, sync events).
+     */
+    async updateCarouselInPlace() {
+        const container = this.app.elements.pageContent;
+        if (!container) return;
+
+        // Save current scroll position
+        const carousel = container.querySelector('#meal-carousel');
+        const previousCarouselLeft = carousel?.scrollLeft ?? 0;
+
+        // Fetch only the data needed for the carousel
+        const loaded = await this.loadData();
+        const { serverMeals, pendingMeals, failedItems } = loaded;
+
+        const user = this.app.state.user || {};
+        const sortedMeals = serverMeals
+            .slice()
+            .sort((a, b) => this.mealTimestamp(b) - this.mealTimestamp(a));
+
+        const pendingSorted = pendingMeals
+            .slice()
+            .sort((a, b) => this.mealTimestamp(b) - this.mealTimestamp(a));
+
+        // Update meals cache
+        this._state.cache.meals = new Map();
+        for (const meal of sortedMeals) {
+            if (meal.id != null) this._state.cache.meals.set(String(meal.id), meal);
+        }
+        for (const meal of pendingSorted) {
+            if (meal.id != null) this._state.cache.meals.set(String(meal.id), meal);
+        }
+
+        const totalMeals = sortedMeals.length + pendingSorted.length;
+        const showDate = this._state.ui.selectedPeriod !== 'day';
+        const cardOptions = { showDate };
+
+        // Build synergy stack slot (day view only)
+        let synergyStackSlot = '';
+        if (this._state.ui.selectedPeriod === 'day') {
+            // Get latest daily summary for the recap card
+            const dailySummary = this._state.cache.dailySummary;
+            const dailySummaryHtml = dailySummary
+                ? Components.dailySummaryCard(dailySummary, this.recapCardOptions())
+                : '';
+            synergyStackSlot = `<div class="ai-synergy-stack-slot snap-center shrink-0">
+                       ${dailySummaryHtml}
+                       ${Components.aiSynergyWidget({
+                           period: this._state.aiSynergy.period,
+                           customStart: this._state.aiSynergy.customRange.start,
+                           customEnd: this._state.aiSynergy.customRange.end,
+                           todayISO: this.todayISO(),
+                           isPremium: !!user?.is_premium,
+                           isRunning: this._state.aiSynergy.running,
+                           hasResult: !!this._state.aiSynergy.result,
+                           result: this._state.aiSynergy.result,
+                       })}
+                   </div>`;
+        }
+
+        // Render new carousel HTML
+        const carouselHtml = this.renderCarouselHtml({ pendingSorted, synergyStackSlot, sortedMeals, cardOptions, totalMeals });
+
+        // Replace carousel in place
+        const carouselContainer = container.querySelector('#meal-carousel');
+        if (carouselContainer) {
+            carouselContainer.outerHTML = carouselHtml;
+        }
+
+        // Update pending sync banner
+        const pendingBannerContainer = container.querySelector('.shrink-0.mb-1');
+        const newPendingBannerHtml = pendingSorted.length > 0
+            ? `
+            <div class="shrink-0 mb-1">
+                <span class="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-2.5 py-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+                    <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    Ожидают синхронизации: ${pendingSorted.length}
+                </span>
+            </div>
+            `
+            : '';
+
+        if (pendingBannerContainer) {
+            if (pendingSorted.length > 0) {
+                pendingBannerContainer.outerHTML = newPendingBannerHtml;
+            } else {
+                pendingBannerContainer.remove();
+            }
+        } else if (pendingSorted.length > 0) {
+            // Insert after header
+            const header = container.querySelector('.viewport-header');
+            if (header) {
+                header.insertAdjacentHTML('afterend', newPendingBannerHtml);
+            }
+        }
+
+        // Update failed items section
+        const failedSection = container.querySelector('#failed-items-section');
+        const newFailedItemsHtml = failedItems.length > 0
+            ? `
+            <div class="viewport-content px-4 pb-2 -mx-4" id="failed-items-section">
+                <div class="glass rounded-xl p-3 mb-2 border border-red-500/20">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-xs font-semibold text-red-400 uppercase tracking-wider">Ошибка синхронизации</h3>
+                        <button id="clear-failed" class="text-xs text-red-500 hover:text-red-400">Очистить все</button>
+                    </div>
+                    ${failedItems.map((item) => Components.failedSyncItem(item)).join('')}
+                    <button id="retry-failed" class="w-full py-2 mt-1 bg-sky-500 hover:bg-sky-600 text-white text-sm font-medium rounded-xl">Повторить всё</button>
+                </div>
+            </div>
+            `
+            : '';
+
+        if (failedSection) {
+            if (failedItems.length > 0) {
+                failedSection.outerHTML = newFailedItemsHtml;
+            } else {
+                failedSection.remove();
+            }
+        } else if (failedItems.length > 0) {
+            // Insert before end of viewport
+            const viewport = container.querySelector('.single-viewport');
+            if (viewport) {
+                viewport.insertAdjacentHTML('beforeend', newFailedItemsHtml);
+            }
+        }
+
+        // Re-bind event handlers for new elements
+        this.bindMealActions();
+        this.bindFailedItems();
+        this.bindAddMealModal();
+        this.bindDailySummary();
+        this.syncDailySummaryToggles();
+        this.bindAiSynergyWidget();
+
+        // Restore scroll position
+        this.settleCarouselScroll(previousCarouselLeft);
+    },
+
     async render(container, app, dateOverride = null) {
         this.app = app;
         if (dateOverride) {
-            this.selectedDate = dateOverride;
+            this._state.ui.selectedDate = dateOverride;
         }
-        if (!this.selectedDate) {
-            this.selectedDate = this.todayISO();
+        if (!this._state.ui.selectedDate) {
+            this._state.ui.selectedDate = this.todayISO();
         }
-        if (!PERIODS.includes(this.selectedPeriod)) {
-            this.selectedPeriod = 'day';
+        if (!PERIODS.includes(this._state.ui.selectedPeriod)) {
+            this._state.ui.selectedPeriod = 'day';
         }
 
         // Close any open modal before re-rendering
@@ -1206,17 +1303,19 @@ try {
 
         try {
             // The period summary is only needed outside the day view, and the day
-            // recap only inside it; both are started here so all three requests
-            // fly in parallel.
+            // recap only inside it; all four requests fly in parallel.
             const periodDataPromise = this.loadPeriodData();
             const dailySummaryPromise = this.loadDailySummary();
-            const synergyReportPromise = (this.selectedPeriod === 'day'
-                && !this._aiSynergyRunning)
+            const synergyReportPromise = (this._state.ui.selectedPeriod === 'day'
+                && !this._state.aiSynergy.running)
                 ? this.loadAiSynergyReport()
                 : Promise.resolve(null);
-            const loaded = await this.loadData();
-            const periodData = await periodDataPromise;
-            const dailySummary = await dailySummaryPromise;
+            const loadDataPromise = this.loadData();
+            const [loaded, periodData, dailySummary] = await Promise.all([
+                loadDataPromise,
+                periodDataPromise,
+                dailySummaryPromise,
+            ]);
             await synergyReportPromise;
             const { summary, targets: apiTargets, failedItems, fromCache } = loaded;
             serverMeals = loaded.serverMeals;
@@ -1229,11 +1328,11 @@ try {
                 return fallback;
             };
 
-            const targets = {
-                target_calories: resolveTarget(apiTargets?.target_calories, user.target_calories, 2000),
-                target_protein: resolveTarget(apiTargets?.target_protein, user.target_protein_g, 150),
-                target_fat: resolveTarget(apiTargets?.target_fat, user.target_fat_g, 65),
-                target_carbs: resolveTarget(apiTargets?.target_carbs, user.target_carbs_g, 250),
+const targets = {
+                target_calories: resolveTarget(apiTargets?.target_calories, user.target_calories, DEFAULT_TARGETS.CALORIES),
+                target_protein: resolveTarget(apiTargets?.target_protein, user.target_protein_g, DEFAULT_TARGETS.PROTEIN),
+                target_fat: resolveTarget(apiTargets?.target_fat, user.target_fat_g, DEFAULT_TARGETS.FAT),
+                target_carbs: resolveTarget(apiTargets?.target_carbs, user.target_carbs_g, DEFAULT_TARGETS.CARBS),
             };
 
             // LIFO: the most recent meal is the first tile after the action card.
@@ -1247,18 +1346,18 @@ try {
 
             // Index every meal with an id so the edit modal can look it up
             // without a dedicated single-meal GET endpoint.
-            this._mealsCache = new Map();
+            this._state.cache.meals = new Map();
             for (const meal of sortedMeals) {
-                if (meal.id != null) this._mealsCache.set(String(meal.id), meal);
+                if (meal.id != null) this._state.cache.meals.set(String(meal.id), meal);
             }
             for (const meal of pendingSorted) {
-                if (meal.id != null) this._mealsCache.set(String(meal.id), meal);
+                if (meal.id != null) this._state.cache.meals.set(String(meal.id), meal);
             }
 
             const totalMeals = sortedMeals.length + pendingSorted.length;
             // Wider periods need the eaten date on every card, otherwise tiles
             // from different days are indistinguishable in the carousel.
-            const showDate = this.selectedPeriod !== 'day';
+            const showDate = this._state.ui.selectedPeriod !== 'day';
 
             const cardOptions = { showDate };
 
@@ -1267,7 +1366,7 @@ try {
             // average, which keeps them comparable with the same daily targets.
             // A missing period payload therefore falls back to zeros rather than
             // re-labelling the day's totals as a week or a month.
-            const isDayPeriod = this.selectedPeriod === 'day';
+            const isDayPeriod = this._state.ui.selectedPeriod === 'day';
             const ringSummary = isDayPeriod ? summary : period.summary;
             const qualityScore = isDayPeriod
                 ? (totalMeals > 0 ? Utils.computeQualityScore(summary) : null)
@@ -1300,7 +1399,7 @@ try {
             // header says only "Сегодня". A finished day also earns the manual
             // generation trigger; a day still being eaten never does. Wider periods
             // have no single day to recap, so the card is left out of the carousel.
-            const dailySummaryHtml = (this.selectedPeriod === 'day' && dailySummary)
+            const dailySummaryHtml = (this._state.ui.selectedPeriod === 'day' && dailySummary)
                 ? Components.dailySummaryCard(dailySummary, this.recapCardOptions())
                 : '';
 
@@ -1311,76 +1410,35 @@ try {
             // no tab switcher, no swapped panes. Wider periods have no
             // single day to recap and no cross-analysis to show, so the
             // slot is left out of the carousel entirely.
-            const synergyStackSlot = (this.selectedPeriod === 'day')
+            const synergyStackSlot = (this._state.ui.selectedPeriod === 'day')
                 ? `<div class="ai-synergy-stack-slot snap-center shrink-0">
                        ${dailySummaryHtml}
                        ${Components.aiSynergyWidget({
-                           period: this._aiSynergyPeriod,
-                           customStart: this._aiSynergyCustomRange.start,
-                           customEnd: this._aiSynergyCustomRange.end,
+                           period: this._state.aiSynergy.period,
+                           customStart: this._state.aiSynergy.customRange.start,
+                           customEnd: this._state.aiSynergy.customRange.end,
                            todayISO: this.todayISO(),
                            isPremium: !!user?.is_premium,
-                           isRunning: this._aiSynergyRunning,
-                           hasResult: !!this._aiSynergyResult,
-                           result: this._aiSynergyResult,
+                           isRunning: this._state.aiSynergy.running,
+                           hasResult: !!this._state.aiSynergy.result,
+                           result: this._state.aiSynergy.result,
                        })}
                    </div>`
                 : '';
 
-            let html = `
-                <div class="single-viewport px-4 pt-4 pb-20">
-                    <!-- HEADER -->
-                    <div class="viewport-header p-1 pt-0 pb-2">
-                        ${this.renderDateNav(fromCache)}
+            // Build the page HTML (header, carousel, failed items)
+            const pageHtml = this.buildPageHtml({
+                fromCache,
+                dashboard,
+                pendingSorted,
+                synergyStackSlot,
+                sortedMeals,
+                cardOptions,
+                failedItems,
+                totalMeals,
+            });
 
-                        <!-- Period dashboard: day, 7 days, month or custom range -->
-                        <div class="mt-2">${dashboard}</div>
-                    </div>
-
-                    <!-- PENDING SYNC BANNER -->
-                    ${pendingSorted.length > 0
-                        ? `
-                        <div class="shrink-0 mb-1">
-                            <span class="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-2.5 py-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
-                                <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                                Ожидают синхронизации: ${pendingSorted.length}
-                            </span>
-                        </div>
-                        `
-                        : ''}
-
-                    <!-- PENDING ANALYSIS: meals still being processed show a neutral badge -->
-                    ${pendingSorted.some(m => m.status === 'pending' || m.status === 'processing' || m.sync_status === DB.SYNC_STATUS.PENDING) ? '' : ''}
-
-<!-- SNAP CAROUSEL: daily summary + synergy stack first (day only),
-                           then the action tile, pending meals, logged meals (LIFO) -->
-                     <div class="meal-carousel" id="meal-carousel">
-                         ${synergyStackSlot}
-                         ${Components.addMealActionCard()}
-                         ${pendingSorted.map((meal) => Components.mealCardPhoto(meal, cardOptions)).join('')}
-                         ${sortedMeals.map((meal) => Components.mealCardPhoto(meal, cardOptions)).join('')}
-                         ${totalMeals === 0 ? Components.mealCarouselEmptyState() : ''}
-                     </div>
-
-<!-- FAILED SYNC ITEMS (inline if any) -->
-                    ${failedItems.length > 0
-                        ? `
-                        <div class="viewport-content px-4 pb-2 -mx-4" id="failed-items-section">
-                            <div class="glass rounded-xl p-3 mb-2 border border-red-500/20">
-                                <div class="flex items-center justify-between mb-2">
-                                    <h3 class="text-xs font-semibold text-red-400 uppercase tracking-wider">Ошибка синхронизации</h3>
-                                    <button id="clear-failed" class="text-xs text-red-500 hover:text-red-400">Очистить все</button>
-                                </div>
-                                ${failedItems.map((item) => Components.failedSyncItem(item)).join('')}
-                                <button id="retry-failed" class="w-full py-2 mt-1 bg-sky-500 hover:bg-sky-600 text-white text-sm font-medium rounded-xl">Повторить всё</button>
-                            </div>
-                        </div>
-                        `
-                        : ''}
-                </div>
-            `;
-
-            container.innerHTML = html;
+            container.innerHTML = pageHtml;
 
             this.bindDateNav();
             this.bindPeriodTabs();
@@ -1422,8 +1480,7 @@ try {
             container.innerHTML = Components.errorState(errorMessage);
         }
     },
-
-    bindDateNav() {
+bindDateNav() {
         const container = this.app.elements.pageContent;
         const prev = container.querySelector('#date-prev');
         const next = container.querySelector('#date-next');
@@ -1456,136 +1513,26 @@ try {
         });
     },
 
-    openNewMealModal() {
-        // Guard on the closing element too, so a tap during the slide-out
-        // animation cannot stack a second sheet on top of the first.
-        if (this._newMealModalState || this._newMealModalClosing) return;
+openNewMealModal() {
+        if (this._state.modals.newMeal || this._state.modals.newMealClosing) return;
 
-        const modalHtml = Components.newMealModal();
-        const modalContainer = document.createElement('div');
-        modalContainer.innerHTML = modalHtml;
-        const modalEl = modalContainer.firstElementChild;
-        document.body.appendChild(modalEl);
-
-        this._newMealModalState = {
-            modalEl,
-            panelEl: modalEl.querySelector('.drum-sheet-panel'),
-            selectedFile: null,
-            selectedMealType: null,
-            previewUrl: null,
-        };
-
-        // Lock background scroll while the sheet is open (restore prior state on close)
-        this._newMealModalState.bodyWasLocked = document.body.classList.contains('overflow-hidden');
-        document.body.classList.add('overflow-hidden');
-
-        // Bind events
-        this.bindNewMealModalEvents(modalEl);
+        this._state.modals.newMeal = new NewMealSheet(this);
+        this._state.modals.newMeal.open();
+        this._state.modals.newMealClosing = this._state.modals.newMeal.modalEl;
     },
 
     closeNewMealModal() {
-        if (!this._newMealModalState) return;
-
-        const { modalEl, panelEl, previewUrl, onKeydown, bodyWasLocked } = this._newMealModalState;
-        // Revoke the object URL before the modal leaves the DOM so a preview
-        // that is never submitted does not leak its blob.
-        if (previewUrl) {
-            URL.revokeObjectURL(previewUrl);
+        if (this._state.modals.newMeal) {
+            this._state.modals.newMeal.close();
+            this._state.modals.newMeal = null;
         }
-        this._newMealModalState = null;
-        if (onKeydown) {
-            document.removeEventListener('keydown', onKeydown);
+        if (this._state.modals.newMealClosing) {
+            this._state.modals.newMealClosing = null;
         }
-        if (!bodyWasLocked) {
-            document.body.classList.remove('overflow-hidden');
-        }
-
-        // Slide the panel back out before removing it, mirroring the drum sheet.
-        panelEl?.classList.add('is-closing');
-        modalEl.querySelector('.drum-sheet-backdrop')?.classList.add('is-closing');
-
-        this._newMealModalClosing = modalEl;
-        setTimeout(() => {
-            modalEl.remove();
-            if (this._newMealModalClosing === modalEl) {
-                this._newMealModalClosing = null;
-            }
-        }, 220);
     },
 
-    bindNewMealModalEvents(modalEl) {
-        const state = this._newMealModalState;
-
-        // Backdrop closes the sheet; the close button sits inside the panel and
-        // is bound directly so panel clicks never bubble into the backdrop handler.
-        modalEl.querySelector('.drum-sheet-backdrop')?.addEventListener('click', () => {
-            this.closeNewMealModal();
-        });
-        modalEl.querySelector('.drum-sheet-panel [data-action="close-new-meal-modal"]')?.addEventListener('click', () => {
-            this.closeNewMealModal();
-        });
-
-        // Escape key
-        const onKeydown = (e) => {
-            if (e.key === 'Escape') {
-                this.closeNewMealModal();
-            }
-        };
-        state.onKeydown = onKeydown;
-        document.addEventListener('keydown', onKeydown);
-
-        // Meal type selection
-        modalEl.querySelectorAll('[data-action="set-new-meal-type"]').forEach((btn) => {
-            btn.onclick = () => {
-                state.selectedMealType = btn.dataset.type;
-                modalEl.querySelectorAll('[data-action="set-new-meal-type"]').forEach((b) => {
-                    const isActive = b.dataset.type === state.selectedMealType;
-                    b.classList.toggle('active', isActive);
-                    b.setAttribute('aria-pressed', String(isActive));
-                });
-                this.updateNewMealSubmitState(modalEl, state);
-            };
-        });
-
-        // Camera button
-        modalEl.querySelector('[data-action="new-meal-camera"]')?.addEventListener('click', () => {
-            const input = modalEl.querySelector('#new-meal-photo-input');
-            if (input) {
-                input.setAttribute('capture', 'environment');
-                input.click();
-            }
-        });
-
-        // Gallery button
-        modalEl.querySelector('[data-action="new-meal-gallery"]')?.addEventListener('click', () => {
-            const input = modalEl.querySelector('#new-meal-photo-input');
-            if (input) {
-                input.removeAttribute('capture');
-                input.click();
-            }
-        });
-
-        // Remove image button
-        modalEl.querySelector('[data-action="remove-new-meal-img"]')?.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.clearNewMealImage(modalEl, state);
-        });
-
-        // File input change
-        const photoInput = modalEl.querySelector('#new-meal-photo-input');
-        if (photoInput) {
-            photoInput.onchange = (e) => {
-                const file = e.target.files[0];
-                if (file) {
-                    this.handleNewMealFileSelect(file, modalEl, state);
-                }
-            };
-        }
-
-        // Submit button
-        modalEl.querySelector('[data-action="submit-new-meal"]')?.addEventListener('click', () => {
-            this.handleNewMealSubmit(modalEl, state);
-        });
+bindNewMealModalEvents(modalEl) {
+        // Now handled by NewMealSheet class
     },
 
     handleNewMealFileSelect(file, modalEl, state) {
@@ -1644,8 +1591,8 @@ try {
 
     async handleNewMealSubmit(modalEl, state) {
         // Prevent double-submit
-        if (this._mealSubmitInFlight) return;
-        this._mealSubmitInFlight = true;
+        if (this._state.flags.mealSubmitInFlight) return;
+        this._state.flags.mealSubmitInFlight = true;
 
         try {
             if (!state.selectedFile || !state.selectedMealType) return;
@@ -1665,8 +1612,8 @@ try {
                 await Camera.queueOfflineMeal(state.selectedFile, notes, state.selectedMealType);
                 this.app.showToast('Сохранено локально. Отправим при появлении связи', 'info');
                 this.closeNewMealModal();
-                this._scrollTargetMealId = null;
-                await this.render(this.app.elements.pageContent, this.app, this.selectedDate);
+                this._state.flags.scrollTargetMealId = null;
+                await this.render(this.app.elements.pageContent, this.app, this._state.ui.selectedDate);
                 return;
             }
 
@@ -1754,8 +1701,8 @@ try {
             // The reload brings the real card (pending, then analysed); the carousel only
             // knows its id once the render that produced it is done, so the target
             // is handed over instead of scrolled to here.
-            this._scrollTargetMealId = newMealId;
-            await this.render(this.app.elements.pageContent, this.app, this.selectedDate);
+            this._state.flags.scrollTargetMealId = newMealId;
+            await this.render(this.app.elements.pageContent, this.app, this._state.ui.selectedDate);
         } catch (err) {
             console.error('[Nutrition] handleNewMealSubmit error:', err);
             try { this.removeAnalyzingSkeleton(); } catch (_) {}
@@ -1767,7 +1714,7 @@ try {
             try { Camera.hideLoadingOverlay(modalEl); } catch (_) {}
             this.app.showToast(err?.message || 'Не удалось сохранить блюдо', 'error');
         } finally {
-            this._mealSubmitInFlight = false;
+            this._state.flags.mealSubmitInFlight = false;
         }
     },
 
@@ -1838,8 +1785,8 @@ try {
         const carousel = this.app.elements.pageContent.querySelector('#meal-carousel');
         if (!carousel) return;
 
-        const targetId = this._scrollTargetMealId;
-        this._scrollTargetMealId = null;
+        const targetId = this._state.flags.scrollTargetMealId;
+        this._state.flags.scrollTargetMealId = null;
         if (targetId !== null && targetId !== undefined) {
             const slot = carousel.querySelector(`.meal-card-slot[data-meal-id="${targetId}"]`);
             if (slot) {
@@ -1860,7 +1807,7 @@ try {
         carousel.scrollLeft = Math.max(0, Math.min(previousLeft || 0, max));
     },
 
-    bindFailedItems() {
+bindFailedItems() {
         const container = this.app.elements.pageContent;
 
         // Individual retry buttons for each failed sync item
@@ -1882,7 +1829,7 @@ try {
                 } catch (e) {
                     console.error('[Nutrition] Retry failed sync item:', e);
                 }
-                this.app.renderPage('nutrition');
+                await this.updateCarouselInPlace();
             };
         });
 
@@ -1901,7 +1848,7 @@ try {
                 } catch (e) {
                     console.error('[Nutrition] Delete failed sync item:', e);
                 }
-                this.app.renderPage('nutrition');
+                await this.updateCarouselInPlace();
             };
         });
 
@@ -1915,7 +1862,7 @@ try {
                 } catch (e) {
                     console.error('[Nutrition] Retry failed:', e);
                 }
-                this.app.renderPage('nutrition');
+                await this.updateCarouselInPlace();
             };
         }
 
@@ -1923,7 +1870,7 @@ try {
         if (clearBtn) {
             clearBtn.onclick = async () => {
                 await SyncEngine.clearQueue();
-                this.app.renderPage('nutrition');
+                await this.updateCarouselInPlace();
             };
         }
     },
@@ -1956,7 +1903,7 @@ try {
         // meal ids are restored right after the handlers are attached.
         container.querySelectorAll('[data-composition]').forEach((list) => {
             const mealId = list.closest('[data-meal-id]')?.dataset.mealId;
-            if (mealId && this._expandedCompositions.has(String(mealId))) {
+            if (mealId && this._state.flags.expandedCompositions.has(String(mealId))) {
                 this.setCompositionExpanded(list, true);
             }
         });
@@ -1973,8 +1920,8 @@ try {
                 const mealId = list.closest('[data-meal-id]')?.dataset.mealId;
                 if (mealId) {
                     const id = String(mealId);
-                    if (expanded) this._expandedCompositions.add(id);
-                    else this._expandedCompositions.delete(id);
+                    if (expanded) this._state.flags.expandedCompositions.add(id);
+                    else this._state.flags.expandedCompositions.delete(id);
                 }
             };
         });
@@ -2005,7 +1952,7 @@ try {
                         const token = this.app.state.tokens.access;
 
                         // NEW: Handle temp IDs locally - no network request
-                        if (this.isTempMealId(mealId)) {
+                        if (isTempMealId(mealId)) {
                             console.log('[Nutrition] Deleting local temp meal:', mealId);
                             // Delete from meals store
                             await DB.deleteMeal(mealId);
@@ -2018,7 +1965,7 @@ try {
                                 }
                             }
                             this.app.showToast('Блюдо удалено', 'success');
-                            await this.render(this.app.elements.pageContent, this.app, this.selectedDate);
+                            await this.render(this.app.elements.pageContent, this.app, this._state.ui.selectedDate);
                             return;
                         }
 
@@ -2046,7 +1993,7 @@ try {
 
     async retryMealAnalysis(mealId, btnEl) {
         // NEW: Temp IDs can't retry analysis - not synced yet
-        if (this.isTempMealId(mealId)) {
+        if (isTempMealId(mealId)) {
             this.app.showToast('Блюдо еще не синхронизировано. Дождитесь загрузки.', 'info');
             return;
         }
@@ -2077,81 +2024,36 @@ try {
         }
     },
 
-    /**
+/**
      * Edit meal modal: bottom sheet pre-filled with the current meal data,
      * following the same drum-sheet open/close lifecycle as the new-meal sheet.
      */
     openEditMealModal(mealId) {
-        if (this._editMealModalState || this._editMealModalClosing) return;
+        if (this._state.modals.editMeal || this._state.modals.editMealClosing) return;
 
-        const meal = this._mealsCache.get(String(mealId));
+        const meal = this._state.cache.meals.get(String(mealId));
         if (!meal) {
             this.app.showToast('Не удалось загрузить данные блюда', 'error');
             return;
         }
 
-        const modalHtml = Components.editMealModal(meal);
-        const modalContainer = document.createElement('div');
-        modalContainer.innerHTML = modalHtml;
-        const modalEl = modalContainer.firstElementChild;
-        document.body.appendChild(modalEl);
-
-        this._editMealModalState = {
-            modalEl,
-            mealId,
-            panelEl: modalEl.querySelector('.drum-sheet-panel'),
-        };
-
-        this._editMealModalState.bodyWasLocked = document.body.classList.contains('overflow-hidden');
-        document.body.classList.add('overflow-hidden');
-
-        this.bindEditMealModalEvents(modalEl, this._editMealModalState);
+        this._state.modals.editMeal = new EditMealSheet(this, mealId);
+        this._state.modals.editMeal.open();
+        this._state.modals.editMealClosing = this._state.modals.editMeal.modalEl;
     },
 
     closeEditMealModal() {
-        if (!this._editMealModalState) return;
-
-        const { modalEl, panelEl, onKeydown, bodyWasLocked } = this._editMealModalState;
-        this._editMealModalState = null;
-        if (onKeydown) {
-            document.removeEventListener('keydown', onKeydown);
+        if (this._state.modals.editMeal) {
+            this._state.modals.editMeal.close();
+            this._state.modals.editMeal = null;
         }
-        if (!bodyWasLocked) {
-            document.body.classList.remove('overflow-hidden');
+        if (this._state.modals.editMealClosing) {
+            this._state.modals.editMealClosing = null;
         }
-
-        panelEl?.classList.add('is-closing');
-        modalEl.querySelector('.drum-sheet-backdrop')?.classList.add('is-closing');
-
-        this._editMealModalClosing = modalEl;
-        setTimeout(() => {
-            modalEl.remove();
-            if (this._editMealModalClosing === modalEl) {
-                this._editMealModalClosing = null;
-            }
-        }, 220);
     },
 
     bindEditMealModalEvents(modalEl, state) {
-        // Backdrop closes the sheet
-        modalEl.querySelector('.drum-sheet-backdrop')?.addEventListener('click', () => {
-            this.closeEditMealModal();
-        });
-        modalEl.querySelector('.drum-sheet-panel [data-action="close-edit-meal-modal"]')?.addEventListener('click', () => {
-            this.closeEditMealModal();
-        });
-
-        // Escape key
-        const onKeydown = (e) => {
-            if (e.key === 'Escape') this.closeEditMealModal();
-        };
-        state.onKeydown = onKeydown;
-        document.addEventListener('keydown', onKeydown);
-
-        // Submit button
-        modalEl.querySelector('[data-action="submit-edit-meal"]')?.addEventListener('click', () => {
-            this.handleEditMealSubmit(modalEl, state);
-        });
+        // Now handled by EditMealSheet class
     },
 
     /**
@@ -2165,7 +2067,7 @@ try {
         const token = this.app.state.tokens.access;
 
         // NEW: Handle temp IDs - update locally only
-        if (this.isTempMealId(mealId)) {
+        if (isTempMealId(mealId)) {
             console.log('[Nutrition] Updating local temp meal:', mealId);
             const meal = await DB.getMeal(mealId);
             if (!meal) {
@@ -2206,10 +2108,10 @@ try {
             };
 
             await DB.saveMeal(updatedMeal);
-            this._mealsCache.set(String(mealId), updatedMeal);
+            this._state.cache.meals.set(String(mealId), updatedMeal);
             this.closeEditMealModal();
             this.app.showToast('Блюдо обновлено локально', 'success');
-            await this.render(this.app.elements.pageContent, this.app, this.selectedDate);
+            await this.render(this.app.elements.pageContent, this.app, this._state.ui.selectedDate);
             return;
         }
 
@@ -2254,10 +2156,10 @@ try {
 
         try {
             const updated = await API.patch(`/nutrition/meals/${mealId}`, updateData, token);
-            this._mealsCache.set(String(mealId), updated);
+            this._state.cache.meals.set(String(mealId), updated);
             this.closeEditMealModal();
             this.app.showToast('Блюдо обновлено', 'success');
-            await this.render(this.app.elements.pageContent, this.app, this.selectedDate);
+            await this.render(this.app.elements.pageContent, this.app, this._state.ui.selectedDate);
         } catch (error) {
             console.error('[Nutrition] Edit meal error:', error);
             this.app.showToast(error?.data?.detail || 'Ошибка сохранения', 'error');
@@ -2267,3 +2169,5 @@ try {
         }
     }
 };
+
+

@@ -1,4 +1,3 @@
-console.log("[DEBUG] Loaded components.js");
 import { Utils } from './utils.js';
 import { DB } from './db.js';
 import { getFriendlyEndpointLabel } from './sync.js';
@@ -16,22 +15,20 @@ export function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
-const MEAL_TYPE_META = {
-    breakfast: { label: 'Завтрак', icon: 'sunrise' },
-    lunch: { label: 'Обед', icon: 'utensils' },
-    dinner: { label: 'Ужин', icon: 'moon' },
-    snack: { label: 'Перекус', icon: 'cookie' },
+/**
+ * Unified meal type configuration - single source of truth for labels and icons.
+ */
+const MEAL_TYPE_CONFIG = {
+    breakfast: { label: 'Завтрак', icon: 'sunrise', iconPath: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9Z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 4v4"/>' },
+    lunch: { label: 'Обед', icon: 'utensils', iconPath: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2v20"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 2v20"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 2v20"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2 10h20"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2 14h20"/>' },
+    dinner: { label: 'Ужин', icon: 'moon', iconPath: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 8a2 2 0 0 0 0-4 2 2 0 0 0-4 0 2 2 0 0 0 4 0Z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2 8h20"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 16V12a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v4"/>' },
+    snack: { label: 'Перекус', icon: 'cookie', iconPath: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v.01"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12v.01"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 12v.01"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 16v.01"/>' },
 };
 
-const MEAL_TYPE_ICON_PATHS = {
-    sunrise: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9Z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 4v4"/>',
-    utensils: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2v20"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 2v20"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 2v20"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2 10h20"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2 14h20"/>',
-    moon: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 8a2 2 0 0 0 0-4 2 2 0 0 0-4 0 2 2 0 0 0 4 0Z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2 8h20"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 16V12a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v4"/>',
-    cookie: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v.01"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12v.01"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 12v.01"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 16v.01"/>',
-};
-
-/* Icons for the card action buttons. They are stroke-based like the meal-type
-   icons so the top-right pair reads as one set on the photo. */
+/**
+ * Icons for the card action buttons. They are stroke-based like the meal-type
+ * icons so the top-right pair reads as one set on the photo.
+ */
 const MEAL_ACTION_ICON_PATHS = {
     edit: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 20h4l10.5-10.5a2.12 2.12 0 0 0-3-3L5 17v3Z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.5 6.5l4 4"/>',
     trash: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 4h4"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 7l1 13h10l1-13"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 11v6"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 11v6"/>',
@@ -145,12 +142,12 @@ export const Components = {
     },
 
     mealTypeLabel(type) {
-        return MEAL_TYPE_META[type]?.label || 'Приём пищи';
+        return MEAL_TYPE_CONFIG[type]?.label || 'Приём пищи';
     },
 
     mealTypeIcon(type, className = 'w-4 h-4') {
-        const icon = MEAL_TYPE_META[type]?.icon || 'utensils';
-        return `<svg class="${className}" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">${MEAL_TYPE_ICON_PATHS[icon]}</svg>`;
+        const iconPath = MEAL_TYPE_CONFIG[type]?.iconPath || MEAL_TYPE_CONFIG.lunch.iconPath;
+        return `<svg class="${className}" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">${iconPath}</svg>`;
     },
 
     /**
@@ -983,7 +980,7 @@ export const Components = {
             <span class="composition-label composition-label--expanded">${escapeHtml(expanded)}</span>
         `;
 
-        const items = Array.isArray(meal.ingredients)
+        const items = Array.isArray(meal?.ingredients)
             ? meal.ingredients.filter((ing) => ing && (ing.name || ing.amount))
             : [];
 
@@ -1013,7 +1010,7 @@ export const Components = {
             };
         }
 
-        const tags = Array.isArray(meal.tags) ? meal.tags.filter(Boolean).map(String) : [];
+        const tags = Array.isArray(meal?.tags) ? meal.tags.filter(Boolean).map(String) : [];
         if (tags.length > 0) {
             const hiddenFrom = Math.min(limit + 1, tags.length);
             const overflow = Math.max(0, tags.length - hiddenFrom);

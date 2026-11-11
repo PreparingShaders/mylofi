@@ -164,6 +164,9 @@ export const Workouts = {
     // dynamically inserted set rows that are added outside of renderWorkoutScreen.
     completedHistorySessions: [],
 
+    // Timer ID for pollForAiPlan polling, so it can be cancelled on unmount
+    _aiPlanPollTimer: null,
+
     escapeHtml(value) {
         return String(value ?? '')
             .replace(/&/g, '&amp;')
@@ -857,13 +860,21 @@ export const Workouts = {
             localStorage.removeItem('active_session_id');
             localStorage.removeItem('active_workout');
         } catch (e) {}
-        this.currentSession = null;
-        this.sessionStartTimestamp = null;
-        if (app?.state) {
-            app.state.currentSessionId = null;
-        }
+        this.setCurrentSession(null);
         // Small delay to ensure localStorage writes complete before any subsequent reads
         await new Promise(r => setTimeout(r, 0));
+    },
+
+    /**
+     * Centralized session state transition. Ensures consistent cleanup and
+     * updates across all session changes.
+     */
+    setCurrentSession(session) {
+        this.currentSession = session;
+        this.sessionStartTimestamp = session?.started_at ? new Date(session.started_at).getTime() : null;
+        if (session?.isLocal) {
+            this.restAutoStart = this.restAutoStart || new Map();
+        }
     },
 
     // AI verdict/summary (recovery advice, intensity conclusions, etc.) is
@@ -1346,7 +1357,7 @@ export const Workouts = {
         this.stopWorkoutTimer();
         // The dashboard replaces the tracking screen, so there is no session
         // on screen any more.
-        this.currentSession = null;
+        this.setCurrentSession(null);
         // The filters sheet lives in the shared #modals host, so release its
         // scroll lock if it survived a navigation.
         this.closeTonnageFiltersSheet();
@@ -1395,6 +1406,10 @@ export const Workouts = {
         // A workout started offline lives only in localStorage until it is synced
         if (!activeSession) {
             activeSession = this.getActiveLocalSession();
+            // Guard: a locally completed/cancelled session must not resurrect as active
+            if (activeSession && (activeSession.key || activeSession.id) && this.isSessionClosedLocally(activeSession.key || activeSession.id)) {
+                activeSession = null;
+            }
         } else if (activeSession.id && this.isSessionClosedLocally(activeSession.id)) {
             // Completed offline and not yet replayed on the server
             activeSession = null;
@@ -1716,6 +1731,27 @@ export const Workouts = {
         // stopwatch without persisting and clear all timer state so a fresh
         // workout screen starts from a clean slate.
         this.dismissRestTimer();
+    },
+
+    /**
+     * Full cleanup for the Workouts module. Call on logout, page unload,
+     * or when the workout screen is permanently closed.
+     */
+    destroy() {
+        // Stop workout timer
+        this.stopWorkoutTimer();
+        
+        // Cancel any in-flight AI plan polling
+        this.cancelAiPlanPoll();
+        
+        // Clear global drum picker keydown handler
+        if (DRUM_KEYDOWN_HANDLER) {
+            document.removeEventListener('keydown', DRUM_KEYDOWN_HANDLER);
+            DRUM_KEYDOWN_HANDLER = null;
+        }
+        
+        // Clear current session reference
+        this.setCurrentSession(null);
     },
 
     // ===== Dual-mode rest timer helpers =====
@@ -2936,6 +2972,12 @@ let html = `
             return null;
         }
         
+        // Clear any existing poll timer
+        if (this._aiPlanPollTimer) {
+            clearTimeout(this._aiPlanPollTimer);
+            this._aiPlanPollTimer = null;
+        }
+
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
             try {
                 const plan = await this.loadAiPlan(app, { session_id: sessionId });
@@ -2952,10 +2994,24 @@ let html = `
             }
             
             if (attempt < maxAttempts - 1) {
-                await new Promise(resolve => setTimeout(resolve, intervalMs));
+                // Use a cancellable timer instead of await setTimeout
+                await new Promise(resolve => {
+                    this._aiPlanPollTimer = setTimeout(resolve, intervalMs);
+                });
+                this._aiPlanPollTimer = null;
             }
         }
         return null;
+    },
+
+    /**
+     * Cancel any in-flight AI plan polling.
+     */
+    cancelAiPlanPoll() {
+        if (this._aiPlanPollTimer) {
+            clearTimeout(this._aiPlanPollTimer);
+            this._aiPlanPollTimer = null;
+        }
     },
 
     /**
@@ -3102,7 +3158,7 @@ let html = `
         // Prompt for template update BEFORE clearing session state
         await this.promptTemplateUpdateIfNeeded(app, sessionToComplete);
 
-        Workouts.clearActiveSessionState(app);
+        await Workouts.clearActiveSessionState(app);
 
         // Persist any in-flight rest timer so its elapsed seconds are recorded
         // on the previous set before the session closes for analysis.
@@ -3605,9 +3661,8 @@ let html = `
         app.state.currentSessionId = session.isLocal ? session.key : session.id;
         // The tracking screen is on top again, so the user is inside the
         // workout once more.
-        this.currentSession = session;
+        this.setCurrentSession(session);
         if (app.state) app.state.workoutScreenDismissed = false;
-        this.restAutoStart = this.restAutoStart || new Map();
 
         try {
             if (app.saveState) {
@@ -3621,8 +3676,7 @@ let html = `
 
         // Anchor the workout duration clock to when the session started, falling
         // back to the local clock for sessions that never got a server timestamp.
-        const sessionStart = session.started_at ? new Date(session.started_at).getTime() : Date.now();
-        this.sessionStartTimestamp = sessionStart;
+        // (setCurrentSession already set sessionStartTimestamp)
 
         const completedHistorySessions = [...(historyData?.sessions || [])]
             .filter(s => s.status === 'completed')

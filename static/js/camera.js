@@ -556,13 +556,18 @@ export const Camera = {
             updated_at: Date.now(),
         };
 
+        // Convert blob to Base64 for reliable IndexedDB storage
+        const blobBase64 = await Utils.blobToBase64(blob);
+        const mimeType = blob.type || 'image/webp';
+
         const syncItem = {
             endpoint: '/nutrition/photos',
             method: 'POST',
             isFormData: true,
             formData: {
-                blob: blob,
+                blob: blobBase64,
                 filename: 'photo.webp',
+                mimeType,
                 fields: {
                     ...timeFields,
                     ...(notes ? { notes } : {}),

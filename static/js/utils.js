@@ -1,17 +1,9 @@
-console.log("[DEBUG] Loaded utils.js");
-
 /**
- * Where this device is, for the server.
- *
- * `eaten_at` is stored as an absolute instant, so it needs no timezone; the
- * offset travels with it because the day a meal belongs to does: the server
- * buckets meals into calendar days, and the only thing that knows where local
- * midnight is, is the device. `getTimezoneOffset()` counts minutes *behind* UTC
- * (UTC+3 is -180), which is the sign the server converts with.
- *
- * The IANA name travels too, purely as a fallback for a device that cannot
- * report an offset.
+ * Check if a meal ID is a temporary local ID (temp_...)
  */
+export function isTempMealId(mealId) {
+    return typeof mealId === 'string' && mealId.startsWith('temp_');
+}
 export function clientTimezone() {
     let offsetMinutes = null;
     try {
@@ -99,6 +91,34 @@ export const Utils = {
             image.onerror = (error) => reject(error);
             image.src = URL.createObjectURL(file);
         });
+    },
+
+    /**
+     * Convert Blob/File to Base64 DataURL string.
+     * Uses FileReader.readAsDataURL() which works reliably on iOS Safari.
+     */
+    async blobToBase64(blob) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(blob);
+        });
+    },
+
+    /**
+     * Convert Base64 DataURL back to Blob.
+     * Handles both "data:image/webp;base64,..." and raw base64 strings.
+     */
+    base64ToBlob(base64, mimeType = 'image/webp') {
+        const base64Data = base64.includes(',') ? base64.split(',')[1] : base64;
+        const byteChars = atob(base64Data);
+        const byteNumbers = new Array(byteChars.length);
+        for (let i = 0; i < byteChars.length; i++) {
+            byteNumbers[i] = byteChars.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        return new Blob([byteArray], { type: mimeType });
     },
 
     fileSizeLabel(bytes) {

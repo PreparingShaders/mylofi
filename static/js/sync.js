@@ -1,5 +1,6 @@
 console.log("[DEBUG] Loaded sync.js");
 import { DB } from './db.js';
+import { Utils } from './utils.js';
 
 const SYNC_TAG = 'mylofi-sync';
 const MAX_RETRIES = 3;
@@ -383,6 +384,12 @@ export const SyncEngine = {
         }
 
         console.log('[SyncEngine] Enqueueing photo upload:', { blobSize: fileBlob.size, blobType: fileBlob.type, endpoint, filename });
+        
+        // Convert blob to Base64 for reliable IndexedDB storage
+        const blobBase64 = await Utils.blobToBase64(fileBlob);
+        const mimeType = fileBlob.type || 'image/webp';
+        
+        // Compute photoHash from raw blob BEFORE Base64 conversion for deduplication
         const photoHash = await generatePhotoHash(fileBlob);
         const existing = await DB.getSyncQueueByPhotoHash(photoHash, endpoint);
         if (existing && existing.length > 0) {
@@ -391,8 +398,9 @@ export const SyncEngine = {
                 console.log(`[SyncEngine] Duplicate photo detected (hash=${photoHash.slice(0, 16)}...), updating existing queue item ${pendingItem.id}`);
                 await DB.updateSyncQueue(pendingItem.id, {
                     formData: {
-                        blob: fileBlob,
+                        blob: blobBase64,
                         filename: filename || 'photo.webp',
+                        mimeType,
                         fields: meta || {},
                     },
                     accessToken,
@@ -408,8 +416,9 @@ export const SyncEngine = {
             endpoint,
             method: 'POST',
             formData: {
-                blob: fileBlob,
+                blob: blobBase64,
                 filename: filename || 'photo.webp',
+                mimeType,
                 fields: meta || {},
             },
             isFormData: true,
@@ -487,6 +496,24 @@ export const SyncEngine = {
                     }
 
                     let item = items[0];
+
+                    // Validate photo upload items have valid blob data before replay
+                    if (this.isPhotoUpload(item) && item.formData) {
+                        const storedBlob = item.formData.blob;
+                        const isValidBlob = (typeof storedBlob === 'string' && storedBlob.length > 0) ||
+                                           (storedBlob instanceof Blob && storedBlob.size > 0) ||
+                                           (storedBlob && typeof storedBlob === 'object' && storedBlob.size > 0);
+                        if (!isValidBlob) {
+                            console.error('[SyncEngine] Corrupted queue item (missing/invalid blob), marking FAILED:', item.id);
+                            await DB.updateSyncQueue(item.id, {
+                                status: DB.SYNC_STATUS.FAILED,
+                                error: 'Corrupted queue item: missing or invalid blob data',
+                                updatedAt: Date.now(),
+                            });
+                            // Skip this item and continue with the next
+                            continue;
+                        }
+                    }
 
                     // Allow callers to rewrite items that depend on not-yet-synced
                     // state (e.g. a local session whose real server id is unknown).

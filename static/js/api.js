@@ -1,5 +1,6 @@
 console.log("[DEBUG] Loaded api.js");
 import { SyncEngine } from './sync.js';
+import { Utils } from './utils.js';
 
 const API_BASE = `${window.location.origin}/api/v1`;
 
@@ -402,6 +403,8 @@ class APIClient {
         this.processingQueue = false;
         this.itemResolver = null;
         this.onItemSynced = null;
+        // In-flight GET request deduplication
+        this._inflightGet = new Map();
     }
 
     getHeaders(accessToken, isFormData = false) {
@@ -618,6 +621,27 @@ class APIClient {
         }
     }
 
+    /**
+     * Deduplicated GET request: if the same endpoint is already being fetched,
+     * return the existing promise instead of making a duplicate request.
+     */
+    async dedupeGet(endpoint, accessToken = null) {
+        // Only deduplicate GET requests with the same endpoint and token
+        const cacheKey = `${endpoint}:${accessToken || 'no-token'}`;
+        
+        if (this._inflightGet.has(cacheKey)) {
+            console.log(`[API] Deduplicating GET request for "${endpoint}"`);
+            return this._inflightGet.get(cacheKey);
+        }
+
+        const promise = this.getWithReadCache(endpoint, accessToken).finally(() => {
+            this._inflightGet.delete(cacheKey);
+        });
+
+        this._inflightGet.set(cacheKey, promise);
+        return promise;
+    }
+
     async replayQueuedItem(item) {
         const accessToken = item.accessToken || window.App?.state?.tokens?.access || null;
         let data = item.payload ?? item.data ?? null;
@@ -627,26 +651,42 @@ class APIClient {
             const fd = new FormData();
             const storedBlob = item.formData.blob;
             const filename = item.formData.filename || 'photo.webp';
+            const mimeType = item.formData.mimeType || 'image/webp';
 
             console.log('[API] Replaying FormData item:', {
                 endpoint: item.endpoint,
                 hasBlob: !!storedBlob,
-                blobType: storedBlob?.constructor?.name,
+                blobType: typeof storedBlob,
+                isString: typeof storedBlob === 'string',
                 blobSize: storedBlob?.size,
                 isBlobInstance: storedBlob instanceof Blob,
                 filename,
+                mimeType,
                 fieldsKeys: Object.keys(item.formData.fields || {}),
             });
 
             let blobToUse = null;
-            if (storedBlob instanceof Blob && storedBlob.size > 0) {
-                blobToUse = storedBlob;
-            } else if (storedBlob && typeof storedBlob === 'object' && storedBlob.size > 0) {
+            
+            // New format: Base64 string (data URL or raw base64)
+            if (typeof storedBlob === 'string' && storedBlob.length > 0) {
                 try {
-                    blobToUse = new Blob([storedBlob], { type: storedBlob.type || 'image/webp' });
-                    console.warn('[API] Reconstructed Blob from plain object:', { size: blobToUse.size, type: blobToUse.type });
+                    blobToUse = Utils.base64ToBlob(storedBlob, mimeType);
+                    console.log('[API] Reconstructed Blob from Base64:', { size: blobToUse.size, type: blobToUse.type });
                 } catch (reconstructError) {
-                    console.error('[API] Failed to reconstruct Blob:', reconstructError);
+                    console.error('[API] Failed to reconstruct Blob from Base64:', reconstructError);
+                }
+            }
+            // Old format: Blob instance (should work directly)
+            else if (storedBlob instanceof Blob && storedBlob.size > 0) {
+                blobToUse = storedBlob;
+            }
+            // Legacy corrupted format: plain object from structured clone
+            else if (storedBlob && typeof storedBlob === 'object' && storedBlob.size > 0) {
+                try {
+                    blobToUse = new Blob([storedBlob], { type: storedBlob.type || mimeType });
+                    console.warn('[API] Reconstructed Blob from plain object (legacy):', { size: blobToUse.size, type: blobToUse.type });
+                } catch (reconstructError) {
+                    console.error('[API] Failed to reconstruct Blob from plain object:', reconstructError);
                 }
             } else {
                 console.error('[API] Invalid or empty blob in queued item:', storedBlob);
