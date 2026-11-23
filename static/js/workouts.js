@@ -4,6 +4,8 @@ import { Components } from './components.js';
 import { Utils } from './utils.js';
 import { DB } from './db.js';
 import { Camera } from './camera.js';
+import { MuscleMap } from './muscleMap.js';
+import { computeHeatmapData } from './muscleZones.js';
 
 const TOGGLE_BASE = 'flex-shrink-0 w-9 h-9 rounded-2xl text-lg font-bold transition-all flex items-center justify-center';
 const TOGGLE_COMPLETED = 'bg-lime-400 text-zinc-950 border-lime-400 shadow-[0_0_12px_rgba(163,230,53,0.4)]';
@@ -166,6 +168,13 @@ export const Workouts = {
 
     // Timer ID for pollForAiPlan polling, so it can be cancelled on unmount
     _aiPlanPollTimer: null,
+
+    // Muscle map state
+    muscleMap: null,
+    muscleMapActiveTab: 'tonnage',
+    muscleMapGender: 'male',
+    muscleMapSide: 'front',
+    muscleMapSelectedSession: null,
 
     escapeHtml(value) {
         return String(value ?? '')
@@ -466,6 +475,177 @@ export const Workouts = {
         if (!current) return;
         current.innerHTML = this.renderTonnageModule(this.tonnageData);
         this.bindTonnageModuleEvents(current, app);
+    },
+
+    renderMuscleMapTab() {
+        const sessions = this.recentSessions || [];
+        const completedSessions = sessions.filter(s => s.status === 'completed');
+        const sessionOptions = completedSessions.map(s => `
+            <option value="${s.id}">${this.escapeHtml(s.name || 'Тренировка')} — ${Utils.formatDate(s.completed_at || s.started_at)}</option>
+        `).join('');
+        
+        return `
+            <div id="muscle-map-module" class="glass rounded-2xl p-4">
+                <div class="flex justify-between items-center gap-2 mb-3">
+                    <h3 class="text-sm font-semibold text-surface-500 uppercase tracking-wider">Карта мышц</h3>
+                </div>
+                
+                <div class="mb-4">
+                    <label class="text-[11px] uppercase tracking-wider text-surface-500 font-semibold mb-1.5 block">Выберите тренировку для тепловой карты</label>
+                    <select id="muscle-map-session-select" class="w-full px-3 py-2.5 text-sm glass-input rounded-xl">
+                        <option value="">— Общая нагрузка (все тренировки) —</option>
+                        ${sessionOptions}
+                    </select>
+                </div>
+
+                <div class="flex gap-2 mb-4">
+                    <button type="button" data-action="muscle-map-side" data-side="front"
+                            class="flex-1 py-2 rounded-xl glass text-sm font-semibold ${this.muscleMapSide === 'front' ? 'bg-primary-600 text-white' : ''} btn-press">
+                        Фронт
+                    </button>
+                    <button type="button" data-action="muscle-map-side" data-side="back"
+                            class="flex-1 py-2 rounded-xl glass text-sm font-semibold ${this.muscleMapSide === 'back' ? 'bg-primary-600 text-white' : ''} btn-press">
+                        Бэк
+                    </button>
+                </div>
+
+                <div id="muscle-map-canvas" class="aspect-[1365/2048] max-h-[500px] rounded-xl overflow-hidden bg-surface-900/50 relative"></div>
+
+                <div id="muscle-map-legend" class="mt-3"></div>
+
+                <div id="muscle-map-info" class="mt-3 glass rounded-xl p-3 hidden">
+                    <h4 class="font-semibold text-sm" id="muscle-map-info-name">—</h4>
+                    <p class="text-xs text-surface-500 mt-1" id="muscle-map-info-details">Нажмите на мышцу для деталей</p>
+                </div>
+            </div>
+        `;
+    },
+
+    bindMuscleMapEvents(container, app) {
+        const sideButtons = container.querySelectorAll('[data-action="muscle-map-side"]');
+        sideButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                this.muscleMapSide = btn.dataset.side;
+                sideButtons.forEach(b => {
+                    b.classList.toggle('bg-primary-600', b.dataset.side === this.muscleMapSide);
+                    b.classList.toggle('text-white', b.dataset.side === this.muscleMapSide);
+                });
+                if (this.muscleMap) {
+                    this.muscleMap.setView(this.muscleMapSide);
+                }
+            });
+        });
+
+        const sessionSelect = container.querySelector('#muscle-map-session-select');
+        if (sessionSelect) {
+            sessionSelect.addEventListener('change', () => {
+                this.muscleMapSelectedSession = sessionSelect.value ? parseInt(sessionSelect.value) : null;
+                this.updateMuscleMapHeatmap(app);
+            });
+        }
+    },
+
+    async initMuscleMap(container, app) {
+        const canvasContainer = container.querySelector('#muscle-map-canvas');
+        const legendContainer = container.querySelector('#muscle-map-legend');
+        const infoContainer = container.querySelector('#muscle-map-info');
+        const infoName = container.querySelector('#muscle-map-info-name');
+        const infoDetails = container.querySelector('#muscle-map-info-details');
+
+        if (!canvasContainer) return;
+
+        // Get user gender from profile
+        let gender = 'male';
+        try {
+            const user = await API.get('/users/me', app.state.tokens.access);
+            if (user?.gender) gender = user.gender;
+        } catch (e) {
+            console.warn('[Workouts] Could not load user gender:', e);
+        }
+        this.muscleMapGender = gender;
+
+        // Initialize MuscleMap
+        this.muscleMap = new MuscleMap(canvasContainer, {
+            gender: this.muscleMapGender,
+            side: this.muscleMapSide,
+        });
+
+        // Mount legend
+        this.muscleMap.mountLegend(legendContainer);
+
+        // Handle muscle click
+        this.muscleMap.on('select', (data) => {
+            infoContainer.classList.remove('hidden');
+            infoName.textContent = data.name;
+            const selectedSession = this.muscleMapSelectedSession 
+                ? this.recentSessions.find(s => s.id === this.muscleMapSelectedSession)
+                : null;
+            if (selectedSession) {
+                const exercise = selectedSession.exercises?.find(ex => 
+                    ex.muscle_group?.toLowerCase() === data.muscle?.toLowerCase()
+                );
+                if (exercise) {
+                    infoDetails.textContent = `${exercise.sets?.filter(s => s.is_completed).length ?? 0} подходов, ${Math.round(exercise.tonnage_kg ?? 0)} кг`;
+                } else {
+                    infoDetails.textContent = 'Нет данных по этой тренировке';
+                }
+            } else {
+                infoDetails.textContent = 'Общая нагрузка по всем тренировкам';
+            }
+        });
+
+        // Initial heatmap
+        await this.updateMuscleMapHeatmap(app);
+    },
+
+    async updateMuscleMapHeatmap(app) {
+        if (!this.muscleMap) return;
+
+        let sessionsToUse = this.recentSessions || [];
+        if (this.muscleMapSelectedSession) {
+            const session = sessionsToUse.find(s => s.id === this.muscleMapSelectedSession);
+            sessionsToUse = session ? [session] : [];
+        }
+
+        // Fetch exercise metadata for muscle group mapping
+        let exercisesMeta = {};
+        try {
+            const meta = await API.get('/workouts/exercises/meta', app.state.tokens.access);
+            if (meta?.exercises) {
+                for (const ex of meta.exercises) {
+                    exercisesMeta[ex.id] = { muscle_group: ex.muscle_group };
+                }
+            }
+        } catch (e) {
+            console.warn('[Workouts] Could not load exercise meta:', e);
+        }
+
+        // Compute heatmap data
+        const heatmapData = [];
+        for (const session of sessionsToUse) {
+            if (session.status !== 'completed') continue;
+            const data = computeHeatmapData(session, exercisesMeta);
+            heatmapData.push(...data);
+        }
+
+        // Merge by muscle (take max intensity)
+        const merged = new Map();
+        for (const d of heatmapData) {
+            const existing = merged.get(d.muscle);
+            if (!existing || d.intensity > existing.intensity) {
+                merged.set(d.muscle, d);
+            }
+        }
+
+        const finalData = [...merged.values()];
+        this.muscleMap.setHeatmap(finalData);
+    },
+
+    destroyMuscleMap() {
+        if (this.muscleMap) {
+            this.muscleMap.destroy();
+            this.muscleMap = null;
+        }
     },
 
     // Bottom sheet with the advanced tonnage filters: date range, muscle group,
@@ -1475,8 +1655,29 @@ export const Workouts = {
                     <h2 class="text-xl font-bold">Тренировки</h2>
                 </div>
 
-                <div id="tonnage-module" class="mb-6">
-                    ${this.renderTonnageModule(this.tonnageData)}
+                <div class="flex gap-1 p-1 rounded-xl bg-surface-100 dark:bg-white/5 mb-4">
+                    <button type="button" data-action="dashboard-tab" data-tab="tonnage"
+                            class="flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${this.muscleMapActiveTab === 'tonnage'
+                                ? 'bg-surface-900 text-white dark:bg-zinc-100 dark:text-zinc-950'
+                                : 'text-surface-500 dark:text-surface-400'}">
+                        Тоннаж
+                    </button>
+                    <button type="button" data-action="dashboard-tab" data-tab="muscle-map"
+                            class="flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${this.muscleMapActiveTab === 'muscle-map'
+                                ? 'bg-surface-900 text-white dark:bg-zinc-100 dark:text-zinc-950'
+                                : 'text-surface-500 dark:text-surface-400'}">
+                        Карта мышц
+                    </button>
+                </div>
+
+                <div id="dashboard-tab-tonnage" class="${this.muscleMapActiveTab === 'tonnage' ? '' : 'hidden'}">
+                    <div id="tonnage-module" class="mb-6">
+                        ${this.renderTonnageModule(this.tonnageData)}
+                    </div>
+                </div>
+
+                <div id="dashboard-tab-muscle-map" class="${this.muscleMapActiveTab === 'muscle-map' ? '' : 'hidden'}">
+                    ${this.renderMuscleMapTab()}
                 </div>
 
                 ${activeSession
@@ -1542,11 +1743,40 @@ export const Workouts = {
 
         container.innerHTML = html;
 
+        // Dashboard tab switching
+        container.querySelectorAll('[data-action="dashboard-tab"]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                this.muscleMapActiveTab = btn.dataset.tab;
+                container.querySelectorAll('[data-action="dashboard-tab"]').forEach(b => {
+                    const active = b.dataset.tab === this.muscleMapActiveTab;
+                    b.classList.toggle('bg-surface-900', active);
+                    b.classList.toggle('text-white', active);
+                    b.classList.toggle('dark:bg-zinc-100', active);
+                    b.classList.toggle('dark:text-zinc-950', active);
+                    b.classList.toggle('text-surface-500', !active);
+                    b.classList.toggle('dark:text-surface-400', !active);
+                });
+                container.querySelector('#dashboard-tab-tonnage')?.classList.toggle('hidden', this.muscleMapActiveTab !== 'tonnage');
+                container.querySelector('#dashboard-tab-muscle-map')?.classList.toggle('hidden', this.muscleMapActiveTab !== 'muscle-map');
+                
+                if (this.muscleMapActiveTab === 'muscle-map') {
+                    this.initMuscleMap(container, app);
+                } else {
+                    this.destroyMuscleMap();
+                }
+            });
+        });
+
         this.bindTonnageModuleEvents(container, app);
         // Fire-and-forget: the module already rendered from the local history
         // fallback, so the dashboard stays interactive while the API call runs.
         this.refreshTonnageModule(app).catch(error =>
             console.warn('[Workouts] Tonnage refresh failed:', error));
+
+        // Initialize muscle map if it's the active tab
+        if (this.muscleMapActiveTab === 'muscle-map') {
+            this.initMuscleMap(container, app);
+        }
 
         container.querySelector('[data-action="start-empty-workout"]')?.addEventListener('click', (e) => {
             if (hasActiveSession) return; // Disabled state handled by CSS

@@ -1,9 +1,9 @@
 // Bumped whenever a shell asset changes: /static is served cache-first with
 // ignoreSearch, so a `?v=` query on the URL does not bust it - only a new cache
 // name does.
-const SHELL_CACHE = 'mylofi-shell-v18';
-const RUNTIME_CACHE = 'mylofi-runtime-v18';
-const CATALOG_CACHE = 'mylofi-catalog-v18';
+const SHELL_CACHE = 'mylofi-shell-v21';
+const RUNTIME_CACHE = 'mylofi-runtime-v21';
+const CATALOG_CACHE = 'mylofi-catalog-v21';
 const CURRENT_CACHES = [SHELL_CACHE, RUNTIME_CACHE, CATALOG_CACHE];
 
 const OFFLINE_FALLBACK_HTML = '<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>mylofi — офлайн</title><link rel="stylesheet" href="/static/css/styles.css"></head><body><div class="min-h-screen flex items-center justify-center p-4"><div class="text-center"><h1 class="text-2xl font-bold mb-2">Офлайн</h1><p class="text-surface-500">Проверьте подключение к интернету. Данные, сохранённые локально, будут синхронизированы при возвращении связи.</p></div></div></body></html>';
@@ -33,6 +33,17 @@ const SHELL_ASSETS = [
     '/static/js/theme.js',
     '/static/js/utils.js',
     '/static/js/workouts.js',
+    '/static/js/muscleMap.js',
+    '/static/js/muscleZones.js',
+    '/static/js/vendor/muscle-map/muscle-map.js',
+    '/static/js/vendor/muscle-map/assets/male-front-light-WPSSUU4P.webp',
+    '/static/js/vendor/muscle-map/assets/male-back-light-ZJKNOE4R.webp',
+    '/static/js/vendor/muscle-map/assets/female-front-light-4S6EEMJP.webp',
+    '/static/js/vendor/muscle-map/assets/female-back-light-VYW6BCEL.webp',
+    '/static/js/vendor/muscle-map/assets/male-front-dark-LRUHDQTT.webp',
+    '/static/js/vendor/muscle-map/assets/male-back-dark-UEOV4A4U.webp',
+    '/static/js/vendor/muscle-map/assets/female-front-dark-M3H6DIX7.webp',
+    '/static/js/vendor/muscle-map/assets/female-back-dark-WBCFOAW7.webp',
     '/static/icons/icon-128.png',
     '/static/icons/icon-152.png',
     '/static/icons/icon-192.png',

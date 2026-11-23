@@ -1,0 +1,3 @@
+[submodule "src/lib/MuscleMapJS"]
+	path = src/lib/MuscleMapJS
+	url = https://github.com/abdofallah/MuscleMapJS.git
