@@ -4,6 +4,7 @@ import { Components } from './components.js';
 import { Utils } from './utils.js';
 import { DB } from './db.js';
 import { Camera } from './camera.js';
+import { MuscleMap } from './muscleMap.js';
 
 const TOGGLE_BASE = 'flex-shrink-0 w-9 h-9 rounded-2xl text-lg font-bold transition-all flex items-center justify-center';
 const TOGGLE_COMPLETED = 'bg-lime-400 text-zinc-950 border-lime-400 shadow-[0_0_12px_rgba(163,230,53,0.4)]';
@@ -1479,6 +1480,24 @@ export const Workouts = {
                     ${this.renderTonnageModule(this.tonnageData)}
                 </div>
 
+                <!-- Muscle Map -->
+                <div id="muscle-map-module" class="mb-6">
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="text-sm font-semibold text-surface-500 uppercase tracking-wider">Карта нагрузки</h3>
+                        <div class="flex items-center gap-2">
+                            <button type="button" data-action="muscle-map-side" data-side="front"
+                                    class="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${'front' === 'front' ? 'bg-surface-900 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'text-surface-500 dark:text-surface-400'}">
+                                Фронт
+                            </button>
+                            <button type="button" data-action="muscle-map-side" data-side="back"
+                                    class="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${'front' === 'back' ? 'bg-surface-900 text-white dark:bg-zinc-100 dark:text-zinc-950' : 'text-surface-500 dark:text-surface-400'}">
+                                Спина
+                            </button>
+                        </div>
+                    </div>
+                    <div id="muscle-map-container" class="aspect-[9/19.5] max-h-[520px] w-full rounded-2xl overflow-hidden bg-zinc-950 dark:bg-black"></div>
+                </div>
+
                 ${activeSession
                     ? `<div class="bg-lime-50 dark:bg-lime-900/20 border border-lime-200 dark:border-lime-800 rounded-xl p-4 mb-6 shadow-sm">
                         <div class="flex items-center justify-between mb-2">
@@ -1541,6 +1560,9 @@ export const Workouts = {
         `;
 
         container.innerHTML = html;
+
+        // Initialize Muscle Map
+        this.initMuscleMap(container, app, activeSession);
 
         this.bindTonnageModuleEvents(container, app);
         // Fire-and-forget: the module already rendered from the local history
@@ -1647,6 +1669,111 @@ export const Workouts = {
             console.error('[Workouts] Render error:', error);
             container.innerHTML = Components.errorState('Ошибка загрузки данных');
         }
+    },
+
+    initMuscleMap(container, app, activeSession) {
+        const mapContainer = container.querySelector('#muscle-map-container');
+        const sideButtons = container.querySelectorAll('[data-action="muscle-map-side"]');
+        if (!mapContainer) return;
+
+        // Initialize the muscle map widget
+        MuscleMap.init(mapContainer, {
+            gender: app.state?.user?.gender || 'male',
+            side: 'front'
+        });
+
+        // Set up click handler for Russian names
+        MuscleMap.onMuscleClick((russianName, muscleKey) => {
+            app.showToast(`${russianName}`, 'info');
+        });
+
+        // Set up front/back toggle
+        sideButtons.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const side = e.currentTarget.dataset.side;
+                sideButtons.forEach(b => {
+                    const isActive = b.dataset.side === side;
+                    b.classList.toggle('bg-surface-900', isActive);
+                    b.classList.toggle('text-white', isActive);
+                    b.classList.toggle('dark:bg-zinc-100', isActive);
+                    b.classList.toggle('dark:text-zinc-950', isActive);
+                    b.classList.toggle('text-surface-500', !isActive);
+                    b.classList.toggle('dark:text-surface-400', !isActive);
+                });
+                MuscleMap.setSide(side);
+            });
+        });
+
+        // If there's an active session, compute load/recovery and highlight
+        if (activeSession) {
+            this.updateMuscleMapHighlights(activeSession);
+        }
+    },
+
+    updateMuscleMapHighlights(session) {
+        if (!session?.exercises) return;
+
+        const loadMap = {};
+        const recoveryMap = {};
+
+        // Compute muscle load from completed sets
+        const muscleLoad = {};
+        (session.exercises || []).forEach(ex => {
+            const muscleGroup = this.getMuscleGroupForExercise(ex.name);
+            if (!muscleGroup) return;
+            (ex.sets || []).forEach(set => {
+                if (!set.is_completed || !set.weight_kg || !set.reps) return;
+                const tonnage = set.weight_kg * set.reps;
+                muscleLoad[muscleGroup] = (muscleLoad[muscleGroup] || 0) + tonnage;
+            });
+        });
+
+        // Normalize to 0-4 intensity scale
+        const maxLoad = Math.max(...Object.values(muscleLoad), 1);
+        Object.entries(muscleLoad).forEach(([muscle, load]) => {
+            const intensity = Math.min(4, Math.round((load / maxLoad) * 4));
+            loadMap[muscle] = intensity;
+        });
+
+        // Highlight load (workout preset)
+        MuscleMap.highlightLoad(loadMap);
+    },
+
+    getMuscleGroupForExercise(exerciseName) {
+        // Simple mapping from exercise names to muscle groups
+        // This is a basic heuristic - can be expanded
+        const name = exerciseName.toLowerCase();
+        const mapping = {
+            // Chest
+            'жим': 'chest', 'press': 'chest', 'fly': 'chest', 'разводк': 'chest',
+            'pushup': 'chest', 'отжим': 'chest', 'crossover': 'chest', 'кроссовер': 'chest',
+            // Back
+            'тяга': 'upper-back', 'pull': 'upper-back', 'row': 'upper-back', 'подтяг': 'upper-back',
+            'deadlift': 'lower-back', 'станов': 'lower-back', 'hyperextension': 'lower-back', 'гиперэкстенз': 'lower-back',
+            // Legs
+            'squat': 'quadriceps', 'присед': 'quadriceps', 'lunge': 'quadriceps', 'выпад': 'quadriceps',
+            'leg press': 'quadriceps', 'лег-пресс': 'quadriceps', 'extension': 'quadriceps', 'разгибание': 'quadriceps',
+            'curl': 'hamstring', 'сгибан': 'hamstring', 'romanian': 'hamstring', 'румынск': 'hamstring',
+            'calf': 'calves', 'икра': 'calves', 'standing calf': 'calves', 'seated calf': 'calves',
+            'glute': 'gluteal', 'ягодиц': 'gluteal', 'hip thrust': 'gluteal', 'тёрст': 'gluteal',
+            // Shoulders
+            'overhead': 'deltoids', 'army': 'deltoids', 'army press': 'deltoids', 'army press': 'deltoids',
+            'lateral raise': 'deltoids', 'разводка': 'deltoids', 'front raise': 'front-deltoid', 'передн': 'front-deltoid',
+            'rear delt': 'rear-deltoid', 'задн': 'rear-deltoid', 'face pull': 'rear-deltoid',
+            // Arms
+            'bicep': 'biceps', 'бицепс': 'biceps', 'hammer': 'biceps', 'молот': 'biceps',
+            'tricep': 'triceps', 'трицепс': 'triceps', 'pushdown': 'triceps', 'разгибание трицепс': 'triceps',
+            'dip': 'triceps', 'на брусьях': 'triceps',
+            // Core
+            'crunch': 'abs', 'кранч': 'abs', 'situp': 'abs', 'подъём': 'abs', 'plank': 'abs', 'планк': 'abs',
+            'russian twist': 'obliques', 'русский': 'obliques', 'side plank': 'obliques', 'боковой планк': 'obliques',
+            'leg raise': 'lower-abs', 'подъём ног': 'lower-abs',
+        };
+
+        for (const [keyword, muscle] of Object.entries(mapping)) {
+            if (name.includes(keyword)) return muscle;
+        }
+        return null;
     },
 
     getElapsedSeconds(session) {
